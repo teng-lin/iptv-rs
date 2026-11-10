@@ -44,6 +44,10 @@ pub enum Action {
     ShowPanels,
     ChannelUp,
     ChannelDown,
+    /// Back to the channel played before the current one (again: return).
+    PreviousChannel,
+    /// From catch-up back to the live stream of the playing channel.
+    GoLive,
     PageUp,
     PageDown,
     PastPrograms,
@@ -114,6 +118,10 @@ impl Keymap {
             b(g, K::FastForward, Short, A::SeekForward),
             b(g, K::Record, Short, A::Record),
             b(g, K::Red, Short, A::ToggleFavorite),
+            // Previous/Next (⏮/⏭): last channel and back to live. Free on
+            // every remote with media keys; no seeking uses them yet.
+            b(g, K::Previous, Short, A::PreviousChannel),
+            b(g, K::Next, Short, A::GoLive),
             // Guide: the reference UX's documented long presses.
             b(Some(Guide), K::Ok, Long, A::ShowMenu),
             b(Some(Guide), K::Left, Long, A::PastPrograms),
@@ -127,6 +135,8 @@ impl Keymap {
             // Long OK and Menu open the control strip (observed).
             b(Some(Player), K::Ok, Long, A::ShowPanels),
             b(Some(Player), K::Menu, Short, A::ShowPanels),
+            // Remotes without media keys: hold 0 for the last channel.
+            b(Some(Player), K::Digit(0), Long, A::PreviousChannel),
             // Control row: directions/OK use the global moves; Up/Down zap.
             b(Some(Controls), K::Up, Short, A::ChannelUp),
             b(Some(Controls), K::Down, Short, A::ChannelDown),
@@ -307,6 +317,31 @@ mod tests {
             k.resolve(Guide, RemoteKey::Red, Press::Short),
             Some(Action::ToggleFavorite)
         );
+    }
+
+    #[test]
+    fn previous_channel_and_live_have_their_own_keys() {
+        let k = Keymap::defaults();
+        for ctx in [Guide, Groups, Player, Controls] {
+            assert_eq!(
+                k.resolve(ctx, RemoteKey::Previous, Press::Short),
+                Some(Action::PreviousChannel)
+            );
+            assert_eq!(
+                k.resolve(ctx, RemoteKey::Next, Press::Short),
+                Some(Action::GoLive)
+            );
+        }
+        assert_eq!(
+            k.resolve(Player, RemoteKey::Digit(0), Press::Long),
+            Some(Action::PreviousChannel)
+        );
+        assert_eq!(
+            k.resolve(Player, RemoteKey::Digit(0), Press::Short),
+            Some(Action::Digit(0)),
+            "a short 0 is still a digit"
+        );
+        assert!(!k.has_long(Guide, RemoteKey::Digit(0)));
     }
 
     #[test]
