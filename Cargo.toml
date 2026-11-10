@@ -6,6 +6,7 @@ members = [
     "crates/iptv-settings",
     "crates/iptv-epg",
     "crates/iptv-providers",
+    "crates/iptv-import",
     "crates/iptv-app",
 ]
 # nsh generates its own Cargo workspaces under the app crate.
@@ -34,3 +35,5 @@ url = "2.5"
 percent-encoding = "2.3"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 sha1_smol = "1"
+# Import pipeline (core, wasm-safe)
+iptv-import = { path = "crates/iptv-import" }

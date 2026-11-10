@@ -1595,6 +1595,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "iptv-import"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "iptv-epg",
+ "iptv-providers",
+ "serde_json",
+]
+
+[[package]]
 name = "iptv-nav"
 version = "0.1.0"
 

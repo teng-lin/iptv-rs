@@ -1,0 +1,327 @@
+mod common;
+
+use common::synth::{self, SimResponse};
+use common::{Events, FakeFetch, Reply, block_on, connect_error};
+use iptv_import::{
+    AuthProblem, CancelToken, FailureKind, FetchErrorKind, ImportError, ImportOptions, NoProgress,
+    ParseProblem, Phase, SourceMeta, Step, import_m3u_text, import_source,
+};
+use iptv_providers::SecretUrl;
+use iptv_providers::model::{CatchUpKind, M3uSourceConfig, SourceConfig};
+
+const URL: &str = "http://127.0.0.1:8089/iptv/playlist.m3u";
+
+fn config(url: &str) -> SourceConfig {
+    SourceConfig::M3u(M3uSourceConfig {
+        location: SecretUrl::new(url),
+        user_agent: Some("SyntheticPlayer/1.0".into()),
+        referrer: Some("http://ref.example.com/".into()),
+    })
+}
+
+fn run(fetch: &FakeFetch) -> Result<iptv_import::Catalog, ImportError> {
+    block_on(import_source(
+        fetch,
+        &config(URL),
+        &ImportOptions::new(synth::NOW),
+        &mut NoProgress,
+        &CancelToken::new(),
+    ))
+}
+
+fn playlist(n: usize) -> String {
+    synth::m3u(
+        n,
+        24,
+        Some("http://127.0.0.1:8089/iptv/guide.xml.gz"),
+        "http://127.0.0.1:8089",
+    )
+}
+
+#[test]
+fn imports_a_streamed_playlist_with_headers_and_progress() {
+    let fetch = FakeFetch::body(playlist(3000));
+    let mut events = Events::default();
+    let catalog = block_on(import_source(
+        &fetch,
+        &config(URL),
+        &ImportOptions::new(synth::NOW),
+        &mut events,
+        &CancelToken::new(),
+    ))
+    .unwrap();
+    assert_eq!(catalog.channels.len(), 3000);
+    assert_eq!(catalog.groups.len(), 24);
+    assert!(catalog.warnings.is_empty());
+    let first = &catalog.channels[0];
+    assert_eq!(first.epg_id.as_deref(), Some("ch0.example"));
+    assert_eq!(first.catch_up.as_ref().unwrap().kind, CatchUpKind::Default);
+    assert_eq!(first.catch_up.as_ref().unwrap().days, 3);
+    let SourceMeta::M3u { header } = &catalog.source else {
+        panic!("not m3u")
+    };
+    assert_eq!(header.epg_urls, ["http://127.0.0.1:8089/iptv/guide.xml.gz"]);
+    let epg = catalog.epg_sources(1);
+    assert_eq!(epg.len(), 1);
+    assert_eq!(
+        epg[0].url.expose(),
+        "http://127.0.0.1:8089/iptv/guide.xml.gz"
+    );
+
+    let reqs = fetch.requests();
+    assert_eq!(reqs.len(), 1);
+    assert_eq!(reqs[0].header("user-agent"), Some("SyntheticPlayer/1.0"));
+    assert_eq!(reqs[0].header("referer"), Some("http://ref.example.com/"));
+    assert_eq!(catalog.stats.requests, 1);
+    assert!(catalog.stats.bytes > 300_000);
+
+    let downloads: Vec<_> = events
+        .0
+        .iter()
+        .filter(|p| p.phase == Phase::Playlist && p.bytes > 0)
+        .collect();
+    assert!(downloads.len() >= 2, "throttled but incremental");
+    assert!(downloads.windows(2).all(|w| w[0].bytes < w[1].bytes));
+    assert!(downloads.windows(2).all(|w| w[0].items <= w[1].items));
+    assert_eq!(downloads.last().unwrap().items, 3000);
+    assert_eq!(downloads[0].total_bytes, Some(catalog.stats.bytes));
+    assert_eq!(events.0.last().unwrap().phase, Phase::Done);
+}
+
+#[test]
+fn gzip_playlists_are_detected() {
+    let fetch = FakeFetch::body(synth::gzip(playlist(500).as_bytes()));
+    assert_eq!(run(&fetch).unwrap().channels.len(), 500);
+    // Even when the first chunk holds a single byte.
+    let mut fetch = FakeFetch::body(synth::gzip(playlist(50).as_bytes()));
+    fetch.chunk = 1;
+    assert_eq!(run(&fetch).unwrap().channels.len(), 50);
+}
+
+#[test]
+fn corrupt_gzip_is_a_decode_failure() {
+    let mut gz = synth::gzip(playlist(200).as_bytes());
+    let mid = gz.len() / 2;
+    gz[mid..].iter_mut().for_each(|b| *b ^= 0x5a);
+    let err = run(&FakeFetch::body(gz)).unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            ImportError::Parse {
+                problem: ParseProblem::Decode(_),
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn failures_are_never_empty_catalogs() {
+    let cases: Vec<(&str, Vec<u8>, FailureKind)> = vec![
+        (
+            "hls",
+            b"#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2,\nseg1.ts\n".to_vec(),
+            FailureKind::Parse,
+        ),
+        (
+            "html",
+            b"<!doctype html><html><body>Service unavailable</body></html>".to_vec(),
+            FailureKind::Parse,
+        ),
+        (
+            "json",
+            br#"{"error":"invalid credentials"}"#.to_vec(),
+            FailureKind::Parse,
+        ),
+        (
+            "words",
+            b"just some text\nnothing here\n".to_vec(),
+            FailureKind::Parse,
+        ),
+        (
+            "malformed",
+            b"#EXTM3U\n#EXTINF:-1,One\n#EXTINF:-1,Two\n".to_vec(),
+            FailureKind::Parse,
+        ),
+        ("header only", b"#EXTM3U\n".to_vec(), FailureKind::Empty),
+        ("empty", Vec::new(), FailureKind::Empty),
+        ("blank", b"\r\n  \n".to_vec(), FailureKind::Empty),
+    ];
+    for (name, body, kind) in cases {
+        let err = run(&FakeFetch::body(body)).unwrap_err();
+        assert_eq!(err.kind(), kind, "{name}: {err:?}");
+        assert_eq!(err.step(), Some(Step::Playlist), "{name}");
+    }
+    let err = run(&FakeFetch::body(
+        b"#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nlow.m3u8\n".to_vec(),
+    ))
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        ImportError::Parse {
+            problem: ParseProblem::HlsManifest,
+            ..
+        }
+    ));
+    let err = run(&FakeFetch::body(b"#EXTM3U\n#EXTINF:-1,A\n".to_vec())).unwrap_err();
+    assert!(matches!(
+        err,
+        ImportError::Parse {
+            problem: ParseProblem::NoUsableEntries { skipped: 1 },
+            ..
+        }
+    ));
+}
+
+#[test]
+fn http_and_network_failures_are_typed() {
+    let err = run(&FakeFetch::new(|_, _| SimResponse::status(404).into())).unwrap_err();
+    assert_eq!(
+        err,
+        ImportError::HttpStatus {
+            step: Step::Playlist,
+            status: 404
+        }
+    );
+    assert!(!err.is_transient());
+    let err = run(&FakeFetch::new(|_, _| SimResponse::status(503).into())).unwrap_err();
+    assert!(err.is_transient());
+    let err = run(&FakeFetch::new(|_, _| SimResponse::status(403).into())).unwrap_err();
+    assert_eq!(
+        err,
+        ImportError::Auth {
+            step: Step::Playlist,
+            problem: AuthProblem::HttpStatus(403)
+        }
+    );
+    let err = run(&FakeFetch::new(|_, _| connect_error())).unwrap_err();
+    assert!(
+        matches!(&err, ImportError::Network { error, .. } if error.kind == FetchErrorKind::Connect)
+    );
+    let body = playlist(100);
+    let err = run(&FakeFetch::new(move |_, _| {
+        Reply::Truncated(SimResponse::ok(body.as_bytes()[..body.len() / 2].to_vec()))
+    }))
+    .unwrap_err();
+    assert!(
+        matches!(&err, ImportError::Network { error, .. } if error.kind == FetchErrorKind::Body),
+        "a dropped connection is not a short playlist: {err:?}"
+    );
+}
+
+#[test]
+fn plain_url_lists_without_header_import() {
+    let body = "http://127.0.0.1:8089/ch0/index.m3u8\nhttp://127.0.0.1:8089/ch1/index.m3u8\n";
+    let catalog = run(&FakeFetch::body(body)).unwrap();
+    assert_eq!(catalog.channels.len(), 2);
+    assert_eq!(catalog.channels[1].name, "index");
+}
+
+#[test]
+fn blank_location_is_a_config_error() {
+    let fetch = FakeFetch::body("");
+    let err = block_on(import_source(
+        &fetch,
+        &config("  "),
+        &ImportOptions::new(synth::NOW),
+        &mut NoProgress,
+        &CancelToken::new(),
+    ))
+    .unwrap_err();
+    assert_eq!(err.kind(), FailureKind::Config);
+    assert!(fetch.requests().is_empty());
+}
+
+#[test]
+fn cancellation_before_during_and_in_flight() {
+    let opts = ImportOptions::new(synth::NOW);
+    // Before start: no request.
+    let fetch = FakeFetch::body(playlist(10));
+    let cancel = CancelToken::new();
+    cancel.cancel();
+    let err = block_on(import_source(
+        &fetch,
+        &config(URL),
+        &opts,
+        &mut NoProgress,
+        &cancel,
+    ));
+    assert_eq!(err.unwrap_err(), ImportError::Cancelled);
+    assert!(fetch.requests().is_empty());
+
+    // Between chunks: the progress callback cancels.
+    let fetch = FakeFetch::body(playlist(5000));
+    let cancel = CancelToken::new();
+    let c2 = cancel.clone();
+    let mut seen = 0;
+    let mut on_progress = |p: &iptv_import::Progress| {
+        if p.bytes > 0 {
+            seen += 1;
+            c2.cancel();
+        }
+    };
+    let err = block_on(import_source(
+        &fetch,
+        &config(URL),
+        &opts,
+        &mut on_progress,
+        &cancel,
+    ));
+    assert_eq!(err.unwrap_err(), ImportError::Cancelled);
+    assert_eq!(seen, 1);
+
+    // While the request hangs: another thread cancels and wakes the import.
+    let cancel = CancelToken::new();
+    let c3 = cancel.clone();
+    let fetch = FakeFetch::new(move |_, _| Reply::Hang(Some(c3.clone())));
+    let err = block_on(import_source(
+        &fetch,
+        &config(URL),
+        &opts,
+        &mut NoProgress,
+        &cancel,
+    ));
+    assert_eq!(err.unwrap_err(), ImportError::Cancelled);
+}
+
+#[test]
+fn text_import_from_memory() {
+    let text = playlist(1200);
+    let mut events = Events::default();
+    let catalog = import_m3u_text(text.as_bytes(), &mut events, &CancelToken::new()).unwrap();
+    assert_eq!(catalog.channels.len(), 1200);
+    assert_eq!(catalog.stats.requests, 0);
+    assert!(
+        events
+            .0
+            .iter()
+            .any(|p| p.phase == Phase::Playlist && p.items > 0)
+    );
+    let gz = synth::gzip(text.as_bytes());
+    let catalog = import_m3u_text(&gz, &mut NoProgress, &CancelToken::new()).unwrap();
+    assert_eq!(catalog.channels.len(), 1200);
+    let cancel = CancelToken::new();
+    cancel.cancel();
+    assert_eq!(
+        import_m3u_text(text.as_bytes(), &mut NoProgress, &cancel).unwrap_err(),
+        ImportError::Cancelled
+    );
+    assert_eq!(
+        import_m3u_text(b"<html></html>", &mut NoProgress, &CancelToken::new())
+            .unwrap_err()
+            .kind(),
+        FailureKind::Parse
+    );
+}
+
+#[test]
+fn warnings_from_skipped_lines_are_kept() {
+    let mut text = playlist(20);
+    text.push_str("#EXTINF:-1,Dangling\n");
+    let catalog = import_m3u_text(text.as_bytes(), &mut NoProgress, &CancelToken::new()).unwrap();
+    assert_eq!(catalog.channels.len(), 20);
+    assert_eq!(catalog.stats.skipped, 1);
+    assert_eq!(catalog.warnings.len(), 1);
+    assert_eq!(catalog.warnings[0].step, Step::Playlist);
+}
