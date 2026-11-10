@@ -14,8 +14,13 @@ and a computer at a desk. The app provides no content.
 **Promise.** Add your playlist once; get a fast, familiar TV guide that
 works with a remote, a finger or a mouse; zapping feels like cable.
 
+**Next after the core (P1).** Multiview: 2–4 channels at once with one
+active audio; limited by the account's connection count and the device's
+decoders (cheap TV boxes: 2; desktop: 4), which the app checks and
+explains.
+
 **Not now.** Recording, reminders, VOD libraries, My list, parental
-controls, multiview, casting, cloud sync. They come after the core is
+controls, casting, cloud sync. They come after the core is
 excellent everywhere (VOD first: most Xtream accounts include it).
 
 ## 2. Platforms and form factors
@@ -69,6 +74,7 @@ Each must be excellent with a remote, with touch and with a mouse:
 | Milestone | Scope | Exit |
 | --- | --- | --- |
 | **M1 Core on Android + Linux** (now) | §3 journeys on Android TV, Android tablet, Linux; groups/rail/favourites, player controls and tracks, playlists screen, settings, EPG management, TV remote defaults | Real Android TV box + Fire TV stick pass; tablet and Linux pass; budgets met (below) |
+| **M1b Multiview (P1)** | 2–4 surfaces (layouts 1+1, 2×2), add/remove/enlarge, active audio, per-surface errors; connection-limit warning from the account's max connections; decoder cap per device | Works on desktop, tablet and a real TV box within its decoder limit |
 | **M2 macOS** | macOS host + libmpv player, menus, shortcuts, notarized build | Same journeys on macOS |
 | **M3 Release 1** | Our name, icon, theme (originality gate, Phase 9), Play Store + Amazon Appstore listings, crash reporting without personal data, armeabi-v7a build | Store-approved builds |
 | **M4 Phone + iPad/iPhone** | Portrait layout, PiP, iOS player (libmpv or VLCKit) | Phone journeys pass |
@@ -100,6 +106,8 @@ without stalls; APK download < 15 MB.
 - Next M1 workstreams: **EPG management**; **TV remote defaults** checked
   on a real Android TV box and a Fire TV stick; **performance budgets**
   measured on that box.
+- Multiview is P1 (M1b), right after the core; the player contract must
+  allow several `tv.player` instances (one persistent surface each).
 - Deferred: recording, reminders, VOD, My list, parental controls,
-  multiview, key remapping UI, backup/restore, appearance options beyond
+  key remapping UI, backup/restore, appearance options beyond
   numbers/logos/timeout.

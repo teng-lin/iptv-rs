@@ -60,7 +60,7 @@ navigation rail          groups list            guide (or channel list)     play
 | Desktop: play/pause, volume/mute, window full screen, mouse-visible controls | (TV app: n/a) | none | missing | P0 on desktop |
 | Catch-up seeking | settings-driven | done (time bar, FF/RW) | done | – |
 | Picture-in-picture on Home | yes | none | missing | P2 |
-| Multiview | gated | none | missing | P3 |
+| Multiview | gated | none | missing | P1 |
 
 ## 4. Library and other surfaces
 
@@ -102,7 +102,8 @@ what each core area must let the user do. Tier per row:
 | Remote control | per-context key bindings, guide: OK watch, Long OK menu, Back back, Long Back return to player, Left groups, Right later programmes, Ch± page; player: OK panels, Long OK menu, Back back, Long Back stop playback, Left channels list over video, Long Left channels list in preview, Right most recent channel; catch-up seek key schemes | **P0** defaults on TV; P1 user remapping |
 | Appearance | guide: sorting, preview on/off, numbers, names, two-line names/titles, catch-up icon, highlight current; player: channels list style, info panel, clock, panels timeout; groups sorting; logos; font size; theme; transparency | P1 (numbers, logos, preview, timeout); P2 rest |
 | General | last channel on start; confirm exit with second Back; User-Agent; backup/restore | P1 (start, exit, UA); P2 backup |
-| Recording, reminders, VOD, My list, parental controls, multiview | – | P3 |
+| Multiview | add/remove/enlarge/reduce, full screen one, active audio, per-surface failure, connection-limit warning | **P1** |
+| Recording, reminders, VOD, My list, parental controls | – | P3 |
 
 Gaps against these tiers that no running workstream covers yet: **EPG
 management** (sources, update/clear, status, per-channel assignment) and
