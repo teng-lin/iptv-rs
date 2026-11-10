@@ -1,9 +1,11 @@
-//! `tv.player` on the Linux desktop: one persistent libmpv player drawing
-//! through mpv's render API (OpenGL) into a `GtkGLArea`, the native widget
-//! NSH hosts in the video layer's view (`video.rs`). In-process and
-//! compositor-independent (Wayland and X11); the app's UI draws above it
-//! as above any view. Layout changes resize the area; the mpv instance
-//! lives as long as the component.
+//! `tv.player` on the desktop: one persistent libmpv player per component
+//! drawing through mpv's render API (OpenGL) into the native view NSH hosts
+//! in the video layer's view (`video.rs`): a `GtkGLArea` on Linux
+//! ([`gtk`]).
+//! In-process; the app's UI draws above it as above any view. Layout
+//! changes resize the view; the mpv instance lives as long as the
+//! component. Nothing is process-wide but the registry mpv's threads find
+//! a player in by id, so several players (multiview) work side by side.
 //!
 //! Same contract as the Android host's `PlayerComponent.kt` (summed up in
 //! `video.rs`):
@@ -25,14 +27,22 @@
 //! ([`map::http`]). `IPTV_RS_AUDIO` names mpv's audio output (`null`
 //! mutes, for tests); `IPTV_RS_HWDEC` overrides `hwdec`.
 //!
-//! GTK's main thread renders; every other mpv call runs on a control
-//! thread ([`worker`]), as mpv's render API requires.
+//! The platform's main thread renders; every other mpv call runs on a
+//! control thread ([`worker`]), as mpv's render API requires. The platform
+//! modules only make the view and its GL context, draw when asked and run
+//! closures on the main thread ([`platform::on_main`]); this module is the
+//! player.
 
 mod ffi;
 mod gl;
 mod handle;
 mod map;
 mod worker;
+
+#[cfg(target_os = "linux")]
+mod gtk;
+#[cfg(target_os = "linux")]
+use gtk as platform;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -41,23 +51,15 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use nsh_platform_linux::gtk4::{self as gtk, glib, prelude::*};
-use nsh_platform_linux::{ComponentContext, Components, NativeComponent};
 use serde_json::{Value, json};
 
 use handle::Mpv;
+pub use platform::register;
+use platform::{ComponentContext, Video};
 use worker::{Cmd, Note, Worker};
 
 pub const NAME: &str = "tv.player";
 pub(crate) const DEFAULT_UA: &str = "iptv-rs/0.1 (mpv)";
-
-/// Registers `tv.player`.
-pub fn register(components: &Components) {
-    components.register(
-        NAME,
-        Rc::new(|ctx| Box::new(Player::new(ctx)) as Box<dyn NativeComponent>),
-    );
-}
 
 thread_local! {
     /// The players by id, for mpv's threads (which reach the main loop with
@@ -81,11 +83,10 @@ struct Waker {
 /// synchronously: mpv may call back from inside its API on this thread).
 fn wake(flag: &AtomicBool, id: u64, f: fn(&Inner)) {
     if !flag.swap(true, Ordering::AcqRel) {
-        glib::idle_add_full(glib::Priority::DEFAULT, move || {
+        platform::on_main(move || {
             if let Some(p) = find(id) {
                 f(&p);
             }
-            glib::ControlFlow::Break
         });
     }
 }
@@ -96,7 +97,7 @@ unsafe extern "C" fn on_frame(data: *mut c_void) {
     let w = unsafe { &*(data as *const Waker) };
     wake(&w.frame, w.id, |p| {
         p.waker.frame.store(false, Ordering::Release);
-        p.area.queue_render();
+        p.video.redraw();
     });
 }
 
@@ -143,9 +144,11 @@ struct State {
     format_sent: (f64, i64),
 }
 
+/// One player: its mpv instance, control thread, render context and the
+/// platform's view it draws in.
 struct Inner {
     id: u64,
-    area: gtk::GLArea,
+    video: Video,
     ctx: ComponentContext,
     mpv: Option<Arc<Mpv>>,
     worker: Option<Worker>,
@@ -155,20 +158,41 @@ struct Inner {
     waker: Arc<Waker>,
 }
 
-/// The component NSH holds.
-struct Player(Rc<Inner>);
+/// Events to send once the state is no longer borrowed (an app handler
+/// may set props right away).
+type Out = Vec<(&'static str, Value)>;
 
-impl Player {
-    fn new(ctx: ComponentContext) -> Self {
+impl State {
+    /// `format` with what changed since it was last sent.
+    fn format(&mut self, out: &mut Out) {
+        let mut format = serde_json::Map::new();
+        if self.fps > 0.0 && self.fps != self.format_sent.0 {
+            format.insert("fps".into(), json!(self.fps));
+        }
+        if self.channels > 0 && self.channels != self.format_sent.1 {
+            format.insert("channels".into(), json!(self.channels));
+        }
+        self.format_sent = (self.fps, self.channels);
+        if !format.is_empty() {
+            out.push(("format", Value::Object(format)));
+        }
+    }
+
+    fn state(&mut self, out: &mut Out, name: &'static str) {
+        if self.last_state != name {
+            self.last_state = name;
+            out.push(("state", json!({ "state": name })));
+        }
+    }
+}
+
+impl Inner {
+    /// A player with a new mpv instance and control thread, drawing in the
+    /// view `video` makes for its id. It reports `position` from then on.
+    fn new(ctx: ComponentContext, video: impl FnOnce(u64) -> Video) -> Rc<Inner> {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         let id = NEXT.fetch_add(1, Ordering::Relaxed);
-        let area = gtk::GLArea::new();
-        area.set_auto_render(false);
-        area.set_has_depth_buffer(false);
-        area.set_has_stencil_buffer(false);
-        // Touches go to the view.
-        area.set_can_target(false);
-        area.set_focusable(false);
+        let video = video(id);
         let mpv = Mpv::new().map(Arc::new);
         if mpv.is_none() {
             log::error!("iptv mpv: no player (is libmpv installed?)");
@@ -186,7 +210,7 @@ impl Player {
         });
         let inner = Rc::new(Inner {
             id,
-            area: area.clone(),
+            video,
             ctx,
             mpv,
             worker,
@@ -222,127 +246,64 @@ impl Player {
             waker,
         });
         PLAYERS.with(|p| p.borrow_mut().insert(id, Rc::downgrade(&inner)));
-        let weak = Rc::downgrade(&inner);
-        area.connect_realize(move |_| {
-            if let Some(p) = weak.upgrade() {
-                p.realize();
-            }
-        });
-        let weak = Rc::downgrade(&inner);
-        area.connect_unrealize(move |_| {
-            if let Some(p) = weak.upgrade() {
-                p.unrealize();
-            }
-        });
-        let weak = Rc::downgrade(&inner);
-        area.connect_render(move |_, _| {
-            if let Some(p) = weak.upgrade() {
-                p.draw();
-            }
-            glib::Propagation::Stop
-        });
         // `position` once a second while playing (catch-up seeking).
-        let weak = Rc::downgrade(&inner);
-        glib::timeout_add_local(std::time::Duration::from_secs(1), move || {
-            let Some(p) = weak.upgrade() else {
-                return glib::ControlFlow::Break;
-            };
-            p.tick();
-            glib::ControlFlow::Continue
-        });
-        Player(inner)
-    }
-}
-
-impl NativeComponent for Player {
-    fn widget(&self) -> gtk::Widget {
-        self.0.area.clone().upcast()
+        platform::every_second(id, Inner::tick);
+        inner
     }
 
-    fn set_prop(&mut self, name: &str, value: Option<&Value>) {
-        let p = &self.0;
+    fn set_prop(&self, name: &str, value: Option<&Value>) {
         match name {
-            "source" => p.set_source(value),
+            "source" => self.set_source(value),
             "paused" => {
                 let paused = value.and_then(Value::as_bool).unwrap_or(false);
-                p.state.borrow_mut().paused = paused;
-                p.send(Cmd::Set("pause", if paused { "yes" } else { "no" }.into()));
+                self.state.borrow_mut().paused = paused;
+                self.send(Cmd::Set("pause", if paused { "yes" } else { "no" }.into()));
             }
             "pictureSize" => {
                 let mode = value.and_then(Value::as_str).unwrap_or("normal");
-                p.state.borrow_mut().picture = mode.to_owned();
-                p.apply_picture();
+                self.state.borrow_mut().picture = mode.to_owned();
+                self.apply_picture();
             }
             "userAgent" => {
                 let ua = value
                     .and_then(Value::as_str)
                     .filter(|s| !s.trim().is_empty());
-                p.state.borrow_mut().user_agent = ua.unwrap_or(DEFAULT_UA).to_owned();
-                p.apply_http();
+                self.state.borrow_mut().user_agent = ua.unwrap_or(DEFAULT_UA).to_owned();
+                self.apply_http();
             }
             "videoTrack" => {
                 let vid = map::track_choice(value.and_then(Value::as_str));
-                p.state.borrow_mut().video_auto = vid == "auto";
-                p.send(Cmd::Set("vid", vid));
+                self.state.borrow_mut().video_auto = vid == "auto";
+                self.send(Cmd::Set("vid", vid));
             }
             "audioTrack" => {
                 let aid = map::track_choice(value.and_then(Value::as_str));
-                p.send(Cmd::Set("aid", aid));
+                self.send(Cmd::Set("aid", aid));
             }
             "textTrack" => {
                 let sid = map::text_choice(value.and_then(Value::as_str));
-                p.send(Cmd::Set("sid", sid));
+                self.send(Cmd::Set("sid", sid));
             }
             "volume" => {
                 let level = value.and_then(Value::as_f64).unwrap_or(100.0);
-                p.send(Cmd::Set(
+                self.send(Cmd::Set(
                     "volume",
                     format!("{:.0}", level.clamp(0.0, 100.0)),
                 ));
             }
             "muted" => {
                 let muted = value.and_then(Value::as_bool).unwrap_or(false);
-                p.send(Cmd::Set("mute", if muted { "yes" } else { "no" }.into()));
+                self.send(Cmd::Set("mute", if muted { "yes" } else { "no" }.into()));
             }
             "audioDelay" => {
                 let ms = value.and_then(Value::as_f64).unwrap_or(0.0);
                 let secs = ms.clamp(-10_000.0, 10_000.0) / 1000.0;
-                p.send(Cmd::Set("audio-delay", format!("{secs:.3}")));
+                self.send(Cmd::Set("audio-delay", format!("{secs:.3}")));
             }
             _ => {}
         }
     }
-}
 
-/// Events to send once the state is no longer borrowed (an app handler
-/// may set props right away).
-type Out = Vec<(&'static str, Value)>;
-
-impl State {
-    /// `format` with what changed since it was last sent.
-    fn format(&mut self, out: &mut Out) {
-        let mut format = serde_json::Map::new();
-        if self.fps > 0.0 && self.fps != self.format_sent.0 {
-            format.insert("fps".into(), json!(self.fps));
-        }
-        if self.channels > 0 && self.channels != self.format_sent.1 {
-            format.insert("channels".into(), json!(self.channels));
-        }
-        self.format_sent = (self.fps, self.channels);
-        if !format.is_empty() {
-            out.push(("format", Value::Object(format)));
-        }
-    }
-
-    fn state(&mut self, out: &mut Out, name: &'static str) {
-        if self.last_state != name {
-            self.last_state = name;
-            out.push(("state", json!({ "state": name })));
-        }
-    }
-}
-
-impl Inner {
     fn send(&self, cmd: Cmd) {
         if let Some(w) = &self.worker {
             w.send(cmd);
@@ -403,7 +364,7 @@ impl Inner {
             st.format_sent = (0.0, 0);
             st.url.clone()
         };
-        self.area.queue_render();
+        self.video.redraw();
         match (url, &self.mpv) {
             (None, Some(_)) => {
                 self.send(Cmd::Stop);
@@ -415,7 +376,7 @@ impl Inner {
                 self.send(Cmd::Stop);
                 fail(&self.state, &mut out, map::UNSUPPORTED_SCHEME, None);
             }
-            // mpv's video output needs the render context: load once realized.
+            // mpv's video output needs the render context: load once there.
             (Some(_), Some(_)) if self.render.get().is_null() => {
                 self.state.borrow_mut().deferred = true;
             }
@@ -453,16 +414,13 @@ impl Inner {
         self.send(Cmd::Set("video-zoom", format!("{:.6}", p.zoom)));
     }
 
-    fn realize(&self) {
-        let Some(mpv) = &self.mpv else { return };
-        self.area.make_current();
-        if let Some(e) = self.area.error() {
-            log::error!("iptv mpv: no GL context: {e}");
-            return;
-        }
+    /// Makes mpv's render context in the platform's GL context, which is
+    /// current; then opens a source that waited for it. Whether it is there.
+    fn create_render(&self) -> bool {
+        let Some(mpv) = &self.mpv else { return false };
         let Some(gl) = gl::Gl::load() else {
             log::error!("iptv mpv: GL functions not found");
-            return;
+            return false;
         };
         self.gl.set(Some(gl));
         let mut init = ffi::mpv_opengl_init_params {
@@ -481,57 +439,54 @@ impl Inner {
             ),
         ];
         let mut render = std::ptr::null_mut();
-        // SAFETY: GTK's context is current; params end with INVALID.
+        // SAFETY: the platform's context is current; params end with INVALID.
         let r = unsafe { ffi::mpv_render_context_create(&mut render, mpv.0, params.as_mut_ptr()) };
         if r < 0 || render.is_null() {
             log::error!("iptv mpv: no render context ({r})");
-            return;
+            return false;
         }
         let data = Arc::as_ptr(&self.waker) as *mut c_void;
         // SAFETY: the waker outlives the render context.
         unsafe { ffi::mpv_render_context_set_update_callback(render, Some(on_frame), data) };
         self.render.set(render);
-        log::info!("iptv mpv: rendering through GTK's GL context");
         if self.state.borrow().deferred {
             self.open();
         }
+        true
     }
 
-    fn unrealize(&self) {
-        self.free_render();
-        // The video output went with the context: reopen when realized again.
-        let mut st = self.state.borrow_mut();
-        st.deferred = st.url.is_some();
-    }
-
+    /// Frees the render context (in the platform's GL context); a source
+    /// that plays waits for the next one.
     fn free_render(&self) {
         let render = self.render.replace(std::ptr::null_mut());
         if render.is_null() {
             return;
         }
-        if self.area.is_realized() {
-            self.area.make_current();
-        }
+        self.video.make_current();
         // SAFETY: ours, freed once, with its GL context current.
         unsafe {
             ffi::mpv_render_context_set_update_callback(render, None, std::ptr::null_mut());
             ffi::mpv_render_context_free(render);
         }
         self.gl.set(None);
+        let mut st = self.state.borrow_mut();
+        st.deferred = st.url.is_some();
     }
 
-    fn draw(&self) {
+    /// Draws into the bound framebuffer, `width`×`height` pixels: the
+    /// stream's picture, or black behind the shutter. The platform's GL
+    /// context is current.
+    fn draw(&self, width: i32, height: i32) {
         let Some(gl) = self.gl.get() else { return };
         let render = self.render.get();
         if render.is_null() || self.state.borrow().shutter {
             gl.black();
             return;
         }
-        let scale = self.area.scale_factor();
         let mut fbo = ffi::mpv_opengl_fbo {
             fbo: gl.framebuffer(),
-            w: self.area.width() * scale,
-            h: self.area.height() * scale,
+            w: width,
+            h: height,
             internal_format: 0,
         };
         let (mut flip, mut block): (c_int, c_int) = (1, 0);
@@ -544,7 +499,7 @@ impl Inner {
                 std::ptr::null_mut::<c_void>(),
             ),
         ];
-        // SAFETY: GTK made its context current for the render signal.
+        // SAFETY: the platform made its context current to draw.
         unsafe { ffi::mpv_render_context_render(render, params.as_mut_ptr()) };
     }
 
@@ -560,7 +515,7 @@ impl Inner {
         if let Some(error) = failed {
             let (code, http) = self.state.borrow().clues.error(error);
             fail(&self.state, &mut out, code, http);
-            self.area.queue_render();
+            self.video.redraw();
         }
         self.emit(out);
     }
@@ -719,7 +674,7 @@ impl Inner {
             st.audio_out = ao;
         }
         drop(st);
-        self.area.queue_render();
+        self.video.redraw();
     }
 }
 
@@ -747,7 +702,7 @@ impl Drop for Inner {
     fn drop(&mut self) {
         PLAYERS.with(|p| p.borrow_mut().remove(&self.id));
         // The control thread stops first, then the render context goes, then
-        // the handle (its last owner).
+        // the handle (its last owner); the view and its GL context last.
         self.worker.take();
         self.free_render();
         self.mpv.take();
