@@ -23,7 +23,7 @@ Android video/input research: [`docs/research/android-video-and-input.md`](docs/
 | `crates/iptv-net` | Native HTTP adapter (reqwest + rustls) implementing `Fetch`; strips identity headers on cross-host redirects |
 | `crates/iptv-store-sqlite` | SQLite store: provider catalog and guide data replaced per refresh, user overlays (favourites, order, hidden, history) kept by stable id, FTS5 search, tested migrations |
 | `crates/iptv-search` | Channel and programme search (folded, ranked, favourites first), history, search-screen state. Wasm-safe |
-| `crates/iptv-app` | NSH shell: screens, placeholder theme, video layer |
+| `crates/iptv-app` | NSH shell: screens, placeholder theme, video layer; on Linux the `tv.player` component on libmpv (`src/mpv/`) |
 | `hosts/android` | Kotlin host: `NshView`, Media3 `tv.player` component, TV launcher manifest |
 | `tools/` | `sync-host.sh`, `make-hls-fixtures.sh`, `make-iptv-fixtures.py`, `mock-server.py`, `mock-xtream.py`, `burst.sh` |
 
@@ -33,13 +33,15 @@ Android video/input research: [`docs/research/android-video-and-input.md`](docs/
 - JDK 21, Android SDK (platform 35, build-tools 35.0.1, platform-tools, emulator), NDK 30.
 - NSH CLI built from the fork: `~/src/nsh` (branch `tv-keys`), `cargo build --release -p nsh-cli`.
 - `ffmpeg` and `python3` for synthetic test streams.
+- Linux desktop: GTK 4 and libmpv 2 (client API 2.x, `pkg-config mpv`;
+  Arch `mpv`, Debian/Ubuntu `libmpv-dev`). The player links `libmpv.so.2`.
 
 ## Run
 
 ```sh
 cargo test -p iptv-core                                   # focus/guide model
 cargo build -p iptv-core --target wasm32-unknown-unknown  # portability check
-cargo run -p iptv-app                                     # Linux desktop (keyboard: arrows, Enter, Esc, o, f, p last channel, n live)
+cargo run -p iptv-app                                     # Linux desktop (see below)
 
 tools/make-hls-fixtures.sh --serve &                      # synthetic HLS on :8089
 tools/sync-host.sh                                        # build libnsh.so (x86_64, arm64) into the host
@@ -49,6 +51,44 @@ adb -s emulator-5554 install -r hosts/android/app/build/outputs/apk/debug/app-de
 
 Emulators: `tab36` (Pixel Tablet, API 36) and `tv36` (Android TV, API 36).
 Start them with `QT_QPA_PLATFORM=xcb` so the host keyboard reaches them.
+
+### Linux desktop
+
+`cargo run -p iptv-app` opens a 960×540 window (Wayland or X11). Video plays
+through libmpv rendering into a GTK GL area under the UI. Without a stored
+playlist the wizard opens; its playlist link defaults to the mock server at
+`http://127.0.0.1:8089/iptv/playlist.m3u` (generate desktop fixtures with
+`python3 -I tools/make-iptv-fixtures.py --host 127.0.0.1:8089`). Data lives in
+`~/.local/share/iptv-rs`.
+
+| Remote | Keyboard |
+| --- | --- |
+| D-pad, OK | arrows, Enter |
+| Back | Escape, Backspace (Backspace edits text in a field) |
+| Menu | `m`, the context-menu key |
+| Channel up / down | Page Up / Page Down over video (they page the guide), `=` / `-` |
+| Digits | `0`–`9` |
+| Play/pause | Space |
+| Info, Guide | `i`, `g` |
+| Previous channel, back to live | `p`, `n` |
+| Overlay / full screen (development) | `o`, `f` |
+
+Environment: `IPTV_RS_AUDIO=null` mutes the player (mpv `ao`; use it for
+tests), `IPTV_RS_HWDEC` sets mpv's `hwdec` (default `auto-copy-safe`),
+`RUST_LOG=info` shows the player's state (never stream addresses).
+`GDK_DEBUG=no-portals` makes the playlist-file picker GTK's own dialog
+instead of the desktop portal's.
+
+Known limit: mpv sends a stream's headers (Cookie, Authorization, ...) with
+every request of that stream, including redirects and HLS segments on other
+hosts; the Android player keeps identity headers to the stream's own host.
+
+Package (release runner, `.desktop` entry and a `.tar.gz`; libmpv stays a
+system dependency):
+
+```sh
+(cd crates/iptv-app && ~/src/nsh/target/release/nsh package --target linux -o ../../target/package .)
+```
 
 ## Before any public release
 
