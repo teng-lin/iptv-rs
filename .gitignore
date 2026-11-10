@@ -1,0 +1,8 @@
+target/
+**/.nsh/
+fixtures/
+results/
+hosts/android/.gradle/
+hosts/android/build/
+hosts/android/app/build/
+hosts/android/local.properties

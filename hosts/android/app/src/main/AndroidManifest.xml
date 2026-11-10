@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- One APK for TV and tablet: neither Leanback nor a touchscreen is required. -->
+    <uses-feature android:name="android.software.leanback" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+
+    <!-- usesCleartextTraffic: the spike plays synthetic HLS from a local server (10.0.2.2). -->
+    <application
+        android:label="iptv-rs"
+        android:banner="@drawable/banner"
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
+        android:supportsRtl="true"
+        android:extractNativeLibs="false"
+        android:enableOnBackInvokedCallback="true"
+        android:usesCleartextTraffic="true">
+
+        <provider
+            android:name="com.longbridge.nsh.FilesProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
+        <activity
+            android:name=".TvActivity"
+            android:exported="true"
+            android:supportsPictureInPicture="true"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode|density|fontScale|layoutDirection|locale"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
