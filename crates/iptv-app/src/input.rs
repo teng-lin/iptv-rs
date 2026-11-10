@@ -3,7 +3,7 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use iptv_nav::{Action, Context, Keymap, Phase, PressDetector, RemoteKey};
 use nsh_core::prelude::*;
@@ -76,16 +76,40 @@ pub fn bind(ui: Ui) {
 fn key_event(ui: Ui, nav: &Rc<RefCell<Nav>>, key: RemoteKey, phase: Phase) {
     let t = Instant::now();
     let ctx = context(&ui);
-    let action = {
+    let (action, deadline) = {
         let mut nav = nav.borrow_mut();
         let now = nav.start.elapsed().as_millis() as u64;
         let has_long = LONG_PRESS && nav.keymap.has_long(ctx, key);
-        nav.detector
+        let action = nav
+            .detector
             .feed(key, phase, now, has_long)
-            .and_then(|(k, press)| nav.keymap.resolve(ctx, k, press))
+            .and_then(|(k, press)| nav.keymap.resolve(ctx, k, press));
+        let deadline = (phase == Phase::Down)
+            .then(|| nav.detector.long_deadline_ms())
+            .flatten()
+            .map(|at| at.saturating_sub(now));
+        (action, deadline)
     };
     if let Some(action) = action {
         apply(ui, action);
+    }
+    // IR remotes never auto-repeat: decide long press on a timer too. If the
+    // key was released (or a repeat already fired it), the poll finds nothing.
+    if let Some(wait_ms) = deadline {
+        let nav = nav.clone();
+        let _ = set_timeout(Duration::from_millis(wait_ms), move || {
+            let action = {
+                let mut nav = nav.borrow_mut();
+                let now = nav.start.elapsed().as_millis() as u64;
+                nav.detector
+                    .poll(now)
+                    .and_then(|(k, press)| nav.keymap.resolve(ctx, k, press))
+            };
+            if let Some(action) = action {
+                log::info!("iptv long press by timer: {action:?}");
+                apply(ui, action);
+            }
+        });
     }
     let us = t.elapsed().as_micros();
     ui.stats.update(|s| {
