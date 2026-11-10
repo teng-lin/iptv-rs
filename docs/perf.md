@@ -310,6 +310,41 @@ main thread nor the engine thread busy that long; unlocked, the same
 steps gave no long frame (at most 11.5 ms): the locked session's
 scheduling, not the guide's work.
 
+## 2026-11-10, desktop, live streams that fail for a while (branch `resilient-live`)
+
+A live channel now retries for as long as it stays selected (1, 2, 4, 4,
+4 s, then 5, 10 and every 20 s), keeps its last frame, and shows the
+"Can't play" card only for failures a retry cannot fix or after 2.5 min
+down, retrying every 30 s behind it (`iptv_core::playback::Health`).
+Refusals (401/403/429/458/509) are retried like any other transient
+failure.
+
+Measured on Linux with libmpv 0.41 headless (`--vo=null --ao=null`) and
+`tools/mock-live-cuts.py`, driven by a scratch harness (not in the
+repository) that runs the app's glue in miniature: the real
+`iptv_core::playback::Health` of each build (before: `8ac1309`), its
+retry and stall timers, mpv's per-load options of each build and the
+desktop player's rule for the black shutter (before: every error; after:
+only a live stream that never showed a frame). No window was opened: the
+desktop session had no private output to put one on. Recovery is from
+the stream's end or first error to the next first frame; outages are
+in the mock's own words (`--refuse-*`, `--drop-*`).
+
+| Case | Before | After |
+| --- | --- | --- |
+| TS, connection closed into a full account (509 for the next 45 s) | 5 retries, then "Can't play" (30 s after the cut); black from the first refusal; never recovers | plays again 50 s after the cut (≈ 8 s after the account had a stream free); last frame kept, no card |
+| HLS, token expired into a full account (403 for 45 s) | "Can't play" at once (403 was final); black; never recovers | plays again 49 s after the cut (≈ 13 s after the refusals ended); last frame, no card |
+| HLS, network down 20 s | black 30 s; plays again 15 s after the network returned | no black; plays again 4 s after the network returned (19 s after the cut) |
+| TS, network down 60 s | "Can't play" after 30 s; black; never recovers | no black, no card; plays again ≈ 13 s after the network returned |
+| HLS, network down 200 s | "Can't play" after 30 s; black 264 s to the end; never recovers | last frame; card after 169 s down (the first failure past 150 s) "still trying"; the retry behind it played 4 s after the network returned and the card went |
+| First frame after open, 300 ms per new connection, 6 runs each (HLS / TS) | median 650 / 1049 ms | median 656 / 1050 ms (noise: the cache options start playback at once) |
+
+The pill says "Reconnecting…" after the quiet second; nothing else
+changed in zap time. Not measured here: the real app's frames (no
+private display), and Android (compiled only: a 10 s minimum live
+offset, ~15 s of load retries, and the player's own reopen once per 30 s
+need a device).
+
 ## Findings
 
 1. **Guide import peak memory** (≈ 570 MB for 2.45 M programmes on the
