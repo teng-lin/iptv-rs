@@ -4,5 +4,11 @@
   "appearance": "dark",
   "rust": ".",
   "root": "App",
-  "features": []
+  "features": [],
+  "window": {
+    "defaultSize": {
+      "width": 1280,
+      "height": 720
+    }
+  }
 }

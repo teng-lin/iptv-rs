@@ -29,7 +29,7 @@ fn main() -> impl std::process::Termination {
         platform::AppOptions {
             title: "iptv-rs".to_owned(),
             app_id: "com.hantekllc.iptvrs".to_owned(),
-            size: (960, 540),
+            size: (1280, 720),
             ..Default::default()
         },
     )

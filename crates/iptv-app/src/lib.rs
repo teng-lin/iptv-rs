@@ -392,6 +392,7 @@ pub fn App() -> impl IntoElement {
     };
     settings::bind(ui);
     desktop::bind();
+    desktop::menus(ui);
     // Leaving full screen closes the panels.
     effect(move || {
         if ui.mode.get() != ViewMode::Fullscreen {

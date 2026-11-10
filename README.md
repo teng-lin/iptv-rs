@@ -25,7 +25,7 @@ Android video/input research: [`docs/research/android-video-and-input.md`](docs/
 | `crates/iptv-search` | Channel and programme search (folded, ranked, favourites first), history, search-screen state. Wasm-safe |
 | `crates/iptv-app` | NSH shell: screens, placeholder theme, video layer; on Linux and macOS the `tv.player` component on libmpv (`src/mpv/`: the player, with `gtk.rs` and `mac.rs` for each desktop's view) |
 | `hosts/android` | Kotlin host: `NshView`, Media3 `tv.player` component, TV launcher manifest |
-| `tools/` | `sync-host.sh`, `make-hls-fixtures.sh`, `make-track-fixtures.sh`, `make-iptv-fixtures.py`, `mock-server.py`, `mock-xtream.py`, `mock-live-cuts.py`, `burst.sh` |
+| `tools/` | `sync-host.sh`, `make-hls-fixtures.sh`, `make-track-fixtures.sh`, `make-iptv-fixtures.py`, `mock-server.py`, `mock-xtream.py`, `mock-live-cuts.py`, `burst.sh`, `package-macos.sh` and `bundle-macos.py` (the self-contained macOS app) |
 
 ## Prerequisites
 
@@ -152,32 +152,59 @@ system dependency):
 
 ### macOS desktop
 
-`cargo run -p iptv-app` opens the same 960×540 window through NSH's AppKit
-backend (`nsh run --target macos` and `nsh package --target macos` build
-NSH's own runner around the crate, at NSH's default window size). Video
-plays through libmpv rendering into a `CAOpenGLLayer` under the UI (mpv's
-render API has no Metal backend). Everything above applies, with macOS's
-keys and places:
+The app opens at 1280×720 (`nsh.json` `"window"`, which NSH's runners
+read: `nsh run --target macos`, `nsh package --target macos`;
+`cargo run -p iptv-app` sets the same size) through NSH's AppKit backend.
+Video plays through libmpv rendering into a `CAOpenGLLayer` under the UI,
+one per player surface (mpv's render API has no Metal backend). Everything
+above applies, with macOS's keys and places:
 
+- Menus: the app menu (About, Settings… ⌘,, Hide, Quit), Edit (cut, copy
+  and paste in text fields), View (Enter Full Screen) and Window.
 - Data lives in `~/Library/Application Support/iptv-rs`; a `HOME`
   override moves it (and NSH's own data) for test runs.
-- Window full screen: Ctrl+Cmd+F (the Window menu's), the panels' button,
-  a double click on the video; Escape leaves it first.
+- Window full screen: Ctrl+Cmd+F or fn+F (View menu), the play bar's
+  button, a double click on the video; Escape leaves it first.
 - Volume: Cmd+Up / Cmd+Down (macOS keeps Ctrl+Up/Down for Mission
   Control); mute Ctrl+M.
 - `IPTV_RS_AUDIO=null`, `IPTV_RS_HWDEC` (default `auto-copy-safe`:
   VideoToolbox) and `RUST_LOG=info` as on Linux.
 - `nsh test <file>.test.tsx --target macos` drives the real app in the
   background (synthetic keys and clicks, window screenshots that include
-  the video); its app is never active, so window full screen cannot be
-  tried there.
+  the video). Window full screen needs `--foreground`; while the screen
+  is locked macOS neither enters full screen nor draws OpenGL layers, so
+  pictures of the video come out empty then.
 
-Package (an ad hoc signed `.app`; libmpv stays a Homebrew dependency, not
-yet bundled or notarized):
+Package: `tools/package-macos.sh` builds the `.app` with
+`nsh package --target macos`, then `tools/bundle-macos.py` copies libmpv
+and the 50 or so dylibs it pulls in from Homebrew (FFmpeg, libass,
+libplacebo, ...) into `Contents/Frameworks`, points the executable and
+each other at them (`@rpath`), and signs everything again ad hoc. The
+result (about 100 MB) runs on a Mac without Homebrew:
 
 ```sh
-(cd crates/iptv-app && ../../../nsh/target/release/nsh package --target macos -o ../../target/package .)
+brew install mpv                     # the libmpv the app links and bundles
+tools/package-macos.sh               # target/package/iptv-rs.app
 ```
+
+Limits of this package, and what a public one needs:
+
+- Apple silicon only (Homebrew's arm64 bottles), and the macOS those
+  bottles were built for or newer (the bundler raises
+  `LSMinimumSystemVersion` to it: 26.0 on a macOS 26 build machine). A
+  release builds libmpv and FFmpeg itself for an older deployment target
+  (`MACOSX_DEPLOYMENT_TARGET`) and both architectures.
+- Licences: Homebrew's FFmpeg and mpv include GPL parts (x264, x265, ...),
+  so a package carrying them is GPL; a release that must not be uses an
+  LGPL build of both.
+- Notarization (not done): a Developer ID Application certificate; every
+  dylib, then the app, signed with it, the hardened runtime and a secure
+  timestamp (`codesign --force --options runtime --timestamp --sign
+  "Developer ID Application: …"`; mpv's scripts are off, so no JIT
+  entitlement should be needed, to be confirmed under the hardened
+  runtime); then `ditto -c -k --keepParent iptv-rs.app iptv-rs.zip`,
+  `xcrun notarytool submit iptv-rs.zip --keychain-profile <profile>
+  --wait` and `xcrun stapler staple iptv-rs.app`.
 
 ## Before any public release
 
