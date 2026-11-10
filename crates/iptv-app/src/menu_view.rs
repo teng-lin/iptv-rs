@@ -234,11 +234,19 @@ pub fn layer(ui: Ui) -> impl IntoElement {
             }
         })
     };
+    let menu_opacity = move || if open() { 1.0_f32 } else { 0.0 };
     view()
         .absolute()
         .inset_0()
         .flex_row()
-        .opacity(move || if open() { 1.0_f32 } else { 0.0 })
+        // The description popover is in it and shows without the menu.
+        .opacity(move || {
+            if open() || ui.description.with(Option::is_some) {
+                1.0_f32
+            } else {
+                0.0
+            }
+        })
         .pointer_events(move || {
             if open() {
                 PointerEvents::Auto
@@ -246,13 +254,20 @@ pub fn layer(ui: Ui) -> impl IntoElement {
                 PointerEvents::None
             }
         })
-        .child(view().flex_1().bg(tint(0x000000, 0x80)).on_press(move || {
-            ui.touched();
-            close(ui);
-        }))
+        .child(
+            view()
+                .flex_1()
+                .bg(tint(0x000000, 0x80))
+                .opacity(menu_opacity)
+                .on_press(move || {
+                    ui.touched();
+                    close(ui);
+                }),
+        )
         .child(
             view()
                 .w(px(PANEL_W))
+                .opacity(menu_opacity)
                 .pt_safe_area()
                 .px(px(12.0))
                 .py(px(16.0))
