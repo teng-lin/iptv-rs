@@ -127,7 +127,35 @@ difference. Android (Media3) was compiled, not run: it reloads HLS
 playlists from the original address (no 403 to bridge) and plays TS as
 two items of the same address (`PlayerComponent.kt`).
 
-## Findings
+## 2026-11-10, macOS, release build (branch `macos-2`)
+
+Apple M4 (10 cores, 24 GB), macOS 26.6; load average about 9 (other
+builds were running). `cargo build --release -p iptv-app` (the same code
+as `tools/package-macos.sh`'s app; its `cargo run` entry point logs with
+`RUST_LOG=info`), a scratch `HOME` holding the large synthetic playlist
+above (10 000 channels, 2.47 M programmes, imported once beforehand) with
+channel 1 last watched, `IPTV_RS_AUDIO=null`, mock server on :8089 serving
+the fixture's three local HLS streams. The screen was locked: macOS draws
+no OpenGL layer then, so the video's frames were decoded but not drawn
+(the UI's own drawing still ran).
+
+| Budget | Target | Result |
+| --- | --- | --- |
+| Cold start to the stored guide (process start → `iptv data: guide switched`) | < 2 s | 0.81 s (two warm runs); 1.91 s on the first launch of the new binary (cold caches) |
+| … and the resumed channel ready (`iptv player 0 state: ready`) | – | 1.09–1.10 s warm, 2.20 s cold |
+| Zap to first picture (Channel Up → the player's first frame, `state: ready`, which also lifts the black shutter), 8 zaps | < 1.5 s | median 744 ms (675–865 ms), no errors |
+| Memory, guide loaded and a channel playing | – | RSS ≈ 409 MB; physical footprint ≈ 535 MB (peak ≈ 600 MB); ≈ 440 MB RSS after 8 zaps |
+
+Zap is measured to `state: ready` rather than to the player's `size`
+event (`tools/perf-android.sh`): the desktop player reports `size` only
+when it changes, and all synthetic streams are 1280×720. Channel Up came
+from a temporary in-app timer (every 5 s, not in the repository): nothing
+can send keys to a locked session, and `nsh test`'s agent drives debug
+builds only. Memory is not broken down yet; it is not comparable with
+the emulator's PSS (220–244 MB) as such (RSS and the physical footprint
+count shared and GPU memory differently), and it holds the same 7-day
+guide window, so narrowing that window (finding 1) applies here too.
+
 ## Findings
 
 1. **Guide import peak memory** (≈ 570 MB for 2.45 M programmes on the

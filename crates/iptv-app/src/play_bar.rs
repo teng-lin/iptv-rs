@@ -42,8 +42,8 @@ const PANEL_ALPHA: u8 = 0xE0;
 /// The frame rate's room at the right end ("120 fps").
 const FPS_W: f32 = 48.0;
 /// Volume and window full screen are the app's on the desktop only
-/// (Android keeps the system volume).
-const DESKTOP: bool = cfg!(target_os = "linux");
+/// (Linux and macOS; Android keeps the system volume).
+const DESKTOP: bool = crate::desktop::DESKTOP;
 
 /// Whether the device has a pointer for the bar: anything but a TV (its
 /// remote has the panels) and a terminal.
