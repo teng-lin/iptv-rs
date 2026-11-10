@@ -838,7 +838,8 @@ fn result_row(ui: Ui, at: Position, focused_index: Memo<Option<usize>>) -> impl 
                 channel_name(c)
             )
         }
-        Some((_, Some(h))) => h.title,
+        // A guide stored before badges were folded at import.
+        Some((_, Some(h))) => iptv_epg::fold_superscripts(&h.title).into_owned(),
         _ => String::new(),
     };
     let line2 = move || match item() {

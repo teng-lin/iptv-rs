@@ -548,8 +548,9 @@ impl Element {
                 }
             }
             Body::Programme { p, .. } => match field {
-                Field::Title if p.title.is_empty() => p.title = value,
-                Field::SubTitle if p.sub_title.is_none() => p.sub_title = Some(value),
+                // Superscript badges ("ᴸᶦᵛᵉ") read as words: `fold_superscripts`.
+                Field::Title if p.title.is_empty() => p.title = folded(value),
+                Field::SubTitle if p.sub_title.is_none() => p.sub_title = Some(folded(value)),
                 Field::Desc if p.desc.is_none() => p.desc = Some(value),
                 Field::Category => p.categories.push(value),
                 Field::EpisodeNum => p.episode_num.push(EpisodeNum {
@@ -690,5 +691,13 @@ mod tests {
         assert_eq!(next_element_start(b"<programmes><channel>", 0), Some(12));
         assert_eq!(next_element_start(b"<channel", 0), None);
         assert_eq!(next_element_start(b"nothing", 0), None);
+    }
+}
+
+/// `value` with its superscript badges folded ([`fold_superscripts`]).
+fn folded(value: String) -> String {
+    match crate::fold_superscripts(&value) {
+        std::borrow::Cow::Borrowed(_) => value,
+        std::borrow::Cow::Owned(f) => f,
     }
 }

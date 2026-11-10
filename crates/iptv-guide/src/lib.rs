@@ -489,7 +489,8 @@ impl Schedule for EpgSchedule {
         let found = self.with_store(t, |s| {
             s.programme_at(key, t)
                 .filter(|p| self.minute(p.start()) == program.start)
-                .map(|p| p.title().to_owned())
+                // A guide stored before badges were folded at import.
+                .map(|p| iptv_epg::fold_superscripts(p.title()).into_owned())
         });
         match found {
             None => LOADING.to_owned(),
