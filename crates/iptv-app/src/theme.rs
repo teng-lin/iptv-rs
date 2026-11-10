@@ -5,7 +5,8 @@
 //! README "Before release").
 //!
 //! Only colour values and state rules live here: no artwork, icons or font
-//! files are copied from the APK (the font is the system's Roboto).
+//! files are copied from the APK. The fonts are Google's own Roboto release
+//! (`fonts.rs`, `fonts/README.md`).
 
 /// An accent bundle: lighter tone and main accent (`0xRRGGBB`). The focus
 /// fill is the main accent at alpha `0x60`.
@@ -112,6 +113,68 @@ pub const fn with_alpha(rgb: u32, a: u8) -> u32 {
     (rgb << 8) | a as u32
 }
 
+/// `over` at alpha `a` drawn on `under` (both `0xRRGGBB`), rounded.
+pub const fn blend(under: u32, over: u32, a: u8) -> u32 {
+    let mut out = 0;
+    let mut shift = 0;
+    while shift < 24 {
+        let (u, o) = ((under >> shift) & 0xFF, (over >> shift) & 0xFF);
+        let c = (o * a as u32 + u * (255 - a as u32) + 127) / 255;
+        out |= c << shift;
+        shift += 8;
+    }
+    out
+}
+
+const WHITE: u32 = 0xFFFFFF;
+/// The focused programme: a light pill whatever the background, with
+/// near-black text.
+pub const FOCUSED_CELL: u32 = 0xD0D2D4;
+pub const FOCUSED_TEXT: u32 = 0x060606;
+/// Titles of the focused row and channel names: white, a touch dimmer.
+pub const BRIGHT_TEXT: u32 = 0xFBFBFB;
+/// White over a programme for the other programmes of the focused row
+/// (`#424547` on Dark).
+pub const ROW_ALPHA: u8 = 0x24;
+/// The accent's light tone over a programme for the now line (`#445868`
+/// on Dark + Blue; measured `#435868`).
+pub const NOW_ALPHA: u8 = 0x4D;
+
+/// The guide's colours for a theme (`0xRRGGBB`; titles of rows without the
+/// focus and the ruler's times are white at [`TEXT_SECONDARY_ALPHA`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GuideColors {
+    /// Behind everything: header, ruler, channel column, between cells.
+    pub window: u32,
+    /// A programme.
+    pub cell: u32,
+    /// The other programmes of the focused row.
+    pub row_cell: u32,
+    /// The playing channel's number, name and marker.
+    pub playing: u32,
+    /// The ruler's date and time.
+    pub ruler_date: u32,
+    /// The now line and its dot.
+    pub now_line: u32,
+    /// The line under the ruler.
+    pub separator: u32,
+}
+
+impl Theme {
+    pub const fn guide(&self) -> GuideColors {
+        let (bg, accent) = (self.background, self.accent);
+        GuideColors {
+            window: bg.window,
+            cell: bg.panel,
+            row_cell: blend(bg.panel, WHITE, ROW_ALPHA),
+            playing: accent.main,
+            ruler_date: accent.light,
+            now_line: blend(bg.panel, accent.light, NOW_ALPHA),
+            separator: bg.alt,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,6 +182,62 @@ mod tests {
     #[test]
     fn alpha_packs_after_rgb() {
         assert_eq!(with_alpha(0x2196F3, FOCUS_ALPHA), 0x2196F360);
+    }
+
+    #[test]
+    fn blend_mixes_each_channel() {
+        assert_eq!(blend(0x000000, 0xFFFFFF, 0xFF), 0xFFFFFF);
+        assert_eq!(blend(0x123456, 0xFFFFFF, 0), 0x123456);
+        assert_eq!(blend(0x000000, 0xFF8000, 0x80), 0x804000);
+    }
+
+    #[test]
+    fn dark_blue_guide_colours_match_the_reference() {
+        let g = Theme::default().guide();
+        assert_eq!(g.window, 0x131619);
+        assert_eq!(g.cell, 0x232629);
+        assert_eq!(g.row_cell, 0x424547);
+        assert_eq!(g.playing, 0x2196F3);
+        assert_eq!(g.ruler_date, 0x90CAF9);
+        assert_eq!(g.separator, 0x333639);
+        // Within one step per channel of the measured #435868.
+        let measured = 0x435868_u32;
+        for shift in [0, 8, 16] {
+            let (a, b) = ((g.now_line >> shift) & 0xFF, (measured >> shift) & 0xFF);
+            assert!(a.abs_diff(b) <= 1, "now line {:06X}", g.now_line);
+        }
+        assert_eq!(
+            (FOCUSED_CELL, FOCUSED_TEXT, BRIGHT_TEXT),
+            (0xD0D2D4, 0x060606, 0xFBFBFB)
+        );
+        // Secondary and disabled text: white at A0 and 60.
+        assert_eq!(
+            with_alpha(WHITE, TEXT_SECONDARY_ALPHA),
+            0xFFFFFFA0,
+            "text secondary"
+        );
+        assert_eq!(with_alpha(WHITE, TEXT_DISABLED_ALPHA), 0xFFFFFF60);
+        assert_eq!(
+            with_alpha(Theme::default().accent.main, FOCUS_ALPHA),
+            0x2196F360
+        );
+    }
+
+    #[test]
+    fn every_bundle_gives_guide_colours_from_its_own_tones() {
+        for accent in ACCENTS {
+            for background in BACKGROUNDS {
+                let g = Theme { accent, background }.guide();
+                assert_eq!((g.window, g.cell), (background.window, background.panel));
+                assert_eq!((g.playing, g.ruler_date), (accent.main, accent.light));
+            }
+        }
+        let black = Theme {
+            accent: ACCENTS[1],
+            background: BACKGROUNDS[1],
+        };
+        assert_eq!(black.background.name, "Black");
+        assert_eq!(black.guide().window, 0x060606);
     }
 
     #[test]
