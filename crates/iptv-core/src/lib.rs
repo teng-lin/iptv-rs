@@ -15,6 +15,7 @@ pub mod favorites;
 pub mod guide;
 pub mod lists;
 pub mod menu;
+pub mod multiview;
 pub mod panels;
 pub mod playback;
 pub mod player_info;
