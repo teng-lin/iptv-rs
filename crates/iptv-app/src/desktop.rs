@@ -7,8 +7,10 @@
 
 use std::cell::{Cell, RefCell};
 
-use nsh_core::desktop::WindowMode;
-use nsh_core::element::desktop::{WindowRef, current_window};
+use nsh_core::desktop::{MenuRole, WindowMode};
+use nsh_core::element::desktop::{MenuItem, WindowRef, current_window, set_application_menu};
+
+use crate::Ui;
 
 /// The desktop backends, where the app owns the window and the sound:
 /// Linux and macOS.
@@ -33,6 +35,59 @@ pub fn fullscreen() -> bool {
             .and_then(WindowRef::state)
             .is_some_and(|s| s.mode == WindowMode::FullScreen)
     })
+}
+
+/// macOS's menu bar: the app menu (About, Settings…, Hide, Quit), Edit
+/// (text fields' cut, copy and paste go through it), View (window full
+/// screen) and Window. Elsewhere none: GTK would draw a menu bar in the
+/// window. Call while the app renders.
+pub fn menus(ui: Ui) {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    let role = MenuItem::role;
+    set_application_menu(vec![
+        // The app menu (AppKit titles it with the app's name).
+        MenuItem::submenu(
+            "iptv-rs",
+            [
+                role(MenuRole::About),
+                MenuItem::separator(),
+                MenuItem::new("Settings…")
+                    .shortcut("mod+,")
+                    .on_select(move || crate::settings_view::open(ui)),
+                MenuItem::separator(),
+                role(MenuRole::Hide),
+                role(MenuRole::HideOthers),
+                role(MenuRole::ShowAll),
+                MenuItem::separator(),
+                role(MenuRole::Quit),
+            ],
+        ),
+        MenuItem::submenu(
+            "Edit",
+            [
+                role(MenuRole::Undo),
+                role(MenuRole::Redo),
+                MenuItem::separator(),
+                role(MenuRole::Cut),
+                role(MenuRole::Copy),
+                role(MenuRole::Paste),
+                role(MenuRole::SelectAll),
+            ],
+        ),
+        // Ctrl+Cmd+F, as every macOS app.
+        MenuItem::submenu("View", [role(MenuRole::ToggleFullScreen)]),
+        MenuItem::submenu(
+            "Window",
+            [
+                role(MenuRole::Minimize),
+                role(MenuRole::Zoom),
+                MenuItem::separator(),
+                role(MenuRole::Close),
+            ],
+        ),
+    ]);
 }
 
 pub fn set_fullscreen(on: bool) {
