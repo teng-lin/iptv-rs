@@ -428,6 +428,19 @@ impl Focus {
         self.enter_group(s);
     }
 
+    /// Shows what plays on `channel` (a zap, a resumed channel, a refreshed
+    /// guide): its live programme, its group and the default window.
+    pub fn show_channel(&mut self, channel: usize, s: &dyn Schedule) {
+        self.pane = Pane::Guide;
+        self.channel = channel.min(s.channel_count().saturating_sub(1));
+        self.group = (0..s.group_count())
+            .rev()
+            .find(|&g| s.group_start(g) <= self.channel)
+            .unwrap_or(0);
+        self.cursor = self.now;
+        self.window = home_window(self.now);
+    }
+
     /// A tap on the programme of `channel` airing at `minute`: it gets the
     /// focus where it is (the window does not move, the cell is on screen).
     pub fn tap(&mut self, channel: usize, minute: i32, s: &dyn Schedule) {
@@ -496,6 +509,22 @@ mod tests {
             }
             assert!(ps.last().unwrap().end >= VISIBLE);
         }
+    }
+
+    #[test]
+    fn show_channel_focuses_its_live_programme_and_group() {
+        // A real guide shown 53 minutes after its epoch, browsing the past.
+        let mut f = Focus::at(53);
+        f.apply(Move::Left, &S);
+        f.apply(Move::Left, &S);
+        let channel = group_start(3) + 2;
+        f.show_channel(channel, &S);
+        assert_eq!((f.pane, f.channel, f.group), (Pane::Guide, channel, 3));
+        assert_eq!(f.cursor, 53, "the cursor is at now, not at the epoch");
+        assert_eq!(f.window, home_window(53));
+        assert_eq!(f.program(&S).airing(f.now), Airing::Live);
+        f.show_channel(usize::MAX, &S);
+        assert_eq!(f.channel, CHANNELS - 1);
     }
 
     #[test]

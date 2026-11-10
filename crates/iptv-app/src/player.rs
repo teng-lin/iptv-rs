@@ -24,7 +24,7 @@ use iptv_providers::model::SourceConfig;
 use iptv_providers::xtream::StreamFormat;
 use nsh_core::prelude::*;
 
-use crate::guide::{Pane, Schedule};
+use crate::guide::Schedule;
 use crate::{Playback, Ui, ViewMode};
 
 const LAST_CHANNEL_FILE: &str = "last_channel";
@@ -346,11 +346,8 @@ pub fn go_live(ui: Ui) {
 }
 
 fn show_channel(ui: Ui, channel: usize) {
-    ui.focus.update(|f| {
-        f.pane = Pane::Guide;
-        f.channel = channel;
-        f.cursor = 0;
-    });
+    ui.focus
+        .update(|f| f.show_channel(channel, &*crate::schedule()));
 }
 
 fn last_channel_path() -> std::path::PathBuf {
