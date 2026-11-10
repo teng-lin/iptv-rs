@@ -1,8 +1,11 @@
 //! Text entry for one wizard field: a sheet with one NSH input, focused
 //! when it opens so the platform keyboard (the TV's IME) comes up. Return
 //! or Done keeps the text, Back keeps it too (as dismissing a keyboard
-//! does), Cancel restores the field. Other screens (the playlists screen)
-//! use the same sheet through [`text_sheet`].
+//! does), Cancel restores the field. The settings screen edits its text
+//! values in the same sheet ([`panel`]), the playlists screen through
+//! [`text_sheet`].
+
+use std::rc::Rc;
 
 use iptv_core::wizard::{Field, WizardEvent};
 use nsh_core::element::input;
@@ -58,7 +61,58 @@ fn set_text(ui: Ui, text: &str) {
     });
 }
 
-/// A text sheet: what it edits and how its owner keeps the text.
+fn button(label: &'static str, act: fn(Ui), ui: Ui) -> impl IntoElement {
+    text(label)
+        .px(px(20.0))
+        .py(px(10.0))
+        .rounded(px(RADIUS))
+        .text_size(px(15.0))
+        .text_color(rgb(WHITE))
+        .bg(tint(WHITE, RESTING))
+        .on_press(move || {
+            ui.touched();
+            act(ui);
+        })
+}
+
+/// The sheet; made when entry starts, so its input exists only then.
+pub fn sheet(ui: Ui) -> impl IntoElement {
+    let Some(field) = ui
+        .wizard
+        .with_untracked(|w| w.as_ref().and_then(|o| o.editing.as_ref().map(|e| e.field)))
+    else {
+        return view();
+    };
+    let current = move || {
+        ui.wizard.with(|w| {
+            w.as_ref()
+                .and_then(|o| o.editing.as_ref().map(|e| e.text.clone()))
+                .unwrap_or_default()
+        })
+    };
+    let keyboard = if field.is_url() {
+        KeyboardType::Url
+    } else {
+        KeyboardType::Default
+    };
+    panel(
+        ui,
+        Sheet {
+            label: words::label(field).to_owned(),
+            placeholder: words::placeholder(field),
+            keyboard,
+            masked: field == Field::Password,
+            current: Rc::new(current),
+            note: Rc::new(String::new),
+            set: Rc::new(move |t: &str| set_text(ui, t)),
+            done: commit,
+            cancel,
+        },
+    )
+}
+
+/// A text sheet whose owner keeps the text in its own state (the
+/// playlists screen): plain functions instead of closures.
 #[derive(Clone, Copy)]
 pub struct TextSheet {
     pub label: &'static str,
@@ -74,69 +128,72 @@ pub struct TextSheet {
     pub cancel: fn(Ui),
 }
 
-fn wizard_text(ui: Ui) -> String {
-    ui.wizard.with(|w| {
-        w.as_ref()
-            .and_then(|o| o.editing.as_ref().map(|e| e.text.clone()))
-            .unwrap_or_default()
-    })
-}
-
-fn button(label: &'static str, act: fn(Ui), ui: Ui) -> impl IntoElement {
-    text(label)
-        .px(px(20.0))
-        .py(px(10.0))
-        .rounded(px(RADIUS))
-        .text_size(px(15.0))
-        .text_color(rgb(WHITE))
-        .bg(tint(WHITE, RESTING))
-        .on_press(move || {
-            ui.touched();
-            act(ui);
-        })
-}
-
-/// The wizard's sheet; made when entry starts, so its input exists only
-/// then.
-pub fn sheet(ui: Ui) -> impl IntoElement {
-    let Some(field) = ui
-        .wizard
-        .with_untracked(|w| w.as_ref().and_then(|o| o.editing.as_ref().map(|e| e.field)))
-    else {
-        return view();
-    };
-    text_sheet(
-        ui,
-        TextSheet {
-            label: words::label(field),
-            placeholder: words::placeholder(field),
-            url: field.is_url(),
-            masked: field == Field::Password,
-            text: wizard_text,
-            set_text,
-            commit,
-            cancel,
-        },
-    )
-}
-
-/// A sheet with one text input over the screen, focused at once so the
-/// platform keyboard comes up. Make it when entry starts.
+/// [`panel`] for a [`TextSheet`]. Make it when entry starts.
 pub fn text_sheet(ui: Ui, sheet: TextSheet) -> View {
     let TextSheet {
         label,
         placeholder,
         url,
         masked,
-        text: current,
+        text,
         set_text,
         commit,
         cancel,
     } = sheet;
-    let keyboard = if url {
-        KeyboardType::Url
-    } else {
-        KeyboardType::Default
+    panel(
+        ui,
+        Sheet {
+            label: label.to_owned(),
+            placeholder,
+            keyboard: if url {
+                KeyboardType::Url
+            } else {
+                KeyboardType::Default
+            },
+            masked,
+            current: Rc::new(move || text(ui)),
+            note: Rc::new(String::new),
+            set: Rc::new(move |t: &str| set_text(ui, t)),
+            done: commit,
+            cancel,
+        },
+    )
+}
+
+/// What a text sheet edits.
+pub(crate) struct Sheet {
+    pub label: String,
+    pub placeholder: &'static str,
+    pub keyboard: KeyboardType,
+    pub masked: bool,
+    /// The text so far.
+    pub current: Rc<dyn Fn() -> String>,
+    /// A line under the field (a problem with the text); empty for none.
+    pub note: Rc<dyn Fn() -> String>,
+    /// Typing.
+    pub set: Rc<dyn Fn(&str)>,
+    /// Return or Done.
+    pub done: fn(Ui),
+    pub cancel: fn(Ui),
+}
+
+/// A text sheet: the label, one input focused at once (the platform
+/// keyboard comes up), an optional note, Cancel and Done.
+pub(crate) fn panel(ui: Ui, sheet: Sheet) -> View {
+    let Sheet {
+        label,
+        placeholder,
+        keyboard,
+        masked,
+        current,
+        note,
+        set,
+        done,
+        cancel,
+    } = sheet;
+    let has_note = {
+        let note = note.clone();
+        move || !note().is_empty()
     };
     view()
         .absolute()
@@ -160,9 +217,9 @@ pub fn text_sheet(ui: Ui, sheet: TextSheet) -> View {
                 )
                 .child(
                     input()
-                        .value(move || current(ui))
-                        .on_change(move |t: &str| set_text(ui, t))
-                        .on_submit(move |_: &str| commit(ui))
+                        .value(move || current())
+                        .on_change(move |t: &str| set(t))
+                        .on_submit(move |_: &str| done(ui))
                         .auto_focus(true)
                         .masked(masked)
                         .keyboard_type(keyboard)
@@ -178,13 +235,19 @@ pub fn text_sheet(ui: Ui, sheet: TextSheet) -> View {
                         .border_color(move || rgb(ui.theme.with(|t| t.accent.main)))
                         .bg(move || rgb(ui.theme.with(|t| t.background.window))),
                 )
+                .child(when(has_note, move || {
+                    let note = note.clone();
+                    text(move || note())
+                        .text_size(px(13.0))
+                        .text_color(rgb(super::ERROR))
+                }))
                 .child(
                     view()
                         .flex_row()
                         .gap(px(12.0))
                         .justify_end()
                         .child(button("Cancel", cancel, ui))
-                        .child(button("Done", commit, ui)),
+                        .child(button("Done", done, ui)),
                 ),
         )
 }

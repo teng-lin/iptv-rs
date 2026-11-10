@@ -280,7 +280,7 @@ fn policy_and_storage_from_settings() {
         store_options(&settings, &at),
         StoreOptions {
             store_descriptions: true,
-            past_days_to_keep: Some(2),
+            past_days_to_keep: Some(7),
         }
     );
     settings

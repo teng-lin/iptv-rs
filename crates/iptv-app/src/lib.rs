@@ -25,6 +25,8 @@ mod playlists_view;
 mod rail;
 mod search_view;
 mod seek;
+mod settings;
+mod settings_view;
 pub mod time;
 mod video;
 mod wizard_view;
@@ -154,6 +156,10 @@ pub struct Ui {
     pub playlists: Signal<Option<playlists_view::Open>>,
     /// The stored playlists: which one is shown, their refreshes (`data.rs`).
     pub library: data::Library,
+    /// Bumped when a setting changes; read values with `settings::read`.
+    pub settings: Signal<u64>,
+    /// The settings screen, when open.
+    pub settings_screen: Signal<Option<iptv_settings::screen::Screen>>,
     /// Stream, health and history of playback (`player.rs`).
     pub player: player::Player,
 }
@@ -218,7 +224,8 @@ impl Ui {
     /// overlay mode it tints the full-screen video.
     pub fn surface(&self, rgb_hex: u32) -> Rgba {
         let alpha = match self.mode.get() {
-            ViewMode::Overlay => 0xC8,
+            // `appearance.ui_transparency`
+            ViewMode::Overlay => settings::overlay_alpha(&settings::read(*self)),
             ViewMode::Guide | ViewMode::Fullscreen => 0x00,
         };
         tint(rgb_hex, alpha)
@@ -310,6 +317,7 @@ pub fn channel_name(ch: usize) -> String {
 
 #[component]
 pub fn App() -> impl IntoElement {
+    settings::load();
     let ui = Ui {
         focus: signal(Focus::default()),
         list: signal(Rc::new(ChannelList::build(
@@ -345,8 +353,11 @@ pub fn App() -> impl IntoElement {
         wizard: signal(None),
         playlists: signal(None),
         library: data::Library::new(),
+        settings: signal(0),
+        settings_screen: signal(None),
         player: player::Player::new(),
     };
+    settings::bind(ui);
     // Leaving full screen closes the panels.
     effect(move || {
         if ui.mode.get() != ViewMode::Fullscreen {
@@ -453,13 +464,16 @@ pub fn App() -> impl IntoElement {
         .child(menu_view::layer(ui))
         .child(chooser::layer(ui))
         .child(fav_editor::layer(ui))
+        .child(settings_view::layer(ui))
+        // The playlists screen opens over settings.
         .child(playlists_view::layer(ui))
         .child(wizard_view::layer(ui))
 }
 
 /// Back: player panels → hidden; full screen/overlay → guide; then the
 /// guide screen's chain (`browse.rs`): hint card → guide → groups → rail →
-/// leave the app (no handler, so the platform's Back leaves).
+/// leave the app (no handler, so the platform's Back leaves; with
+/// `general.confirm_exit` the first press only asks for a second).
 fn bind_back(ui: Ui) {
     let back_target = computed(move || {
         let panels = ui.panels.with(|p| p.shown) != iptv_core::panels::Shown::Hidden;
@@ -478,8 +492,13 @@ fn bind_back(ui: Ui) {
             && !ui.menu.with(Option::is_some)
             && !ui.description.with(Option::is_some)
             && !search_view::is_open(ui)
-            && !playlists_view::is_open(ui);
-        if !leaves {
+            && !playlists_view::is_open(ui)
+            && !settings_view::is_open(ui);
+        let confirm = settings::read(ui).bool(
+            iptv_settings::keys::CONFIRM_EXIT,
+            &iptv_settings::Target::Global,
+        );
+        if !leaves || confirm {
             on_back_press(move || go_back(ui));
         }
     });
@@ -497,6 +516,7 @@ pub(crate) fn go_back(ui: Ui) -> bool {
         match (ui.mode.get(), ui.focus.with(|f| f.pane), panels || menu) {
             _ if ui.wizard.with(Option::is_some) => wizard_view::back(ui),
             _ if playlists_view::is_open(ui) => playlists_view::back(ui),
+            _ if settings_view::is_open(ui) => settings_view::back(ui),
             _ if ui.editor.with(Option::is_some) => {
                 fav_editor::close(ui);
                 true
@@ -517,8 +537,9 @@ pub(crate) fn go_back(ui: Ui) -> bool {
                 ui.panels.update(|p| p.hide());
                 true
             }
-            // Hint, past programme → now, guide → groups → rail → leave.
-            (ViewMode::Guide, _, _) => lists::back(ui),
+            // Hint, past programme → now, guide → groups → rail → leave
+            // (`general.confirm_exit`: only after a second press).
+            (ViewMode::Guide, _, _) => lists::back(ui) || !settings_view::may_leave(),
             _ => {
                 ui.mode.set(ViewMode::Guide);
                 true

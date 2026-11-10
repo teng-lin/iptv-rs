@@ -15,6 +15,7 @@ iptv-import.workspace = true
 iptv-net.workspace = true
 iptv-store-sqlite.workspace = true
 iptv-search.workspace = true
+iptv-settings.workspace = true
 futures-channel = "0.3"
 tokio = { version = "1", default-features = false, features = ["rt"] }
 nsh-core.workspace = true

@@ -61,11 +61,12 @@ pub static EPG: &[Setting] = &[
         boolean(true),
         "Fetch guide data after a playlist is added, changed or refreshed.",
     ),
-    // default: ours
+    // default: ours — a week, so the guide reaches back as far as the
+    // usual catch-up archives (3 to 7 days) and replays can be chosen.
     epg(
         "storage",
         "epg.keep_past",
-        days(0, 14, 1, 2),
+        days(0, 14, 1, 7),
         "How many days of finished programmes stay in the guide (for catch-up and browsing back).",
     ),
     // default: ours

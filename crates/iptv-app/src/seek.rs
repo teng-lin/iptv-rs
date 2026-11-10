@@ -5,20 +5,40 @@
 //! provider and container. Presses add up to one target, shown on the info
 //! card, and the archive reopens once the keys pause.
 //!
-//! Steps are the `catchup.*_step` settings' defaults (the settings are not
-//! wired in yet): fast-forward 30 s, rewind 10 s, one time-bar step
-//! (Left/Right) 5 min.
+//! Steps are the `catchup.*_step` settings (by default fast-forward 30 s,
+//! rewind 10 s, one time-bar step 5 min); `catchup.seek_keys` chooses
+//! which keys step along the time bar (`input.rs`).
 
 use std::cell::Cell;
 use std::time::Duration;
 
+use iptv_settings::{Settings, Target, keys};
 use nsh_core::prelude::*;
 
 use crate::{Playback, Ui};
 
-pub const FORWARD_STEP: i32 = 30;
-pub const REWIND_STEP: i32 = 10;
-pub const TIMEBAR_STEP: i32 = 300;
+/// Seek steps in seconds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Steps {
+    pub forward: i32,
+    pub rewind: i32,
+    pub timebar: i32,
+}
+
+/// The steps chosen in `catchup.*_step`.
+pub fn steps_of(s: &Settings) -> Steps {
+    let secs = |key| i32::try_from(s.duration_ms(key, &Target::Global) / 1000).unwrap_or(i32::MAX);
+    Steps {
+        forward: secs(keys::FORWARD_STEP),
+        rewind: secs(keys::REWIND_STEP),
+        timebar: secs(keys::TIMEBAR_STEP),
+    }
+}
+
+/// The current steps.
+pub fn steps() -> Steps {
+    steps_of(&crate::settings::get())
+}
 /// The archive reopens this long after the last seek key.
 const COMMIT_AFTER: Duration = Duration::from_millis(900);
 /// A seek stops this far before the archive's end (the programme's end,
@@ -122,7 +142,31 @@ pub fn hms(secs: i32) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::hms;
+    use iptv_settings::Value;
+
+    use super::*;
+
+    #[test]
+    fn steps_follow_the_settings() {
+        let mut s = Settings::new();
+        let defaults = Steps {
+            forward: 30,
+            rewind: 10,
+            timebar: 300,
+        };
+        assert_eq!(steps_of(&s), defaults);
+        s.set("catchup.forward_step", Value::secs(60)).unwrap();
+        s.set("catchup.rewind_step", Value::secs(5)).unwrap();
+        s.set("catchup.timebar_step", Value::secs(15 * 60)).unwrap();
+        assert_eq!(
+            steps_of(&s),
+            Steps {
+                forward: 60,
+                rewind: 5,
+                timebar: 900,
+            }
+        );
+    }
 
     #[test]
     fn times_read_as_minutes_or_hours() {

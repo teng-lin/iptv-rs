@@ -109,6 +109,12 @@ pub static COMMANDS: &[Command] = &[
     Command::new(
         S::Playlists,
         "",
+        "playlists.manage",
+        "Open the playlists screen: add, choose, refresh, rename, change the guide address, delete.",
+    ),
+    Command::new(
+        S::Playlists,
+        "",
         "playlists.add",
         "Open the add-playlist wizard.",
     ),

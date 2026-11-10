@@ -4,9 +4,13 @@
 //! searches (debounced), maps remote keys and taps to search actions and
 //! carries out what the state answers (play, show details, close).
 //!
-//! Choosing a result plays it full screen and keeps the screen suspended;
-//! leaving full screen brings it back with its query and focus
-//! (`SearchState::resume`). Wording is iptv-rs's own.
+//! Choosing a result plays it full screen. With `search.stay_on_search`
+//! the screen waits suspended and leaving full screen brings it back with
+//! its query and focus (`SearchState::resume`); otherwise it closes.
+//! Ranking follows `search.favorites_first` and
+//! `search.include_past_without_catchup`; with `search.show_history` off
+//! the screen opens without the recent searches (they are still kept).
+//! Wording is iptv-rs's own.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -21,15 +25,13 @@ use iptv_search::{
     ChannelIndex, ChannelSearchOptions, Focus, Phase, ProgrammeHit, ProgrammeIndex,
     ProgrammeSearchOptions, ResultId, SearchAction, SearchEffect, SearchHistory, SearchState, Tab,
 };
+use iptv_settings::{Settings, Target, keys};
 use nsh_base::input;
 use nsh_core::prelude::*;
 
 use crate::theme::{FOCUS_ALPHA, RADIUS, RESTING_ALPHA, TEXT_SECONDARY_ALPHA};
 use crate::{Playback, Ui, ViewMode, channel_name, clock, tint};
 
-// Defaults of the `search.*` settings (iptv-settings), until settings reach the app.
-const FAVOURITES_FIRST: bool = true;
-const INCLUDE_PAST_WITHOUT_CATCHUP: bool = false;
 /// Typing pause before a search runs.
 const DEBOUNCE: Duration = Duration::from_millis(200);
 const LIMIT: usize = 200;
@@ -87,6 +89,39 @@ enum Outcome {
         start: UnixTime,
     },
     Nothing,
+}
+
+/// The `search.*` settings the screen follows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Options {
+    favourites_first: bool,
+    include_past_without_catchup: bool,
+    /// Come back to the results after watching one.
+    stay: bool,
+    show_history: bool,
+}
+
+fn options(s: &Settings) -> Options {
+    let at = &Target::Global;
+    Options {
+        favourites_first: s.bool(keys::SEARCH_FAVORITES_FIRST, at),
+        include_past_without_catchup: s.bool(keys::SEARCH_INCLUDE_PAST_WITHOUT_CATCHUP, at),
+        stay: s.bool(keys::SEARCH_STAY, at),
+        show_history: s.bool(keys::SEARCH_SHOW_HISTORY, at),
+    }
+}
+
+/// The recent searches to save: with the history hidden the screen
+/// started empty, so its queries go on top of the saved ones.
+fn to_save(shown: bool, saved: SearchHistory, session: &SearchHistory) -> Vec<String> {
+    if shown {
+        return session.to_list();
+    }
+    let mut all = saved;
+    for q in session.entries().iter().rev() {
+        all.push(q);
+    }
+    all.to_list()
 }
 
 fn outcome(id: ResultId, hit: Option<&ProgrammeHit>) -> Outcome {
@@ -186,12 +221,14 @@ fn load_history() -> SearchHistory {
 }
 
 fn save_history(ui: Ui) {
-    let Some(list) = ui
+    let Some(session) = ui
         .search
-        .with_untracked(|s| s.as_ref().map(|s| s.state.history().to_list()))
+        .with_untracked(|s| s.as_ref().map(|s| s.state.history().clone()))
     else {
         return;
     };
+    let shown = options(&crate::settings::get()).show_history;
+    let list = to_save(shown, load_history(), &session);
     let dir = crate::data::data_dir();
     let _ = std::fs::create_dir_all(&dir);
     if let Ok(json) = serde_json::to_vec(&list)
@@ -268,21 +305,22 @@ fn run_search(ui: Ui, query: &str) {
     let favourites = ui.favorites.get_untracked();
     let schedule = crate::schedule();
     let days = |c: usize| schedule.catchup_days(c);
+    let options = options(&crate::settings::get());
     let (channels, programmes) = INDEXES.with(|i| {
         let i = i.borrow();
         let channels = i.channels.search_channels(
             query,
             &favourites,
             ChannelSearchOptions {
-                favourites_first: FAVOURITES_FIRST,
+                favourites_first: options.favourites_first,
                 limit: LIMIT,
             },
         );
         let opts = ProgrammeSearchOptions {
-            include_past_without_catchup: INCLUDE_PAST_WITHOUT_CATCHUP,
+            include_past_without_catchup: options.include_past_without_catchup,
             catchup_days: Some(&days),
             favourites: Some(&favourites),
-            favourites_first: FAVOURITES_FIRST,
+            favourites_first: options.favourites_first,
             limit: LIMIT,
             ..Default::default()
         };
@@ -335,7 +373,11 @@ pub fn open(ui: Ui) {
         Some(false) => {}
         None => {
             ui.search.set(Some(Screen {
-                state: SearchState::new(load_history()),
+                state: SearchState::new(if options(&crate::settings::get()).show_history {
+                    load_history()
+                } else {
+                    SearchHistory::default()
+                }),
                 suspended: false,
                 programmes: Programmes::Building,
             }));
@@ -426,7 +468,8 @@ fn choose(ui: Ui, id: ResultId) {
     }
 }
 
-/// Plays full screen; the screen waits until playback leaves full screen.
+/// Plays full screen; the screen waits until playback leaves full screen
+/// (`search.stay_on_search`), else closes.
 fn watch(ui: Ui, channel: usize, playback: Playback) {
     save_history(ui);
     let now = ui.focus.with(|f| f.now);
@@ -435,6 +478,10 @@ fn watch(ui: Ui, channel: usize, playback: Playback) {
     // Full screen first: the resume effect ignores a suspended screen in full screen.
     ui.mode.set(ViewMode::Fullscreen);
     ui.update_panels(|p, now| p.show_info(now));
+    if !options(&crate::settings::get()).stay {
+        close(ui);
+        return;
+    }
     ui.search.update(|s| {
         if let Some(s) = s {
             s.suspended = true;
@@ -636,7 +683,9 @@ fn history(ui: Ui) -> impl IntoElement {
         .gap(px(8.0))
         .child(
             text(move || {
-                if count() == 0 {
+                if !options(&crate::settings::read(ui)).show_history {
+                    ""
+                } else if count() == 0 {
                     "No recent searches yet"
                 } else {
                     "Recent searches"
@@ -851,6 +900,52 @@ mod tests {
         channel: 3,
         start: 1_000,
     };
+
+    #[test]
+    fn options_follow_the_search_settings() {
+        let mut s = Settings::new();
+        let defaults = Options {
+            favourites_first: true,
+            include_past_without_catchup: false,
+            stay: false,
+            show_history: true,
+        };
+        assert_eq!(options(&s), defaults);
+        s.set("search.favorites_first", iptv_settings::Value::Bool(false))
+            .unwrap();
+        s.set(
+            "search.include_past_without_catchup",
+            iptv_settings::Value::Bool(true),
+        )
+        .unwrap();
+        s.set("search.stay_on_search", iptv_settings::Value::Bool(true))
+            .unwrap();
+        s.set("search.show_history", iptv_settings::Value::Bool(false))
+            .unwrap();
+        assert_eq!(
+            options(&s),
+            Options {
+                favourites_first: false,
+                include_past_without_catchup: true,
+                stay: true,
+                show_history: false,
+            }
+        );
+    }
+
+    #[test]
+    fn hidden_history_still_keeps_new_searches() {
+        let saved = SearchHistory::from_list(["news", "films"], 20);
+        let mut session = SearchHistory::default();
+        session.push("sport");
+        session.push("weather");
+        assert_eq!(
+            to_save(false, saved.clone(), &session),
+            ["weather", "sport", "news", "films"]
+        );
+        // Shown: the screen started from the saved list, its list is it.
+        assert_eq!(to_save(true, saved, &session), ["weather", "sport"]);
+    }
 
     #[test]
     fn choosing_a_result() {

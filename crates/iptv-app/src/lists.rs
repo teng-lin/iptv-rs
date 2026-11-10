@@ -212,6 +212,7 @@ fn open(ui: Ui, item: RailItem) {
     match item {
         RailItem::Search => crate::search_view::open(ui),
         RailItem::Playlists => crate::playlists_view::open(ui),
+        RailItem::Settings => crate::settings_view::open(ui),
         other => log::info!("iptv rail: {other:?} not implemented yet"),
     }
 }

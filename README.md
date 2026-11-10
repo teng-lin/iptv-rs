@@ -59,7 +59,8 @@ through libmpv rendering into a GTK GL area under the UI. Without a stored
 playlist the wizard opens; its playlist link defaults to the mock server at
 `http://127.0.0.1:8089/iptv/playlist.m3u` (generate desktop fixtures with
 `python3 -I tools/make-iptv-fixtures.py --host 127.0.0.1:8089`). Data lives in
-`~/.local/share/iptv-rs`.
+`~/.local/share/iptv-rs` (settings in `settings.json` there). Settings open
+from the guide's menu (Menu, `m`).
 
 | Remote | Keyboard |
 | --- | --- |

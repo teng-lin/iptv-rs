@@ -10,6 +10,7 @@
 //!   global → default) reads and writes, resets, change lists.
 //! - [`backup`]: versioned JSON with migrations; unknown keys survive.
 //! - [`keys`]: typed keys for settings read in code.
+//! - [`screen`]: the settings screen's state (sections, rows, editors).
 //!
 //! Plain Rust: no NSH, no platform APIs, no I/O (callers persist the JSON
 //! text), and it builds for `wasm32-unknown-unknown`.
@@ -42,6 +43,7 @@ mod error;
 pub mod keys;
 pub mod schema;
 mod scope;
+pub mod screen;
 mod store;
 pub mod validate;
 mod value;
