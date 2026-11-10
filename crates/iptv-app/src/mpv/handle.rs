@@ -8,6 +8,11 @@ use super::{DEFAULT_UA, ffi};
 /// An mpv instance.
 pub struct Mpv(pub *mut ffi::mpv_handle);
 
+// SAFETY: libmpv's client API may be used from any thread; the handle is
+// destroyed once, when the last owner drops it.
+unsafe impl Send for Mpv {}
+unsafe impl Sync for Mpv {}
+
 impl Mpv {
     pub fn new() -> Option<Mpv> {
         // SAFETY: mpv refuses to start under a locale whose numbers are not
@@ -85,6 +90,25 @@ impl Mpv {
         }
     }
 
+    pub fn get_f64(&self, name: &CStr) -> Option<f64> {
+        let mut v = 0.0_f64;
+        self.get_raw(name, ffi::MPV_FORMAT_DOUBLE, (&mut v as *mut f64).cast())
+            .then_some(v)
+            .filter(|v| v.is_finite())
+    }
+
+    pub fn get_i64(&self, name: &CStr) -> Option<i64> {
+        let mut v = 0_i64;
+        self.get_raw(name, ffi::MPV_FORMAT_INT64, (&mut v as *mut i64).cast())
+            .then_some(v)
+    }
+
+    /// Reads property `name` in `format` into `data` (sized for it).
+    fn get_raw(&self, name: &CStr, format: std::ffi::c_int, data: *mut std::ffi::c_void) -> bool {
+        // SAFETY: a live handle; callers pass storage of `format`'s type.
+        unsafe { ffi::mpv_get_property(self.0, name.as_ptr(), format, data) >= 0 }
+    }
+
     pub fn get(&self, name: &CStr) -> Option<String> {
         // SAFETY: a live handle; the result is mpv's to free.
         unsafe {
@@ -96,6 +120,12 @@ impl Mpv {
             ffi::mpv_free(p.cast());
             Some(s)
         }
+    }
+
+    /// Interrupts `mpv_wait_event` (safe on the render thread).
+    pub fn wakeup(&self) {
+        // SAFETY: a live handle.
+        unsafe { ffi::mpv_wakeup(self.0) };
     }
 
     /// Runs a command; whether mpv accepted it.

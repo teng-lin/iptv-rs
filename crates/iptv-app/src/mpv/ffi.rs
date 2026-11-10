@@ -20,6 +20,7 @@ pub const MPV_FORMAT_INT64: c_int = 4;
 pub const MPV_FORMAT_DOUBLE: c_int = 5;
 
 pub const MPV_EVENT_NONE: c_int = 0;
+pub const MPV_EVENT_SHUTDOWN: c_int = 1;
 pub const MPV_EVENT_LOG_MESSAGE: c_int = 2;
 pub const MPV_EVENT_START_FILE: c_int = 6;
 pub const MPV_EVENT_END_FILE: c_int = 7;
@@ -117,6 +118,12 @@ unsafe extern "C" {
         name: *const c_char,
         data: *const c_char,
     ) -> c_int;
+    pub fn mpv_get_property(
+        ctx: *mut mpv_handle,
+        name: *const c_char,
+        format: c_int,
+        data: *mut c_void,
+    ) -> c_int;
     pub fn mpv_get_property_string(ctx: *mut mpv_handle, name: *const c_char) -> *mut c_char;
     pub fn mpv_free(data: *mut c_void);
     pub fn mpv_command(ctx: *mut mpv_handle, args: *mut *const c_char) -> c_int;
@@ -128,7 +135,7 @@ unsafe extern "C" {
     ) -> c_int;
     pub fn mpv_request_log_messages(ctx: *mut mpv_handle, min_level: *const c_char) -> c_int;
     pub fn mpv_wait_event(ctx: *mut mpv_handle, timeout: f64) -> *mut mpv_event;
-    pub fn mpv_set_wakeup_callback(ctx: *mut mpv_handle, cb: Option<Callback>, d: *mut c_void);
+    pub fn mpv_wakeup(ctx: *mut mpv_handle);
 
     pub fn mpv_render_context_create(
         res: *mut *mut mpv_render_context,
