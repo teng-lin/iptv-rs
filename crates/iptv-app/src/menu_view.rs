@@ -18,6 +18,7 @@ fn implemented(item: MenuItem) -> bool {
     matches!(
         item,
         MenuItem::Search
+            | MenuItem::Settings
             | MenuItem::Description
             | MenuItem::ToggleFavorite
             | MenuItem::StartFromBeginning
@@ -125,6 +126,10 @@ pub fn perform(ui: Ui, item: MenuItem) {
         MenuItem::Search => {
             close(ui);
             crate::search_view::open(ui);
+        }
+        MenuItem::Settings => {
+            close(ui);
+            crate::settings_view::open(ui);
         }
         MenuItem::ToggleFavorite => {
             ui.favorites.update(|f| {

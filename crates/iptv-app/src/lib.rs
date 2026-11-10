@@ -19,6 +19,8 @@ mod player;
 mod player_panels;
 mod search_view;
 mod seek;
+mod settings;
+mod settings_view;
 pub mod time;
 mod video;
 mod wizard_view;
@@ -135,6 +137,10 @@ pub struct Ui {
     pub search: Signal<Option<search_view::Screen>>,
     /// The add-playlist wizard, when open.
     pub wizard: Signal<Option<wizard_view::Open>>,
+    /// Bumped when a setting changes; read values with `settings::read`.
+    pub settings: Signal<u64>,
+    /// The settings screen, when open.
+    pub settings_screen: Signal<Option<iptv_settings::screen::Screen>>,
     /// Stream, health and history of playback (`player.rs`).
     pub player: player::Player,
 }
@@ -197,7 +203,8 @@ impl Ui {
     /// overlay mode it tints the full-screen video.
     pub fn surface(&self, rgb_hex: u32) -> Rgba {
         let alpha = match self.mode.get() {
-            ViewMode::Overlay => 0xC8,
+            // `appearance.ui_transparency`
+            ViewMode::Overlay => settings::overlay_alpha(&settings::read(*self)),
             ViewMode::Guide | ViewMode::Fullscreen => 0x00,
         };
         tint(rgb_hex, alpha)
@@ -290,6 +297,7 @@ pub fn channel_name(ch: usize) -> String {
 
 #[component]
 pub fn App() -> impl IntoElement {
+    settings::load();
     let ui = Ui {
         focus: signal(Focus::default()),
         playing: signal(None),
@@ -316,8 +324,11 @@ pub fn App() -> impl IntoElement {
         editor: signal(None),
         search: signal(None),
         wizard: signal(None),
+        settings: signal(0),
+        settings_screen: signal(None),
         player: player::Player::new(),
     };
+    settings::bind(ui);
     // Leaving full screen closes the panels.
     effect(move || {
         if ui.mode.get() != ViewMode::Fullscreen {
@@ -416,12 +427,14 @@ pub fn App() -> impl IntoElement {
         .child(menu_view::layer(ui))
         .child(chooser::layer(ui))
         .child(fav_editor::layer(ui))
+        .child(settings_view::layer(ui))
         .child(wizard_view::layer(ui))
 }
 
 /// Back: player panels → hidden; full screen/overlay → guide; guide →
 /// groups; groups → leave the app (no handler, so the platform's Back
-/// leaves).
+/// leaves; with `general.confirm_exit` the first press only asks for a
+/// second).
 fn bind_back(ui: Ui) {
     let back_target = computed(move || {
         let panels = ui.panels.with(|p| p.shown) != iptv_core::panels::Shown::Hidden;
@@ -438,8 +451,13 @@ fn bind_back(ui: Ui) {
             && !ui.chooser.with(Option::is_some)
             && !ui.menu.with(Option::is_some)
             && !ui.description.with(Option::is_some)
-            && !search_view::is_open(ui);
-        if !leaves {
+            && !search_view::is_open(ui)
+            && !settings_view::is_open(ui);
+        let confirm = settings::read(ui).bool(
+            iptv_settings::keys::CONFIRM_EXIT,
+            &iptv_settings::Target::Global,
+        );
+        if !leaves || confirm {
             on_back_press(move || go_back(ui));
         }
     });
@@ -456,6 +474,7 @@ pub(crate) fn go_back(ui: Ui) -> bool {
             || ui.editor.with(Option::is_some);
         match (ui.mode.get(), ui.focus.with(|f| f.pane), panels || menu) {
             _ if ui.wizard.with(Option::is_some) => wizard_view::back(ui),
+            _ if settings_view::is_open(ui) => settings_view::back(ui),
             _ if ui.editor.with(Option::is_some) => {
                 fav_editor::close(ui);
                 true
@@ -476,12 +495,15 @@ pub(crate) fn go_back(ui: Ui) -> bool {
                 ui.panels.update(|p| p.hide());
                 true
             }
-            (ViewMode::Guide, Pane::Groups, _) => false,
+            (ViewMode::Guide, Pane::Groups, _) => !settings_view::may_leave(),
             (ViewMode::Guide, Pane::Guide, _) => {
-                // Back on a past/future programme returns to now; on now, to the groups.
+                // Back on a past/future programme returns to now
+                // (`guide.back_returns_to_now`); on now, to the groups.
                 let mut moved = false;
-                ui.focus
-                    .update(|f| moved = f.return_to_now(&*crate::schedule()));
+                if settings::flag(iptv_settings::keys::BACK_RETURNS_TO_NOW) {
+                    ui.focus
+                        .update(|f| moved = f.return_to_now(&*crate::schedule()));
+                }
                 if !moved {
                     ui.focus.update(|f| f.pane = Pane::Groups);
                 }

@@ -16,7 +16,7 @@ use crate::{Input, Ui, ViewMode};
 /// Long press needs key releases, which NSH (branch `tv-keys`) reports on
 /// Android only. Elsewhere every key is a plain press and long bindings are
 /// not consulted (a deferred short press would never see its release).
-const LONG_PRESS: bool = cfg!(target_os = "android");
+pub(crate) const LONG_PRESS: bool = cfg!(target_os = "android");
 
 /// NSH keystroke names and the remote keys they stand for: the remote's own
 /// keys, then keyboard stand-ins for the desktop and emulators.
@@ -69,6 +69,9 @@ struct Nav {
 pub fn context(ui: &Ui) -> Context {
     if crate::wizard_view::is_open(*ui) {
         return Context::Menu;
+    }
+    if crate::settings_view::is_open(*ui) {
+        return Context::Editor; // Up/Down/Left/Right, OK, Back
     }
     if ui.editor.with(Option::is_some) {
         return Context::Editor;
@@ -131,6 +134,12 @@ fn key_event(ui: Ui, nav: &Rc<RefCell<Nav>>, key: RemoteKey, phase: Phase) {
     let (action, deadline) = {
         let mut nav = nav.borrow_mut();
         let now = nav.start.elapsed().as_millis() as u64;
+        // `remote.long_press`, taken up when a key goes down (a new press
+        // ends whatever was held).
+        let threshold = crate::settings::long_press_ms();
+        if LONG_PRESS && phase == Phase::Down && nav.detector.threshold_ms() != threshold {
+            nav.detector = PressDetector::new(threshold);
+        }
         let has_long = LONG_PRESS && nav.keymap.has_long(ctx, key);
         let action = nav
             .detector
@@ -181,18 +190,30 @@ fn key_event(ui: Ui, nav: &Rc<RefCell<Nav>>, key: RemoteKey, phase: Phase) {
     );
 }
 
-/// While a programme plays from the archive, Left/Right in the player step
-/// along its time bar (`catchup.seek_keys` = left_right, the default)
-/// instead of bringing the guide.
+/// While a programme plays from the archive, the keys `catchup.seek_keys`
+/// names step along its time bar in the player: Left/Right (the default,
+/// instead of bringing the guide) or Down/Up (instead of zapping). With
+/// `transport` only the media keys seek (Rewind/Fast-forward always do).
 fn catch_up_keys(ui: &Ui, ctx: Context, key: RemoteKey, action: Option<Action>) -> Option<Action> {
     let catch_up = matches!(ui.playback.get_untracked(), crate::Playback::CatchUp { .. });
-    match (ctx, key, action) {
-        (Context::Player, RemoteKey::Left, Some(Action::ShowGuide)) if catch_up => {
-            Some(Action::TimeBarBack)
-        }
-        (Context::Player, RemoteKey::Right, Some(Action::ShowGuide)) if catch_up => {
-            Some(Action::TimeBarForward)
-        }
+    if !catch_up || ctx != Context::Player {
+        return action;
+    }
+    seek_key(
+        crate::settings::choice(iptv_settings::keys::SEEK_KEYS),
+        key,
+        action,
+    )
+}
+
+/// The player's action for `key` during catch-up under the `seek_keys`
+/// choice `scheme`.
+fn seek_key(scheme: &str, key: RemoteKey, action: Option<Action>) -> Option<Action> {
+    match (scheme, key, action) {
+        ("left_right", RemoteKey::Left, Some(Action::ShowGuide))
+        | ("down_up", RemoteKey::Down, Some(Action::ChannelDown)) => Some(Action::TimeBarBack),
+        ("left_right", RemoteKey::Right, Some(Action::ShowGuide))
+        | ("down_up", RemoteKey::Up, Some(Action::ChannelUp)) => Some(Action::TimeBarForward),
         _ => action,
     }
 }
@@ -211,6 +232,10 @@ fn apply(ui: Ui, action: Action) {
     let mv = |m: Move| ui.focus.update(|f| f.apply(m, &*crate::schedule()));
     if crate::wizard_view::is_open(ui) {
         crate::wizard_view::key(ui, action);
+        return;
+    }
+    if crate::settings_view::is_open(ui) {
+        crate::settings_view::key(ui, action);
         return;
     }
     if ui.editor.with(Option::is_some) {
@@ -304,16 +329,16 @@ fn apply(ui: Ui, action: Action) {
         Action::PlayPause => ui.paused.update(|p| *p = !*p),
         // Catch-up seeking (`seek.rs`); nothing to seek in a live stream.
         Action::SeekBack => {
-            crate::seek::step(ui, -crate::seek::REWIND_STEP);
+            crate::seek::step(ui, -crate::seek::steps().rewind);
         }
         Action::SeekForward => {
-            crate::seek::step(ui, crate::seek::FORWARD_STEP);
+            crate::seek::step(ui, crate::seek::steps().forward);
         }
         Action::TimeBarBack => {
-            crate::seek::step(ui, -crate::seek::TIMEBAR_STEP);
+            crate::seek::step(ui, -crate::seek::steps().timebar);
         }
         Action::TimeBarForward => {
-            crate::seek::step(ui, crate::seek::TIMEBAR_STEP);
+            crate::seek::step(ui, crate::seek::steps().timebar);
         }
         Action::ChannelUp => zap(ui, -1),
         Action::ChannelDown => zap(ui, 1),
@@ -339,8 +364,10 @@ fn zap(ui: Ui, step: isize) {
         f.cursor = f.now;
     });
     ui.play(to, crate::Playback::Live);
-    // Channel-change feedback over full-screen video.
-    if ui.mode.get() == ViewMode::Fullscreen {
+    // Channel-change feedback over full-screen video (`player.info_on_switch`).
+    if ui.mode.get() == ViewMode::Fullscreen
+        && crate::settings::flag(iptv_settings::keys::INFO_ON_SWITCH)
+    {
         ui.update_panels(|p, now| p.show_info(now));
     }
 }
@@ -374,4 +401,36 @@ fn page(ui: Ui, dir: isize) {
             .clamp(0, (crate::schedule().channel_count() as isize - 1).max(0));
         f.channel = to as usize;
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn seek_keys_choose_the_time_bar_keys() {
+        let guide = Some(Action::ShowGuide);
+        let (up, down) = (Some(Action::ChannelUp), Some(Action::ChannelDown));
+        let back = Some(Action::TimeBarBack);
+        let forward = Some(Action::TimeBarForward);
+        // Left/Right (default): instead of the guide; Up/Down still zap.
+        assert_eq!(seek_key("left_right", RemoteKey::Left, guide), back);
+        assert_eq!(seek_key("left_right", RemoteKey::Right, guide), forward);
+        assert_eq!(seek_key("left_right", RemoteKey::Up, up), up);
+        // Down/Up: instead of zapping; Left/Right still bring the guide.
+        assert_eq!(seek_key("down_up", RemoteKey::Down, down), back);
+        assert_eq!(seek_key("down_up", RemoteKey::Up, up), forward);
+        assert_eq!(seek_key("down_up", RemoteKey::Left, guide), guide);
+        // Page keys zap whatever the choice.
+        assert_eq!(seek_key("down_up", RemoteKey::PageUp, up), up);
+        // Transport keys only: the arrows keep their meaning.
+        for (key, action) in [
+            (RemoteKey::Left, guide),
+            (RemoteKey::Right, guide),
+            (RemoteKey::Up, up),
+            (RemoteKey::Down, down),
+        ] {
+            assert_eq!(seek_key("transport", key, action), action);
+        }
+    }
 }

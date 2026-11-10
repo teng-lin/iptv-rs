@@ -9,7 +9,7 @@
 //! Entry points: first run without a stored source, the top bar's "Add
 //! playlist" (tap), and Menu in the groups pane (remote).
 
-mod entry;
+pub(crate) mod entry;
 mod words;
 
 use std::cell::RefCell;

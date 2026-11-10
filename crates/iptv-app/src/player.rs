@@ -19,7 +19,7 @@ use iptv_core::playback::{ChannelHistory, ErrorKind, Health, PlaySource, PlayerS
 use iptv_guide::EpgSchedule;
 use iptv_guide::playback::{Clock, PlaybackContext, Resolution, StalkerLink, Unavailable};
 use iptv_import::{CancelToken, SourceMeta};
-use iptv_net::{NetClient, NetConfig};
+use iptv_net::NetClient;
 use iptv_providers::model::SourceConfig;
 use iptv_providers::xtream::StreamFormat;
 use nsh_core::prelude::*;
@@ -181,10 +181,11 @@ fn open(ui: Ui, session: u64) {
     }
 }
 
-fn load(ui: Ui, session: u64, source: PlaySource) {
+fn load(ui: Ui, session: u64, mut source: PlaySource) {
     if ui.player.health.with_untracked(|h| h.session()) != session {
         return; // the viewer moved on
     }
+    crate::settings::add_user_agent(&mut source.headers, crate::settings::user_agent());
     log::info!(
         "iptv player open: session {session}, {} header(s)",
         source.headers.len()
@@ -213,7 +214,8 @@ fn resolve_link(ui: Ui, session: u64, link: Box<StalkerLink>, schedule: Rc<dyn S
                 .build()
                 .map_err(|_| "runtime".to_owned())?;
             runtime.block_on(async {
-                let net = NetClient::new(NetConfig::default()).map_err(|_| "network".to_owned())?;
+                let net = NetClient::new(crate::settings::net_config())
+                    .map_err(|_| "network".to_owned())?;
                 iptv_import::stalker_link(&net, &mut portal, &cmd, false, &CancelToken::new())
                     .await
                     .map_err(|e| format!("{:?}", e.kind()))
@@ -348,7 +350,9 @@ pub fn previous_channel(ui: Ui) {
     };
     show_channel(ui, channel);
     ui.play(channel, Playback::Live);
-    if ui.mode.get_untracked() == ViewMode::Fullscreen {
+    if ui.mode.get_untracked() == ViewMode::Fullscreen
+        && crate::settings::flag(iptv_settings::keys::INFO_ON_SWITCH)
+    {
         ui.update_panels(|p, now| p.show_info(now));
     }
 }
@@ -442,9 +446,11 @@ fn follow_playing(ui: Ui) {
 
 /// `data.rs` put an imported source's schedule on screen. After the
 /// startup refresh of a stored source (`refresh`), and with no wizard open,
-/// the last channel starts once, unless something already plays.
+/// the last channel starts once (`general.resume_last_channel`), unless
+/// something already plays.
 pub fn source_ready(ui: Ui, refresh: bool) {
     if !refresh
+        || !crate::settings::flag(iptv_settings::keys::RESUME_LAST_CHANNEL)
         || !ui.player.resume.get_untracked()
         || ui.playing.get_untracked().is_some()
         || ui.wizard.with_untracked(Option::is_some)

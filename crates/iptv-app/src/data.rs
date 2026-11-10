@@ -11,7 +11,7 @@
 //! refresh reaches the network, and stay when the refresh fails. Its guide
 //! is downloaded again only when the refresh policy says so (`stored`).
 
-mod stored;
+pub(crate) mod stored;
 mod wizard_map;
 
 use std::cell::Cell;
@@ -31,7 +31,7 @@ use iptv_import::{
     CancelToken, Catalog, Decision, EpgImport, EpgSourceConfig, ImportError, ImportOptions,
     NoProgress, Progress, ProgressSink, Trigger, import_epg, import_source,
 };
-use iptv_net::{NetClient, NetConfig};
+use iptv_net::NetClient;
 use iptv_providers::SecretUrl;
 use iptv_providers::model::{Channel, Group, Source};
 use iptv_store_sqlite::{CatalogCounts, SourceId, Store, StoreError, StoredSource};
@@ -273,6 +273,7 @@ fn show(ui: Ui, imported: Box<Imported>, generation: u64, refresh: bool) {
     if GENERATION.with(Cell::get) != generation {
         return;
     }
+    stored::note_shown(imported.source);
     let channels = imported.channels.len();
     let schedule = EpgSchedule::from_catalog(
         &imported.groups,
@@ -375,7 +376,7 @@ async fn guide_pipeline(source: SourceId, tx: &Sender<Msg>) {
     match stored::plan(Trigger::Timer, &guides, &channels, Some(&state), now) {
         Decision::Refresh(reason) => {
             log::info!("iptv data: downloading the guide ({reason:?})");
-            match NetClient::new(NetConfig::default()) {
+            match NetClient::new(crate::settings::net_config()) {
                 Ok(net) => {
                     let cancel = CancelToken::new();
                     let result = download_guide(
@@ -449,7 +450,7 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
     if let Some(view) = job.stored.and_then(|id| stored_view(&job, id, now)) {
         let _ = tx.send(Msg::Guide(view));
     }
-    let Ok(net) = NetClient::new(NetConfig::default()) else {
+    let Ok(net) = NetClient::new(crate::settings::net_config()) else {
         log::warn!("iptv data: network client setup failed");
         return fail(ImportFailure::new(FailureKind::Network));
     };
