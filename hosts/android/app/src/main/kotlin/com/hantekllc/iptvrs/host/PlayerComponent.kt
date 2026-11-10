@@ -67,12 +67,17 @@ import com.longbridge.nsh.NshComponentContext
  * its own player and state (several may play at once: multiview mounts one
  * per tile, two on a TV box by default, and mutes all but the active one;
  * a component's [destroy] releases its decoders). Recovers by itself from
- * BEHIND_LIVE_WINDOW, and retries once with
+ * BEHIND_LIVE_WINDOW (back to the default position), retries once with
  * the other kind of stream (a container it could not parse as HLS, a
- * playlist it could not parse as progressive); everything else goes to the
- * app, which owns the retry policy. The picture is black from a new source
- * or an error until the next first frame; a reconnect of the same stream
- * keeps the last frame.
+ * playlist it could not parse as progressive), and reopens a live stream
+ * that played once per 30 s after a network error or refusal
+ * ([quickReopen]); everything else goes to the app, which owns the retry
+ * policy. Loads retry network failures for about 15 s first
+ * ([LiveLoadPolicy]), and live streams play at least 10 s behind their
+ * live edge ([LIVE_MIN_OFFSET_MS]), so short outages play out of the
+ * buffer. The picture is black from a new source until its first frame
+ * (and after an error, except a live stream's that showed one); a
+ * reconnect of the same stream keeps the last frame.
  *
  * In the background nothing plays or loads: the activity's stop calls
  * [background] (the player stops, closing its connections; a provider
@@ -103,6 +108,18 @@ class PlayerComponent(
          * it gets no further spare: its end goes to the app, which backs off.
          */
         private const val MIN_BRIDGED_MS = 5_000L
+        /**
+         * A live stream plays at least this far behind its live edge (HLS:
+         * Media3's own offset, three segments, when that is more), so its
+         * buffer rides out a short outage instead of stalling at once.
+         */
+        const val LIVE_MIN_OFFSET_MS = 10_000L
+        /**
+         * A live stream that played reopens itself after an error at most
+         * once in this long ([quickReopen]); a second error in it goes to
+         * the app, which backs off.
+         */
+        private const val QUICK_REOPEN_EVERY_MS = 30_000L
     }
 
     /** What [foreground] reopens. */
@@ -139,6 +156,10 @@ class PlayerComponent(
     private var live = false
     /** When the playing item started (a spare that closes too soon gets none). */
     private var itemStartedAt = 0L
+    /** The current source showed a frame (its errors keep it: [listener]). */
+    private var rendered = false
+    /** When [quickReopen] last reopened the stream. */
+    private var quickReopenAt = 0L
     private var sourceHeaders: Map<String, String> = emptyMap()
     @Volatile private var headers = Headers(null, emptyMap())
     /** Set after the one format fallback (HLS or progressive) for the current stream. */
@@ -189,7 +210,9 @@ class PlayerComponent(
         }
         return ExoPlayer.Builder(context, renderers)
             .setMediaSourceFactory(
-                DefaultMediaSourceFactory(context).setDataSourceFactory(withHeaders),
+                DefaultMediaSourceFactory(context)
+                    .setDataSourceFactory(withHeaders)
+                    .setLoadErrorHandlingPolicy(LiveLoadPolicy()),
             )
             .build()
             .also { p ->
@@ -248,6 +271,7 @@ class PlayerComponent(
 
         override fun onRenderedFirstFrame() {
             shutter.visibility = View.GONE
+            rendered = true
             // Again for each stream: the app forgets the last one's.
             val size = player.videoSize
             if (size.width > 0 && size.height > 0) {
@@ -308,11 +332,34 @@ class PlayerComponent(
                     return
                 }
             }
-            shutter.visibility = View.VISIBLE
+            val status = httpStatus(error)
+            if (quickReopen(error, status)) return
+            // A live stream keeps its last frame: the app reconnects it,
+            // with "Reconnecting…" or its card over the frame.
+            if (!live || !rendered) shutter.visibility = View.VISIBLE
             val event = mutableMapOf<String, Any>("code" to error.errorCodeName)
-            httpStatus(error)?.let { event["http"] = it }
+            status?.let { event["http"] = it }
             nsh.emit("error", event)
         }
+    }
+
+    /**
+     * A live stream that played and fails on the network or with a refusal
+     * (an expired token: [LiveLoadPolicy]) reopens through its original
+     * address at once, keeping its last frame, without telling the app; at
+     * most once per [QUICK_REOPEN_EVERY_MS]. Whether it did.
+     */
+    private fun quickReopen(error: PlaybackException, status: Int?): Boolean {
+        val io = error.errorCode in 2000..2999
+        val now = SystemClock.elapsedRealtime()
+        if (!live || !rendered || !(io || LiveLoadPolicy.refused(status))) return false
+        if (now - itemStartedAt < MIN_BRIDGED_MS || now - quickReopenAt < QUICK_REOPEN_EVERY_MS) {
+            return false
+        }
+        quickReopenAt = now
+        val target = url ?: return false
+        start(target, mime)
+        return true
     }
 
     /** Reports where the stream is once a second while it plays (catch-up seeking). */
@@ -378,6 +425,7 @@ class PlayerComponent(
         applyHeaders()
         if (!changed) return
         triedOtherFormat = false
+        if (!keepFrame) rendered = false
         // A new stream: default tracks, no old cues.
         choice = PlayerTracks.Choice()
         applyChoice()
@@ -449,6 +497,13 @@ class PlayerComponent(
     private fun start(target: String, mime: String?) {
         val builder = MediaItem.Builder().setUri(target)
         if (mime != null) builder.setMimeType(mime)
+        if (live) {
+            // Behind live, never at the edge ([LIVE_MIN_OFFSET_MS]); the
+            // first frame still comes from the first segment loaded.
+            builder.setLiveConfiguration(
+                MediaItem.LiveConfiguration.Builder().setMinOffsetMs(LIVE_MIN_OFFSET_MS).build(),
+            )
+        }
         val item = builder.build()
         this.mime = mime
         val progressive =
