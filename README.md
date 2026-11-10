@@ -18,7 +18,7 @@ Android video/input research: [`docs/research/android-video-and-input.md`](docs/
 | `crates/iptv-settings` | One settings schema: catalogue, scoped store, versioned backup JSON. Wasm-safe |
 | `crates/iptv-epg` | Sans-IO XMLTV parser (gzip), EPG channel matching, compact guide store. Wasm-safe |
 | `crates/iptv-providers` | Sans-IO M3U parser, Xtream and Stalker clients, stable ids, catch-up URLs. Wasm-safe |
-| `crates/iptv-guide` | The real guide schedule: imported channels + EPG store behind the `Schedule` trait, with gap filling; stream resolution (URL + headers, live and catch-up) per provider. Wasm-safe |
+| `crates/iptv-guide` | The real guide schedule: imported channels + EPG store behind the `Schedule` trait, with gap filling and older days of a stored guide paged in on demand; stream resolution (URL + headers, live and catch-up) per provider. Wasm-safe |
 | `crates/iptv-import` | Runtime-agnostic import pipeline: M3U/Xtream/Stalker sources into a `Catalog`; XMLTV guides streamed into a `GuideSink` (the app stages them on disk) and matched; typed failures, progress, cancel; EPG refresh policy. Wasm-safe |
 | `crates/iptv-net` | Native HTTP adapter (reqwest + rustls) implementing `Fetch`; strips identity headers on cross-host redirects |
 | `crates/iptv-store-sqlite` | SQLite store: provider catalog and guide data replaced per refresh (the guide from a download staged in its own file; with each feed's result and channel list), guide sources per playlist, user overlays (favourites, order, hidden, history, a channel's guide choice) kept by stable id, FTS5 search, tested migrations |

@@ -84,7 +84,77 @@ guide marked two days old, startup refresh), RSS sampled every ~1.6 s:
 
 Next: the stored window itself (≈ 370 MB RSS with 7 days × 10 000 channels
 loaded) dominates on Android; load a narrower window (e.g. now − 1 day …
-end) and page older days in on demand when browsing back.
+end) and page older days in on demand when browsing back. Done: see the
+guide window section below.
+
+## 2026-11-10, guide window: the last day held, older days paged in (branch `epg-window`)
+
+The app held every kept day of the stored guide in memory (`epg.keep_past`,
+a week by default). Now a shown schedule holds the stored guide from one
+day before the hour on (`data::pages::LOADED_PAST_DAYS`, at most what is
+kept); older days are read one day at a time when something needs them
+(`iptv_guide::pages`: a guide cell browsed back to, a programme's details,
+catch-up of an older programme, which waits for its day and pins it), on
+their own thread, and show "Loading…" until then. At most three older
+days are held; they go when the guide's window is back at now. Programme
+search reads the titles of every kept day from the store on its own
+thread (`Store::for_each_epg_title`) instead of indexing the guide in
+memory. Reading a window back builds the slots straight from the store's
+settled rows (`iptv_epg::SettledBuilder`), so it no longer peaks at
+~2.5× what it keeps (finding 1). SQLite schema and retention unchanged.
+
+Same fixture (10 000 channels, 2.45 M programmes, 7 days kept, stored
+by the app's import), `c6f5d4a` before.
+
+**Tablet emulator** (Pixel Tablet, API 36, x86_64; x86_64-only debug
+host APK, `nsh package` thin LTO; the host had a load of 9–23 from other
+work), the stored guide fresh (no download at start), nothing playing.
+Memory sampled after a cold start (two runs each, they agree within
+1 MB); `tools/perf-android.sh emulator-5554` for the rest (zap measured
+nothing: the fixture's channels did not start playing):
+
+| Tablet emulator | Before | After |
+| --- | --- | --- |
+| RSS, 10 s after a cold start (guide on screen) | 442 MB | 333 MB |
+| RSS, steady (70–100 s) | 394 MB | 319 MB |
+| PSS, steady | 277 MB | 202 MB |
+| Native heap (PSS), steady | 208 MB | 133 MB |
+| Cold start to the stored guide on screen (median of 3) | 1825 ms (1761–2522) | 1875 ms (1574–2340) |
+| Guide key handling (30 × Down) | median 0.59 ms, max 4.5 ms | median 0.53 ms, max 2.5 ms |
+| Guide frame time (30 × Down), 50th / 90th / 99th | 42 / 65 / 101 ms | 40 / 61 / 77 ms |
+| An older day paged in (‹ in the time bar, 10 000 channels) | – | 256–331 ms, ≈ 5.1 MiB each |
+| RSS after paging in 1 / 2 / 3 / 4 days (3 held) | – | 320 / 339 / 348 / 359 MB |
+| RSS back at now (3 days dropped) | – | 342 MB |
+
+The script's own memory line (taken after its Back key and 30 × Down)
+read PSS 217 / 216 MB, RSS 335 / 334 MB for both builds, so it is not
+used here. Dropped pages free their heap, but the allocator keeps most of
+it (RSS stays ≈ 20 MB above the start until it is reused); the cap of
+three days bounds that.
+
+**Desktop** (Intel Core 7 240H, load 9), one window read per process
+(`epg_window_bench`, store filled by `epg_import_bench`), three
+alternating runs each, identical results:
+
+```sh
+cargo run --release -p iptv-store-sqlite --example epg_window_bench -- fixtures/bench window 7
+```
+
+| Desktop window read (`Store::load_epg`) | Before | After |
+| --- | --- | --- |
+| 7 days (what the app held before): time | 0.85–1.38 s | 0.79–0.80 s |
+| … guide heap / RSS peak over the read / held after | 38 MiB / +82 MiB / +82 MiB | 38 MiB / +58 MiB / +58 MiB |
+| 1 day (what the app holds now): time | 0.37–0.47 s | 0.35–0.36 s |
+| … guide heap / RSS peak / held after | 13 MiB / +49 MiB / +49 MiB | 13 MiB / +33 MiB / +33 MiB |
+| One older day (a page): time, heap, RSS peak | 0.19 s, 5.1 MiB, +28 MiB | 0.18 s, 5.1 MiB, +25 MiB |
+
+RSS includes the connection's SQLite page cache (up to 16 MiB; the app
+closes the connection after each read). So the app's guide at start
+goes from +82 MiB (7 days, old read) to +33 MiB (1 day, settled read).
+
+Not measured: programme search's index over every kept day now builds
+off the UI thread from the store (2.45 M titles); its build time and size
+on the emulator, and a real TV box.
 
 ## 2026-11-10, desktop, live streams the server cuts (branch `seamless-reconnect`)
 
@@ -160,11 +230,11 @@ guide window, so narrowing that window (finding 1) applies here too.
 
 1. **Guide import peak memory** (≈ 570 MB for 2.45 M programmes on the
    emulator before): the import builds no guide in memory any more
-   (desktop: +303 MiB → +84 MiB, and 30 % faster; see above). Next: the
-   window read back (`load_epg`) is now the peak (+41 MiB transient over
-   the 38 MiB it keeps): build the slots directly from the store's
-   sorted, settled rows. Re-measure on the emulator / a TV box with
-   `tools/perf-android.sh`.
+   (desktop: +303 MiB → +84 MiB, and 30 % faster; see above). The window
+   read back now builds its slots straight from the store's settled rows
+   (7 days: +82 → +58 MiB on the desktop), and the app holds only the
+   last day (emulator steady RSS 394 → 319 MB, PSS 277 → 202 MB; guide
+   window section). Re-measure on a TV box with `tools/perf-android.sh`.
 2. **Guide frame times** exceed the budget on the emulator under load; key
    handling itself is sub-millisecond, so the cost is layout/draw of the grid.
    Needs a real-device run (gfxinfo) before optimising.
