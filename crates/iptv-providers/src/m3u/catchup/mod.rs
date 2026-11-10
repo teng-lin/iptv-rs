@@ -21,6 +21,10 @@
 //!     EXT `m3u8` for an `.m3u8` live URL, else `ts`.
 //! - Unknown types and Stalker channels: [`CatchupError::Unsupported`].
 //!
+//! The live URL's own `{lutc}`/`${now}`/`${timestamp}` placeholders are
+//! expanded first ([`expand_live_url`]); generated URLs keep its query and
+//! fragment byte for byte.
+//!
 //! Template placeholders, in `{x}` or `${x}` form: `utc`/`start` (programme
 //! start), `utcend`/`end`, `lutc`/`now`/`timestamp`, `duration` (seconds),
 //! `offset` (now − start, seconds), `duration:N`/`offset:N` (divided by N),
@@ -52,7 +56,7 @@
 
 mod template;
 
-use template::{Vars, expand};
+use template::{Scope, Vars, expand};
 
 pub use crate::error::CatchupError;
 use crate::model::{CatchUpKind, Channel, StreamLocator};
@@ -106,6 +110,21 @@ impl CatchupRequest {
     }
 }
 
+/// Expands the placeholders Kodi allows in a channel's own (live) URL:
+/// `{lutc}`, `${now}`, `${timestamp}` and their `:FMT` forms (FMT in the
+/// viewer's clock, `local_offset_secs`). Other placeholders are left as they
+/// are. Catch-up URLs built from the live URL apply this first.
+pub fn expand_live_url(url: &str, now: i64, local_offset_secs: i32) -> String {
+    let vars = Vars {
+        from: now,
+        to: now,
+        now,
+        on_air: true,
+        local_offset_secs,
+    };
+    expand(url, &vars, Scope::Live)
+}
+
 /// The replay URL for a programme on `channel`. See the module docs for the
 /// rules and the checks.
 pub fn build_catchup_url(channel: &Channel, req: CatchupRequest) -> Result<String, CatchupError> {
@@ -120,20 +139,21 @@ pub fn build_catchup_url(channel: &Channel, req: CatchupRequest) -> Result<Strin
         return Err(CatchupError::Unsupported);
     }
     let vars = window(&req, catch_up.window_days(req.default_window_days))?;
+    let live = &expand(live, &vars, Scope::Live);
     let source = catch_up
         .source
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty());
-    let appended = |src: &str| checked(format!("{live}{}", expand(src, &vars)));
+    let appended = |src: &str| checked(format!("{live}{}", expand(src, &vars, Scope::Archive)));
     match &catch_up.kind {
         CatchUpKind::Append => appended(source.ok_or(CatchupError::MissingTemplate)?),
         CatchUpKind::Default => match source.ok_or(CatchupError::MissingTemplate)? {
-            src if has_scheme(src) => checked(expand(src, &vars)),
+            src if has_scheme(src) => checked(expand(src, &vars, Scope::Archive)),
             src => appended(src),
         },
         _ => match source.filter(|s| is_http(s)) {
-            Some(src) => checked(expand(src, &vars)),
+            Some(src) => checked(expand(src, &vars, Scope::Archive)),
             None => match &catch_up.kind {
                 CatchUpKind::Flussonic => flussonic(live, &vars),
                 CatchUpKind::Xtream => xtream(
@@ -267,19 +287,14 @@ fn split_path(raw: &str) -> Option<(&str, &str, &str)> {
 }
 
 fn xtream(live: &str, vars: &Vars, offset_secs: i32) -> Result<String, CatchupError> {
-    let mut url = url::Url::parse(live).map_err(|_| CatchupError::MalformedUrl)?;
-    let segments: Vec<String> = url
-        .path_segments()
-        .ok_or(CatchupError::MalformedUrl)?
-        .filter(|s| !s.is_empty())
-        .map(str::to_owned)
-        .collect();
+    let (origin, path, rest) = split_path(live).ok_or(CatchupError::MalformedUrl)?;
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     let (user, pass, last) = match segments.as_slice() {
-        [kind, u, p, last] if kind == "live" => (u, p, last),
+        ["live", u, p, last] => (u, p, last),
         [u, p, last] => (u, p, last),
         _ => return Err(CatchupError::MalformedUrl),
     };
-    let (id, ext) = last.split_once('.').unwrap_or((last.as_str(), ""));
+    let (id, ext) = last.split_once('.').unwrap_or((last, ""));
     if id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit()) {
         return Err(CatchupError::MalformedUrl);
     }
@@ -291,10 +306,9 @@ fn xtream(live: &str, vars: &Vars, offset_secs: i32) -> Result<String, CatchupEr
     };
     let minutes = crate::time::catchup_duration_minutes(vars.from, vars.to);
     let start = crate::time::format_catchup_start(vars.from + i64::from(offset_secs), 0);
-    url.set_path(&format!(
-        "/timeshift/{user}/{pass}/{minutes}/{start}/{id}.{ext}"
-    ));
-    Ok(url.to_string())
+    checked(format!(
+        "{origin}/timeshift/{user}/{pass}/{minutes}/{start}/{id}.{ext}{rest}"
+    ))
 }
 
 #[cfg(test)]

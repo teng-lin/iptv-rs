@@ -27,8 +27,17 @@ impl Vars {
     }
 }
 
+/// Which placeholders a string may use.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Scope {
+    /// A `catchup-source`: all of them.
+    Archive,
+    /// A channel's own URL: only the current time (`lutc`/`now`/`timestamp`).
+    Live,
+}
+
 /// Expands `{x}` and `${x}` placeholders; unknown ones are left untouched.
-pub(super) fn expand(template: &str, vars: &Vars) -> String {
+pub(super) fn expand(template: &str, vars: &Vars, scope: Scope) -> String {
     let mut out = String::with_capacity(template.len() + 16);
     let mut rest = template;
     while let Some(open) = rest.find('{') {
@@ -37,7 +46,11 @@ pub(super) fn expand(template: &str, vars: &Vars) -> String {
             break;
         };
         let token = &rest[open + 1..close];
-        match placeholder(token, vars) {
+        let value = match scope {
+            Scope::Archive => placeholder(token, vars),
+            Scope::Live => live_placeholder(token, vars),
+        };
+        match value {
             Some(value) => {
                 out.push_str(&rest[..if dollar { open - 1 } else { open }]);
                 out.push_str(&value);
@@ -48,6 +61,13 @@ pub(super) fn expand(template: &str, vars: &Vars) -> String {
     }
     out.push_str(rest);
     out
+}
+
+fn live_placeholder(token: &str, vars: &Vars) -> Option<String> {
+    let name = token.split_once(':').map_or(token, |(n, _)| n);
+    matches!(name, "lutc" | "now" | "timestamp")
+        .then(|| placeholder(token, vars))
+        .flatten()
 }
 
 fn placeholder(token: &str, vars: &Vars) -> Option<String> {

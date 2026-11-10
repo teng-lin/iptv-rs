@@ -399,3 +399,40 @@ fn xc_without_a_server_clock_uses_the_viewer_clock() {
         Ok("http://xc.example.com/timeshift/demo/secret/60/2023-11-14:22-13/7.ts")
     );
 }
+
+#[test]
+fn live_url_placeholders_are_expanded() {
+    assert_eq!(
+        expand_live_url(
+            "http://l.example.com/c.m3u8?t={lutc}&n=${now}&s=${timestamp}&d={lutc:Ymd}&u={utc}",
+            1_700_000_000,
+            3600
+        ),
+        "http://l.example.com/c.m3u8?t=1700000000&n=1700000000&s=1700000000&d=20231114&u={utc}"
+    );
+    // In a catch-up URL built from the live URL they are now as well.
+    let ch = channel(
+        r#"catchup="shift" catchup-days="1""#,
+        "http://l.example.com/c.m3u8?k=${timestamp}",
+    );
+    assert_eq!(
+        build_catchup_url(&ch, REQ).as_deref(),
+        Ok("http://l.example.com/c.m3u8?k=1700010000&utc=1700000000&lutc=1700010000")
+    );
+    let ch = channel(
+        r#"catchup="append" catchup-days="1" catchup-source="&archive={utc}""#,
+        "http://l.example.com/c.m3u8?k={lutc}",
+    );
+    assert_eq!(
+        build_catchup_url(&ch, REQ).as_deref(),
+        Ok("http://l.example.com/c.m3u8?k=1700010000&archive=1700000000")
+    );
+    let ch = channel(
+        r#"catchup="xc" catchup-days="1""#,
+        "http://xc.example.com/live/demo/secret/7.m3u8?k={lutc}",
+    );
+    assert_eq!(
+        build_catchup_url(&ch, REQ).as_deref(),
+        Ok("http://xc.example.com/timeshift/demo/secret/60/2023-11-14:22-13/7.m3u8?k=1700010000")
+    );
+}
