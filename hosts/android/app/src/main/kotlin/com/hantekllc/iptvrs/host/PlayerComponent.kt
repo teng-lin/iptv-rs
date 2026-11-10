@@ -5,6 +5,7 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.Gravity
 import android.view.SurfaceView
 import android.view.View
@@ -22,6 +23,7 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.common.util.Util
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.ResolvingDataSource
@@ -41,10 +43,14 @@ import com.longbridge.nsh.NshComponentContext
  * it; changing layout never recreates the decoder.
  *
  * Props:
- * - `source`: `{url, headers: {name: value}, token}` or null (stops). A new
- *   url or token reopens the stream (the token forces a retry of the same
- *   url). Headers go with every request; identity headers (Cookie,
- *   Authorization, SN, X-User-Agent) only to the stream's own host.
+ * - `source`: `{url, headers: {name: value}, token, live, reconnect}` or
+ *   null (stops). A new url or token reopens the stream (the token forces a
+ *   retry of the same url). Headers go with every request; identity headers
+ *   (Cookie, Authorization, SN, X-User-Agent) only to the stream's own host.
+ *   `live` (a live channel, not catch-up): a progressive live stream plays
+ *   on across a connection the server closes ([start]). `reconnect`: the
+ *   app reopens the stream that played (a retry), so the last frame stays
+ *   instead of the black shutter; so does a new token for the same url.
  * - `paused` (bool), `userAgent` (fallback when the source sends none),
  * - `pictureSize` ("normal", "full", "zoom", "cinema", "reduced", "4:3",
  *   "16:9", "2.35:1"; sizes the surface by layout, never by transform).
@@ -67,7 +73,13 @@ import com.longbridge.nsh.NshComponentContext
  * the other kind of stream (a container it could not parse as HLS, a
  * playlist it could not parse as progressive); everything else goes to the
  * app, which owns the retry policy. The picture is black from a new source
- * or an error until the next first frame.
+ * or an error until the next first frame; a reconnect of the same stream
+ * keeps the last frame.
+ *
+ * Live HLS needs nothing here: Media3 reloads a media playlist from the
+ * address it was given (a provider's redirect to a tokenized address is
+ * followed again on every reload, so an expired token never shows), not
+ * from where the redirect led.
  */
 @OptIn(UnstableApi::class)
 class PlayerComponent(
@@ -78,6 +90,11 @@ class PlayerComponent(
         const val NAME = "tv.player"
         private const val DEFAULT_UA = "iptv-rs/0.1 (Media3)"
         private val IDENTITY = setOf("cookie", "authorization", "sn", "x-user-agent")
+        /**
+         * A live item that played shorter than this before the server closed
+         * it gets no further spare: its end goes to the app, which backs off.
+         */
+        private const val MIN_BRIDGED_MS = 5_000L
     }
 
     /** Headers for the current stream; read on loader threads. */
@@ -107,6 +124,10 @@ class PlayerComponent(
     private var userAgent = DEFAULT_UA
     private var url: String? = null
     private var token: Long = 0
+    /** The source is a live channel ([start]'s spare items). */
+    private var live = false
+    /** When the playing item started (a spare that closes too soon gets none). */
+    private var itemStartedAt = 0L
     private var sourceHeaders: Map<String, String> = emptyMap()
     @Volatile private var headers = Headers(null, emptyMap())
     /** Set after the one format fallback (HLS or progressive) for the current stream. */
@@ -216,6 +237,18 @@ class PlayerComponent(
             emitFormat(player.videoFormat, player.audioFormat)
         }
 
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_AUTO || mediaItem == null) return
+            // The server closed a live stream and the spare plays on: drop
+            // what played, and queue the next spare.
+            val now = SystemClock.elapsedRealtime()
+            val played = now - itemStartedAt
+            itemStartedAt = now
+            val index = player.currentMediaItemIndex
+            if (index > 0) player.removeMediaItems(0, index)
+            if (played >= MIN_BRIDGED_MS) player.addMediaItem(mediaItem)
+        }
+
         override fun onTracksChanged(tracks: Tracks) {
             applyChoice()
             nsh.emit("tracks", PlayerTracks.event(tracks, choice))
@@ -310,6 +343,9 @@ class PlayerComponent(
     private fun setSource(source: Map<*, *>?) {
         val next = source?.get("url") as? String
         val nextToken = (source?.get("token") as? Number)?.toLong() ?: 0
+        live = source?.get("live") == true
+        // The same stream again (a retry): keep its last frame.
+        val keepFrame = next != null && (next == url || source?.get("reconnect") == true)
         sourceHeaders = (source?.get("headers") as? Map<*, *>)
             ?.entries
             ?.mapNotNull { (k, v) -> (k as? String)?.let { key -> (v as? String)?.let { key to it } } }
@@ -325,7 +361,7 @@ class PlayerComponent(
         choice = PlayerTracks.Choice()
         applyChoice()
         subtitles.setCues(emptyList())
-        shutter.visibility = View.VISIBLE
+        if (!keepFrame) shutter.visibility = View.VISIBLE
         if (next == null) {
             player.stop()
             player.clearMediaItems()
@@ -342,10 +378,26 @@ class PlayerComponent(
         headers = Headers(url?.let { Uri.parse(it).host }, all)
     }
 
+    /**
+     * Plays `target`. A live progressive stream (MPEG-TS over HTTP) ends when
+     * the server closes the connection, which providers do every minute or
+     * so: it plays as two items of the same address, and once the first is
+     * fully read the player opens the second while the buffered rest plays,
+     * then switches without a gap ([listener]'s `onMediaItemTransition`
+     * queues the next spare).
+     */
     private fun start(target: String, mime: String?) {
-        val item = MediaItem.Builder().setUri(target)
-        if (mime != null) item.setMimeType(mime)
-        player.setMediaItem(item.build())
+        val builder = MediaItem.Builder().setUri(target)
+        if (mime != null) builder.setMimeType(mime)
+        val item = builder.build()
+        val progressive =
+            Util.inferContentTypeForUriAndMimeType(Uri.parse(target), mime) == C.CONTENT_TYPE_OTHER
+        if (live && progressive) {
+            player.setMediaItems(listOf(item, item))
+        } else {
+            player.setMediaItem(item)
+        }
+        itemStartedAt = SystemClock.elapsedRealtime()
         player.prepare()
     }
 
