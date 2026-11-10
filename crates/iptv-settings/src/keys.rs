@@ -52,8 +52,10 @@ pub const EPG_UPDATE_ON_PLAYLIST_CHANGE: BoolKey = BoolKey("epg.update_on_playli
 pub const EPG_KEEP_PAST: DurationKey = DurationKey("epg.keep_past");
 pub const EPG_STORE_DESCRIPTIONS: BoolKey = BoolKey("epg.store_descriptions");
 
-// Startup.
+// Startup and leaving.
 pub const RESUME_LAST_CHANNEL: BoolKey = BoolKey("general.resume_last_channel");
+pub const CONFIRM_EXIT: BoolKey = BoolKey("general.confirm_exit");
+pub const CONFIRM_EXIT_WINDOW: DurationKey = DurationKey("general.confirm_exit_window");
 
 // Appearance over video.
 pub const UI_TRANSPARENCY: IntKey = IntKey("appearance.ui_transparency");
@@ -73,6 +75,7 @@ pub const SEARCH_FAVORITES_FIRST: BoolKey = BoolKey("search.favorites_first");
 pub const SEARCH_INCLUDE_PAST_WITHOUT_CATCHUP: BoolKey =
     BoolKey("search.include_past_without_catchup");
 pub const SEARCH_STAY: BoolKey = BoolKey("search.stay_on_search");
+pub const SEARCH_SHOW_HISTORY: BoolKey = BoolKey("search.show_history");
 
 /// Every typed key with its expected type name, for the schema test.
 pub const ALL: &[(&str, &str)] = &[
@@ -98,6 +101,8 @@ pub const ALL: &[(&str, &str)] = &[
     (EPG_KEEP_PAST.0, "duration"),
     (EPG_STORE_DESCRIPTIONS.0, "bool"),
     (RESUME_LAST_CHANNEL.0, "bool"),
+    (CONFIRM_EXIT.0, "bool"),
+    (CONFIRM_EXIT_WINDOW.0, "duration"),
     (UI_TRANSPARENCY.0, "integer"),
     (BACK_RETURNS_TO_NOW.0, "bool"),
     (INFO_ON_SWITCH.0, "bool"),
@@ -108,4 +113,5 @@ pub const ALL: &[(&str, &str)] = &[
     (SEARCH_FAVORITES_FIRST.0, "bool"),
     (SEARCH_INCLUDE_PAST_WITHOUT_CATCHUP.0, "bool"),
     (SEARCH_STAY.0, "bool"),
+    (SEARCH_SHOW_HISTORY.0, "bool"),
 ];

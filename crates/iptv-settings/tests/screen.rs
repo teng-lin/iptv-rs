@@ -1,33 +1,86 @@
 //! The settings screen's state machine.
 
-use iptv_settings::screen::{Ctx, Editor, Effect, Key, Pane, Row, Screen, Status, rows};
+use iptv_settings::screen::{
+    Ctx, Editor, Effect, Key, Offer, Page, Pane, Part, Row, Screen, Status, rows,
+};
 use iptv_settings::{Section, Settings, Value};
 
-/// The app acts on these (a sample of each value type).
-fn available(key: &str) -> bool {
-    matches!(
-        key,
+static PAGES: &[Page] = &[
+    Page {
+        key: "general",
+        parts: &[Part::Section(Section::General)],
+    },
+    Page {
+        key: "playlists",
+        parts: &[Part::Keys(&["playlists.update_all"])],
+    },
+    Page {
+        key: "epg",
+        parts: &[Part::Section(Section::Epg)],
+    },
+    Page {
+        key: "appearance",
+        parts: &[
+            Part::Section(Section::Appearance),
+            Part::Section(Section::Guide),
+        ],
+    },
+    Page {
+        key: "playback",
+        parts: &[
+            Part::Section(Section::Player),
+            Part::Section(Section::Catchup),
+        ],
+    },
+    Page {
+        key: "remote",
+        parts: &[Part::Section(Section::Remote)],
+    },
+    Page {
+        key: "other",
+        parts: &[Part::Section(Section::Search), Part::Section(Section::Vod)],
+    },
+];
+
+/// What the app offers (a sample of each kind and value type).
+fn offer(key: &str) -> Offer {
+    match key {
         "general.resume_last_channel"
-            | "epg.update_interval"
-            | "epg.keep_past"
-            | "appearance.accent"
-            | "appearance.ui_transparency"
-            | "catchup.seek_keys"
-            | "catchup.forward_step"
-            | "guide.highlight_now"
-            | "guide.now_highlight_style"
-            | "player.clock"
-            | "player.clock_date"
-            | "general.udp_proxy"
-            | "remote.key_overrides"
-    )
+        | "epg.update_interval"
+        | "epg.keep_past"
+        | "epg.update_now"
+        | "epg.clear"
+        | "appearance.accent"
+        | "appearance.ui_transparency"
+        | "catchup.seek_keys"
+        | "catchup.forward_step"
+        | "guide.highlight_now"
+        | "guide.now_highlight_style"
+        | "player.clock"
+        | "player.clock_date"
+        | "remote.customize"
+        | "remote.key_overrides"
+        | "search.favorites_first" => Offer::Active,
+        "general.about" => Offer::ReadOnly,
+        "general.start_on_boot" | "general.start_on_wake" | "search.prefer_voice" => Offer::Hidden,
+        k if k.starts_with("vod.") => Offer::Later,
+        _ => Offer::NotYet,
+    }
+}
+
+fn everything(_: &str) -> Offer {
+    Offer::Active
 }
 
 fn ctx(settings: &Settings) -> Ctx<'_> {
     Ctx {
         settings,
-        available: &available,
+        offer: &offer,
     }
+}
+
+fn page(key: &str) -> &'static Page {
+    PAGES.iter().find(|p| p.key == key).unwrap()
 }
 
 fn press(screen: &mut Screen, settings: &Settings, keys: &[Key]) -> Effect {
@@ -52,65 +105,121 @@ fn keys_of(rows: &[Row]) -> Vec<&'static str> {
     rows.iter().filter_map(Row::key).collect()
 }
 
+fn row(settings: &Settings, page_key: &str, key: &str) -> Row {
+    rows(page(page_key), &ctx(settings))
+        .into_iter()
+        .find(|r| r.key() == Some(key))
+        .unwrap()
+}
+
 #[test]
-fn sections_choose_and_back_closes() {
+fn pages_choose_and_back_closes() {
     let s = Settings::new();
-    let mut screen = Screen::new(Section::General);
-    assert_eq!(screen.pane(), Pane::Sections);
+    let mut screen = Screen::new(PAGES, "nothing");
+    assert_eq!((screen.page().key, screen.pane()), ("general", Pane::Pages));
     press(&mut screen, &s, &[Key::Up]);
-    assert_eq!(screen.section(), Section::General, "no wrap at the top");
-    press(&mut screen, &s, &[Key::Down, Key::Down, Key::Down]);
-    assert_eq!(screen.section(), Section::Epg);
-    press(
-        &mut screen,
-        &s,
-        &[Key::PageDown, Key::PageDown, Key::PageDown, Key::PageDown],
-    );
-    assert_eq!(screen.section(), Section::Vod, "stops at the last");
+    assert_eq!(screen.page().key, "general", "no wrap at the top");
+    press(&mut screen, &s, &[Key::Down, Key::Down]);
+    assert_eq!(screen.page().key, "epg");
+    press(&mut screen, &s, &[Key::PageDown, Key::PageDown]);
+    assert_eq!(screen.page().key, "other", "stops at the last");
     assert_eq!(press(&mut screen, &s, &[Key::Back]), Effect::Close);
+    assert_eq!(Screen::new(PAGES, "remote").page_index(), 5);
+}
+
+#[test]
+fn rows_leave_out_what_is_not_offered() {
+    let s = Settings::new();
+    let general = keys_of(&rows(page("general"), &ctx(&s)));
+    assert!(!general.contains(&"general.start_on_boot"));
+    assert!(general.contains(&"general.confirm_exit"));
+    assert!(
+        !general.contains(&"general.confirm_exit_window"),
+        "advanced"
+    );
+    let other = keys_of(&rows(page("other"), &ctx(&s)));
+    assert!(!other.contains(&"search.prefer_voice"));
+    // Named rows are shown in their order.
+    assert_eq!(
+        keys_of(&rows(page("playlists"), &ctx(&s))),
+        ["playlists.update_all"]
+    );
+}
+
+#[test]
+fn headings_name_subsections_and_sections_of_shared_pages() {
+    let s = Settings::new();
+    let epg = rows(page("epg"), &ctx(&s));
+    assert!(
+        matches!(epg[0], Row::Command(_)),
+        "no heading without a subsection"
+    );
+    assert!(epg.contains(&Row::Heading {
+        section: Section::Epg,
+        subsection: Some("updates")
+    }));
+    // Search has no subsections: on a shared page its name heads its rows.
+    let other = rows(page("other"), &ctx(&s));
+    assert_eq!(
+        other[0],
+        Row::Heading {
+            section: Section::Search,
+            subsection: None
+        }
+    );
+}
+
+#[test]
+fn statuses_follow_the_offer() {
+    let mut s = Settings::new();
+    let c = ctx(&s);
+    assert_eq!(c.status(&row(&s, "epg", "epg.keep_past")), Status::Active);
+    assert_eq!(c.status(&row(&s, "epg", "epg.time_offset")), Status::NotYet);
+    assert_eq!(c.status(&row(&s, "other", "vod.sort")), Status::Later);
+    assert_eq!(
+        c.status(&row(&s, "general", "general.about")),
+        Status::ReadOnly
+    );
+    // An active key-binding list has no editor: read-only.
+    let bindings = row(&s, "remote", "remote.key_overrides");
+    assert_eq!(c.status(&bindings), Status::ReadOnly);
+    // Switched off by another setting.
+    s.set("player.clock", Value::Bool(false)).unwrap();
+    let date = row(&s, "playback", "player.clock_date");
+    assert_eq!(ctx(&s).status(&date), Status::Disabled);
+    let mut screen = Screen::new(PAGES, "playback");
+    assert_eq!(screen.tap_row("player.clock_date", &ctx(&s)), Effect::None);
+    assert_eq!(screen.editor(), None);
 }
 
 #[test]
 fn entering_the_rows_focuses_the_first_row_the_app_acts_on() {
     let s = Settings::new();
-    let mut screen = Screen::new(Section::General);
+    let mut screen = Screen::new(PAGES, "general");
     // General starts with commands the app cannot run yet.
-    let first = rows(Section::General, &s, false);
-    assert!(matches!(first[0], Row::Command(_)));
+    assert!(matches!(
+        rows(page("general"), &ctx(&s))[0],
+        Row::Command(_)
+    ));
     press(&mut screen, &s, &[Key::Right]);
     assert_eq!(screen.pane(), Pane::Rows);
     assert_eq!(screen.focus(), Some("general.resume_last_channel"));
-    // Left goes back to the sections; Right returns to the same row.
+    // Left goes back to the pages; Right returns to the same row.
     press(&mut screen, &s, &[Key::Down, Key::Left]);
-    assert_eq!(screen.pane(), Pane::Sections);
+    assert_eq!(screen.pane(), Pane::Pages);
     press(&mut screen, &s, &[Key::Ok]);
     assert_eq!(screen.focus(), Some("general.confirm_exit"));
-    // A section without any row the app acts on: its first row.
-    let mut screen = Screen::new(Section::Vod);
+    // A page without any row the app acts on: its first row.
+    let mut screen = Screen::new(PAGES, "playlists");
     press(&mut screen, &s, &[Key::Ok]);
-    assert_eq!(screen.focus(), Some("vod.movies_by_category"));
+    assert_eq!(screen.focus(), Some("playlists.update_all"));
 }
 
 #[test]
 fn rows_skip_headings_and_stop_at_the_ends() {
     let s = Settings::new();
-    let all = rows(Section::Epg, &s, false);
-    assert!(
-        matches!(all[0], Row::Command(_)),
-        "commands without a subsection first"
-    );
-    assert!(
-        all.iter().any(|r| matches!(
-            r,
-            Row::Heading {
-                subsection: "updates",
-                ..
-            }
-        )),
-        "subsections have headings"
-    );
-    let keys = keys_of(&all);
-    let mut screen = Screen::new(Section::Epg);
+    let keys = keys_of(&rows(page("epg"), &ctx(&s)));
+    let mut screen = Screen::new(PAGES, "epg");
     press(&mut screen, &s, &[Key::Right]);
     assert_eq!(screen.focus(), Some("epg.update_interval"));
     press(&mut screen, &s, &[Key::PageUp, Key::Up]);
@@ -122,17 +231,9 @@ fn rows_skip_headings_and_stop_at_the_ends() {
 }
 
 #[test]
-fn advanced_settings_are_left_out() {
-    let s = Settings::new();
-    let keys = keys_of(&rows(Section::Epg, &s, false));
-    assert!(!keys.contains(&"epg.full_scan"));
-    assert!(keys_of(&rows(Section::Epg, &s, true)).contains(&"epg.full_scan"));
-}
-
-#[test]
 fn ok_flips_a_switch() {
     let mut s = Settings::new();
-    let mut screen = Screen::new(Section::General);
+    let mut screen = Screen::new(PAGES, "general");
     let effect = press(&mut screen, &s, &[Key::Right, Key::Ok]);
     assert_eq!(
         effect,
@@ -155,10 +256,8 @@ fn ok_flips_a_switch() {
 #[test]
 fn a_choice_opens_a_list_on_the_current_value() {
     let s = Settings::new();
-    let mut screen = Screen::new(Section::Catchup);
-    press(&mut screen, &s, &[Key::Right]);
-    assert_eq!(screen.focus(), Some("catchup.seek_keys"));
-    press(&mut screen, &s, &[Key::Ok]);
+    let mut screen = Screen::new(PAGES, "playback");
+    screen.tap_row("catchup.seek_keys", &ctx(&s));
     let Some(Editor::Choice {
         focus, selected, ..
     }) = screen.editor().cloned()
@@ -189,12 +288,8 @@ fn a_choice_opens_a_list_on_the_current_value() {
 #[test]
 fn colours_are_picked_as_colours() {
     let s = Settings::new();
-    let mut screen = Screen::new(Section::Appearance);
-    assert_eq!(
-        screen.tap_row("appearance.accent", &ctx(&s)),
-        Effect::None,
-        "a tap opens the list"
-    );
+    let mut screen = Screen::new(PAGES, "appearance");
+    assert_eq!(screen.tap_row("appearance.accent", &ctx(&s)), Effect::None);
     assert_eq!(
         screen.pick(13),
         Effect::Set {
@@ -207,7 +302,7 @@ fn colours_are_picked_as_colours() {
 #[test]
 fn a_stepper_moves_in_steps_within_range_and_keeps_on_ok() {
     let mut s = Settings::new();
-    let mut screen = Screen::new(Section::Epg);
+    let mut screen = Screen::new(PAGES, "epg");
     press(&mut screen, &s, &[Key::Right, Key::Ok]);
     let hour = 3_600_000;
     let value = |screen: &Screen| match screen.editor() {
@@ -251,7 +346,7 @@ fn a_stepper_moves_in_steps_within_range_and_keeps_on_ok() {
 #[test]
 fn integers_step_as_integers() {
     let s = Settings::new();
-    let mut screen = Screen::new(Section::Appearance);
+    let mut screen = Screen::new(PAGES, "appearance");
     screen.tap_row("appearance.ui_transparency", &ctx(&s));
     screen.step(1);
     assert_eq!(
@@ -266,64 +361,68 @@ fn integers_step_as_integers() {
 #[test]
 fn rows_the_app_does_not_act_on_do_nothing() {
     let s = Settings::new();
-    let mut screen = Screen::new(Section::General);
+    let mut screen = Screen::new(PAGES, "general");
     let c = ctx(&s);
-    // A setting, a command and a key-binding list (no editor).
-    assert_eq!(screen.tap_row("general.start_on_boot", &c), Effect::None);
-    assert_eq!(screen.focus(), Some("general.start_on_boot"));
+    assert_eq!(screen.tap_row("general.language", &c), Effect::None);
+    assert_eq!(screen.focus(), Some("general.language"));
     assert_eq!(screen.editor(), None);
     assert_eq!(screen.tap_row("general.backup", &c), Effect::None);
-    let all = rows(Section::Remote, &s, false);
-    let bindings = all
-        .iter()
-        .find(|r| r.key() == Some("remote.key_overrides"))
-        .unwrap();
-    assert_eq!(c.status(bindings), Status::Unavailable);
-    let boot = rows(Section::General, &s, false)
-        .into_iter()
-        .find(|r| r.key() == Some("general.start_on_boot"))
-        .unwrap();
-    assert_eq!(c.status(&boot), Status::Unavailable);
+    assert_eq!(
+        screen.tap_row("general.about", &c),
+        Effect::None,
+        "read-only"
+    );
+    let mut screen = Screen::new(PAGES, "other");
+    assert_eq!(screen.tap_row("vod.sort", &c), Effect::None, "later");
 }
 
 #[test]
-fn commands_the_app_runs_are_run() {
+fn commands_run_after_a_confirmation_when_asked() {
     let s = Settings::new();
-    let runs = |key: &str| key == "epg.update_now";
-    let c = Ctx {
-        settings: &s,
-        available: &runs,
-    };
-    let mut screen = Screen::new(Section::Epg);
+    let mut screen = Screen::new(PAGES, "epg");
     assert_eq!(
-        screen.tap_row("epg.update_now", &c),
+        screen.tap_row("epg.update_now", &ctx(&s)),
         Effect::Run("epg.update_now")
     );
+    // Clearing the guide asks first; Back keeps everything.
+    assert_eq!(screen.tap_row("epg.clear", &ctx(&s)), Effect::None);
+    assert!(matches!(screen.editor(), Some(Editor::Confirm { .. })));
+    assert_eq!(
+        press(&mut screen, &s, &[Key::Left, Key::Back]),
+        Effect::None
+    );
+    assert_eq!(screen.editor(), None);
+    screen.tap_row("epg.clear", &ctx(&s));
+    assert_eq!(press(&mut screen, &s, &[Key::Ok]), Effect::Run("epg.clear"));
+    assert_eq!(screen.editor(), None);
 }
 
 #[test]
-fn dependencies_hide_or_disable_rows() {
-    let mut s = Settings::new();
-    let style = "guide.now_highlight_style";
-    assert!(keys_of(&rows(Section::Guide, &s, false)).contains(&style));
-    s.set("guide.highlight_now", Value::Bool(false)).unwrap();
-    assert!(!keys_of(&rows(Section::Guide, &s, false)).contains(&style));
-
-    s.set("player.clock", Value::Bool(false)).unwrap();
-    let date = rows(Section::Player, &s, false)
-        .into_iter()
-        .find(|r| r.key() == Some("player.clock_date"))
-        .unwrap();
-    assert_eq!(ctx(&s).status(&date), Status::Disabled);
-    let mut screen = Screen::new(Section::Player);
-    assert_eq!(screen.tap_row("player.clock_date", &ctx(&s)), Effect::None);
+fn a_read_only_list_scrolls_and_closes() {
+    let s = Settings::new();
+    let mut screen = Screen::new(PAGES, "remote");
+    assert_eq!(
+        screen.tap_row("remote.customize", &ctx(&s)),
+        Effect::Run("remote.customize")
+    );
+    screen.open_list("remote.customize", 3);
+    press(&mut screen, &s, &[Key::Down; 5]);
+    assert!(matches!(
+        screen.editor(),
+        Some(Editor::List { focus: 2, .. })
+    ));
+    press(&mut screen, &s, &[Key::Ok]);
+    assert_eq!(screen.editor(), None);
+    screen.open_list("remote.customize", 3);
+    press(&mut screen, &s, &[Key::Back]);
+    assert_eq!((screen.editor(), screen.pane()), (None, Pane::Rows));
 }
 
 #[test]
 fn focus_follows_the_row_not_its_position() {
     let mut s = Settings::new();
     s.set("guide.highlight_now", Value::Bool(false)).unwrap();
-    let mut screen = Screen::new(Section::Guide);
+    let mut screen = Screen::new(PAGES, "appearance");
     screen.tap_row("guide.now_line_full_height", &ctx(&s));
     // A row appears above the focused one.
     s.set("guide.highlight_now", Value::Bool(true)).unwrap();
@@ -333,21 +432,19 @@ fn focus_follows_the_row_not_its_position() {
     // The focused row disappears: movement starts from the first row.
     s.set("guide.highlight_now", Value::Bool(false)).unwrap();
     press(&mut screen, &s, &[Key::Down]);
-    let keys = keys_of(&rows(Section::Guide, &s, false));
+    let keys = keys_of(&rows(page("appearance"), &ctx(&s)));
     assert_eq!(screen.focus(), Some(keys[1]));
 }
 
 #[test]
-fn text_is_edited_and_kept_on_ok() {
+fn text_is_kept_only_when_valid() {
     let s = Settings::new();
-    let all = |_: &str| true;
     let c = Ctx {
         settings: &s,
-        available: &all,
+        offer: &everything,
     };
-    let mut screen = Screen::new(Section::General);
+    let mut screen = Screen::new(PAGES, "general");
     assert_eq!(screen.tap_row("general.user_agent", &c), Effect::None);
-    assert!(matches!(screen.editor(), Some(Editor::Text { .. })));
     screen.set_text("SyntheticPlayer/1.0");
     assert_eq!(
         screen.key(Key::Ok, &c),
@@ -356,20 +453,6 @@ fn text_is_edited_and_kept_on_ok() {
             value: Value::text("SyntheticPlayer/1.0")
         }
     );
-    // Advanced rows are not listed, so a tap finds nothing.
-    assert_eq!(screen.tap_row("general.udp_proxy", &c), Effect::None);
-    assert_eq!(screen.editor(), None);
-}
-
-#[test]
-fn an_invalid_text_keeps_the_editor_open() {
-    let s = Settings::new();
-    let all = |_: &str| true;
-    let c = Ctx {
-        settings: &s,
-        available: &all,
-    };
-    let mut screen = Screen::new(Section::General);
     screen.tap_row("general.language", &c);
     screen.set_text("not a language");
     assert_eq!(screen.commit(), Effect::None);
@@ -392,19 +475,19 @@ fn an_invalid_text_keeps_the_editor_open() {
 }
 
 #[test]
-fn tapping_a_section_leaves_any_editor() {
+fn tapping_a_page_leaves_any_editor() {
     let s = Settings::new();
-    let mut screen = Screen::new(Section::Epg);
+    let mut screen = Screen::new(PAGES, "epg");
     screen.tap_row("epg.keep_past", &ctx(&s));
     assert!(screen.editor().is_some());
-    screen.tap_section(Section::Search);
+    screen.tap_page(6);
     assert_eq!(
         (
-            screen.section(),
+            screen.page().key,
             screen.pane(),
             screen.editor(),
             screen.focus()
         ),
-        (Section::Search, Pane::Sections, None, None)
+        ("other", Pane::Pages, None, None)
     );
 }

@@ -1,22 +1,24 @@
-//! The settings screen's state: the chosen section, the focused row (by
-//! key, never by position) and the open value editor. Toolkit-free and
-//! pure like the rest of the crate: the app draws it, feeds it keys and
-//! taps, and carries out the [`Effect`]s it answers (store a value, run a
-//! command, close).
+//! The settings screen's state: the chosen page, the focused row (by key,
+//! never by position) and the open editor. Toolkit-free and pure like the
+//! rest of the crate: the app draws it, feeds it keys and taps, and
+//! carries out the [`Effect`]s it answers (store a value, run a command,
+//! close).
 //!
-//! Layout: the [`Section`]s, and the [`rows`] of the chosen one —
-//! subsection headings, then settings and commands in catalogue order.
-//! Rows whose visibility conditions fail are left out; advanced settings
-//! show only with `advanced`. Every setting and command takes the focus,
-//! also those the app cannot act on yet ([`Status`]), so the UI can say
-//! why OK does nothing there.
+//! Layout: the app's [`Page`]s (each one or more catalogue sections, or
+//! named rows), and the [`rows`] of the chosen one — headings, then
+//! settings and commands in catalogue order. Rows whose visibility
+//! conditions fail, advanced settings, and rows the app does not offer
+//! ([`Offer::Hidden`]) are left out. Every other setting and command
+//! takes the focus, also those the app cannot act on yet ([`Status`]), so
+//! the UI can say why OK does nothing there.
 //!
-//! Keys. Sections: Up/Down choose (the rows follow), Right or OK enter the
+//! Keys. Pages: Up/Down choose (the rows follow), Right or OK enter the
 //! rows, Back closes. Rows: Up/Down move, Page keys move five, Left or
-//! Back return to the sections, OK edits — a switch flips at once, a
-//! choice opens its list, a number or duration opens a stepper (Left/Down
-//! less, Right/Up more, Page keys ten steps, OK keeps, Back cancels), text
-//! opens a text editor (OK keeps a valid text, Back cancels).
+//! Back return to the pages, OK acts — a switch flips at once, a choice
+//! opens its list, a number or duration opens a stepper (Left/Down less,
+//! Right/Up more, Page keys ten steps, OK keeps, Back cancels), text opens
+//! a text editor (OK keeps a valid text, Back cancels), a command runs
+//! (after a confirmation when the catalogue asks for one).
 
 use crate::catalogue::{self, Command};
 use crate::schema::{Section, Setting, ValueType};
@@ -30,13 +32,58 @@ const PAGE: usize = 5;
 /// Steps one Page key moves in the stepper.
 const BIG_STEP: i64 = 10;
 
+/// What the app does with a setting or command.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Offer {
+    /// It acts on the value, or runs the command.
+    Active,
+    /// It shows the value (or runs nothing); there is nothing to change.
+    ReadOnly,
+    /// Not done yet.
+    NotYet,
+    /// Planned for a later version.
+    Later,
+    /// Not offered: left out of the sections. A page that names it
+    /// ([`Part::Keys`]) shows it read-only.
+    Hidden,
+}
+
+/// What OK on a row can do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Status {
+    Active,
+    ReadOnly,
+    /// Another setting switches it off (an `enabled_if` condition fails).
+    Disabled,
+    NotYet,
+    Later,
+}
+
+/// One part of a page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Part {
+    /// A catalogue section's rows.
+    Section(Section),
+    /// Settings or commands by key, in this order (shown whatever their
+    /// [`Offer`]).
+    Keys(&'static [&'static str]),
+}
+
+/// One entry of the pages list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Page {
+    pub key: &'static str,
+    pub parts: &'static [Part],
+}
+
 /// One line of the rows pane.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Row {
-    /// A subsection title; never focused.
+    /// A title over the rows below it; never focused. Without a
+    /// subsection: the section's name (on pages of several sections).
     Heading {
         section: Section,
-        subsection: &'static str,
+        subsection: Option<&'static str>,
     },
     Setting(&'static Setting),
     Command(&'static Command),
@@ -53,45 +100,40 @@ impl Row {
     }
 }
 
-/// What OK on a row can do.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Status {
-    /// The app acts on the value or runs the command.
-    Active,
-    /// The app does not act on it yet (or it has no editor).
-    Unavailable,
-    /// Another setting switches it off (an `enabled_if` condition fails).
-    Disabled,
-}
-
 /// What the screen reads from the app.
 pub struct Ctx<'a> {
     pub settings: &'a Settings,
-    /// Whether the app acts on a setting or command key.
-    pub available: &'a dyn Fn(&str) -> bool,
+    pub offer: &'a dyn Fn(&str) -> Offer,
 }
 
 impl Ctx<'_> {
     pub fn status(&self, row: &Row) -> Status {
-        match row {
-            Row::Heading { .. } => Status::Unavailable,
-            Row::Command(c) if (self.available)(c.key) => Status::Active,
-            Row::Command(_) => Status::Unavailable,
-            Row::Setting(s) => {
-                let editable = !matches!(s.ty, ValueType::KeyBindings { .. });
-                if !editable || !(self.available)(s.key) {
-                    Status::Unavailable
-                } else if !self
-                    .settings
-                    .is_enabled(s.key, &Target::Global)
-                    .unwrap_or(false)
+        let Some(key) = row.key() else {
+            return Status::ReadOnly;
+        };
+        match (self.offer)(key) {
+            Offer::ReadOnly | Offer::Hidden => Status::ReadOnly,
+            Offer::NotYet => Status::NotYet,
+            Offer::Later => Status::Later,
+            Offer::Active => match row {
+                Row::Setting(s) if matches!(s.ty, ValueType::KeyBindings { .. }) => {
+                    Status::ReadOnly
+                }
+                Row::Setting(s)
+                    if !self
+                        .settings
+                        .is_enabled(s.key, &Target::Global)
+                        .unwrap_or(false) =>
                 {
                     Status::Disabled
-                } else {
-                    Status::Active
                 }
-            }
+                _ => Status::Active,
+            },
         }
+    }
+
+    fn offered(&self, key: &str) -> bool {
+        (self.offer)(key) != Offer::Hidden
     }
 
     fn value(&self, s: &Setting) -> Value {
@@ -101,35 +143,58 @@ impl Ctx<'_> {
     }
 }
 
-/// The rows of `section` with the current values' visibility.
-pub fn rows(section: Section, settings: &Settings, advanced: bool) -> Vec<Row> {
-    let Some(node) = catalogue::tree(advanced)
-        .into_iter()
-        .find(|n| n.section == section)
-    else {
-        return Vec::new();
-    };
+/// The rows of `page`. On a page of several sections, rows without a
+/// subsection get their section's name as heading.
+pub fn rows(page: &Page, ctx: &Ctx) -> Vec<Row> {
+    let several = page.parts.len() > 1;
+    let tree = catalogue::tree(false);
     let mut rows = Vec::new();
-    for group in node.groups {
-        let start = rows.len();
-        if let Some(subsection) = group.subsection {
-            rows.push(Row::Heading {
-                section,
-                subsection,
-            });
-        }
-        let before = rows.len();
-        let visible = |s: &&&Setting| settings.is_visible(s.key, &Target::Global).unwrap_or(false);
-        rows.extend(
-            group
+    for part in page.parts {
+        let section = match part {
+            Part::Keys(keys) => {
+                rows.extend(keys.iter().filter_map(|k| {
+                    catalogue::setting(k)
+                        .map(Row::Setting)
+                        .or_else(|| catalogue::command(k).map(Row::Command))
+                }));
+                continue;
+            }
+            Part::Section(section) => *section,
+        };
+        let Some(node) = tree.iter().find(|n| n.section == section) else {
+            continue;
+        };
+        for group in &node.groups {
+            let visible = |s: &&&Setting| {
+                ctx.offered(s.key)
+                    && ctx
+                        .settings
+                        .is_visible(s.key, &Target::Global)
+                        .unwrap_or(false)
+            };
+            let items: Vec<Row> = group
                 .settings
                 .iter()
                 .filter(visible)
-                .map(|s| Row::Setting(s)),
-        );
-        rows.extend(group.commands.iter().map(|c| Row::Command(c)));
-        if rows.len() == before {
-            rows.truncate(start);
+                .map(|s| Row::Setting(s))
+                .chain(
+                    group
+                        .commands
+                        .iter()
+                        .filter(|c| ctx.offered(c.key))
+                        .map(|c| Row::Command(c)),
+                )
+                .collect();
+            if items.is_empty() {
+                continue;
+            }
+            if group.subsection.is_some() || several {
+                rows.push(Row::Heading {
+                    section,
+                    subsection: group.subsection,
+                });
+            }
+            rows.extend(items);
         }
     }
     rows
@@ -151,11 +216,11 @@ pub fn grid(ty: &ValueType) -> Option<(i64, i64, i64)> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pane {
-    Sections,
+    Pages,
     Rows,
 }
 
-/// An open value editor.
+/// An open editor or dialog.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Editor {
     /// An enum or colour: its variants, the focused one and the current one.
@@ -175,14 +240,35 @@ pub enum Editor {
         text: String,
         invalid: bool,
     },
+    /// "Really?" before a command the catalogue wants confirmed.
+    Confirm { command: &'static Command },
+    /// A read-only list of `len` lines the app fills (the remote's keys).
+    List {
+        key: &'static str,
+        len: usize,
+        focus: usize,
+    },
 }
 
 impl Editor {
-    pub fn setting(&self) -> &'static Setting {
+    /// The key the editor is about.
+    pub fn key(&self) -> &'static str {
         match self {
             Editor::Choice { setting, .. }
             | Editor::Number { setting, .. }
-            | Editor::Text { setting, .. } => setting,
+            | Editor::Text { setting, .. } => setting.key,
+            Editor::Confirm { command } => command.key,
+            Editor::List { key, .. } => key,
+        }
+    }
+
+    /// The setting being edited.
+    pub fn setting(&self) -> Option<&'static Setting> {
+        match self {
+            Editor::Choice { setting, .. }
+            | Editor::Number { setting, .. }
+            | Editor::Text { setting, .. } => Some(setting),
+            Editor::Confirm { .. } | Editor::List { .. } => None,
         }
     }
 }
@@ -216,27 +302,39 @@ pub enum Effect {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Screen {
-    section: Section,
+    pages: &'static [Page],
+    page: usize,
     pane: Pane,
     focus: Option<&'static str>,
     editor: Option<Editor>,
-    advanced: bool,
+}
+
+fn moved(at: usize, by: isize, len: usize) -> usize {
+    (at as isize + by).clamp(0, len.saturating_sub(1) as isize) as usize
 }
 
 impl Screen {
-    /// Opens on `section`, with the focus in the sections list.
-    pub fn new(section: Section) -> Screen {
+    /// Opens on the page `key` (else the first), focus in the pages list.
+    pub fn new(pages: &'static [Page], key: &str) -> Screen {
         Screen {
-            section,
-            pane: Pane::Sections,
+            pages,
+            page: pages.iter().position(|p| p.key == key).unwrap_or(0),
+            pane: Pane::Pages,
             focus: None,
             editor: None,
-            advanced: false,
         }
     }
 
-    pub fn section(&self) -> Section {
-        self.section
+    pub fn pages(&self) -> &'static [Page] {
+        self.pages
+    }
+
+    pub fn page(&self) -> &'static Page {
+        &self.pages[self.page]
+    }
+
+    pub fn page_index(&self) -> usize {
+        self.page
     }
 
     pub fn pane(&self) -> Pane {
@@ -252,20 +350,14 @@ impl Screen {
         self.editor.as_ref()
     }
 
-    pub fn advanced(&self) -> bool {
-        self.advanced
-    }
-
-    pub fn rows(&self, settings: &Settings) -> Vec<Row> {
-        rows(self.section, settings, self.advanced)
+    pub fn rows(&self, ctx: &Ctx) -> Vec<Row> {
+        rows(self.page(), ctx)
     }
 
     /// The row with the focus, if the rows pane has it.
-    pub fn focused_row(&self, settings: &Settings) -> Option<Row> {
+    pub fn focused_row(&self, ctx: &Ctx) -> Option<Row> {
         let key = self.focus.filter(|_| self.pane == Pane::Rows)?;
-        self.rows(settings)
-            .into_iter()
-            .find(|r| r.key() == Some(key))
+        self.rows(ctx).into_iter().find(|r| r.key() == Some(key))
     }
 
     pub fn key(&mut self, key: Key, ctx: &Ctx) -> Effect {
@@ -273,31 +365,26 @@ impl Screen {
             return self.editor_key(key);
         }
         match self.pane {
-            Pane::Sections => self.sections_key(key, ctx),
+            Pane::Pages => self.pages_key(key, ctx),
             Pane::Rows => self.rows_key(key, ctx),
         }
     }
 
-    fn sections_key(&mut self, key: Key, ctx: &Ctx) -> Effect {
-        let at = Section::ALL
-            .iter()
-            .position(|s| *s == self.section)
-            .unwrap_or(0);
+    fn pages_key(&mut self, key: Key, ctx: &Ctx) -> Effect {
         let to = match key {
-            Key::Up => at.saturating_sub(1),
-            Key::Down => at + 1,
-            Key::PageUp => at.saturating_sub(PAGE),
-            Key::PageDown => at + PAGE,
+            Key::Up => moved(self.page, -1, self.pages.len()),
+            Key::Down => moved(self.page, 1, self.pages.len()),
+            Key::PageUp => moved(self.page, -(PAGE as isize), self.pages.len()),
+            Key::PageDown => moved(self.page, PAGE as isize, self.pages.len()),
             Key::Right | Key::Ok => {
                 self.enter_rows(ctx);
                 return Effect::None;
             }
             Key::Back => return Effect::Close,
-            Key::Left => at,
+            Key::Left => self.page,
         };
-        let to = Section::ALL[to.min(Section::ALL.len() - 1)];
-        if to != self.section {
-            self.section = to;
+        if to != self.page {
+            self.page = to;
             self.focus = None;
         }
         Effect::None
@@ -306,7 +393,7 @@ impl Screen {
     /// Focus moves into the rows: the remembered row, else the first one
     /// the app acts on, else the first row.
     fn enter_rows(&mut self, ctx: &Ctx) {
-        let rows = self.rows(ctx.settings);
+        let rows = self.rows(ctx);
         let keys: Vec<&'static str> = rows.iter().filter_map(Row::key).collect();
         if keys.is_empty() {
             return;
@@ -321,28 +408,27 @@ impl Screen {
     }
 
     fn rows_key(&mut self, key: Key, ctx: &Ctx) -> Effect {
-        let rows = self.rows(ctx.settings);
+        let rows = self.rows(ctx);
         let keys: Vec<&'static str> = rows.iter().filter_map(Row::key).collect();
         if keys.is_empty() {
-            self.pane = Pane::Sections;
+            self.pane = Pane::Pages;
             return Effect::None;
         }
         // A focused row that left (its visibility changed) counts as the first.
-        let at = self.focus.and_then(|k| keys.iter().position(|x| *x == k));
-        let moved = |by: isize| {
-            let i = at.unwrap_or(0) as isize + by;
-            keys.get(i.clamp(0, keys.len() as isize - 1) as usize)
-                .copied()
-        };
+        let at = self
+            .focus
+            .and_then(|k| keys.iter().position(|x| *x == k))
+            .unwrap_or(0);
+        let step = |by: isize| Some(keys[moved(at, by, keys.len())]);
         match key {
-            Key::Up => self.focus = moved(-1),
-            Key::Down => self.focus = moved(1),
-            Key::PageUp => self.focus = moved(-(PAGE as isize)),
-            Key::PageDown => self.focus = moved(PAGE as isize),
-            Key::Left | Key::Back => self.pane = Pane::Sections,
+            Key::Up => self.focus = step(-1),
+            Key::Down => self.focus = step(1),
+            Key::PageUp => self.focus = step(-(PAGE as isize)),
+            Key::PageDown => self.focus = step(PAGE as isize),
+            Key::Left | Key::Back => self.pane = Pane::Pages,
             Key::Right => {}
             Key::Ok => {
-                let row = at.and_then(|i| rows.iter().find(|r| r.key() == Some(keys[i])));
+                let row = rows.iter().find(|r| r.key() == Some(keys[at]));
                 return match row {
                     Some(row) => self.activate(*row, ctx),
                     None => Effect::None,
@@ -359,39 +445,41 @@ impl Screen {
         }
         let s = match row {
             Row::Setting(s) => s,
+            Row::Command(c) if c.confirm => {
+                self.editor = Some(Editor::Confirm { command: c });
+                return Effect::None;
+            }
             Row::Command(c) => return Effect::Run(c.key),
             Row::Heading { .. } => return Effect::None,
         };
         let current = ctx.value(s);
-        match (&s.ty, current) {
-            (ValueType::Bool { .. }, Value::Bool(b)) => Effect::Set {
-                key: s.key,
-                value: Value::Bool(!b),
-            },
+        self.editor = match (&s.ty, current) {
+            (ValueType::Bool { .. }, Value::Bool(b)) => {
+                return Effect::Set {
+                    key: s.key,
+                    value: Value::Bool(!b),
+                };
+            }
             (ty, Value::Enum(v) | Value::Colour(v)) => {
                 let variants = ty.choices().map_or(&[][..], |c| c.variants);
                 let selected = variants.iter().position(|x| *x == v).unwrap_or(0);
-                self.editor = Some(Editor::Choice {
+                Some(Editor::Choice {
                     setting: s,
                     focus: selected,
                     selected,
-                });
-                Effect::None
+                })
             }
             (_, Value::Int(value) | Value::Duration(value)) => {
-                self.editor = Some(Editor::Number { setting: s, value });
-                Effect::None
+                Some(Editor::Number { setting: s, value })
             }
-            (_, Value::Text(text)) => {
-                self.editor = Some(Editor::Text {
-                    setting: s,
-                    text,
-                    invalid: false,
-                });
-                Effect::None
-            }
-            _ => Effect::None,
-        }
+            (_, Value::Text(text)) => Some(Editor::Text {
+                setting: s,
+                text,
+                invalid: false,
+            }),
+            _ => None,
+        };
+        Effect::None
     }
 
     fn editor_key(&mut self, key: Key) -> Effect {
@@ -399,21 +487,28 @@ impl Screen {
             self.cancel();
             return Effect::None;
         }
-        match self.editor {
+        let by = match key {
+            Key::Up => -1,
+            Key::Down => 1,
+            Key::PageUp => -(PAGE as isize),
+            Key::PageDown => PAGE as isize,
+            _ => 0,
+        };
+        match &mut self.editor {
             Some(Editor::Choice { setting, focus, .. }) => {
-                let last = setting.ty.choices().map_or(0, |c| c.variants.len()) as isize - 1;
-                let by = match key {
-                    Key::Up => -1,
-                    Key::Down => 1,
-                    Key::PageUp => -(PAGE as isize),
-                    Key::PageDown => PAGE as isize,
-                    Key::Ok => return self.pick(focus),
-                    // Left/Right do nothing in a list (as in menus).
-                    _ => 0,
-                };
-                let to = (focus as isize + by).clamp(0, last.max(0)) as usize;
-                if let Some(Editor::Choice { focus, .. }) = &mut self.editor {
-                    *focus = to;
+                if key == Key::Ok {
+                    let at = *focus;
+                    return self.pick(at);
+                }
+                // Left/Right do nothing in a list (as in menus).
+                let len = setting.ty.choices().map_or(0, |c| c.variants.len());
+                *focus = moved(*focus, by, len);
+            }
+            Some(Editor::List { focus, len, .. }) => {
+                if key == Key::Ok {
+                    self.cancel();
+                } else {
+                    *focus = moved(*focus, by, *len);
                 }
             }
             Some(Editor::Number { .. }) => match key {
@@ -424,18 +519,20 @@ impl Screen {
                 _ => return self.commit(),
             },
             // Typing belongs to the text field; OK keeps the text.
-            Some(Editor::Text { .. }) if key == Key::Ok => return self.commit(),
+            Some(Editor::Text { .. } | Editor::Confirm { .. }) if key == Key::Ok => {
+                return self.commit();
+            }
             _ => {}
         }
         Effect::None
     }
 
-    /// A tap on a section.
-    pub fn tap_section(&mut self, section: Section) {
+    /// A tap on page `index`.
+    pub fn tap_page(&mut self, index: usize) {
         self.editor = None;
-        self.pane = Pane::Sections;
-        if section != self.section {
-            self.section = section;
+        self.pane = Pane::Pages;
+        if index != self.page && index < self.pages.len() {
+            self.page = index;
             self.focus = None;
         }
     }
@@ -443,11 +540,7 @@ impl Screen {
     /// A tap on a row: it takes the focus and acts as OK.
     pub fn tap_row(&mut self, key: &str, ctx: &Ctx) -> Effect {
         self.editor = None;
-        let Some(row) = self
-            .rows(ctx.settings)
-            .into_iter()
-            .find(|r| r.key() == Some(key))
-        else {
+        let Some(row) = self.rows(ctx).into_iter().find(|r| r.key() == Some(key)) else {
             return Effect::None;
         };
         self.pane = Pane::Rows;
@@ -455,16 +548,22 @@ impl Screen {
         self.activate(row, ctx)
     }
 
+    /// Shows the app's read-only list of `len` lines for `key` (after a
+    /// [`Effect::Run`] of that command).
+    pub fn open_list(&mut self, key: &'static str, len: usize) {
+        self.editor = Some(Editor::List { key, len, focus: 0 });
+    }
+
     /// Picks entry `index` of an open choice list.
     pub fn pick(&mut self, index: usize) -> Effect {
         let Some(Editor::Choice { setting, .. }) = self.editor else {
             return Effect::None;
         };
-        let variant = setting
+        let Some(variant) = setting
             .ty
             .choices()
-            .and_then(|c| c.variants.get(index).copied());
-        let Some(variant) = variant else {
+            .and_then(|c| c.variants.get(index).copied())
+        else {
             return Effect::None;
         };
         self.editor = None;
@@ -497,7 +596,8 @@ impl Screen {
         }
     }
 
-    /// Keeps the stepper's value or the typed text. A text that does not
+    /// OK in an editor: keeps the stepper's value or the typed text, picks
+    /// the focused choice, confirms a command. A text that does not
     /// validate keeps the editor open, marked invalid.
     pub fn commit(&mut self) -> Effect {
         let (setting, value) = match &self.editor {
@@ -510,7 +610,15 @@ impl Screen {
             }
             Some(Editor::Text { setting, text, .. }) => (*setting, Value::Text(text.clone())),
             Some(Editor::Choice { focus, .. }) => return self.pick(*focus),
-            None => return Effect::None,
+            Some(Editor::Confirm { command }) => {
+                let key = command.key;
+                self.editor = None;
+                return Effect::Run(key);
+            }
+            Some(Editor::List { .. }) | None => {
+                self.editor = None;
+                return Effect::None;
+            }
         };
         if validate::check(setting, &value).is_err() {
             if let Some(Editor::Text { invalid, .. }) = &mut self.editor {
@@ -525,7 +633,7 @@ impl Screen {
         }
     }
 
-    /// Closes the editor without storing anything.
+    /// Closes the editor without storing or running anything.
     pub fn cancel(&mut self) {
         self.editor = None;
     }
