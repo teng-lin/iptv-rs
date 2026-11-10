@@ -10,4 +10,6 @@ for c in iptv-core iptv-nav iptv-settings iptv-epg iptv-providers iptv-guide ipt
   cargo build -p "$c" --target wasm32-unknown-unknown --quiet
 done
 cargo build -p iptv-app --quiet
+# The app's own tests, among them headless runs of the whole app (tests/).
+cargo test -p iptv-app --quiet
 echo "all checks passed"

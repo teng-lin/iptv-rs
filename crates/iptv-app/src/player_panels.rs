@@ -191,7 +191,16 @@ pub fn layer(ui: Ui) -> impl IntoElement {
         .child(
             view()
                 .gap(px(10.0))
-                .pointer_events(PointerEvents::BoxNone)
+                // Mounted while hidden: nothing in the layer says `Auto` or
+                // `BoxNone` then (NSH's pointer events inherit as CSS's,
+                // so either would take presses through the hidden layer).
+                .pointer_events(move || {
+                    if shown.get() == Shown::Hidden {
+                        PointerEvents::None
+                    } else {
+                        PointerEvents::BoxNone
+                    }
+                })
                 .child(when(card, move || info_card(ui, panel)))
                 .child(time_bar(ui, panel))
                 .child(when(buttons, move || quick_row(ui, panel)))
@@ -229,7 +238,6 @@ fn top_bar(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> impl IntoElemen
         .py(px(10.0))
         .rounded(px(RADIUS_LARGE))
         .bg(panel)
-        .pointer_events(PointerEvents::Auto)
         .child(
             text(move || {
                 ui.data_version.get();
@@ -326,7 +334,6 @@ fn info_card(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> impl IntoElem
         .py(px(16.0))
         .rounded(px(RADIUS_LARGE))
         .bg(panel)
-        .pointer_events(PointerEvents::Auto)
         .child(
             // The logo slot stays when a channel has none.
             view()
@@ -491,7 +498,6 @@ fn time_bar(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> impl IntoEleme
         .py(px(8.0))
         .rounded(px(RADIUS_LARGE))
         .bg(panel)
-        .pointer_events(PointerEvents::Auto)
         .child(
             text(move || ends().0)
                 .text_size(px(13.0))
@@ -572,7 +578,6 @@ fn quick_row(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> impl IntoElem
         .py(px(6.0))
         .rounded(px(RADIUS_LARGE))
         .bg(panel)
-        .pointer_events(PointerEvents::Auto)
         .children(QUICK_ACTIONS.iter().enumerate().map(move |(i, action)| {
             let action = *action;
             let focused = move || {
@@ -611,7 +616,6 @@ fn transport(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> impl IntoElem
         .py(px(4.0))
         .rounded(px(RADIUS_LARGE))
         .bg(panel)
-        .pointer_events(PointerEvents::Auto)
         .child(pill(
             ui,
             move || {
