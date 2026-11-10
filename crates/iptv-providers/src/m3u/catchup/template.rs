@@ -22,11 +22,11 @@ pub(super) struct Vars<'a> {
 impl Vars<'_> {
     /// Replay length in seconds, at least 1.
     pub(super) fn duration(&self) -> i64 {
-        (self.to - self.from).max(1)
+        self.to.saturating_sub(self.from).max(1)
     }
 
     fn offset(&self) -> i64 {
-        (self.now - self.from).max(0)
+        self.now.saturating_sub(self.from).max(0)
     }
 }
 
@@ -92,7 +92,7 @@ fn placeholder(token: &str, vars: &Vars) -> Option<String> {
             .filter(|d| *d > 0)
             .map(|d| (v / d).to_string()),
     };
-    let local = |t: i64| t + i64::from(vars.local_offset_secs);
+    let local = |t: i64| t.saturating_add(i64::from(vars.local_offset_secs));
     let formatted = |t: i64| match arg {
         None => Some(t.to_string()),
         Some(fmt) => Some(format_time(fmt, local(t))),

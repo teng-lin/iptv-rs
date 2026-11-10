@@ -511,3 +511,25 @@ fn catchup_id_placeholder() {
         "a programme without a catchup-id cannot fill the template"
     );
 }
+
+#[test]
+fn extreme_inputs_do_not_panic() {
+    let ch = channel(
+        r#"catchup="default" catchup-source="http://arc.example.com/{utc}/{duration}/{offset}/{Y}""#,
+        "http://l.example.com/x",
+    );
+    for req in [
+        CatchupRequest::new(i64::MIN, i64::MAX, i64::MAX),
+        CatchupRequest {
+            local_offset_secs: i32::MAX,
+            offset_secs: u32::MAX,
+            buffer_before_secs: u32::MAX,
+            buffer_after_secs: u32::MAX,
+            default_window_days: u32::MAX,
+            server_offset_minutes: Some(i32::MAX),
+            ..CatchupRequest::new(i64::MIN + 1, i64::MIN + 2, i64::MIN + 3)
+        },
+    ] {
+        let _ = build_catchup_url(&ch, req);
+    }
+}

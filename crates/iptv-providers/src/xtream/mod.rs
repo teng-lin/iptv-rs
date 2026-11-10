@@ -493,8 +493,9 @@ impl XtreamClient {
         viewer_offset_secs: i32,
     ) -> String {
         let minutes = catchup_duration_minutes(start, end);
-        let offset_secs = server_offset_minutes.map_or(viewer_offset_secs, |m| m * 60);
-        let when = format_catchup_start(start + i64::from(offset_secs), 0);
+        let offset_secs =
+            server_offset_minutes.map_or(viewer_offset_secs, |m| m.saturating_mul(60));
+        let when = format_catchup_start(start.saturating_add(i64::from(offset_secs)), 0);
         let ext = match variant {
             CatchupVariant::RestTs | CatchupVariant::LegacyTs => Some("ts"),
             CatchupVariant::RestM3u8 | CatchupVariant::LegacyM3u8 => Some("m3u8"),

@@ -189,7 +189,7 @@ pub fn build_catchup_url(channel: &Channel, req: CatchupRequest) -> Result<Strin
                     live,
                     &vars,
                     req.server_offset_minutes
-                        .map_or(req.local_offset_secs, |m| m * 60),
+                        .map_or(req.local_offset_secs, |m| m.saturating_mul(60)),
                 ),
                 _ => set_utc_params(live, &vars),
             },
@@ -223,16 +223,25 @@ fn window<'a>(
     correction_secs: i32,
 ) -> Result<Vars<'a>, CatchupError> {
     let shift = i64::from(correction_secs);
-    let (start, end, now) = (req.start + shift, req.end + shift, req.now);
+    // Saturating: guide times are untrusted input and must not panic.
+    let (start, end, now) = (
+        req.start.saturating_add(shift),
+        req.end.saturating_add(shift),
+        req.now,
+    );
     if start > now {
         return Err(CatchupError::FutureProgramme);
     }
-    let from = start - i64::from(req.buffer_before_secs) + i64::from(req.offset_secs);
-    let to = (end + i64::from(req.buffer_after_secs)).min(end.max(now));
+    let from = start
+        .saturating_sub(i64::from(req.buffer_before_secs))
+        .saturating_add(i64::from(req.offset_secs));
+    let to = end
+        .saturating_add(i64::from(req.buffer_after_secs))
+        .min(end.max(now));
     if from > now {
         return Err(CatchupError::FutureProgramme);
     }
-    if from > to || from.max(start) < now - i64::from(days) * 86_400 {
+    if from > to || from.max(start) < now.saturating_sub(i64::from(days) * 86_400) {
         return Err(CatchupError::OutsideArchive);
     }
     Ok(Vars {
@@ -340,7 +349,8 @@ fn xtream(live: &str, vars: &Vars, offset_secs: i32) -> Result<String, CatchupEr
         "ts"
     };
     let minutes = crate::time::catchup_duration_minutes(vars.from, vars.to);
-    let start = crate::time::format_catchup_start(vars.from + i64::from(offset_secs), 0);
+    let start =
+        crate::time::format_catchup_start(vars.from.saturating_add(i64::from(offset_secs)), 0);
     checked(format!(
         "{origin}/timeshift/{user}/{pass}/{minutes}/{start}/{id}.{ext}{rest}"
     ))
