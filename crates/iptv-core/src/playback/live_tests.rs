@@ -35,13 +35,11 @@ fn a_live_stream_that_played_retries_for_good_with_a_capped_backoff() {
     let waits = fail_until(&mut h, ErrorKind::Http(403), 60_000, 60_000 + 140_000);
     assert_eq!(
         &waits[..5],
-        [1_000, 2_000, 4_000, 8_000, 16_000],
+        [1_000, 2_000, 4_000, 4_000, 4_000],
         "fast first"
     );
-    assert!(
-        waits[5..].iter().all(|w| *w == 20_000),
-        "then slow: {waits:?}"
-    );
+    assert_eq!(&waits[5..7], [5_000, 10_000], "then slower");
+    assert!(waits[7..].iter().all(|w| *w == 20_000), "capped: {waits:?}");
     assert!(h.failure().is_none(), "no card within the first 2.5 min");
     assert!(h.reconnecting(), "the last frame stays");
     assert_eq!(

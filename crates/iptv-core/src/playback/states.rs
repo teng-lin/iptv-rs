@@ -9,10 +9,13 @@ pub struct RetryPolicy {
     /// Delay before the first retry; doubles per fast attempt.
     pub first_delay_ms: u64,
     pub max_delay_ms: u64,
-    /// Fast retries. Then a live stream retries every
-    /// [`RetryPolicy::slow_delay_ms`]; catch-up gives up.
+    /// Fast retries. Then a live stream retries slowly
+    /// ([`RetryPolicy::slow_first_delay_ms`] doubling up to
+    /// [`RetryPolicy::slow_delay_ms`]) for good; catch-up gives up.
     pub max_attempts: u32,
-    /// Live: the wait between retries after the fast ones.
+    /// Live: the wait before the first retry after the fast ones.
+    pub slow_first_delay_ms: u64,
+    /// Live: the longest wait between slow retries.
     pub slow_delay_ms: u64,
     /// Live: a stream that played and has been down this long shows the
     /// failure card (its retries go on behind it).
@@ -33,8 +36,9 @@ impl Default for RetryPolicy {
     fn default() -> Self {
         Self {
             first_delay_ms: 1_000,
-            max_delay_ms: 16_000,
+            max_delay_ms: 4_000,
             max_attempts: 5,
+            slow_first_delay_ms: 5_000,
             slow_delay_ms: 20_000,
             card_after_ms: 150_000,
             background_delay_ms: 30_000,
@@ -54,14 +58,17 @@ impl RetryPolicy {
             .min(self.max_delay_ms)
     }
 
-    /// The wait before live retry number `attempt`: the fast ones, then
-    /// slow ones for good.
+    /// The wait before live retry number `attempt`: the fast ones (by
+    /// default 1, 2, 4, 4, 4 s), then slow ones for good (5, 10, then
+    /// every 20 s).
     pub fn live_delay_ms(&self, attempt: u32) -> u64 {
-        if attempt > self.max_attempts {
-            self.slow_delay_ms
-        } else {
-            self.delay_ms(attempt)
+        if attempt <= self.max_attempts {
+            return self.delay_ms(attempt);
         }
+        let shift = (attempt - self.max_attempts - 1).min(20);
+        self.slow_first_delay_ms
+            .saturating_mul(1 << shift)
+            .min(self.slow_delay_ms)
     }
 }
 

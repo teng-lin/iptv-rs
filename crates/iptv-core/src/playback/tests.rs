@@ -6,6 +6,7 @@ fn policy() -> RetryPolicy {
         first_delay_ms: 1_000,
         max_delay_ms: 8_000,
         max_attempts: 4,
+        slow_first_delay_ms: 5_000,
         slow_delay_ms: 20_000,
         card_after_ms: 120_000,
         background_delay_ms: 30_000,
@@ -27,7 +28,18 @@ fn backoff_doubles_up_to_the_cap() {
     let p = policy();
     let delays: Vec<u64> = (1..=6).map(|a| p.delay_ms(a)).collect();
     assert_eq!(delays, [1_000, 2_000, 4_000, 8_000, 8_000, 8_000]);
-    assert_eq!(RetryPolicy::default().delay_ms(100), 16_000, "no overflow");
+    assert_eq!(RetryPolicy::default().delay_ms(100), 4_000, "no overflow");
+    let live: Vec<u64> = (1..=9)
+        .map(|a| RetryPolicy::default().live_delay_ms(a))
+        .collect();
+    assert_eq!(
+        live,
+        [
+            1_000, 2_000, 4_000, 4_000, 4_000, 5_000, 10_000, 20_000, 20_000
+        ],
+        "fast, then slow and capped"
+    );
+    assert_eq!(RetryPolicy::default().live_delay_ms(u32::MAX), 20_000);
 }
 
 #[test]
