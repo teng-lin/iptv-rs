@@ -221,8 +221,9 @@ pub fn parse_live_streams(response: &HttpResponse) -> Result<Import<Channel>, Pr
         let days = o.u32("tv_archive_duration").unwrap_or(0);
         let catch_up = (o.flag("tv_archive") && days > 0).then_some(CatchUp {
             kind: CatchUpKind::Xtream,
-            days,
+            days: Some(days),
             source: None,
+            correction_secs: 0,
         });
         out.items.push(Channel {
             id: ContentId::from_provider(

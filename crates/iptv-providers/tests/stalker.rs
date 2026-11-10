@@ -666,7 +666,7 @@ fn genres_and_channels() {
     let cu = news.catch_up.as_ref().unwrap();
     assert_eq!(
         (&cu.kind, cu.days),
-        (&CatchUpKind::Stalker, 3),
+        (&CatchUpKind::Stalker, Some(3)),
         "72 hours = 3 days"
     );
     assert_eq!(

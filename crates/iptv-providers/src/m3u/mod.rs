@@ -10,7 +10,8 @@
 //! An `#EXTINF` without a following URL is skipped with a warning.
 //!
 //! Recognised lines: `#EXTM3U` (header attributes: `url-tvg`/`x-tvg-url`/
-//! `tvg-url`, `catchup`, `catchup-days`, `catchup-source`, `tvg-shift`),
+//! `tvg-url`, `catchup`, `catchup-days`, `catchup-source`,
+//! `catchup-correction`, `tvg-shift`),
 //! `#EXTINF`, `#EXTGRP`, `#EXTVLCOPT` and `#KODIPROP`. Option lines may come
 //! before or after `#EXTINF`; either way they belong to the next URL.
 
@@ -36,6 +37,7 @@ pub struct M3uHeader {
     pub catchup: Option<String>,
     pub catchup_days: Option<String>,
     pub catchup_source: Option<String>,
+    pub catchup_correction: Option<String>,
     pub tvg_shift: Option<String>,
     /// Every header attribute, lowercased keys, in file order.
     pub attributes: Vec<(String, String)>,
@@ -240,6 +242,7 @@ impl M3uParser {
                 "catchup" | "catchup-type" => self.header.catchup = non_empty(&v),
                 "catchup-days" => self.header.catchup_days = non_empty(&v),
                 "catchup-source" => self.header.catchup_source = non_empty(&v),
+                "catchup-correction" => self.header.catchup_correction = non_empty(&v),
                 "tvg-shift" => self.header.tvg_shift = non_empty(&v),
                 _ => {}
             }
@@ -338,6 +341,7 @@ impl M3uParser {
                 .or(attr("tvg-rec"))
                 .or(self.header.catchup_days.as_deref()),
             attr("catchup-source").or(self.header.catchup_source.as_deref()),
+            attr("catchup-correction").or(self.header.catchup_correction.as_deref()),
         );
         let shift = attr("tvg-shift")
             .or(self.header.tvg_shift.as_deref())
@@ -447,30 +451,56 @@ fn fallback_name(url: &str) -> String {
     }
 }
 
-/// IPTVnator's rule: no archive days → no catch-up, whatever the type says.
-/// Days come from `catchup-days`, then `timeshift`, then `tvg-rec`.
-fn catch_up(kind: Option<&str>, days: Option<&str>, source: Option<&str>) -> Option<CatchUp> {
-    let days = days?
-        .trim()
-        .replace(',', ".")
-        .parse::<f64>()
-        .ok()
-        .filter(|d| d.is_finite() && *d > 0.0)?;
-    let days = days.ceil().min(f64::from(u16::MAX)) as u32;
+/// Catch-up from the entry's attributes (header defaults already merged).
+///
+/// Days come from `catchup-days`, then `timeshift`, then `tvg-rec`. A declared
+/// type or source without days keeps catch-up with an unknown window
+/// (`days: None`, Kodi's behaviour; IPTVnator drops it). Without a type, a
+/// source means `default` (Kodi) and days alone mean `shift` (IPTVnator).
+/// Non-positive or unparsable days count as unknown.
+fn catch_up(
+    kind: Option<&str>,
+    days: Option<&str>,
+    source: Option<&str>,
+    correction: Option<&str>,
+) -> Option<CatchUp> {
+    let days = days
+        .and_then(parse_decimal)
+        .filter(|d| *d > 0.0)
+        .map(|d| d.ceil().min(f64::from(u16::MAX)) as u32);
+    let source = source.and_then(non_empty);
     let kind = match kind.map(|k| k.trim().to_ascii_lowercase()).as_deref() {
-        None | Some("") => CatchUpKind::Shift,
+        None | Some("") if source.is_some() => CatchUpKind::Default,
+        None | Some("") if days.is_some() => CatchUpKind::Shift,
+        None | Some("") => return None,
         Some("default") => CatchUpKind::Default,
         Some("append") => CatchUpKind::Append,
         Some("shift" | "timeshift") => CatchUpKind::Shift,
         Some("flussonic" | "flussonic-hls" | "flussonic-ts" | "fs") => CatchUpKind::Flussonic,
         Some("xc") => CatchUpKind::Xtream,
+        Some("vod") => CatchUpKind::Vod,
         Some(other) => CatchUpKind::Unsupported(other.to_owned()),
     };
+    // Kodi's setting range for the correction is −12…+14 hours.
+    let correction_secs = correction
+        .and_then(parse_decimal)
+        .filter(|h| (-12.0..=14.0).contains(h))
+        .map_or(0, |h| (h * 3600.0).round() as i32);
     Some(CatchUp {
         kind,
         days,
-        source: source.and_then(non_empty),
+        source,
+        correction_secs,
     })
+}
+
+/// `2.5` or `2,5`; finite values only.
+fn parse_decimal(s: &str) -> Option<f64> {
+    s.trim()
+        .replace(',', ".")
+        .parse::<f64>()
+        .ok()
+        .filter(|v| v.is_finite())
 }
 
 #[cfg(test)]

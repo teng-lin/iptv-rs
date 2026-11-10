@@ -223,3 +223,63 @@ fn parses_100k_entries_quickly_and_linearly() {
         "not linear: {elapsed:?} vs {small_elapsed:?} for n/4"
     );
 }
+
+fn first_catch_up(text: &str) -> Option<CatchUp> {
+    parse_m3u(text).channels.items.remove(0).catch_up
+}
+
+#[test]
+fn catch_up_without_days_keeps_an_unknown_window() {
+    let cu = first_catch_up("#EXTINF:-1 catchup=\"xc\",A\nhttp://l.example.com/a\n").unwrap();
+    assert_eq!((&cu.kind, cu.days), (&CatchUpKind::Xtream, None));
+    assert_eq!(cu.window_days(7), 7);
+    // Header type without days applies to every entry.
+    let cu = first_catch_up("#EXTM3U catchup=\"shift\"\n#EXTINF:-1,A\nhttp://l.example.com/a\n")
+        .unwrap();
+    assert_eq!((cu.kind, cu.days), (CatchUpKind::Shift, None));
+    // A source without a type is Kodi's `default`.
+    let cu = first_catch_up(
+        "#EXTINF:-1 catchup-source=\"http://arc.example.com/{utc}\",A\nhttp://l.example.com/a\n",
+    )
+    .unwrap();
+    assert_eq!((cu.kind, cu.days), (CatchUpKind::Default, None));
+    // Declared days win over the default; "0" is not a window.
+    let cu = first_catch_up(
+        "#EXTINF:-1 catchup=\"shift\" catchup-days=\"2.5\",A\nhttp://l.example.com/a\n",
+    )
+    .unwrap();
+    assert_eq!((cu.days, cu.window_days(7)), (Some(3), 3));
+    let cu = first_catch_up(
+        "#EXTINF:-1 catchup=\"shift\" catchup-days=\"0\",A\nhttp://l.example.com/a\n",
+    )
+    .unwrap();
+    assert_eq!(cu.days, None);
+    // Nothing declared: no catch-up.
+    assert_eq!(
+        first_catch_up("#EXTINF:-1,A\nhttp://l.example.com/a\n"),
+        None
+    );
+    assert_eq!(
+        first_catch_up("#EXTINF:-1 tvg-rec=\"0\",A\nhttp://l.example.com/a\n"),
+        None
+    );
+}
+
+#[test]
+fn parses_vod_type_and_catchup_correction() {
+    let text = "#EXTM3U catchup-correction=\"-2.5\"\n\
+                #EXTINF:-1 catchup=\"vod\" catchup-days=\"3\",A\nhttp://l.example.com/a\n\
+                #EXTINF:-1 catchup=\"append\" catchup-correction=\"1,25\",B\nhttp://l.example.com/b\n\
+                #EXTINF:-1 catchup=\"shift\" catchup-correction=\"40\",C\nhttp://l.example.com/c\n";
+    let items = parse_m3u(text).channels.items;
+    let cu: Vec<&CatchUp> = items.iter().map(|c| c.catch_up.as_ref().unwrap()).collect();
+    assert_eq!(
+        (&cu[0].kind, cu[0].correction_secs),
+        (&CatchUpKind::Vod, -9000)
+    );
+    assert_eq!(
+        cu[1].correction_secs, 4500,
+        "per-channel overrides the header"
+    );
+    assert_eq!(cu[2].correction_secs, 0, "outside −12…+14 h is ignored");
+}

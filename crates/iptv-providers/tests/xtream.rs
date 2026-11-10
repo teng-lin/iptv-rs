@@ -380,7 +380,7 @@ fn live_streams() {
         vec!["xt:live-group:1", "xt:live-group:3"]
     );
     let cu = news.catch_up.as_ref().unwrap();
-    assert_eq!((&cu.kind, cu.days), (&CatchUpKind::Xtream, 3));
+    assert_eq!((&cu.kind, cu.days), (&CatchUpKind::Xtream, Some(3)));
     assert_eq!(
         news.stream,
         StreamLocator::Xtream {

@@ -47,7 +47,7 @@ pub fn build_catchup_url(channel: &Channel, req: CatchupRequest) -> Option<Strin
         .map(str::trim)
         .filter(|s| !s.is_empty());
     match &catch_up.kind {
-        CatchUpKind::Unsupported(_) | CatchUpKind::Stalker => return None,
+        CatchUpKind::Unsupported(_) | CatchUpKind::Stalker | CatchUpKind::Vod => return None,
         CatchUpKind::Append => return source.map(|s| format!("{live}{}", expand(s, req))),
         _ => {}
     }
@@ -238,10 +238,13 @@ mod tests {
     }
 
     #[test]
-    fn no_days_means_no_catchup() {
+    fn no_days_keeps_catchup() {
         let ch = channel(r#"catchup="shift""#, "http://live.example.com/ch/3.ts");
-        assert!(ch.catch_up.is_none());
-        assert_eq!(build_catchup_url(&ch, REQ), None);
+        assert_eq!(ch.catch_up.as_ref().unwrap().days, None);
+        assert_eq!(
+            build_catchup_url(&ch, REQ).as_deref(),
+            Some("http://live.example.com/ch/3.ts?utc=1700000000&lutc=1700010000")
+        );
     }
 
     #[test]
@@ -329,6 +332,11 @@ mod tests {
             r#"catchup="vod" catchup-days="1""#,
             "http://l.example.com/x",
         );
+        assert_eq!(build_catchup_url(&ch, REQ), None);
+        let ch = channel(
+            r#"catchup="rtsp-magic" catchup-days="1""#,
+            "http://l.example.com/x",
+        );
         assert!(matches!(
             ch.catch_up.as_ref().unwrap().kind,
             CatchUpKind::Unsupported(_)
@@ -340,7 +348,7 @@ mod tests {
     fn header_catchup_defaults_apply() {
         let text = "#EXTM3U catchup=\"shift\" catchup-days=\"5\"\n#EXTINF:-1,A\nhttp://l.example.com/a\n#EXTINF:-1 catchup-days=\"1\",B\nhttp://l.example.com/b\n";
         let items = parse_m3u(text).channels.items;
-        assert_eq!(items[0].catch_up.as_ref().map(|c| c.days), Some(5));
-        assert_eq!(items[1].catch_up.as_ref().map(|c| c.days), Some(1));
+        assert_eq!(items[0].catch_up.as_ref().map(|c| c.days), Some(Some(5)));
+        assert_eq!(items[1].catch_up.as_ref().map(|c| c.days), Some(Some(1)));
     }
 }
