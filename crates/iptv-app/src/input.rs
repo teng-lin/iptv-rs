@@ -63,7 +63,10 @@ struct Nav {
 
 /// The surface that owns input now.
 pub fn context(ui: &Ui) -> Context {
-    if ui.menu.with(Option::is_some) || ui.description.with(Option::is_some) {
+    let overlay = ui.menu.with(Option::is_some)
+        || ui.description.with(Option::is_some)
+        || ui.chooser.with(Option::is_some);
+    if overlay {
         return Context::Menu;
     }
     match (ui.mode.get(), ui.focus.with(|f| f.pane)) {
@@ -172,6 +175,20 @@ fn apply(ui: Ui, action: Action) {
     ui.update_panels(|p, now| p.touch(now));
     let controls = ui.panels.with(|p| p.captures_input()) && ui.mode.get() == ViewMode::Fullscreen;
     let mv = |m: Move| ui.focus.update(|f| f.apply(m, &*crate::schedule()));
+    if ui.chooser.with(Option::is_some) {
+        match action {
+            Action::MoveUp => crate::chooser::move_focus(ui, -1),
+            Action::MoveDown => crate::chooser::move_focus(ui, 1),
+            Action::Select => {
+                if let Some(i) = ui.chooser.with(|c| c.as_ref().map(|c| c.list.focus)) {
+                    crate::chooser::pick(ui, i);
+                }
+            }
+            Action::Back | Action::ShowMenu => crate::chooser::close(ui),
+            _ => {}
+        }
+        return;
+    }
     if ui.description.with(Option::is_some) {
         // The popover has no actions; Back (or Menu) closes it.
         if matches!(action, Action::Back | Action::ShowMenu) {
@@ -258,6 +275,8 @@ pub fn press_control(ui: Ui, control: Control) {
     ui.update_panels(|p, now| p.touch(now));
     match control {
         Control::ChannelList => ui.mode.set(ViewMode::Overlay),
+        Control::Scaling => crate::chooser::open(ui, crate::chooser::Kind::Picture),
+        Control::SleepTimer => crate::chooser::open(ui, crate::chooser::Kind::Sleep),
         Control::Favorite => {
             if let Some(ch) = ui.playing.get() {
                 ui.favorites.update(|f| {

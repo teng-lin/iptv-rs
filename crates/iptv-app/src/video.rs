@@ -62,6 +62,10 @@ pub fn layer(ui: Ui) -> impl IntoElement {
                 })
         })
         .prop("paused", move || json!(ui.paused.get()))
+        .prop("pictureSize", move || {
+            let ch = ui.playing.get().unwrap_or(0);
+            json!(ui.picture.with(|p| p.for_channel(ch)).key())
+        })
         .on_native_event(move |e: &NativeEvent| {
             let status = match &*e.name {
                 "state" => e.data["state"].as_str().unwrap_or("?").to_owned(),

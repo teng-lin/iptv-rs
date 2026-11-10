@@ -37,7 +37,10 @@ fn label(control: Control, favorite: bool) -> &'static str {
 
 /// The controls this build can perform; the rest show disabled.
 pub fn implemented(control: Control) -> bool {
-    matches!(control, Control::ChannelList | Control::Favorite)
+    matches!(
+        control,
+        Control::ChannelList | Control::Favorite | Control::Scaling | Control::SleepTimer
+    )
 }
 
 /// "SD" / "HD" / "FHD" / "4K" from the video height.
@@ -123,6 +126,16 @@ fn status_chip(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> impl IntoEl
                     "ready" => res.to_owned(),
                     other => format!("{res} {other}").trim().to_owned(),
                 }
+            })
+            .text_size(px(13.0))
+            .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA)),
+        )
+        .child(
+            // Sleep timer: minutes left as of the last redraw.
+            text(move || {
+                ui.sleep
+                    .with(|t| t.remaining_minutes(ui.now_ms()))
+                    .map_or(String::new(), |m| format!("⏾ {m} min"))
             })
             .text_size(px(13.0))
             .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA)),

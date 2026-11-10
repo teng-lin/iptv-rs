@@ -6,6 +6,7 @@
 pub use iptv_core::guide;
 pub mod theme;
 
+mod chooser;
 mod grid;
 mod input;
 mod menu_view;
@@ -22,6 +23,7 @@ use std::rc::Rc;
 
 use iptv_core::menu::{Menu, Origin};
 use iptv_core::panels::Panels;
+use iptv_core::player_options::{PictureSettings, SleepTimer};
 use nsh_core::prelude::*;
 use theme::Theme;
 
@@ -99,6 +101,10 @@ pub struct Ui {
     pub playback: Signal<Playback>,
     /// Bumped when the guide data changes (views re-read `schedule()`).
     pub data_version: Signal<u64>,
+    pub picture: Signal<PictureSettings>,
+    pub sleep: Signal<SleepTimer>,
+    /// The open chooser over the video (picture size, sleep timer).
+    pub chooser: Signal<Option<chooser::Open>>,
 }
 
 impl Ui {
@@ -259,6 +265,9 @@ pub fn App() -> impl IntoElement {
         favorites: signal(BTreeSet::new()),
         playback: signal(Playback::Live),
         data_version: signal(0),
+        picture: signal(PictureSettings::default()),
+        sleep: signal(SleepTimer::default()),
+        chooser: signal(None),
     };
     // Leaving full screen closes the panels.
     effect(move || {
@@ -349,6 +358,7 @@ pub fn App() -> impl IntoElement {
         )
         .child(player_panels::layer(ui))
         .child(menu_view::layer(ui))
+        .child(chooser::layer(ui))
 }
 
 /// Back: player panels → hidden; full screen/overlay → guide; guide →
@@ -356,10 +366,16 @@ pub fn App() -> impl IntoElement {
 fn bind_back(ui: Ui) {
     let back_target = computed(move || {
         let panels = ui.panels.with(|p| p.shown) != iptv_core::panels::Shown::Hidden;
-        let menu = ui.menu.with(Option::is_some) || ui.description.with(Option::is_some);
+        let menu = ui.menu.with(Option::is_some)
+            || ui.description.with(Option::is_some)
+            || ui.chooser.with(Option::is_some);
         (ui.mode.get(), ui.focus.with(|f| f.pane), panels || menu)
     });
     effect(move || match back_target.get() {
+        _ if ui.chooser.with(Option::is_some) => on_back_press(move || {
+            chooser::close(ui);
+            true
+        }),
         _ if ui.menu.with(Option::is_some) || ui.description.with(Option::is_some) => {
             on_back_press(move || {
                 menu_view::close(ui);
