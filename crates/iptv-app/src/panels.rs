@@ -150,6 +150,17 @@ pub fn info_panel(ui: Ui) -> impl IntoElement {
         ui.focus
             .with(|f| (version, f.now, f.channel, f.program(&*crate::schedule())))
     });
+    // Read once per focused programme (a stored guide reads it from disk).
+    let description = computed(move || {
+        program.with(|(_, _, ch, p)| {
+            let schedule = crate::schedule();
+            schedule
+                .as_any()
+                .and_then(|s| s.downcast_ref::<iptv_guide::EpgSchedule>())
+                .and_then(|s| s.description(*ch, *p))
+                .unwrap_or_default()
+        })
+    });
     // Transparent: the video layer sits under this rectangle in guide mode.
     // A tap opens full screen.
     let preview = view()
@@ -179,7 +190,7 @@ pub fn info_panel(ui: Ui) -> impl IntoElement {
         );
     let details = view()
         .flex_1()
-        .gap(px(6.0))
+        .gap(px(4.0))
         .child(
             text(move || program.with(|(_, _, ch, p)| crate::schedule().title(*ch, *p)))
                 .text_size(px(20.0))
@@ -228,21 +239,10 @@ pub fn info_panel(ui: Ui) -> impl IntoElement {
                 ),
         )
         .child(
-            text(move || match ui.playing.get() {
-                Some(ch) => format!(
-                    "Playing {} · player {} · mode {:?}",
-                    channel_name(ch),
-                    ui.player_status.get(),
-                    ui.mode.get()
-                ),
-                None => format!(
-                    "player {} · mode {:?}",
-                    ui.player_status.get(),
-                    ui.mode.get()
-                ),
-            })
-            .text_size(px(12.0))
-            .text_color(secondary()),
+            text(move || description.get())
+                .text_size(px(12.0))
+                .number_of_lines(2)
+                .text_color(secondary()),
         )
         .child(
             text(move || match (ui.focus.with(|f| f.pane), ui.keys_shown()) {

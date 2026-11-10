@@ -74,6 +74,17 @@ pub fn context_for(config: &SourceConfig, meta: &SourceMeta) -> Option<PlaybackC
     }
 }
 
+/// What a stored source's streams need before its refresh ran: no account
+/// details yet (HLS for Xtream) and no portal session, so a Stalker
+/// source plays only once it imported.
+pub fn stored_context(config: &SourceConfig) -> Option<PlaybackContext> {
+    match config {
+        SourceConfig::M3u(c) => Some(PlaybackContext::m3u(c)),
+        SourceConfig::Xtream(c) => PlaybackContext::xtream(c, None, StreamFormat::Auto).ok(),
+        _ => None,
+    }
+}
+
 /// `f` after `delay`, under the app's owner.
 fn later(ui: Ui, delay: Duration, f: impl FnOnce() + 'static) {
     ui.player.owner.run(|| {

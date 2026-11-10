@@ -5,8 +5,13 @@
 //! add-playlist wizard opens on its empty state (`wizard_view`). The wizard
 //! adds sources through [`start_import`]. A new source is stored only once
 //! its import succeeded, so a failed or cancelled attempt leaves nothing
-//! behind. On a failed refresh the synthetic guide stays.
+//! behind.
+//!
+//! A stored source's saved channels and guide are on screen before its
+//! refresh reaches the network, and stay when the refresh fails. Its guide
+//! is downloaded again only when the refresh policy says so (`stored`).
 
+mod stored;
 mod wizard_map;
 
 use std::cell::Cell;
@@ -22,15 +27,13 @@ use iptv_core::wizard::{
 use iptv_epg::{GuideStore, Overrides};
 use iptv_guide::EpgSchedule;
 use iptv_import::{
-    CancelToken, Catalog, EpgSourceConfig, ImportError, ImportOptions, NoProgress, Progress,
-    ProgressSink, import_epg, import_source,
+    CancelToken, Catalog, Decision, EpgImport, EpgSourceConfig, ImportError, ImportOptions,
+    NoProgress, Progress, ProgressSink, Trigger, import_epg, import_source,
 };
 use iptv_net::{NetClient, NetConfig};
 use iptv_providers::SecretUrl;
 use iptv_providers::model::{Channel, Group, Source};
-use iptv_store_sqlite::{
-    CatalogCounts, ImportErrorKind, SourceId, Store, StoreError, StoredSource,
-};
+use iptv_store_sqlite::{CatalogCounts, SourceId, Store, StoreError, StoredSource};
 use nsh_core::prelude::*;
 
 pub use wizard_map::source_from_draft;
@@ -78,12 +81,17 @@ struct Imported {
     playback: Option<iptv_guide::playback::PlaybackContext>,
     guide: GuideStore,
     now: i64,
+    /// The stored source, whose descriptions are read on demand.
+    source: Option<SourceId>,
+    /// Whether the last channel may start (its stream can be resolved).
+    resume: bool,
 }
 
 enum Msg {
     Progress(ImportProgress),
     Playlist(Result<(ImportCounts, Box<Imported>), ImportFailure>),
-    /// The source's own guide, loaded after the playlist was reported.
+    /// What the store has (before the playlist), or the source's guide
+    /// loaded after the playlist was reported.
     Guide(Box<Imported>),
 }
 
@@ -158,7 +166,7 @@ pub fn start(ui: Ui) {
             let _ = start_import(ui, job, |update| match update {
                 Update::Done(Ok(counts)) => log::info!("iptv data: refreshed {counts:?}"),
                 Update::Done(Err(f)) => {
-                    log::warn!("iptv data: refresh failed ({f:?}); keeping the synthetic guide")
+                    log::warn!("iptv data: refresh failed ({f:?}); keeping what is on screen")
                 }
                 Update::Progress(_) => {}
             });
@@ -201,16 +209,19 @@ pub fn start_import(ui: Ui, job: Job, on_update: impl Fn(Update) + 'static) -> C
             return; // a newer import owns the guide
         }
         let channels = imported.channels.len();
-        let schedule = EpgSchedule::from_catalog(
+        let mut schedule = EpgSchedule::from_catalog(
             &imported.groups,
             &imported.channels,
             imported.guide,
             imported.now,
         )
         .with_playback(imported.playback);
+        if let Some(lookup) = imported.source.and_then(stored::description_lookup) {
+            schedule = schedule.with_description_lookup(lookup);
+        }
         log::info!("iptv data: guide switched to {channels} imported channels");
         crate::set_schedule(&ui, Rc::new(schedule));
-        crate::player::source_ready(ui, refresh);
+        crate::player::source_ready(ui, refresh && imported.resume);
     };
     spawn_in_app(async move {
         let mut finished = false;
@@ -283,11 +294,16 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
     let fail = |failure: ImportFailure| {
         let _ = tx.send(Msg::Playlist(Err(failure)));
     };
+    let now = now_unix();
+    let stored_guide = job.stored.and_then(stored::guide_state);
+    // A stored source: what the store has is on screen before any network.
+    if let Some(view) = job.stored.and_then(|id| stored_view(&job, id, now)) {
+        let _ = tx.send(Msg::Guide(view));
+    }
     let Ok(net) = NetClient::new(NetConfig::default()) else {
         log::warn!("iptv data: network client setup failed");
         return fail(ImportFailure::new(FailureKind::Network));
     };
-    let now = now_unix();
     let mut progress = Forward(tx);
     let options = ImportOptions::new(now);
     let catalog =
@@ -302,14 +318,17 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
     if catalog.is_empty() {
         return fail(ImportFailure::new(FailureKind::EmptyPlaylist));
     }
-    let mut guides = catalog.epg_sources(CUSTOM_EPG.0 + 1);
+    let guides = stored::configs(
+        stored::own_guides(&catalog),
+        job.epg_url.clone(),
+        stored_guide.as_ref(),
+    );
     // A guide the user typed is part of adding the source: it must load
     // before the source is kept, and its failure points at its field.
-    let typed_guide = match job.epg_url.clone() {
-        Some(url) => {
-            guides.insert(0, EpgSourceConfig::new(CUSTOM_EPG, url).with_priority(1000));
-            match load_guide(&net, &guides, &catalog, now, &mut progress, cancel, true).await {
-                Ok(guide) => Some(guide),
+    let typed_guide = match job.epg_url {
+        Some(_) => {
+            match download_guide(&net, &guides, &catalog, now, &mut progress, cancel, true).await {
+                Ok(import) => Some(import),
                 Err(e) => {
                     log::warn!("iptv data: the typed guide failed: {e}");
                     let mut failure = wizard_map::failure_of(&e);
@@ -330,8 +349,8 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
         done: 0,
         total: None,
     }));
-    let counts = match save(&job, &catalog) {
-        Ok(counts) => counts,
+    let (id, counts) = match save(&job, &catalog) {
+        Ok(saved) => saved,
         Err(e) => {
             log::warn!("iptv data: store: {e}");
             return fail(ImportFailure::new(FailureKind::Network));
@@ -343,7 +362,6 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
         movies: counts.vod,
         series: counts.series,
     };
-    let has_typed_guide = typed_guide.is_some();
     let imported = |guide| {
         Box::new(Imported {
             groups: catalog.groups.clone(),
@@ -351,27 +369,105 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
             playback: crate::player::context_for(&job.source.config, &catalog.source),
             guide,
             now,
+            source: Some(id),
+            resume: true,
         })
     };
-    let _ = tx.send(Msg::Playlist(Ok((
-        counts,
-        imported(typed_guide.unwrap_or_default()),
-    ))));
-    if has_typed_guide || guides.is_empty() {
-        return;
+    let report = |guide| {
+        let _ = tx.send(Msg::Playlist(Ok((counts, imported(guide)))));
+    };
+    if let Some(import) = typed_guide {
+        return report(keep_guide(id, import, &guides, &catalog.channels, now));
     }
-    // The source's own guide loads after the channels are on screen.
-    match load_guide(&net, &guides, &catalog, now, &mut NoProgress, cancel, false).await {
-        Ok(guide) => {
-            let _ = tx.send(Msg::Guide(imported(guide)));
+    let trigger = if job.stored.is_some() {
+        Trigger::Startup
+    } else {
+        Trigger::PlaylistChanged
+    };
+    match stored::plan(
+        trigger,
+        &guides,
+        &catalog.channels,
+        stored_guide.as_ref(),
+        now,
+    ) {
+        Decision::Refresh(reason) => {
+            log::info!("iptv data: downloading the guide ({reason:?})");
+            report(stored::load_guide(id, now).unwrap_or_default());
+            // The guide loads after the channels are on screen.
+            match download_guide(&net, &guides, &catalog, now, &mut NoProgress, cancel, false).await
+            {
+                Ok(import) => {
+                    let guide = keep_guide(id, import, &guides, &catalog.channels, now);
+                    let _ = tx.send(Msg::Guide(imported(guide)));
+                }
+                Err(ImportError::Cancelled) => {}
+                Err(e) => {
+                    log::warn!("iptv data: guide: {e}");
+                    stored::record_failure(id, &e);
+                }
+            }
         }
-        Err(e) => log::warn!("iptv data: guide: {e}"),
+        Decision::Discard => {
+            stored::discard(id);
+            report(GuideStore::default());
+        }
+        decision => {
+            log::info!("iptv data: using the stored guide ({decision:?})");
+            report(stored::load_guide(id, now).unwrap_or_default());
+        }
     }
 }
 
-/// Loads `guides` for the catalog's channels. With `typed_first`, the
+/// A stored source's saved channels and guide, as they were last imported.
+fn stored_view(job: &Job, id: SourceId, now: i64) -> Option<Box<Imported>> {
+    let (groups, channels) = match stored::catalog(id) {
+        Ok(catalog) => catalog,
+        Err(e) => {
+            log::warn!("iptv data: stored catalog: {e}");
+            return None;
+        }
+    };
+    if channels.is_empty() {
+        return None;
+    }
+    let playback = crate::player::stored_context(&job.source.config);
+    log::info!(
+        "iptv data: showing {} stored channels before the refresh",
+        channels.len()
+    );
+    Some(Box::new(Imported {
+        groups,
+        channels,
+        resume: playback.is_some(),
+        playback,
+        guide: stored::load_guide(id, now).unwrap_or_default(),
+        now,
+        source: Some(id),
+    }))
+}
+
+/// Stores a downloaded guide and reads it back without descriptions; the
+/// downloaded one when the store fails.
+fn keep_guide(
+    id: SourceId,
+    import: EpgImport,
+    guides: &[EpgSourceConfig],
+    channels: &[Channel],
+    now: i64,
+) -> GuideStore {
+    match stored::replace(id, &import, guides, channels, now) {
+        Ok(_) => stored::load_guide(id, now).unwrap_or(import.guide),
+        Err(e) => {
+            log::warn!("iptv data: could not store the guide: {e}");
+            import.guide
+        }
+    }
+}
+
+/// Downloads `guides` for the catalog's channels. With `typed_first`, the
 /// first guide (the one the user typed) must load.
-async fn load_guide<P: ProgressSink>(
+async fn download_guide<P: ProgressSink>(
     net: &NetClient,
     guides: &[EpgSourceConfig],
     catalog: &Catalog,
@@ -379,7 +475,7 @@ async fn load_guide<P: ProgressSink>(
     progress: &mut P,
     cancel: &CancelToken,
     typed_first: bool,
-) -> Result<GuideStore, ImportError> {
+) -> Result<EpgImport, ImportError> {
     let epg = import_epg(
         net,
         guides,
@@ -399,12 +495,12 @@ async fn load_guide<P: ProgressSink>(
     {
         return Err(e.clone());
     }
-    Ok(epg.guide)
+    Ok(epg)
 }
 
 /// Stores the catalog: under a new source (removed again if the catalog
 /// cannot be written) or the refreshed one.
-fn save(job: &Job, catalog: &Catalog) -> Result<CatalogCounts, StoreError> {
+fn save(job: &Job, catalog: &Catalog) -> Result<(SourceId, CatalogCounts), StoreError> {
     let mut store = open_store()?;
     let (id, added) = match job.stored {
         Some(id) => (id, false),
@@ -426,7 +522,7 @@ fn save(job: &Job, catalog: &Catalog) -> Result<CatalogCounts, StoreError> {
         counts.channels,
         id.0
     );
-    Ok(counts)
+    Ok((id, counts))
 }
 
 /// Notes a failed refresh on the stored source (kind only).
@@ -434,15 +530,7 @@ fn record_failure(stored: Option<SourceId>, error: &ImportError) {
     let Some(id) = stored else {
         return;
     };
-    let kind = match error {
-        ImportError::InvalidConfig(_) => ImportErrorKind::InvalidConfig,
-        ImportError::Cancelled => ImportErrorKind::Cancelled,
-        ImportError::Network { .. } => ImportErrorKind::Network,
-        ImportError::HttpStatus { .. } => ImportErrorKind::HttpStatus,
-        ImportError::Auth { .. } => ImportErrorKind::AccountRejected,
-        ImportError::Parse { .. } => ImportErrorKind::InvalidBody,
-        ImportError::Portal { .. } | ImportError::Empty { .. } => ImportErrorKind::Other,
-    };
+    let kind = stored::error_kind(error);
     if let Err(e) = open_store().and_then(|mut s| s.record_import_failure(id, kind)) {
         log::warn!("iptv data: could not record the failure: {e}");
     }
