@@ -12,3 +12,5 @@ serde_json.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+iptv-epg.workspace = true
+iptv-guide.workspace = true

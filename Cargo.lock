@@ -1846,6 +1846,8 @@ dependencies = [
 name = "iptv-store-sqlite"
 version = "0.1.0"
 dependencies = [
+ "iptv-epg",
+ "iptv-guide",
  "iptv-providers",
  "rusqlite",
  "serde_json",
