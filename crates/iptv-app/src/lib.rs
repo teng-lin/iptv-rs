@@ -472,6 +472,7 @@ pub fn App() -> impl IntoElement {
         .child(
             // Full screen: a tap toggles the player panels.
             view()
+                .test_id("video")
                 .absolute()
                 .inset_0()
                 .pointer_events(move || {
@@ -486,7 +487,7 @@ pub fn App() -> impl IntoElement {
                     toggle_panels(ui);
                     // A double click on the desktop: window full screen (the
                     // first click's panels go again).
-                    if e.clicks == 2 && cfg!(target_os = "linux") {
+                    if e.clicks == 2 && desktop::DESKTOP {
                         desktop::toggle_fullscreen();
                     }
                 }),

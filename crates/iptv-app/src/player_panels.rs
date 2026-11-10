@@ -29,7 +29,7 @@ const LOGO_H: f32 = 63.0;
 const VOLUME_W: f32 = 96.0;
 /// Pointer controls (play/pause, mute) on every platform; volume and
 /// window full screen where the app owns them (the desktop).
-const DESKTOP: bool = cfg!(target_os = "linux");
+const DESKTOP: bool = crate::desktop::DESKTOP;
 
 fn quick_label(action: QuickAction) -> &'static str {
     match action {
