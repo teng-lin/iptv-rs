@@ -1,0 +1,243 @@
+//! M3U import: streamed download (or text in memory) → [`M3uParser`].
+//!
+//! Gzip-compressed files (`.m3u.gz`, served without `Content-Encoding`) are
+//! detected by their magic bytes. Classification after parsing keeps
+//! failures apart from empty playlists: an HLS manifest, HTML/JSON error
+//! pages and all-malformed files are [`ParseProblem`]s; only a well-formed
+//! playlist without entries is [`ImportError::Empty`].
+
+use std::io::Write;
+
+use flate2::write::MultiGzDecoder;
+use iptv_providers::HttpRequest;
+use iptv_providers::m3u::{M3uParser, M3uPlaylist};
+use iptv_providers::model::{Channel, ContentKind, M3uSourceConfig, StreamLocator};
+
+use crate::cancel::{CancelToken, check};
+use crate::catalog::{Catalog, SourceMeta};
+use crate::ctx::Ctx;
+use crate::error::{ImportError, ParseProblem, Step};
+use crate::fetch::Fetch;
+use crate::progress::{Phase, Progress, ProgressSink, REPORT_EVERY_BYTES};
+
+/// Leading decoded bytes kept to recognise HTML/JSON bodies.
+const SNIFF: usize = 512;
+
+/// Decodes (optionally gzip) and parses a playlist fed in chunks.
+pub(crate) struct M3uFeeder {
+    parser: M3uParser,
+    head: Vec<u8>,
+    gzip: Option<Box<MultiGzDecoder<Vec<u8>>>>,
+    decided: bool,
+    sniff: Vec<u8>,
+    /// Channels moved out of the parser as they complete (progress counts).
+    taken: Vec<Channel>,
+}
+
+impl M3uFeeder {
+    pub fn new() -> Self {
+        Self {
+            parser: M3uParser::new(),
+            head: Vec::new(),
+            gzip: None,
+            decided: false,
+            sniff: Vec::new(),
+            taken: Vec::new(),
+        }
+    }
+
+    /// Feeds raw bytes; returns the number of channels parsed so far.
+    pub fn push(&mut self, bytes: &[u8]) -> Result<u64, ImportError> {
+        if self.decided {
+            self.decoded(bytes)?;
+        } else {
+            self.head.extend_from_slice(bytes);
+            if self.head.len() >= 2 {
+                self.decide();
+                let head = std::mem::take(&mut self.head);
+                self.decoded(&head)?;
+            }
+        }
+        self.taken.append(&mut self.parser.take_channels());
+        Ok(self.taken.len() as u64)
+    }
+
+    fn decide(&mut self) {
+        self.decided = true;
+        if self.head.starts_with(&[0x1f, 0x8b]) {
+            self.gzip = Some(Box::new(MultiGzDecoder::new(Vec::new())));
+        }
+    }
+
+    fn decoded(&mut self, bytes: &[u8]) -> Result<(), ImportError> {
+        match &mut self.gzip {
+            None => text(&mut self.sniff, &mut self.parser, bytes),
+            Some(gz) => {
+                // Small slices bound the inflated buffer.
+                for piece in bytes.chunks(16 * 1024) {
+                    gz.write_all(piece).map_err(gzip_error)?;
+                    let out = std::mem::take(gz.get_mut());
+                    text(&mut self.sniff, &mut self.parser, &out);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn finish(mut self) -> Result<(M3uPlaylist, Vec<u8>), ImportError> {
+        if !self.decided {
+            self.decide();
+            let head = std::mem::take(&mut self.head);
+            self.decoded(&head)?;
+        }
+        if let Some(mut gz) = self.gzip.take() {
+            gz.try_finish().map_err(gzip_error)?;
+            let out = std::mem::take(gz.get_mut());
+            text(&mut self.sniff, &mut self.parser, &out);
+        }
+        let mut playlist = self.parser.finish();
+        self.taken.append(&mut playlist.channels.items);
+        playlist.channels.items = self.taken;
+        Ok((playlist, self.sniff))
+    }
+}
+
+/// Decoded playlist text: keep the first bytes for sniffing, then parse.
+fn text(sniff: &mut Vec<u8>, parser: &mut M3uParser, bytes: &[u8]) {
+    if sniff.len() < SNIFF {
+        let n = (SNIFF - sniff.len()).min(bytes.len());
+        sniff.extend_from_slice(&bytes[..n]);
+    }
+    parser.feed(bytes);
+}
+
+fn gzip_error(e: std::io::Error) -> ImportError {
+    ImportError::parse(
+        Step::Playlist,
+        ParseProblem::Decode(format!("corrupt gzip playlist: {e}")),
+    )
+}
+
+/// Turns a parsed playlist into a catalog, or explains why it is not one.
+fn into_catalog(
+    playlist: M3uPlaylist,
+    sniff: &[u8],
+    stats: crate::catalog::ImportStats,
+) -> Result<Catalog, ImportError> {
+    let fail = |p| Err(ImportError::parse(Step::Playlist, p));
+    let head = String::from_utf8_lossy(sniff);
+    let head = head.trim_start_matches('\u{feff}').trim_start();
+    let header = &playlist.header;
+    if header.looks_like_hls {
+        return fail(ParseProblem::HlsManifest);
+    }
+    if !header.declared {
+        if head.is_empty() {
+            return Err(ImportError::Empty {
+                step: Step::Playlist,
+            });
+        }
+        // Without `#EXTM3U` every non-comment line is read as a URL, so an
+        // error page would otherwise "parse".
+        let any_url = playlist.channels.items.iter().any(|c| match &c.stream {
+            StreamLocator::Url { url, .. } => url.contains("://"),
+            _ => false,
+        });
+        if head.starts_with(['<', '{', '[']) || !any_url {
+            return fail(ParseProblem::NotAPlaylist);
+        }
+    }
+    let channels = &playlist.channels;
+    if channels.items.is_empty() {
+        return if channels.skipped > 0 {
+            fail(ParseProblem::NoUsableEntries {
+                skipped: channels.skipped,
+            })
+        } else {
+            Err(ImportError::Empty {
+                step: Step::Playlist,
+            })
+        };
+    }
+    let mut catalog = Catalog::new(SourceMeta::M3u {
+        header: playlist.header,
+    });
+    catalog.stats = stats;
+    catalog.groups = playlist.groups;
+    catalog.channels = catalog.absorb(Step::Playlist, None, playlist.channels);
+    Ok(catalog)
+}
+
+/// Imports an M3U playlist from its URL (or a `file://`/absolute path the
+/// adapter can read). The configured User-Agent and Referer are sent.
+pub(crate) async fn import_m3u<F: Fetch, P: ProgressSink>(
+    ctx: &mut Ctx<'_, F, P>,
+    config: &M3uSourceConfig,
+) -> Result<Catalog, ImportError> {
+    let location = config.location.expose().trim();
+    if location.is_empty() {
+        return Err(ImportError::InvalidConfig(
+            "playlist address is required".into(),
+        ));
+    }
+    let mut req = HttpRequest::get(location);
+    if let Some(ua) = config
+        .user_agent
+        .as_deref()
+        .map(str::trim)
+        .filter(|u| !u.is_empty())
+    {
+        req = req.with_header("User-Agent", ua);
+    }
+    if let Some(r) = config
+        .referrer
+        .as_deref()
+        .map(str::trim)
+        .filter(|r| !r.is_empty())
+    {
+        req = req.with_header("Referer", r);
+    }
+    ctx.phase(Phase::Playlist);
+    let mut feeder = M3uFeeder::new();
+    ctx.stream(Step::Playlist, Phase::Playlist, req, |chunk| {
+        feeder.push(chunk)
+    })
+    .await?;
+    let (playlist, sniff) = feeder.finish()?;
+    let catalog = into_catalog(playlist, &sniff, ctx.stats.clone())?;
+    report_done(ctx.progress, catalog.channels.len());
+    Ok(catalog)
+}
+
+fn report_done(progress: &mut impl ProgressSink, channels: usize) {
+    let mut p = Progress::phase(Phase::Items(ContentKind::Live));
+    p.items = channels as u64;
+    progress.report(&p);
+    progress.report(&Progress::phase(Phase::Done));
+}
+
+/// Imports a playlist already in memory (a picked file, the clipboard).
+/// Synchronous; checks `cancel` every 256 KiB.
+pub fn import_m3u_text(
+    bytes: &[u8],
+    progress: &mut impl ProgressSink,
+    cancel: &CancelToken,
+) -> Result<Catalog, ImportError> {
+    let mut feeder = M3uFeeder::new();
+    let mut p = Progress::phase(Phase::Playlist);
+    p.total_bytes = Some(bytes.len() as u64);
+    for chunk in bytes.chunks(REPORT_EVERY_BYTES as usize) {
+        check(cancel)?;
+        p.items = feeder.push(chunk)?;
+        p.bytes += chunk.len() as u64;
+        progress.report(&p);
+    }
+    let (playlist, sniff) = feeder.finish()?;
+    let stats = crate::catalog::ImportStats {
+        bytes: bytes.len() as u64,
+        ..Default::default()
+    };
+    let catalog = into_catalog(playlist, &sniff, stats)?;
+    report_done(progress, catalog.channels.len());
+    Ok(catalog)
+}

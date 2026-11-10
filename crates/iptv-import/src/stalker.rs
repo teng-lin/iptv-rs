@@ -1,0 +1,362 @@
+//! Stalker/Ministra import: endpoint discovery → auth loop → genres →
+//! paginated channels (and optionally VOD).
+//!
+//! Discovery probes each candidate endpoint with a token-less
+//! `get_genres`: data proves a token-free panel; an auth refusal is
+//! confirmed with a full handshake + profile. A connection failure aborts
+//! (every candidate shares the host); timeouts and non-portal answers move
+//! on. API calls rejected for the token re-run the auth loop and retry once.
+
+use iptv_providers::model::{Channel, ContentKind, StalkerCredentials, VodItem};
+use iptv_providers::stalker::{
+    ApiError, AuthStep, Page, PagedCrawl, PortalMode, ProbeResult, StalkerPortal, StalkerSession,
+    classify_probe, endpoint_candidates, parse_channel_page, parse_genres, parse_vod_page,
+};
+use iptv_providers::{HttpRequest, HttpResponse, ProviderError, StalkerError, StalkerErrorKind};
+
+use crate::catalog::{Catalog, CatalogWarning, ImportOptions, SourceMeta};
+use crate::ctx::Ctx;
+use crate::error::{AuthProblem, ImportError, ParseProblem, Step};
+use crate::fetch::Fetch;
+use crate::progress::{Phase, Progress, ProgressSink};
+use crate::xtream::soften;
+
+pub(crate) async fn import_stalker<F: Fetch, P: ProgressSink>(
+    ctx: &mut Ctx<'_, F, P>,
+    creds: &StalkerCredentials,
+    opts: &ImportOptions,
+) -> Result<Catalog, ImportError> {
+    let mut session = discover(ctx, creds).await?;
+    let live = ContentKind::Live;
+
+    ctx.phase(Phase::Groups(live));
+    let genres = call(
+        ctx,
+        &mut session,
+        Step::Categories(live),
+        |s| s.genres(),
+        |r| parse_genres(r, live),
+    )
+    .await;
+    if let Err(e) = &genres
+        && (e.is_fatal() || matches!(e, ImportError::Network { .. }))
+    {
+        return Err(e.clone());
+    }
+    let channels = crawl::<_, _, Channel>(
+        ctx,
+        &mut session,
+        live,
+        opts,
+        opts.stalker_channel_cap,
+        |s, p| s.channels_page("*", p),
+        parse_channel_page,
+    )
+    .await?;
+
+    let mut vod = None;
+    if opts.include_vod {
+        let kind = ContentKind::Movie;
+        ctx.phase(Phase::Groups(kind));
+        let cats = call(
+            ctx,
+            &mut session,
+            Step::Categories(kind),
+            |s| s.vod_categories(),
+            |r| parse_genres(r, kind),
+        )
+        .await;
+        let items = crawl::<_, _, VodItem>(
+            ctx,
+            &mut session,
+            kind,
+            opts,
+            opts.stalker_vod_cap,
+            |s, p| s.vod_page("*", p),
+            parse_vod_page,
+        )
+        .await;
+        vod = Some((cats, items));
+    }
+
+    let mut catalog = Catalog::new(SourceMeta::Stalker {
+        session: Box::new(session),
+    });
+    if let Some(import) = soften(&mut catalog, genres)? {
+        let groups = catalog.absorb(Step::Categories(live), None, import);
+        catalog.groups.extend(groups);
+    }
+    catalog.channels = channels.into_catalog(&mut catalog);
+    let referenced: Vec<_> = catalog
+        .channels
+        .iter()
+        .flat_map(|c| c.groups.clone())
+        .collect();
+    catalog.add_missing_groups(live, referenced.iter());
+
+    if let Some((cats, items)) = vod {
+        let kind = ContentKind::Movie;
+        if let Some(import) = soften(&mut catalog, cats)? {
+            let groups = catalog.absorb(Step::Categories(kind), None, import);
+            catalog.groups.extend(groups);
+        }
+        if let Some(items) = soften(&mut catalog, items)? {
+            catalog.vod = items.into_catalog(&mut catalog);
+            let referenced: Vec<_> = catalog.vod.iter().flat_map(|v| v.groups.clone()).collect();
+            catalog.add_missing_groups(kind, referenced.iter());
+        }
+    }
+
+    if catalog.is_empty() {
+        return Err(ImportError::Empty {
+            step: Step::Items(live),
+        });
+    }
+    catalog.set_transport_stats(&ctx.stats);
+    ctx.phase(Phase::Done);
+    Ok(catalog)
+}
+
+/// Finds the API endpoint and mode, and authorises a session on it.
+async fn discover<F: Fetch, P: ProgressSink>(
+    ctx: &mut Ctx<'_, F, P>,
+    creds: &StalkerCredentials,
+) -> Result<StalkerSession, ImportError> {
+    let step = Step::PortalDiscovery;
+    let candidates = endpoint_candidates(&creds.portal_url).map_err(config)?;
+    let mut last = None;
+    for endpoint in candidates {
+        ctx.phase(Phase::Connecting);
+        let portal =
+            StalkerPortal::from_credentials(creds, &endpoint, PortalMode::Full).map_err(config)?;
+        let resp = match ctx.send(step, portal.probe_request()).await {
+            Ok(r) => r,
+            Err(ImportError::Network { step, error }) if !error.kind.is_host_failure() => {
+                last = Some(ImportError::Network { step, error });
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
+        match classify_probe(&resp) {
+            ProbeResult::Data => {
+                let portal = StalkerPortal::from_credentials(creds, &endpoint, PortalMode::Simple)
+                    .map_err(config)?;
+                return Ok(StalkerSession::new(portal));
+            }
+            ProbeResult::AuthRequired => {
+                let mut session = StalkerSession::new(portal);
+                match authenticate(ctx, &mut session).await {
+                    Ok(()) => return Ok(session),
+                    // Not a working token endpoint after all: try the next.
+                    Err(
+                        e @ ImportError::Auth {
+                            problem:
+                                AuthProblem::Stalker(StalkerError {
+                                    kind: StalkerErrorKind::NoToken,
+                                    ..
+                                }),
+                            ..
+                        },
+                    )
+                    | Err(e @ ImportError::Portal { .. }) => last = Some(e),
+                    Err(e) => return Err(e),
+                }
+            }
+            ProbeResult::NotAPortal => {}
+        }
+    }
+    Err(last.unwrap_or(ImportError::parse(step, ParseProblem::NotAPortal)))
+}
+
+fn config(e: ProviderError) -> ImportError {
+    match e {
+        ProviderError::InvalidConfig(why) => ImportError::InvalidConfig(why),
+        other => ImportError::InvalidConfig(other.to_string()),
+    }
+}
+
+/// Runs the session's auth loop to `Ready`.
+async fn authenticate<F: Fetch, P: ProgressSink>(
+    ctx: &mut Ctx<'_, F, P>,
+    session: &mut StalkerSession,
+) -> Result<(), ImportError> {
+    let step = Step::Authentication;
+    ctx.phase(Phase::Authenticating);
+    loop {
+        match session.poll() {
+            AuthStep::Send(req) => {
+                let resp = ctx.send(step, req).await?;
+                session
+                    .on_auth_response(&resp)
+                    .map_err(|e| ImportError::stalker(step, e))?;
+            }
+            AuthStep::Ready => return Ok(()),
+            AuthStep::Failed(e) => return Err(ImportError::stalker(step, e)),
+            AuthStep::Waiting => {
+                return Err(ImportError::stalker(
+                    step,
+                    StalkerError::new(StalkerErrorKind::NotAuthorized),
+                ));
+            }
+        }
+    }
+}
+
+/// One API call; a token rejection re-authenticates and retries once.
+async fn call<F: Fetch, P: ProgressSink, T>(
+    ctx: &mut Ctx<'_, F, P>,
+    session: &mut StalkerSession,
+    step: Step,
+    build: impl Fn(&StalkerSession) -> Result<HttpRequest, StalkerError>,
+    parse: impl Fn(&HttpResponse) -> Result<T, ProviderError>,
+) -> Result<T, ImportError> {
+    let mut retried = false;
+    loop {
+        let req = build(session).map_err(|e| ImportError::stalker(step, e))?;
+        let resp = ctx.send(step, req).await?;
+        match parse(&resp) {
+            Ok(v) => {
+                if retried {
+                    // Resets the session's rejection counter after recovery.
+                    let _ = session.check_api_response(&resp);
+                }
+                return Ok(v);
+            }
+            Err(ProviderError::Stalker(e))
+                if !retried
+                    && matches!(
+                        e.kind,
+                        StalkerErrorKind::AuthFailed | StalkerErrorKind::Blocked
+                    ) =>
+            {
+                match session.check_api_response(&resp) {
+                    Err(ApiError::Reauthenticate) => {
+                        authenticate(ctx, session).await?;
+                        retried = true;
+                    }
+                    Err(ApiError::Provider(pe)) => return Err(ImportError::provider(step, pe)),
+                    Ok(_) => return Err(ImportError::stalker(step, e)),
+                }
+            }
+            Err(e) => return Err(ImportError::provider(step, e)),
+        }
+    }
+}
+
+/// [`PagedCrawl`] for the row types it supports (its bound is private to
+/// the providers crate).
+trait Crawl: Sized {
+    fn crawl(cap: usize) -> PagedCrawl<Self>;
+    fn next_page(c: &PagedCrawl<Self>) -> Option<u32>;
+    fn push(c: &mut PagedCrawl<Self>, page: Page<Self>);
+    fn abort(c: &mut PagedCrawl<Self>);
+    fn into_items(c: PagedCrawl<Self>) -> Vec<Self>;
+}
+
+macro_rules! crawlable {
+    ($t:ty) => {
+        impl Crawl for $t {
+            fn crawl(cap: usize) -> PagedCrawl<Self> {
+                PagedCrawl::new(cap)
+            }
+            fn next_page(c: &PagedCrawl<Self>) -> Option<u32> {
+                c.next_page()
+            }
+            fn push(c: &mut PagedCrawl<Self>, page: Page<Self>) {
+                c.push(page)
+            }
+            fn abort(c: &mut PagedCrawl<Self>) {
+                c.abort()
+            }
+            fn into_items(c: PagedCrawl<Self>) -> Vec<Self> {
+                c.into_items()
+            }
+        }
+    };
+}
+crawlable!(Channel);
+crawlable!(VodItem);
+
+/// Items from a crawl plus what to report about them.
+struct Crawled<T> {
+    items: Vec<T>,
+    skipped: usize,
+    warnings: Vec<CatalogWarning>,
+    dropped: usize,
+}
+
+impl<T> Crawled<T> {
+    fn into_catalog(self, catalog: &mut Catalog) -> Vec<T> {
+        catalog.stats.skipped += self.skipped;
+        catalog.warnings_dropped += self.dropped;
+        for w in self.warnings {
+            catalog.push_warning(w);
+        }
+        self.items
+    }
+}
+
+/// Crawls `get_ordered_list` pages. A failed page is retried
+/// `opts.page_retries` times; then the crawl stops with what it has (and a
+/// warning), or fails when it has nothing.
+async fn crawl<F: Fetch, P: ProgressSink, T: Crawl>(
+    ctx: &mut Ctx<'_, F, P>,
+    session: &mut StalkerSession,
+    kind: ContentKind,
+    opts: &ImportOptions,
+    cap: usize,
+    build: impl Fn(&StalkerSession, u32) -> Result<HttpRequest, StalkerError>,
+    parse: impl Fn(&HttpResponse) -> Result<Page<T>, ProviderError>,
+) -> Result<Crawled<T>, ImportError> {
+    let step = Step::Items(kind);
+    let mut crawl = T::crawl(cap);
+    let mut out = Crawled {
+        items: Vec::new(),
+        skipped: 0,
+        warnings: Vec::new(),
+        dropped: 0,
+    };
+    let mut rows = 0u64;
+    let mut failures = 0u8;
+    while let Some(page) = T::next_page(&crawl) {
+        let mut p = Progress::phase(Phase::Items(kind));
+        p.page = Some(page);
+        p.items = rows;
+        ctx.report(p);
+        match call(ctx, session, step, |s| build(s, page), &parse).await {
+            Ok(mut got) => {
+                failures = 0;
+                ctx.stats.pages += 1;
+                rows += got.items.items.len() as u64;
+                out.skipped += std::mem::take(&mut got.items.skipped);
+                out.dropped += std::mem::take(&mut got.items.warnings_dropped);
+                for w in std::mem::take(&mut got.items.warnings) {
+                    out.warnings.push(CatalogWarning {
+                        step,
+                        page: Some(page),
+                        location: Some(w.location),
+                        message: w.message,
+                    });
+                }
+                T::push(&mut crawl, got);
+            }
+            Err(e) if e.is_fatal() => return Err(e),
+            Err(_) if failures < opts.page_retries => failures += 1,
+            Err(e) if rows == 0 => return Err(e),
+            Err(e) => {
+                out.warnings.push(CatalogWarning {
+                    step,
+                    page: Some(page),
+                    location: None,
+                    message: format!("stopped after {rows} rows: {e}"),
+                });
+                T::abort(&mut crawl);
+            }
+        }
+    }
+    out.items = T::into_items(crawl);
+    let mut p = Progress::phase(Phase::Items(kind));
+    p.items = out.items.len() as u64;
+    ctx.report(p);
+    Ok(out)
+}
