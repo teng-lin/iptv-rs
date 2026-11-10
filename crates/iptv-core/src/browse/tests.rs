@@ -16,6 +16,8 @@ struct Screen {
     rail: Vec<RailItem>,
     view: ListView,
     focus: Focus,
+    /// `guide.back_returns_to_now`.
+    back_to_now: bool,
 }
 
 impl Screen {
@@ -34,6 +36,7 @@ impl Screen {
             rail: rail_items(false),
             view,
             focus,
+            back_to_now: true,
         }
     }
 
@@ -61,6 +64,7 @@ impl Screen {
         let cols = Columns {
             entries: entry_count(&*self.catalog),
             rail: &self.rail.clone(),
+            back_to_now: true,
         };
         let o = self.focus.navigate(m, &cols, &self.view);
         self.follow(o)
@@ -71,6 +75,7 @@ impl Screen {
         let cols = Columns {
             entries: entry_count(&*self.catalog),
             rail: &rail,
+            back_to_now: true,
         };
         let o = self.focus.ok(&cols, &self.view);
         self.follow(o)
@@ -81,6 +86,7 @@ impl Screen {
         let cols = Columns {
             entries: entry_count(&*self.catalog),
             rail: &rail,
+            back_to_now: self.back_to_now,
         };
         self.focus.back(&cols, &self.view)
     }
@@ -209,6 +215,46 @@ fn back_on_a_future_programme_returns_to_now_first() {
 }
 
 #[test]
+fn without_back_to_now_back_on_a_past_or_future_programme_opens_the_groups() {
+    let mut s = Screen::new();
+    s.back_to_now = false;
+    s.mv(Move::Right);
+    s.mv(Move::Right);
+    let cursor = s.focus.cursor;
+    assert_ne!(cursor, s.focus.now);
+    assert_eq!(s.back(), Outcome::Moved);
+    assert_eq!(s.focus.pane, Pane::Groups, "straight to the groups");
+    assert_eq!(s.focus.cursor, cursor, "the guide stays where it was");
+    // The rest of the chain is the same.
+    assert_eq!(s.back(), Outcome::Moved);
+    assert_eq!(s.focus.pane, Pane::Rail);
+    assert_eq!(s.back(), Outcome::Leave);
+}
+
+#[test]
+fn the_player_list_selects_a_list_without_touching_the_columns() {
+    let mut s = Screen::new();
+    s.mv(Move::Down);
+    s.focus.now = 40;
+    let rail = s.rail.clone();
+    let cols = Columns {
+        entries: entry_count(&*s.catalog),
+        rail: &rail,
+        back_to_now: true,
+    };
+    assert!(s.focus.preview_list(FIRST_GROUP + 1, &cols));
+    s.rebuild(false);
+    assert_eq!(s.shown(), [3, 4], "Sports");
+    assert_eq!((s.focus.pane, s.focus.channel), (Pane::Guide, 0));
+    assert_eq!(s.focus.cursor, 40, "at now");
+    assert!(
+        !s.focus.preview_list(FIRST_GROUP + 1, &cols),
+        "already shown"
+    );
+    assert!(!s.focus.preview_list(99, &cols), "no such entry");
+}
+
+#[test]
 fn the_rail_skips_items_without_a_screen() {
     let mut s = Screen::new();
     s.focus.open_groups();
@@ -257,6 +303,7 @@ fn rail_items_follow_the_playlist() {
     let cols = Columns {
         entries: 3,
         rail: &items,
+        back_to_now: true,
     };
     assert_eq!(
         f.tap_rail(2, &cols, &SyntheticList),
@@ -311,6 +358,7 @@ fn a_tap_on_a_group_selects_and_filters_it() {
     let cols = Columns {
         entries: cols_entries,
         rail: &rail,
+        back_to_now: true,
     };
     let o = s.focus.tap_entry(Entry::Group(2).index(), &cols);
     s.follow(o);

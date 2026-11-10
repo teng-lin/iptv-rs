@@ -140,6 +140,16 @@ fn rows_are_numbered_by_their_place_in_the_list() {
 }
 
 #[test]
+fn a_channel_is_numbered_by_the_list_on_screen_else_by_the_catalog() {
+    let c = Catalog::small();
+    let kids = ChannelList::build(5, &c, &[], &[]);
+    assert_eq!(kids.number_of(7, &c), 3, "its row + 1");
+    assert_eq!(kids.number_of(0, &c), 100, "not in the list: the catalog's");
+    let fav = ChannelList::build(FAVORITES, &c, &[8, 0], &[]);
+    assert_eq!(fav.number_of(0, &c), 2);
+}
+
+#[test]
 fn a_list_view_reads_the_catalog_channel_behind_each_row() {
     let catalog: Rc<dyn Schedule> = Rc::new(Catalog::small());
     let fav = view(

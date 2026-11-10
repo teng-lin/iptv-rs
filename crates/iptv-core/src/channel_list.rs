@@ -1,12 +1,18 @@
 //! The channel list over full-screen video (the player's Left; Long Left
 //! shows it beside the video shrunk to a preview), as the reference's
-//! player defaults have it: the playing group's channels with their
-//! programmes, Up/Down move, OK plays (OK on what plays closes the list),
-//! Left shows the groups, Back steps back and closes. Focus is kept by
-//! channel and group index into the caller's [`Schedule`].
+//! player defaults have it: the list the guide shows (a group, All
+//! channels, Favourites, Recently watched: [`crate::lists::ChannelList`])
+//! with the same numbers and what is on now. Up/Down move, OK plays (OK
+//! on what plays closes the list), Back closes.
+//!
+//! Left shows the guide's groups column beside it, with the same entries
+//! ([`crate::lists::Entry`]): moving over an entry previews its list
+//! ([`Outcome::Preview`]; the shell changes the guide's list as its groups
+//! column does), OK or Right goes into it, Back returns to the channels.
+//! The focus is a row of the current list and an entry index; the list
+//! itself is the caller's.
 
-use crate::guide::Schedule;
-use crate::playback::group_range;
+use crate::lists::ChannelList as Rows;
 
 /// How the list sits over the video.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,7 +23,7 @@ pub enum ListMode {
     Preview,
 }
 
-/// Which list has the focus.
+/// Which column has the focus.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ListPane {
     Channels,
@@ -27,10 +33,13 @@ pub enum ListPane {
 /// What a key did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
-    /// The list changed (or nothing happened).
+    /// Only the focus moved (or nothing happened).
     Stay,
-    /// Play this channel; the list stays.
+    /// Play this catalog channel; the list stays.
     Play(usize),
+    /// Show the list of this groups column entry: the shell selects it
+    /// (as the guide's groups column does) and calls [`ChannelList::shown`].
+    Preview(usize),
     /// Close the list.
     Close,
 }
@@ -39,116 +48,96 @@ pub enum Outcome {
 pub struct ChannelList {
     pub mode: ListMode,
     pub pane: ListPane,
-    /// The group whose channels are listed.
-    pub group: usize,
-    /// The focused channel (an index into the schedule, inside `group`).
-    pub channel: usize,
-    /// The focused group in the groups pane.
-    pub group_focus: usize,
-}
-
-/// The group holding `channel` (groups start in ascending order; 0 without
-/// groups).
-pub fn group_of(s: &dyn Schedule, channel: usize) -> usize {
-    let n = s.group_count();
-    if n == 0 {
-        return 0;
-    }
-    let (mut lo, mut hi) = (0, n);
-    while hi - lo > 1 {
-        let mid = (lo + hi) / 2;
-        if s.group_start(mid) <= channel {
-            lo = mid;
-        } else {
-            hi = mid;
-        }
-    }
-    lo
+    /// The focused row of the current list.
+    pub row: usize,
+    /// The focused entry of the groups column.
+    pub entry: usize,
 }
 
 impl ChannelList {
-    /// Opens on `playing` (else the first channel) in its group.
-    pub fn open(mode: ListMode, playing: Option<usize>, s: &dyn Schedule) -> ChannelList {
-        let last = s.channel_count().saturating_sub(1);
-        let channel = playing.unwrap_or(0).min(last);
-        let group = group_of(s, channel);
+    /// Opens on the row of `playing` (catalog), else the list's first.
+    pub fn open(mode: ListMode, playing: Option<usize>, list: &Rows) -> ChannelList {
         ChannelList {
             mode,
             pane: ListPane::Channels,
-            group,
-            channel,
-            group_focus: group,
+            row: playing.and_then(|c| list.row_of(c)).unwrap_or(0),
+            entry: list.entry(),
         }
     }
 
-    /// The channels listed (a range of schedule indices).
-    pub fn channels(&self, s: &dyn Schedule) -> std::ops::Range<usize> {
-        if s.group_count() == 0 {
-            return 0..s.channel_count();
-        }
-        let start = s.group_start(self.group.min(s.group_count() - 1));
-        group_range(s, start)
-    }
-
-    /// Up/Down (and pages): moves within the pane's list, clamped.
-    pub fn move_focus(&mut self, step: isize, s: &dyn Schedule) {
+    /// Up/Down (and pages): moves within the focused column, clamped. In
+    /// the groups a new entry is previewed. `entries` is the groups
+    /// column's length ([`crate::lists::entry_count`]).
+    pub fn move_focus(&mut self, step: isize, list: &Rows, entries: usize) -> Outcome {
         match self.pane {
             ListPane::Channels => {
-                let r = self.channels(s);
-                if r.is_empty() {
-                    return;
+                if !list.is_empty() {
+                    let last = list.len() as isize - 1;
+                    self.row = (self.row as isize + step).clamp(0, last) as usize;
                 }
-                let to = (self.channel as isize + step).clamp(r.start as isize, r.end as isize - 1);
-                self.channel = to as usize;
-            }
-            ListPane::Groups => {
-                let last = s.group_count().saturating_sub(1) as isize;
-                self.group_focus = (self.group_focus as isize + step).clamp(0, last) as usize;
-            }
-        }
-    }
-
-    /// Left: from the channels to the groups.
-    pub fn left(&mut self) {
-        if self.pane == ListPane::Channels {
-            self.pane = ListPane::Groups;
-            self.group_focus = self.group;
-        }
-    }
-
-    /// Right: from the groups back to the focused group's channels.
-    pub fn right(&mut self, s: &dyn Schedule) {
-        if self.pane == ListPane::Groups {
-            self.enter_group(self.group_focus, s);
-        }
-    }
-
-    /// Lists `group`'s channels, focus on its first.
-    pub fn enter_group(&mut self, group: usize, s: &dyn Schedule) {
-        if s.group_count() == 0 {
-            self.pane = ListPane::Channels;
-            return;
-        }
-        let group = group.min(s.group_count() - 1);
-        if group != self.group {
-            self.group = group;
-            self.channel = self.channels(s).start;
-        }
-        self.group_focus = group;
-        self.pane = ListPane::Channels;
-    }
-
-    /// OK: a channel plays (on the one playing: the list closes); a group
-    /// opens.
-    pub fn select(&mut self, playing: Option<usize>, s: &dyn Schedule) -> Outcome {
-        match self.pane {
-            ListPane::Groups => {
-                self.enter_group(self.group_focus, s);
                 Outcome::Stay
             }
-            ListPane::Channels if playing == Some(self.channel) => Outcome::Close,
-            ListPane::Channels => Outcome::Play(self.channel),
+            ListPane::Groups => {
+                let last = entries.saturating_sub(1) as isize;
+                let to = (self.entry as isize + step).clamp(0, last.max(0)) as usize;
+                self.preview(to, list)
+            }
         }
+    }
+
+    /// The list of `entry` is shown now (after a [`Outcome::Preview`]):
+    /// the focus starts at its first row.
+    pub fn shown(&mut self, list: &Rows) {
+        self.entry = list.entry();
+        self.row = 0;
+    }
+
+    /// Left: from the channels to the groups, on the current list's entry.
+    pub fn left(&mut self, list: &Rows) {
+        if self.pane == ListPane::Channels {
+            self.pane = ListPane::Groups;
+            self.entry = list.entry();
+        }
+    }
+
+    /// Right: from the groups into the list shown (an empty one cannot be
+    /// entered).
+    pub fn right(&mut self, list: &Rows) {
+        if self.pane == ListPane::Groups && !list.is_empty() {
+            self.pane = ListPane::Channels;
+        }
+    }
+
+    /// OK: a channel plays (on the one playing: the list closes); on an
+    /// entry, its list (previewed already) is entered.
+    pub fn select(&mut self, playing: Option<usize>, list: &Rows) -> Outcome {
+        match self.pane {
+            ListPane::Groups if self.entry != list.entry() => self.preview(self.entry, list),
+            ListPane::Groups => {
+                self.right(list);
+                Outcome::Stay
+            }
+            ListPane::Channels => match list.channel(self.row) {
+                Some(c) if playing == Some(c) => Outcome::Close,
+                Some(c) => Outcome::Play(c),
+                None => Outcome::Stay,
+            },
+        }
+    }
+
+    /// A tap on an entry of the groups column: previews it, or enters it
+    /// when it is the list shown.
+    pub fn tap_entry(&mut self, entry: usize, list: &Rows) -> Outcome {
+        self.pane = ListPane::Groups;
+        self.entry = entry;
+        self.select(None, list)
+    }
+
+    /// A tap on a row: focuses it and picks it.
+    pub fn tap_row(&mut self, row: usize, playing: Option<usize>, list: &Rows) -> Outcome {
+        self.pane = ListPane::Channels;
+        self.row = row;
+        self.select(playing, list)
     }
 
     /// Back: from the groups to the channels, else closes.
@@ -162,81 +151,158 @@ impl ChannelList {
         }
     }
 
-    /// The playing channel changed (a zap while the list shows): follow it.
-    pub fn follow(&mut self, playing: usize, s: &dyn Schedule) {
-        self.group = group_of(s, playing);
-        self.channel = playing;
-        self.group_focus = self.group;
+    /// The playing channel changed (a zap while the list shows): follow it
+    /// when the list has it.
+    pub fn follow(&mut self, playing: usize, list: &Rows) {
+        if let Some(row) = list.row_of(playing) {
+            self.row = row;
+        }
+    }
+
+    fn preview(&mut self, entry: usize, list: &Rows) -> Outcome {
+        self.entry = entry;
+        if entry == list.entry() {
+            Outcome::Stay
+        } else {
+            Outcome::Preview(entry)
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::guide::{SyntheticSchedule, group_start};
+    use crate::lists::tests::Catalog;
+    use crate::lists::{ALL, FAVORITES, FIRST_GROUP, RECENT, entry_count};
 
-    const S: SyntheticSchedule = SyntheticSchedule;
+    /// The player's list as the shell runs it: the guide's list, rebuilt
+    /// on a preview.
+    struct Player {
+        catalog: Catalog,
+        favorites: Vec<usize>,
+        recent: Vec<usize>,
+        list: Rows,
+        state: ChannelList,
+    }
+
+    impl Player {
+        fn on(entry: usize, playing: Option<usize>) -> Player {
+            let catalog = Catalog::small();
+            let (favorites, recent) = (vec![7, 3], vec![4, 0, 8]);
+            let list = Rows::build(entry, &catalog, &favorites, &recent);
+            let state = ChannelList::open(ListMode::Overlay, playing, &list);
+            Player {
+                catalog,
+                favorites,
+                recent,
+                list,
+                state,
+            }
+        }
+
+        fn follow(&mut self, o: Outcome) -> Outcome {
+            if let Outcome::Preview(entry) = o {
+                self.list = Rows::build(entry, &self.catalog, &self.favorites, &self.recent);
+                self.state.shown(&self.list);
+            }
+            o
+        }
+
+        fn step(&mut self, by: isize) -> Outcome {
+            let o = self
+                .state
+                .move_focus(by, &self.list, entry_count(&self.catalog));
+            self.follow(o)
+        }
+
+        fn ok(&mut self, playing: Option<usize>) -> Outcome {
+            let o = self.state.select(playing, &self.list);
+            self.follow(o)
+        }
+    }
 
     #[test]
-    fn opens_on_the_playing_channel_in_its_group() {
-        let playing = group_start(2) + 3;
-        let l = ChannelList::open(ListMode::Overlay, Some(playing), &S);
+    fn opens_on_the_current_list_at_the_playing_row() {
+        // All channels in playlist order: 0, 3, 5, 1, 4, ...
+        let p = Player::on(ALL, Some(1));
+        assert_eq!((p.state.row, p.state.entry), (3, ALL));
+        assert_eq!(Rows::number(p.state.row), 4, "numbered as in the guide");
+        // A list without the playing channel opens on its first row.
+        let p = Player::on(FAVORITES, Some(1));
+        assert_eq!((p.state.row, p.state.pane), (0, ListPane::Channels));
+        assert_eq!(p.list.channels(), [7, 3]);
+    }
+
+    #[test]
+    fn moves_stay_inside_the_list_and_ok_plays_its_channels() {
+        let mut p = Player::on(RECENT, Some(4));
+        assert_eq!(p.state.row, 0);
+        assert_eq!(p.ok(Some(4)), Outcome::Close, "OK on what plays closes");
+        p.step(-1);
+        assert_eq!(p.state.row, 0, "clamped at the first row");
+        p.step(100);
+        assert_eq!(p.state.row, 2, "and at the last");
+        assert_eq!(p.ok(Some(4)), Outcome::Play(8), "a catalog channel");
+        p.state.follow(0, &p.list);
+        assert_eq!(p.state.row, 1, "a zap moves the focus to its row");
+        p.state.follow(5, &p.list);
+        assert_eq!(p.state.row, 1, "a channel the list lacks leaves it");
+    }
+
+    #[test]
+    fn left_opens_the_guides_groups_and_moving_previews_their_lists() {
+        let mut p = Player::on(ALL, Some(0));
+        p.state.left(&p.list);
+        assert_eq!((p.state.pane, p.state.entry), (ListPane::Groups, ALL));
+        assert_eq!(p.step(-1), Outcome::Preview(RECENT));
         assert_eq!(
-            (l.group, l.channel, l.pane),
-            (2, playing, ListPane::Channels)
+            p.list.channels(),
+            [4, 0, 8],
+            "Recently watched, newest first"
         );
-        assert_eq!(l.channels(&S), group_start(2)..group_start(3));
-        let none = ChannelList::open(ListMode::Preview, None, &S);
-        assert_eq!((none.group, none.channel), (0, 0));
-    }
-
-    #[test]
-    fn moves_stay_inside_the_group() {
-        let mut l = ChannelList::open(ListMode::Overlay, Some(group_start(1)), &S);
-        l.move_focus(-1, &S);
-        assert_eq!(l.channel, group_start(1), "clamped at the group's first");
-        l.move_focus(1000, &S);
-        assert_eq!(l.channel, group_start(2) - 1, "and at its last");
-    }
-
-    #[test]
-    fn left_shows_the_groups_and_a_group_lists_its_channels() {
-        let mut l = ChannelList::open(ListMode::Overlay, Some(group_start(1) + 2), &S);
-        l.left();
-        assert_eq!((l.pane, l.group_focus), (ListPane::Groups, 1));
-        l.move_focus(1, &S);
-        assert_eq!(l.select(None, &S), Outcome::Stay);
+        assert_eq!(p.step(-1), Outcome::Preview(FAVORITES));
+        assert_eq!(p.step(-1), Outcome::Stay, "the first entry clamps");
+        assert_eq!(p.step(4), Outcome::Preview(FIRST_GROUP + 1));
+        assert_eq!(p.list.channels(), [3, 4], "Sports");
         assert_eq!(
-            (l.pane, l.group, l.channel),
-            (ListPane::Channels, 2, group_start(2))
+            p.step(10),
+            Outcome::Preview(FIRST_GROUP + 2),
+            "the last clamps"
         );
-        // Back to the playing group: Right enters the focused group too.
-        l.left();
-        l.move_focus(-1, &S);
-        l.right(&S);
-        assert_eq!((l.group, l.channel), (1, group_start(1)));
-        // Back from the groups returns to the channels, then closes.
-        l.left();
-        assert_eq!(l.back(), Outcome::Stay);
-        assert_eq!(l.pane, ListPane::Channels);
-        assert_eq!(l.back(), Outcome::Close);
+        // OK goes into the previewed list at its first row.
+        assert_eq!(p.ok(Some(0)), Outcome::Stay);
+        assert_eq!((p.state.pane, p.state.row), (ListPane::Channels, 0));
+        assert_eq!(p.ok(Some(0)), Outcome::Play(5));
     }
 
     #[test]
-    fn ok_plays_and_ok_on_the_playing_channel_closes() {
-        let playing = group_start(0) + 1;
-        let mut l = ChannelList::open(ListMode::Overlay, Some(playing), &S);
-        assert_eq!(l.select(Some(playing), &S), Outcome::Close);
-        l.move_focus(1, &S);
-        assert_eq!(l.select(Some(playing), &S), Outcome::Play(playing + 1));
-        l.follow(group_start(3), &S);
-        assert_eq!((l.group, l.channel), (3, group_start(3)));
+    fn an_empty_list_is_shown_but_not_entered() {
+        let mut p = Player::on(ALL, None);
+        p.favorites.clear();
+        p.state.left(&p.list);
+        p.step(-2);
+        assert!(p.list.is_empty());
+        assert_eq!(p.ok(None), Outcome::Stay);
+        p.state.right(&p.list);
+        assert_eq!(p.state.pane, ListPane::Groups, "nothing to enter");
+        assert_eq!(p.ok(None), Outcome::Stay);
+        // Back returns to the (empty) channels, then closes.
+        assert_eq!(p.state.back(), Outcome::Stay);
+        assert_eq!(p.state.pane, ListPane::Channels);
+        assert_eq!(p.ok(None), Outcome::Stay, "no row to play");
+        assert_eq!(p.state.back(), Outcome::Close);
     }
 
     #[test]
-    fn the_group_of_a_channel() {
-        assert_eq!(group_of(&S, 0), 0);
-        assert_eq!(group_of(&S, group_start(1)), 1);
-        assert_eq!(group_of(&S, group_start(1) - 1), 0);
+    fn taps_preview_then_enter_an_entry_and_play_a_row() {
+        let mut p = Player::on(ALL, Some(0));
+        let o = p.state.tap_entry(FIRST_GROUP, &p.list);
+        assert_eq!(p.follow(o), Outcome::Preview(FIRST_GROUP));
+        assert_eq!(p.list.channels(), [0, 1, 2]);
+        assert_eq!(p.state.pane, ListPane::Groups);
+        assert_eq!(p.state.tap_entry(FIRST_GROUP, &p.list), Outcome::Stay);
+        assert_eq!(p.state.pane, ListPane::Channels);
+        assert_eq!(p.state.tap_row(2, Some(0), &p.list), Outcome::Play(2));
+        assert_eq!(p.state.tap_row(0, Some(0), &p.list), Outcome::Close);
     }
 }
