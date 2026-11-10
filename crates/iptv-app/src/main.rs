@@ -5,6 +5,7 @@
 fn main() -> impl std::process::Termination {
     env_logger::init();
     use nsh_platform_linux as platform;
+    platform::set_components(iptv_app::components);
     platform::run_app(
         platform::AppSource::Rust(platform::Root::of::<iptv_app::App>()),
         platform::AppOptions {
