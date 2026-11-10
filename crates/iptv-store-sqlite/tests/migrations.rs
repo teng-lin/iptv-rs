@@ -22,7 +22,7 @@ use iptv_providers::{ContentId, GroupId};
 use iptv_store_sqlite::migrate::schema_dump;
 use iptv_store_sqlite::{
     ChannelOrder, ChannelQuery, ChannelScope, EpgFeedMeta, EpgOverride, EpgWindow, ImportErrorKind,
-    SCHEMA_VERSION, SourceId, Store,
+    SCHEMA_VERSION, SourceId, SourceSettings, Store,
 };
 
 #[test]
@@ -62,6 +62,16 @@ const HISTORY: &[Version] = &[
     Version {
         version: 4,
         data: &["data_v1.sql", "data_v2.sql", "data_v3.sql", "data_v4.sql"],
+    },
+    Version {
+        version: 5,
+        data: &[
+            "data_v1.sql",
+            "data_v2.sql",
+            "data_v3.sql",
+            "data_v4.sql",
+            "data_v5.sql",
+        ],
     },
 ];
 
@@ -294,6 +304,7 @@ fn every_historical_version_migrates_with_its_data() {
             check_organisation(&store);
         }
         check_guide(&store, v.version);
+        check_settings(&store, v.version);
         drop(store);
 
         // Opening again (every app start) changes nothing.
@@ -306,7 +317,24 @@ fn every_historical_version_migrates_with_its_data() {
             check_organisation(&again);
         }
         check_guide(&again, v.version);
+        check_settings(&again, v.version);
     }
+}
+
+/// Per-source settings and the shown source, written by v5 builds; none
+/// before (older builds kept a typed guide address only with the guide).
+fn check_settings(store: &Store, version: u32) {
+    let typed = store.source_settings(SRC).unwrap();
+    let removed = store.source_settings(SourceId(2)).unwrap();
+    if version < 5 {
+        assert_eq!((typed, removed), (None, None));
+        assert_eq!(store.active_source().unwrap(), None);
+        return;
+    }
+    let url = typed.unwrap().epg_url.unwrap();
+    assert_eq!(url.expose(), "http://epg.example.com/typed.xml");
+    assert_eq!(removed, Some(SourceSettings { epg_url: None }));
+    assert_eq!(store.active_source().unwrap(), Some(SourceId(2)));
 }
 
 /// Guide data written by v4 builds; none before.
@@ -548,4 +576,34 @@ fn check_overlays_after_return(store: &Store) {
             .collect::<Vec<_>>(),
         ["xt:live:102", "xt:live:999", "xt:live:101"]
     );
+}
+
+/// After upgrading from any version, the playlists screen can save a guide
+/// address and the shown source, and deleting a source takes them along.
+#[test]
+fn playlist_settings_after_upgrading() {
+    for v in HISTORY {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.db");
+        build_old_file(&path, v);
+        let mut store = Store::open(&path).unwrap();
+        let url = SecretUrl::new("http://epg.example.com/changed.xml");
+        store.set_source_epg_url(SRC, Some(&url)).unwrap();
+        store.set_active_source(SRC).unwrap();
+        drop(store);
+        let mut store = Store::open(&path).unwrap();
+        assert_eq!(
+            store.source_settings(SRC).unwrap().unwrap().epg_url,
+            Some(url),
+            "v{}",
+            v.version
+        );
+        assert_eq!(store.active_source().unwrap(), Some(SRC));
+        // The other source still has what it had.
+        check_guide(&store, v.version);
+        assert!(store.delete_source(SRC).unwrap());
+        assert_eq!(store.active_source().unwrap(), None);
+        assert_eq!(store.sources().unwrap().len(), 1);
+        assert!(store.source(SourceId(2)).unwrap().is_some());
+    }
 }

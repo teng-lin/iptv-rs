@@ -307,11 +307,13 @@ impl Store {
         Ok(())
     }
 
-    /// Deletes the source with its catalog, credentials, customisations and
-    /// history. Returns `false` if it did not exist.
+    /// Deletes the source with its catalog, credentials, settings, stored
+    /// guide, customisations and history (and forgets it as the shown
+    /// source). Returns `false` if it did not exist.
     pub fn delete_source(&mut self, id: SourceId) -> Result<bool> {
         let tx = self.conn.transaction()?;
         crate::search::forget_source(&tx, self.fts_index, id)?;
+        crate::source_settings::forget_active(&tx, id)?;
         let deleted = tx.execute("DELETE FROM sources WHERE id = ?1", [id.0])?;
         tx.commit()?;
         Ok(deleted > 0)
