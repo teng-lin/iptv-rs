@@ -20,19 +20,36 @@ pub fn groups_width(ui: Ui) -> f32 {
         0.0
     }
 }
-/// The preview at the header's top left (16:9) and the header's padding;
-/// the header is as tall as the preview with its padding.
-pub const PREVIEW_W: f32 = 256.0;
-pub const PREVIEW_H: f32 = 144.0;
-pub const HEADER_PAD_X: f32 = 16.0;
-pub const HEADER_PAD_Y: f32 = 10.0;
-pub const HEADER_H: f32 = PREVIEW_H + 2.0 * HEADER_PAD_Y;
+/// The header's share of the window's height; the preview (16:9) at its
+/// top left: its largest share of the window's width, its margin and
+/// corner radius (dp).
+pub const HEADER_SHARE: f32 = 0.39;
+pub const PREVIEW_SHARE: f32 = 0.37;
+pub const PREVIEW_MARGIN: f32 = 12.0;
+pub const PREVIEW_RADIUS: f32 = 10.0;
+
+/// The header's height and the preview's width and height in a window
+/// `w` × `h`: the preview as tall as the header leaves it, narrowed to its
+/// share of the width.
+pub fn header_size(w: f32, h: f32) -> (f32, f32, f32) {
+    let header = (h * HEADER_SHARE).round();
+    let tall = (header - 2.0 * PREVIEW_MARGIN).max(0.0);
+    let width = (tall * 16.0 / 9.0).min(w * PREVIEW_SHARE).round();
+    (header, width, (width * 9.0 / 16.0).round())
+}
+
+/// [`header_size`] of the window now (reactive).
+pub fn header_now() -> (f32, f32, f32) {
+    let w = window();
+    header_size(w.width.0, w.height.0)
+}
 
 /// The rectangle the video layer occupies in guide mode (x, y, width,
 /// height): the preview, below the status bar.
 pub fn preview_rect() -> (f32, f32, f32, f32) {
     let top = safe_area().top.0;
-    (HEADER_PAD_X, top + HEADER_PAD_Y, PREVIEW_W, PREVIEW_H)
+    let (_, w, h) = header_now();
+    (PREVIEW_MARGIN, top + PREVIEW_MARGIN, w, h)
 }
 
 fn secondary() -> Rgba {
@@ -40,7 +57,8 @@ fn secondary() -> Rgba {
 }
 
 /// The opaque colours of the regions, drawn under the video layer with the
-/// same geometry as the foreground (header, rail, groups column, guide).
+/// same geometry as the foreground: the window colour under the header and
+/// the guide, the rail's and the groups column's own.
 /// The foreground stays clear in guide mode, so the video shows wherever it is
 /// laid out: today the preview rectangle.
 pub fn backdrop(ui: Ui) -> impl IntoElement {
@@ -51,19 +69,18 @@ pub fn backdrop(ui: Ui) -> impl IntoElement {
         .absolute()
         .inset_0()
         .pointer_events(PointerEvents::None)
+        .bg(window)
         .child(
             view()
                 .pt_safe_area()
-                .bg(panel)
-                .child(view().h(px(HEADER_H))),
+                .child(view().h(move || px(header_now().0))),
         )
         .child(
             view()
                 .flex_1()
                 .flex_row()
                 .child(view().w(move || px(crate::rail::width(ui))).bg(alt))
-                .child(view().w(move || px(groups_width(ui))).bg(panel))
-                .child(view().flex_1().bg(window)),
+                .child(view().w(move || px(groups_width(ui))).bg(panel)),
         )
 }
 
@@ -130,4 +147,27 @@ pub fn group_column(ui: Ui, groups: ElementRef) -> impl IntoElement {
     .w(move || px(groups_width(ui)))
     .py(px(6.0))
     .bg(move || ui.surface(ui.theme.with(|t| t.background.panel)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn header_and_preview_keep_their_shares() {
+        // Tablet (1920 × 1200 at 1.5 px/dp), desktop window, TV (1080p at 2).
+        assert_eq!(header_size(1280.0, 800.0), (312.0, 474.0, 267.0));
+        assert_eq!(header_size(1280.0, 720.0), (281.0, 457.0, 257.0));
+        assert_eq!(header_size(960.0, 540.0), (211.0, 332.0, 187.0));
+        for (w, h) in [
+            (1280.0, 800.0),
+            (1280.0, 720.0),
+            (960.0, 540.0),
+            (760.0, 480.0),
+        ] {
+            let (header, pw, ph) = header_size(w, h);
+            assert!(ph + 2.0 * PREVIEW_MARGIN <= header + 1.0, "{w}x{h}");
+            assert!(pw <= w * PREVIEW_SHARE + 0.5, "{w}x{h}");
+        }
+    }
 }

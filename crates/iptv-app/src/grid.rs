@@ -1,29 +1,56 @@
-//! The guide grid: a time bar, one virtualized row per channel of the list
+//! The guide grid: a time ruler, one virtualized row per channel of the list
 //! on screen (`lists.rs`) with its programmes across the full remaining
 //! width, and a now-line. Rows are numbered by their place in the list;
 //! `at.index()` is a row, the catalog channel comes from the list.
+//!
+//! The look: programmes are rounded cells on the window colour; the focused
+//! programme is a light pill with dark text, the rest of its row lighter
+//! cells with white titles, every other row dimmed (grey titles). Sizes are
+//! dp, the same on TV, tablet and desktop (`fonts.rs` has the type).
+
+mod channel;
+mod ruler;
 
 use iptv_core::lists::{FAVORITES, RECENT};
 use nsh_core::prelude::*;
 
-use crate::guide::{Airing, Pane, Program, STEP, VISIBLE};
-use crate::theme::{FOCUS_ALPHA, RADIUS, RESTING_ALPHA, TEXT_SECONDARY_ALPHA, TEXT_SIZE};
-use crate::{Ui, channel_name, clock, tint};
+use crate::fonts::{CELL_TITLE, CONDENSED};
+use crate::guide::{Pane, Program, VISIBLE};
+use crate::theme::{BRIGHT_TEXT, FOCUSED_CELL, FOCUSED_TEXT, RADIUS, TEXT_SECONDARY_ALPHA};
+use crate::{Ui, ViewMode, tint};
 
-pub const ROW_H: f32 = 48.0;
-pub const NAME_W: f32 = 250.0;
-/// The logo box: missing or broken logos leave it empty.
-const LOGO_W: f32 = 40.0;
-const LOGO_H: f32 = 28.0;
+/// Row pitch; a programme's height (the rest is the gap between rows), the
+/// gap between programmes, their corner radius and text inset.
+pub const ROW_H: f32 = 58.0;
+const CELL_H: f32 = 53.0;
+const CELL_GAP: f32 = 3.0;
+const CELL_RADIUS: f32 = 4.0;
+const CELL_INSET: f32 = 16.0;
+/// The channel column: its share of the window's width, within bounds.
+const CHANNEL_SHARE: f32 = 0.40;
+const CHANNEL_MIN: f32 = 260.0;
+const CHANNEL_MAX: f32 = 640.0;
+/// The now line's width.
+const NOW_W: f32 = 2.0;
 
-/// Shown where a channel has no logo (an image needs a source).
-pub(crate) fn no_logo() -> String {
-    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1' height='1'/%3E"
-        .to_owned()
-}
 /// Cells a row can hold: VISIBLE / shortest programme, plus one.
 const MAX_CELLS: usize = 12;
 const WHITE: u32 = 0xFFFFFF;
+
+/// The channel column's width now (reactive: the window's size).
+pub fn channel_width() -> f32 {
+    (window().width.0 * CHANNEL_SHARE).clamp(CHANNEL_MIN, CHANNEL_MAX)
+}
+
+/// An opaque guide colour; over full-screen video (overlay) at the
+/// overlay's alpha (`appearance.ui_transparency`).
+pub(crate) fn fill(ui: Ui, rgb_hex: u32) -> Rgba {
+    let alpha = match ui.mode.get() {
+        ViewMode::Overlay => crate::settings::overlay_alpha(&crate::settings::read(ui)),
+        ViewMode::Guide | ViewMode::Fullscreen => 0xFF,
+    };
+    tint(rgb_hex, alpha)
+}
 
 pub fn guide(ui: Ui, rows: ElementRef) -> impl IntoElement {
     // The programme area's width: the window always spans all of it.
@@ -37,13 +64,20 @@ pub fn guide(ui: Ui, rows: ElementRef) -> impl IntoElement {
         ui.focus
             .with(|f| (f.pane == Pane::Guide).then(|| (f.channel, f.program(&view).start)))
     });
+    // Read where used: a memo of it went stale on window resizes.
+    let column: fn() -> f32 = channel_width;
     // Rows are numbered by place: the list's length is its widest number.
     let number_w = computed(move || crate::numbers::column_width(ui.list.with(|l| l.len())));
+    let now_x = computed(move || {
+        let at = now.get() - window.get();
+        let rows = ui.list.with(|l| !l.is_empty());
+        (rows && (0..=VISIBLE).contains(&at)).then(|| at as f32 * scale.get())
+    });
     scroll_to_focus_on_new_list(ui, rows);
     view()
         .flex_1()
         .bg(move || ui.surface(ui.theme.with(|t| t.background.window)))
-        .child(time_bar(ui, window, now, scale, width))
+        .child(ruler::ruler(ui, column, window, now, now_x, width))
         .child(
             view()
                 .flex_1()
@@ -51,7 +85,7 @@ pub fn guide(ui: Ui, rows: ElementRef) -> impl IntoElement {
                 .child(
                     virtual_list(
                         move || ui.list.with(|l| l.len()),
-                        move |at| row(ui, at, window, now, scale, focused, number_w),
+                        move |at| row(ui, at, column, window, scale, focused, number_w),
                     )
                     .estimated_item_size(px(ROW_H))
                     .element_ref(&rows)
@@ -66,18 +100,10 @@ pub fn guide(ui: Ui, rows: ElementRef) -> impl IntoElement {
                         .absolute()
                         .top(px(0.0))
                         .h_full()
-                        .w(px(2.0))
-                        .opacity(move || {
-                            let at = now.get() - window.get();
-                            let rows = ui.list.with(|l| !l.is_empty());
-                            if rows && (0..=VISIBLE).contains(&at) {
-                                1.0_f32
-                            } else {
-                                0.0
-                            }
-                        })
-                        .left(move || px(NAME_W + (now.get() - window.get()) as f32 * scale.get()))
-                        .bg(move || rgb(ui.theme.with(|t| t.accent.main)))
+                        .w(px(NOW_W))
+                        .opacity(move || if now_x.get().is_some() { 1.0_f32 } else { 0.0 })
+                        .left(move || px(column() + now_x.get().unwrap_or(0.0) - NOW_W / 2.0))
+                        .bg(move || fill(ui, ui.theme.with(|t| t.guide().now_line)))
                         .pointer_events(PointerEvents::None),
                 )
                 .child(empty_state(ui))
@@ -153,69 +179,11 @@ fn scroll_to_focus_on_new_list(ui: Ui, list: ElementRef) {
     });
 }
 
-fn time_bar(
-    ui: Ui,
-    window: Memo<i32>,
-    now: Memo<i32>,
-    scale: Memo<f32>,
-    width: Signal<f32>,
-) -> impl IntoElement {
-    let shift = move |label: &'static str, minutes: i32| {
-        text(label)
-            .px(px(9.0))
-            .py(px(4.0))
-            .rounded(px(RADIUS))
-            .bg(tint(WHITE, RESTING_ALPHA))
-            .text_color(rgb(WHITE))
-            .text_size(px(13.0))
-            .on_press(move || {
-                ui.touched();
-                ui.focus.update(|f| f.shift_window(minutes));
-            })
-    };
-    let tick = move |i: i32| {
-        // The epoch comes with the data; now decides which day is "today".
-        text(move || {
-            ui.guide_data();
-            now.get();
-            clock(window.get() + i * STEP)
-        })
-        .absolute()
-        .left(move || px(i as f32 * STEP as f32 * scale.get() + 6.0))
-        .text_size(px(12.0))
-        .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA))
-    };
-    view()
-        .h(px(36.0))
-        .flex_row()
-        .items_center()
-        .child(
-            // The date and time, then the touch steps of the time window.
-            view()
-                .w(px(NAME_W))
-                .flex_row()
-                .items_center()
-                .gap(px(6.0))
-                .px(px(10.0))
-                .child(crate::header::date_time(ui).flex_1())
-                .child(shift("‹", -STEP))
-                .child(shift("›", STEP)),
-        )
-        .child(
-            view()
-                .flex_1()
-                .h_full()
-                .justify_center()
-                .on_layout(move |b: &Bounds<Points>| width.set(b.size.width.0))
-                .children((0..VISIBLE / STEP).map(tick)),
-        )
-}
-
 fn row(
     ui: Ui,
     at: Position,
+    column: fn() -> f32,
     window: Memo<i32>,
-    now: Memo<i32>,
     scale: Memo<f32>,
     focused: Memo<Option<(usize, i32)>>,
     number_w: Memo<f32>,
@@ -228,6 +196,8 @@ fn row(
             crate::schedule().programs_between(ch, window.get(), VISIBLE)
         })
     });
+    // The row with the focus: lighter cells, white titles.
+    let lit = computed(move || focused.get().is_some_and(|(row, _)| row == at.index()));
     let cell = move |i: usize| {
         let program = move || programs.with(|ps| ps.get(i).copied());
         let geometry = move || {
@@ -244,25 +214,25 @@ fn row(
             program().is_some_and(|p| focused.get() == Some((at.index(), p.start)))
                 && ui.keys_shown()
         };
-        let airing = move || program().map(|p| p.airing(now.get()));
         view()
             .absolute()
-            .top(px(3.0))
-            .h(px(ROW_H - 6.0))
-            .left(move || px(geometry().0 + 1.0))
-            .w(move || px((geometry().1 - 2.0).max(0.0)))
+            .top(px((ROW_H - CELL_H) / 2.0))
+            .h(px(CELL_H))
+            .left(move || px(geometry().0 + CELL_GAP / 2.0))
+            .w(move || px((geometry().1 - CELL_GAP).max(0.0)))
             .opacity(move || if program().is_some() { 1.0_f32 } else { 0.0 })
-            .rounded(px(RADIUS))
-            .px(px(10.0))
+            .rounded(px(CELL_RADIUS))
+            .px(px(CELL_INSET))
             .justify_center()
             .overflow_hidden()
             .bg(move || {
+                let g = ui.theme.with(|t| t.guide());
                 if is_focused() {
-                    tint(ui.theme.with(|t| t.accent.main), FOCUS_ALPHA)
-                } else if airing() == Some(Airing::Live) {
-                    tint(WHITE, RESTING_ALPHA * 2)
+                    fill(ui, FOCUSED_CELL)
+                } else if lit.get() {
+                    fill(ui, g.row_cell)
                 } else {
-                    tint(WHITE, RESTING_ALPHA)
+                    fill(ui, g.cell)
                 }
             })
             .on_press(move || {
@@ -282,93 +252,23 @@ fn row(
                     }
                 })
                 .number_of_lines(1)
-                .text_size(px(TEXT_SIZE))
+                .text_overflow(nsh_core::EllipsizeMode::Clip)
+                .font_family(CONDENSED)
+                .text_size(px(CELL_TITLE))
                 .text_color(move || {
-                    let alpha = if airing() == Some(Airing::Ended) {
-                        TEXT_SECONDARY_ALPHA
+                    if is_focused() {
+                        rgb(FOCUSED_TEXT)
+                    } else if lit.get() {
+                        rgb(BRIGHT_TEXT)
                     } else {
-                        0xFF
-                    };
-                    tint(WHITE, alpha)
+                        tint(WHITE, TEXT_SECONDARY_ALPHA)
+                    }
                 }),
             )
-    };
-    let playing = move || channel.get().is_some() && ui.playing.get() == channel.get();
-    let logo = move || {
-        ui.guide_data();
-        channel
-            .get()
-            .and_then(|ch| crate::schedule().channel_logo(ch))
-            .unwrap_or_else(no_logo)
     };
     view()
         .h(px(ROW_H))
         .flex_row()
-        .child(
-            view()
-                .w(px(NAME_W))
-                .px(px(8.0))
-                .flex_row()
-                .items_center()
-                .gap(px(8.0))
-                .on_press(move || {
-                    ui.touched();
-                    let view = crate::lists::view(ui);
-                    ui.focus.update(|f| {
-                        let now = f.now;
-                        f.tap(at.index(), now, &view)
-                    });
-                    ui.watch();
-                })
-                .child(
-                    // The place in the list on screen.
-                    text(move || (at.index() + 1).to_string())
-                        .w(move || px(number_w.get()))
-                        .number_of_lines(1)
-                        .text_size(px(TEXT_SIZE))
-                        .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA)),
-                )
-                .child(
-                    view()
-                        .w(px(LOGO_W))
-                        .h(px(LOGO_H))
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            image(logo)
-                                .w(px(LOGO_W))
-                                .h(px(LOGO_H))
-                                .object_fit(ResizeMode::Contain),
-                        ),
-                )
-                .child(
-                    text(move || {
-                        // Cells are made once per recycled slot: the index
-                        // alone does not change when the data does.
-                        ui.guide_data();
-                        let Some(ch) = channel.get() else {
-                            return String::new();
-                        };
-                        let star = ui.favorites.with(|f| f.contains(&ch));
-                        format!("{}{}", if star { "★ " } else { "" }, channel_name(ch))
-                    })
-                    .flex_shrink(1.0)
-                    .number_of_lines(1)
-                    .text_size(px(TEXT_SIZE))
-                    .text_color(move || {
-                        if playing() {
-                            rgb(ui.theme.with(|t| t.accent.light))
-                        } else {
-                            rgb(WHITE)
-                        }
-                    }),
-                )
-                .child(
-                    // The playing marker, after the name.
-                    text(move || if playing() { "▶" } else { "" })
-                        .text_size(px(12.0))
-                        .text_color(move || rgb(ui.theme.with(|t| t.accent.light))),
-                ),
-        )
+        .child(channel::cell(ui, at, channel, column, number_w))
         .child(view().flex_1().children((0..MAX_CELLS).map(cell)))
 }

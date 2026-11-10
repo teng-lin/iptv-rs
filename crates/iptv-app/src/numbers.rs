@@ -3,7 +3,7 @@
 
 use nsh_core::prelude::*;
 
-use crate::theme::TEXT_SIZE;
+use crate::fonts::CHANNEL as TEXT_SIZE;
 
 /// Digits the column always has room for.
 const MIN_DIGITS: usize = 3;
@@ -16,7 +16,7 @@ const SLACK: f32 = 2.0;
 /// The width (px) of a number column for rows numbered up to `widest`.
 pub fn column_width(widest: usize) -> f32 {
     let digits = digits(widest).max(MIN_DIGITS);
-    let measured = measure_text(&format!("{TEXT_SIZE}px sans-serif"), &"0".repeat(digits)).0;
+    let measured = measure_text(&format!("{TEXT_SIZE}px Roboto"), &"0".repeat(digits)).0;
     width(digits, measured)
 }
 
@@ -51,6 +51,6 @@ mod tests {
         // Five digits at 0.55 em (a common face) fit.
         assert!(five >= 5.0 * TEXT_SIZE * 0.55 + 1.0);
         // A face measured wider than the estimate wins.
-        assert_eq!(width(5, 60.0), 62.0);
+        assert_eq!(width(5, 100.0), 102.0);
     }
 }

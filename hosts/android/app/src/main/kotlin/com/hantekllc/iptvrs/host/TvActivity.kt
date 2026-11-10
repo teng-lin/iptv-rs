@@ -3,7 +3,11 @@ package com.hantekllc.iptvrs.host
 import android.app.Activity
 import android.content.Intent
 import android.content.res.Configuration
+import android.os.Build
 import android.os.Bundle
+import android.view.View
+import android.view.WindowInsets
+import android.view.WindowInsetsController
 import com.longbridge.nsh.DevActivity
 import com.longbridge.nsh.NshView
 
@@ -12,7 +16,8 @@ import com.longbridge.nsh.NshView
  * the app's native components before the Rust root mounts. Its players stop
  * while it is stopped (Home, another app, the screen off) and reopen when
  * it starts again ([PlayerComponent.background]); nothing plays in the
- * background.
+ * background. It runs full screen (immersive): no status or navigation bar
+ * until a swipe from the edge shows them for a moment.
  */
 class TvActivity : Activity() {
     private lateinit var nsh: NshView
@@ -33,6 +38,7 @@ class TvActivity : Activity() {
             }
         }
         setContentView(nsh)
+        immersive()
         nsh.handleNotificationIntent(intent)
         if (state == null) nsh.handleUrlSchemeIntent(intent)
         nsh.runRustApp("nsh")
@@ -53,6 +59,31 @@ class TvActivity : Activity() {
     override fun onConfigurationChanged(config: Configuration) {
         super.onConfigurationChanged(config)
         DevActivity.systemBars(this)
+        immersive()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // Dialogs and the system's own windows can bring the bars back.
+        if (hasFocus) immersive()
+    }
+
+    /** Hides the status and navigation bars; a swipe shows them briefly. */
+    @Suppress("DEPRECATION")
+    private fun immersive() {
+        if (Build.VERSION.SDK_INT >= 30) {
+            val c = window.insetsController ?: return
+            c.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            c.hide(WindowInsets.Type.systemBars())
+        } else {
+            window.decorView.systemUiVisibility = (window.decorView.systemUiVisibility
+                or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                or View.SYSTEM_UI_FLAG_FULLSCREEN
+                or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
