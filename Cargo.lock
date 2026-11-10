@@ -1595,6 +1595,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "iptv-guide"
+version = "0.1.0"
+dependencies = [
+ "iptv-core",
+ "iptv-epg",
+ "iptv-providers",
+]
+
+[[package]]
 name = "iptv-nav"
 version = "0.1.0"
 
