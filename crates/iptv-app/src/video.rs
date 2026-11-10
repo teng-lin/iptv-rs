@@ -15,6 +15,18 @@ pub fn stream_url(channel: usize) -> String {
     format!("http://10.0.2.2:8089/ch{}/index.m3u8", channel % 3)
 }
 
+/// The synthetic archive URL (`tools/mock-server.py` serves `/archive/*`).
+/// Placeholder until `iptv-catchup` builds real provider URLs.
+pub fn catchup_url(channel: usize, start: i32) -> String {
+    let p = crate::guide::program_at(channel, start);
+    let utc = crate::GUIDE_EPOCH_UNIX + i64::from(p.start) * 60;
+    let duration = (p.end - p.start) * 60;
+    format!(
+        "http://10.0.2.2:8089/archive/ch{}/index.m3u8?utc={utc}&duration={duration}",
+        channel % 3
+    )
+}
+
 pub fn layer(ui: Ui) -> impl IntoElement {
     let full = move || ui.mode.get() != ViewMode::Guide;
     native("tv.player")
@@ -44,7 +56,10 @@ pub fn layer(ui: Ui) -> impl IntoElement {
         .prop("url", move || {
             ui.playing
                 .get()
-                .map_or(Value::Null, |ch| json!(stream_url(ch)))
+                .map_or(Value::Null, |ch| match ui.playback.get() {
+                    crate::Playback::Live => json!(stream_url(ch)),
+                    crate::Playback::CatchUp { start } => json!(catchup_url(ch, start)),
+                })
         })
         .prop("paused", move || json!(ui.paused.get()))
         .on_native_event(move |e: &NativeEvent| {

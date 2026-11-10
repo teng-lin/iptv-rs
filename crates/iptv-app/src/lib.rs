@@ -15,7 +15,7 @@ mod video;
 
 use std::time::{Duration, Instant};
 
-use guide::{Airing, Focus, Pane};
+use guide::{Airing, Focus, Pane, Program, catchup_days};
 use std::collections::BTreeSet;
 
 use iptv_core::menu::{Menu, Origin};
@@ -46,6 +46,20 @@ pub enum ViewMode {
     /// Full-screen video, no UI.
     Fullscreen,
 }
+
+/// What the player is showing for the playing channel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Playback {
+    Live,
+    /// An archived programme from its start (guide minutes).
+    CatchUp {
+        start: i32,
+    },
+}
+
+/// Unix time of guide minute 0 on the synthetic clock (catch-up URLs carry
+/// absolute times).
+pub const GUIDE_EPOCH_UNIX: i64 = 1_794_333_600;
 
 /// Keys handled and handler time, for the status line and logcat.
 #[derive(Clone, Copy, PartialEq, Default)]
@@ -79,6 +93,8 @@ pub struct Ui {
     /// The programme description popover, if open.
     pub description: Signal<Option<Origin>>,
     pub favorites: Signal<BTreeSet<usize>>,
+    /// Live or catch-up for the playing channel.
+    pub playback: Signal<Playback>,
 }
 
 impl Ui {
@@ -86,16 +102,38 @@ impl Ui {
     /// channel already playing goes full screen); ended and upcoming ones
     /// only show their details (no catch-up or reminders yet).
     pub fn watch(&self) {
-        let (channel, airing) = self.focus.with(|f| (f.channel, f.program().airing()));
-        if airing != Airing::Live {
-            return;
+        let (channel, program) = self.focus.with(|f| (f.channel, f.program()));
+        match program.airing() {
+            Airing::Live => {
+                let live = self.playback.get() == Playback::Live;
+                if self.playing.get() == Some(channel) && live {
+                    self.mode.set(ViewMode::Fullscreen);
+                    self.update_panels(|p, now| p.show_info(now));
+                } else {
+                    self.play(channel, Playback::Live);
+                }
+            }
+            // A past programme plays from the archive when the channel has
+            // one that reaches it; otherwise OK leaves the guide as it is.
+            Airing::Ended if in_archive(channel, program) => {
+                self.play(
+                    channel,
+                    Playback::CatchUp {
+                        start: program.start,
+                    },
+                );
+                self.mode.set(ViewMode::Fullscreen);
+                self.update_panels(|p, now| p.show_info(now));
+            }
+            Airing::Ended | Airing::Upcoming => {}
         }
-        if self.playing.get() == Some(channel) {
-            self.mode.set(ViewMode::Fullscreen);
-            self.update_panels(|p, now| p.show_info(now));
-        } else {
-            self.playing.set(Some(channel));
-        }
+    }
+
+    /// Starts `channel` live or from the archive.
+    pub fn play(&self, channel: usize, playback: Playback) {
+        self.playback.set(playback);
+        self.playing.set(Some(channel));
+        self.paused.set(false);
     }
 
     /// A touch on any control.
@@ -150,6 +188,12 @@ impl Ui {
     }
 }
 
+/// Whether `program` on `channel` is inside the channel's catch-up window.
+pub fn in_archive(channel: usize, program: Program) -> bool {
+    let days = i32::from(catchup_days(channel));
+    days > 0 && program.end <= 0 && program.start >= -days * 24 * 60
+}
+
 /// `0xRRGGBB` with alpha, as an NSH colour.
 pub fn tint(rgb_hex: u32, alpha: u8) -> Rgba {
     rgba(theme::with_alpha(rgb_hex, alpha))
@@ -191,6 +235,7 @@ pub fn App() -> impl IntoElement {
         menu: signal(None),
         description: signal(None),
         favorites: signal(BTreeSet::new()),
+        playback: signal(Playback::Live),
     };
     // Leaving full screen closes the panels.
     effect(move || {

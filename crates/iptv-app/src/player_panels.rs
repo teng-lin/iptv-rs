@@ -97,20 +97,24 @@ fn status_chip(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> impl IntoEl
         .rounded(px(RADIUS_LARGE))
         .bg(panel)
         .child(
-            text(move || if live() { "LIVE" } else { "PAUSED" })
-                .px(px(8.0))
-                .py(px(2.0))
-                .rounded(px(4.0))
-                .text_size(px(12.0))
-                .font_weight(FontWeight::BOLD)
-                .text_color(rgb(WHITE))
-                .bg(move || {
-                    if live() {
-                        rgb(ui.theme.with(|t| t.accent.main))
-                    } else {
-                        tint(WHITE, RESTING_ALPHA * 3)
-                    }
-                }),
+            text(move || match (ui.playback.get(), live()) {
+                (crate::Playback::CatchUp { .. }, _) => "CATCH-UP",
+                (_, true) => "LIVE",
+                (_, false) => "PAUSED",
+            })
+            .px(px(8.0))
+            .py(px(2.0))
+            .rounded(px(4.0))
+            .text_size(px(12.0))
+            .font_weight(FontWeight::BOLD)
+            .text_color(rgb(WHITE))
+            .bg(move || {
+                if live() {
+                    rgb(ui.theme.with(|t| t.accent.main))
+                } else {
+                    tint(WHITE, RESTING_ALPHA * 3)
+                }
+            }),
         )
         .child(
             text(move || {
@@ -132,7 +136,11 @@ fn info_card(
     with_controls: impl Fn() -> bool + Copy + 'static,
 ) -> impl IntoElement {
     let channel = move || ui.playing.get().unwrap_or(0);
-    let now = move || program_at(channel(), 0);
+    let minute = move || match ui.playback.get() {
+        crate::Playback::Live => 0,
+        crate::Playback::CatchUp { start } => start,
+    };
+    let now = move || program_at(channel(), minute());
     let next = move || program_at(channel(), now().end);
     let secondary = move || tint(WHITE, TEXT_SECONDARY_ALPHA);
     let line = move |prefix: &'static str, p: crate::guide::Program| {

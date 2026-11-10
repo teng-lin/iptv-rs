@@ -245,8 +245,7 @@ fn zap(ui: Ui, step: isize) {
         f.channel = to;
         f.cursor = 0;
     });
-    ui.playing.set(Some(to));
-    ui.paused.set(false);
+    ui.play(to, crate::Playback::Live);
     // Channel-change feedback over full-screen video.
     if ui.mode.get() == ViewMode::Fullscreen {
         ui.update_panels(|p, now| p.show_info(now));

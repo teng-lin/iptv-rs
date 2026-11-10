@@ -16,7 +16,10 @@ const ROW_H: f32 = 48.0;
 
 /// The actions this build can perform; the rest show disabled.
 fn implemented(item: MenuItem) -> bool {
-    matches!(item, MenuItem::Description | MenuItem::ToggleFavorite)
+    matches!(
+        item,
+        MenuItem::Description | MenuItem::ToggleFavorite | MenuItem::StartFromBeginning
+    )
 }
 
 fn label(item: MenuItem, favorite: bool) -> &'static str {
@@ -94,6 +97,17 @@ pub fn perform(ui: Ui, item: MenuItem) {
     match item {
         // Details replaces the menu; Back from it returns to the guide.
         MenuItem::Description => ui.description.set(Some(origin)),
+        MenuItem::StartFromBeginning => {
+            close(ui);
+            ui.play(
+                origin.channel,
+                crate::Playback::CatchUp {
+                    start: origin.program_start,
+                },
+            );
+            ui.mode.set(ViewMode::Fullscreen);
+            ui.update_panels(|p, now| p.show_info(now));
+        }
         MenuItem::ToggleFavorite => {
             ui.favorites.update(|f| {
                 if !f.remove(&origin.channel) {
