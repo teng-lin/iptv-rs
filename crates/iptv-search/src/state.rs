@@ -103,7 +103,8 @@ pub enum SearchEffect {
     Close,
 }
 
-#[derive(Clone, Debug)]
+/// `PartialEq` so a UI can hold it in a change-detecting signal.
+#[derive(Clone, Debug, PartialEq)]
 pub struct SearchState {
     query: String,
     phase: Phase,
