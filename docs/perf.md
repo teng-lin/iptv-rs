@@ -70,6 +70,22 @@ The peak is now reading the window back (`Store::load_epg`, the same
 code as at app start): `SourceBuilder` holds 32-byte raw rows for every
 programme of the window before compacting them into 16-byte slots.
 
+## 2026-11-10, tablet emulator, streamed import (master `c998208`)
+
+Re-import of the same 2.45 M-programme guide over a stored one (the stored
+guide marked two days old, startup refresh), RSS sampled every ~1.6 s:
+
+| | Result |
+| --- | --- |
+| RSS before the download (stored 7-day window loaded, a channel playing) | ≈ 370 MB |
+| Peak RSS during the import | ≈ 436 MB (+66 MB; the old path added ≈ +300 MB) |
+| Download → stored | 32.5 s (replacing 2.4 M stored rows; the earlier 17.5 s was a first import into an empty store) |
+| PSS after | ≈ 319 MB |
+
+Next: the stored window itself (≈ 370 MB RSS with 7 days × 10 000 channels
+loaded) dominates on Android; load a narrower window (e.g. now − 1 day …
+end) and page older days in on demand when browsing back.
+
 ## Findings
 
 1. **Guide import peak memory** (≈ 570 MB for 2.45 M programmes on the
