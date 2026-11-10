@@ -226,6 +226,43 @@ the emulator's PSS (220–244 MB) as such (RSS and the physical footprint
 count shared and GPU memory differently), and it holds the same 7-day
 guide window, so narrowing that window (finding 1) applies here too.
 
+## 2026-11-10, macOS, live streams the server cuts (branch `macos-3`)
+
+The live bridging above (`mpv/worker.rs`, shared by both desktops) on
+macOS: Apple M4, macOS 26.6, the app run by `nsh test --target macos`
+(its development host, a debug build), display kept awake (`caffeinate
+-d`: macOS draws no OpenGL layer while the screen is locked or asleep).
+`tools/mock-live-cuts.py` as above (HLS token 40 s, TS closed after
+70 s, `--open-delay-ms 1500` for a slow provider); on macOS its picture
+has testsrc2's own time code instead of the wall clock (Homebrew's
+FFmpeg has no `drawtext`). A temporary trace in the app (not in the
+repository) recorded every draw of the player's `CAOpenGLLayer` and
+whether the black shutter was up, every new frame mpv offered, and each
+bridge and reopen: a frame is black when drawn behind the shutter, frozen
+when mpv offers no new one. Content jumps are read off the time code in
+window pictures taken every ≈ 2.3 s (that run only: taking a picture
+holds the main thread, so its frame gaps are not counted; the slow
+provider's runs took none and give the frame cadence). Audio gaps
+are mpv's own (0.42 CLI, `--ao=null --prefetch-playlist=yes`, the
+address listed again as the app appends its spare): from the old
+entry's `audio end or underrun` to the spare's `starting AO`.
+
+| Cut | macOS |
+| --- | --- |
+| HLS, local mock (2 cuts) | both bridged; no black; content back ≈ 0.7 s and ≈ 2.1 s |
+| TS, local mock (2 cuts) | both bridged; no black; content back ≤ 0.2 s |
+| HLS, 1.5 s per new connection (3 cuts) | all bridged; no black; 25 fps through each (largest gap between new frames within ±3 s: 0.07 s) |
+| TS, 1.5 s per new connection (1 cut) | bridged; no black; 25 fps through it (largest gap 0.05 s) |
+| Audio at a bridge (mpv 0.42 CLI, local mock, 3 each) | HLS 0.17–0.22 s, TS 0.26–0.43 s |
+| Real provider (anonymised), HLS, one channel, 5 min | no cut in 5 min; ready 1.3 s after opening; no black, no freeze |
+| Real provider (anonymised), TS, one channel, 5 min | 2 cuts (≈ 2 min apart), both bridged; no app-level reconnect; ready 1.1 s; no black, no freeze over 0.3 s |
+
+No `ended`, retry or reopen reached the app at any cut; the only black
+frames were deliberate zaps to another channel. The real provider played
+with sound at 20 % (its audio gaps were not measured); its login was read
+at run time from outside the repository, and the test profile, traces
+and pictures were deleted afterwards.
+
 ## Findings
 
 1. **Guide import peak memory** (≈ 570 MB for 2.45 M programmes on the
