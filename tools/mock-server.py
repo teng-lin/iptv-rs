@@ -9,7 +9,9 @@ logged with its full query to stdout, so catch-up URL construction can be
 checked against what the app actually sent.
 
 Usage: tools/mock-server.py [port] [directory]
-The Android emulator reaches the host at http://10.0.2.2:<port>/.
+The Android emulator reaches the host at http://10.0.2.2:<port>/. Playlists
+(*.m3u) name that address; they are served with it replaced by the host
+the request came to, so the desktop app (127.0.0.1) plays them too.
 """
 
 import http.server
@@ -25,6 +27,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if p.startswith("/archive/"):
             p = p[len("/archive"):]
         return super().translate_path(p)
+
+    def send_head(self):
+        path = self.translate_path(self.path)
+        host = self.headers.get("Host")
+        if not (path.endswith(".m3u") and host and os.path.isfile(path)):
+            return super().send_head()
+        with open(path, "rb") as f:
+            body = f.read().replace(b"10.0.2.2:8089", host.encode("ascii", "replace"))
+        self.send_response(200)
+        self.send_header("Content-Type", "audio/x-mpegurl")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        import io
+        return io.BytesIO(body)
 
     def log_message(self, fmt, *args):
         sys.stdout.write("%s %s\n" % (self.log_date_time_string(), fmt % args))
