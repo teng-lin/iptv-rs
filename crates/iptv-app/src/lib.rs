@@ -186,6 +186,8 @@ impl Ui {
                     .panels
                     .with(|p| p.hide_at_ms().is_some_and(|at| now >= at))
                 {
+                    let at = ui.panels.with(|p| p.hide_at_ms());
+                    log::info!("iptv panels auto-hide now={now} at={at:?}");
                     ui.panels.update(|p| {
                         p.tick(now);
                     });
@@ -272,6 +274,7 @@ pub fn App() -> impl IntoElement {
     // Leaving full screen closes the panels.
     effect(move || {
         if ui.mode.get() != ViewMode::Fullscreen {
+            log::info!("iptv panels hidden: left full screen");
             ui.panels.update(|p| p.hide());
         }
     });
@@ -352,6 +355,7 @@ pub fn App() -> impl IntoElement {
                     if ui.panels.with(|p| p.shown) == iptv_core::panels::Shown::Hidden {
                         ui.update_panels(|p, now| p.show_controls(now));
                     } else {
+                        log::info!("iptv panels hidden by a tap");
                         ui.panels.update(|p| p.hide());
                     }
                 }),

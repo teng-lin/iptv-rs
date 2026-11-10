@@ -135,7 +135,7 @@ fn status_chip(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> impl IntoEl
             text(move || {
                 ui.sleep
                     .with(|t| t.remaining_minutes(ui.now_ms()))
-                    .map_or(String::new(), |m| format!("⏾ {m} min"))
+                    .map_or(String::new(), |m| format!("Sleep {m} min"))
             })
             .text_size(px(13.0))
             .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA)),
