@@ -17,13 +17,14 @@ impl Line {
     }
 }
 
-const CONTEXTS: [(Context, &str); 6] = [
+const CONTEXTS: [(Context, &str); 7] = [
     (Context::Guide, "In the guide"),
     (Context::Groups, "In the groups"),
     (Context::Player, "Watching full screen"),
     (Context::Controls, "With the player controls"),
     (Context::Menu, "In menus"),
     (Context::Editor, "In lists being edited"),
+    (Context::Multiview, "In multiview"),
 ];
 
 const KEYS: [RemoteKey; 26] = [
@@ -136,6 +137,7 @@ fn action_name(action: Action) -> &'static str {
         Action::SeekForward => "Fast-forward (replays)",
         Action::TimeBarBack => "Time bar back",
         Action::TimeBarForward => "Time bar forward",
+        Action::ToggleEnlarge => "Enlarge or reduce",
         Action::Record => "Record",
         Action::ToggleFavorite => "Favourite on or off",
         Action::Digit(_) => "Channel number",

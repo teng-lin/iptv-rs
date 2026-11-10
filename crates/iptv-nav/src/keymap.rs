@@ -28,6 +28,9 @@ pub enum Context {
     /// A context menu or popover (Up/Down move, OK selects, Back closes;
     /// Left/Right do nothing, as observed in the reference UX).
     Menu,
+    /// Multiview's tiles: the arrows move between them, OK opens the
+    /// tile's menu, Long OK enlarges or reduces it.
+    Multiview,
 }
 
 /// What the app should do.
@@ -68,6 +71,8 @@ pub enum Action {
     /// One step back/forward along a replayed programme's time bar.
     TimeBarBack,
     TimeBarForward,
+    /// Multiview: enlarge the focused tile, or reduce it.
+    ToggleEnlarge,
     Record,
     ToggleFavorite,
     Digit(u8),
@@ -103,7 +108,7 @@ impl Keymap {
     /// iptv-rs's default remote map.
     pub fn defaults() -> Keymap {
         use Action as A;
-        use Context::{Controls, Groups, Guide, Menu, Player};
+        use Context::{Controls, Groups, Guide, Menu, Multiview, Player};
         use Press::{Long, Short};
         use RemoteKey as K;
         let g = None;
@@ -170,6 +175,8 @@ impl Keymap {
             // Menus: Left and Right do nothing (observed); Back closes.
             b(Some(Menu), K::Left, Short, A::Ignore),
             b(Some(Menu), K::Right, Short, A::Ignore),
+            // Multiview: Long OK enlarges the tile (the reference's).
+            b(Some(Multiview), K::Ok, Long, A::ToggleEnlarge),
         ];
         defaults.extend((0..=9).map(|d| b(g, K::Digit(d), Short, A::Digit(d))));
         Keymap {
@@ -394,6 +401,25 @@ mod tests {
             Some(Action::Select)
         );
         assert!(!k.has_long(Context::Editor, RemoteKey::Ok));
+    }
+
+    #[test]
+    fn multiview_enlarges_on_long_ok() {
+        let k = Keymap::defaults();
+        let mv = Context::Multiview;
+        assert_eq!(
+            k.resolve(mv, RemoteKey::Ok, Press::Short),
+            Some(Action::Select)
+        );
+        assert_eq!(
+            k.resolve(mv, RemoteKey::Ok, Press::Long),
+            Some(Action::ToggleEnlarge)
+        );
+        assert_eq!(
+            k.resolve(mv, RemoteKey::Up, Press::Short),
+            Some(Action::MoveUp)
+        );
+        assert!(!k.has_long(mv, RemoteKey::Back));
     }
 
     #[test]
