@@ -18,7 +18,8 @@
 //!   first frame, except when `reconnect` says the app reopens the stream
 //!   that played, or only the token changed: the last frame stays; `live`
 //!   streams play on across connections the server closes where the
-//!   player can bridge them), `paused`, `userAgent`, `pictureSize`; `videoTrack` (`auto` or a video track id),
+//!   player can bridge them, keep their last frame after an error (the app
+//!   reconnects them) and are buffered to ride out short outages), `paused`, `userAgent`, `pictureSize`; `videoTrack` (`auto` or a video track id),
 //!   `audioTrack` (`auto` or an audio track id), `textTrack` (`off` or a
 //!   text track id) for the open stream (a new source starts again from
 //!   `auto`/`auto`/`off`); `volume` (0–100; the desktop's, Android keeps

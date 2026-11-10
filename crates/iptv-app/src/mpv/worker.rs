@@ -38,11 +38,13 @@ const SPARE_OPTIONS: &str = "live_start_index=-2";
 /// What the main thread asks of mpv.
 pub enum Cmd {
     /// `loadfile <url> replace`, from the default tracks (video and audio
-    /// automatic, no subtitles); answered by [`Note::Loading`]. A `live`
-    /// stream is bridged across connections the server closes.
+    /// automatic, no subtitles) with `options` set first
+    /// ([`super::map::load_options`]); answered by [`Note::Loading`]. A
+    /// `live` stream is bridged across connections the server closes.
     Load {
         url: String,
         live: bool,
+        options: Vec<(&'static str, String)>,
     },
     Stop,
     Set(&'static str, String),
@@ -201,12 +203,15 @@ fn execute(mpv: &Mpv, cmd: Cmd, bridge: &mut Bridge) -> Vec<Note> {
 
 fn execute_one(mpv: &Mpv, cmd: Cmd, bridge: &mut Bridge) -> Option<Note> {
     match cmd {
-        Cmd::Load { url, live } => {
+        Cmd::Load { url, live, options } => {
             // Track choices are options: they would carry over to this file.
             mpv.set("vid", "auto");
             mpv.set("aid", "auto");
             mpv.set("sid", "no");
-            mpv.set("demuxer-lavf-o", "");
+            // Also clears the bridge's spare options.
+            for (name, value) in &options {
+                mpv.set(name, value);
+            }
             let ok = mpv.command(&["loadfile", &url, "replace"]);
             // The new entry is the playlist's last (`replace` may keep the
             // stopping one until it ends).

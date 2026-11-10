@@ -24,9 +24,11 @@
 //!   `tracks` (from mpv's `track-list`, [`map::tracks`]) and `format`
 //!   {fps?, channels?}.
 //!
-//! The picture is black from a new source or an error until the stream
-//! plays again; a reopen of the same stream (`reconnect`, or a new token
-//! for the same url: [`map::keeps_frame`]) keeps the last frame. mpv
+//! The picture is black from a new source until the stream plays; a
+//! reopen of the same stream (`reconnect`, or a new token for the same
+//! url: [`map::keeps_frame`]) keeps the last frame, and so does a live
+//! stream's error (the app reconnects it; other errors go black). Each
+//! load sets its cache options first ([`map::load_options`]). mpv
 //! sends a stream's headers with all of its requests ([`map::http`]).
 //! `IPTV_RS_AUDIO` names mpv's audio output (`null` mutes, for tests);
 //! `IPTV_RS_HWDEC` overrides `hwdec`; `IPTV_RS_LIVE_BRIDGE=0` turns
@@ -366,7 +368,7 @@ impl Inner {
 
     /// Opens the current source (or stops), behind the black shutter
     /// unless `keep_frame` (the same stream again: its last frame stays
-    /// until the new one plays; an error still blacks it out).
+    /// until the new one plays).
     fn open(&self, keep_frame: bool) {
         let mut out = Out::new();
         let url = {
@@ -409,7 +411,8 @@ impl Inner {
                 st.state(&mut out, "buffering");
                 let live = st.live;
                 drop(st);
-                self.send(Cmd::Load { url, live });
+                let options = map::load_options(live, keep_frame);
+                self.send(Cmd::Load { url, live, options });
             }
         }
         self.emit(out);
@@ -712,10 +715,13 @@ impl Inner {
     }
 }
 
-/// The current file failed: black picture, `error`, then `idle`.
+/// The current file failed: `error`, then `idle`. A live stream keeps
+/// its last frame (the app reconnects it); anything else goes black.
 fn fail(state: &RefCell<State>, out: &mut Out, code: &'static str, http: Option<u16>) {
     let mut st = state.borrow_mut();
-    st.shutter = true;
+    if !map::keeps_frame_on_error(st.live) {
+        st.shutter = true;
+    }
     st.playing = false;
     let mut data = json!({ "code": code });
     if let Some(status) = http {

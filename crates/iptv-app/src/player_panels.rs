@@ -10,7 +10,7 @@
 //! [`status`] draws the waiting and error states of `player.rs`.
 
 use iptv_core::panels::{CONTROLS, Control, QUICK_ACTIONS, QuickAction, Shown};
-use iptv_core::playback::{ErrorKind, Phase, Waiting};
+use iptv_core::playback::Phase;
 use iptv_core::player_info::{StreamFormat, badges, date_time, minutes_left};
 use iptv_core::sound::delay_label;
 use iptv_core::tracks::{Kind as Track, audio_layout};
@@ -19,6 +19,10 @@ use nsh_core::prelude::*;
 use crate::guide::Airing;
 use crate::theme::{FOCUS_ALPHA, RADIUS, RADIUS_LARGE, RESTING_ALPHA, TEXT_SECONDARY_ALPHA};
 use crate::{Playback, Ui, ViewMode, channel_name, clock, input, tint};
+
+mod words;
+
+pub(crate) use words::{failure_message, waiting_text};
 
 const WHITE: u32 = 0xFFFFFF;
 /// Panel fill over video: the theme's panel colour, mostly opaque.
@@ -638,28 +642,11 @@ enum Status {
     Waiting(String),
     Failed {
         title: String,
-        message: &'static str,
+        message: String,
         detail: String,
     },
     /// A replayed programme reached its end.
     Over,
-}
-
-/// Our own wording for a failure.
-pub(crate) fn failure_message(kind: &ErrorKind, catch_up: bool) -> &'static str {
-    match kind {
-        ErrorKind::Unavailable if catch_up => "This programme can't be replayed.",
-        ErrorKind::Unavailable => "This channel has no stream address.",
-        ErrorKind::Http(401 | 403) => "The provider refused this stream.",
-        ErrorKind::Http(404 | 410) => "The provider doesn't have this stream.",
-        ErrorKind::Http(_) => "The provider answered with an error.",
-        ErrorKind::Network => "The stream can't be reached.",
-        ErrorKind::Format => "This stream's format isn't supported.",
-        ErrorKind::Ended => "The stream ended.",
-        ErrorKind::Stalled => "The stream stopped sending video.",
-        ErrorKind::Resolve => "The portal didn't give a stream address.",
-        ErrorKind::Other => "Playback stopped with an error.",
-    }
 }
 
 fn status_of(ui: Ui) -> Status {
@@ -674,30 +661,26 @@ fn status_of(ui: Ui) -> Status {
     }
     let catch_up = matches!(ui.playback.get(), Playback::CatchUp { .. });
     let now = ui.now_ms();
-    ui.player.main().health.with(|h| match h.phase() {
-        Phase::Idle if catch_up => Status::Over,
-        Phase::Failed(f) => Status::Failed {
-            title: format!("Can't play {}", channel_name(channel)),
-            message: failure_message(&f.kind, catch_up),
-            detail: match f.attempts {
-                0 => f.detail.clone(),
-                n => format!("{} · tried {n} times", f.detail),
+    ui.player
+        .main()
+        .health
+        .with(|h| match (h.phase(), h.failure()) {
+            (Phase::Idle, _) if catch_up => Status::Over,
+            // Retries may go on behind the card: it goes once the stream plays.
+            (_, Some(f)) => Status::Failed {
+                title: format!("Can't play {}", channel_name(channel)),
+                message: failure_message(&f.kind, catch_up),
+                detail: match (f.attempts, f.retrying) {
+                    (_, true) => format!("{} · still trying", f.detail),
+                    (0, false) => f.detail.clone(),
+                    (n, false) => format!("{} · tried {n} times", f.detail),
+                },
             },
-        },
-        // A quick reconnect keeps the last frame without a pill.
-        _ => h
-            .indicator(now)
-            .map_or(Status::Hidden, |w| Status::Waiting(waiting_text(&w))),
-    })
-}
-
-/// The waiting pill's words.
-pub(crate) fn waiting_text(waiting: &Waiting) -> String {
-    match waiting {
-        Waiting::Loading => "Loading…".into(),
-        Waiting::Buffering => "Buffering…".into(),
-        Waiting::Reconnecting { attempt, of } => format!("Reconnecting… ({attempt} of {of})"),
-    }
+            // A quick reconnect keeps the last frame without a pill.
+            _ => h
+                .indicator(now)
+                .map_or(Status::Hidden, |w| Status::Waiting(waiting_text(&w))),
+        })
 }
 
 /// Waiting and error states over the video, in the player's rectangle:
@@ -754,7 +737,7 @@ pub fn status(ui: Ui) -> impl IntoElement {
                 )
                 .child(
                     text(move || match status.get() {
-                        Status::Failed { message, .. } => message.to_owned(),
+                        Status::Failed { message, .. } => message,
                         _ => "Next (⏭) returns to live.".to_owned(),
                     })
                     .text_size(size(16.0))
@@ -776,9 +759,9 @@ pub fn status(ui: Ui) -> impl IntoElement {
                     move || {
                         text(move || {
                             if ui.keys_shown() {
-                                "OK  Retry".to_owned()
+                                "OK  Try again".to_owned()
                             } else {
-                                "Retry".to_owned()
+                                "Try again".to_owned()
                             }
                         })
                         .mt(px(6.0))

@@ -10,7 +10,7 @@
 mod chrome;
 
 use iptv_core::multiview::{Dialog, MAX_SURFACES, TileAction, WARNING_CHOICES, WarningChoice};
-use iptv_core::playback::Phase;
+
 use nsh_core::prelude::*;
 
 use crate::multiview::{self, State};
@@ -57,20 +57,21 @@ fn device_limit(m: &State) -> Option<String> {
 enum TileStatus {
     Playing,
     Waiting(String),
-    Failed(&'static str),
+    Failed(String),
 }
 
 fn tile_status(ui: Ui, surface: usize) -> TileStatus {
     let now = ui.now_ms();
-    ui.player.stream(surface).health.with(|h| match h.phase() {
-        Phase::Failed(f) => {
-            TileStatus::Failed(crate::player_panels::failure_message(&f.kind, false))
-        }
-        // A quick reconnect keeps the last frame without a label.
-        _ => h.indicator(now).map_or(TileStatus::Playing, |w| {
-            TileStatus::Waiting(crate::player_panels::waiting_text(&w))
-        }),
-    })
+    ui.player
+        .stream(surface)
+        .health
+        .with(|h| match h.failure() {
+            Some(f) => TileStatus::Failed(crate::player_panels::failure_message(&f.kind, false)),
+            // A quick reconnect keeps the last frame without a label.
+            _ => h.indicator(now).map_or(TileStatus::Playing, |w| {
+                TileStatus::Waiting(crate::player_panels::waiting_text(&w))
+            }),
+        })
 }
 
 pub fn layer(ui: Ui) -> impl IntoElement {

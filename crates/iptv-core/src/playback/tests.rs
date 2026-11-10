@@ -6,6 +6,9 @@ fn policy() -> RetryPolicy {
         first_delay_ms: 1_000,
         max_delay_ms: 8_000,
         max_attempts: 4,
+        slow_delay_ms: 20_000,
+        card_after_ms: 120_000,
+        background_delay_ms: 30_000,
         stable_ms: 10_000,
         stall_ms: 15_000,
         quiet_reconnect_ms: 1_000,
@@ -28,7 +31,7 @@ fn backoff_doubles_up_to_the_cap() {
 }
 
 #[test]
-fn live_errors_retry_with_backoff_then_stay_failed() {
+fn live_errors_retry_fast_then_show_the_card_and_go_on_retrying() {
     let mut h = Health::new(policy());
     let session = h.start(true, 0);
     h.resolved(0);
@@ -41,6 +44,7 @@ fn live_errors_retry_with_backoff_then_stay_failed() {
         assert_eq!((r.attempt, r.session), (attempt, session));
         waits.push(r.at_ms - now);
         assert!(h.waiting(), "retrying shows the waiting indicator");
+        assert!(h.failure().is_none(), "no card during the fast attempts");
         assert!(!h.due(r, r.at_ms - 1), "not before its time");
         assert!(h.due(r, r.at_ms));
         assert_eq!(h.phase(), &Phase::Resolving);
@@ -48,12 +52,34 @@ fn live_errors_retry_with_backoff_then_stay_failed() {
         now = r.at_ms + 50;
     }
     assert_eq!(waits, [1_000, 2_000, 4_000, 8_000]);
-    assert_eq!(h.on_error(ErrorKind::Network, "x".into(), now), None);
-    let f = h.failure().expect("gave up");
-    assert_eq!((f.kind.clone(), f.attempts), (ErrorKind::Network, 4));
-    // Further player noise does not leave the failed state.
+    // A stream that never played: the card after the fast attempts, and
+    // slow retries behind it.
+    let r = h
+        .on_error(ErrorKind::Network, "x".into(), now)
+        .expect("retries go on");
+    assert_eq!(r.at_ms - now, 30_000);
+    let f = h.failure().expect("the card shows");
+    assert_eq!(
+        (f.kind.clone(), f.attempts, f.retrying),
+        (ErrorKind::Network, 4, true)
+    );
+    assert!(!h.waiting(), "the card, not a pill");
+    assert_eq!(h.indicator(now), None);
+    // Further player noise does not drop the card.
     assert_eq!(h.on_state(PlayerState::Buffering, now + 1), None);
     assert!(h.failure().is_some());
+    // A background retry that fails keeps the card and waits again.
+    assert!(h.due(r, r.at_ms));
+    h.resolved(r.at_ms);
+    assert!(h.failure().is_some(), "the card stays while it tries");
+    let r2 = h
+        .on_error(ErrorKind::Network, "x".into(), r.at_ms + 500)
+        .unwrap();
+    assert_eq!(r2.at_ms - (r.at_ms + 500), 30_000);
+    // One that plays clears it.
+    assert!(h.due(r2, r2.at_ms));
+    playing(&mut h, r2.at_ms);
+    assert!(h.failure().is_none());
 }
 
 #[test]
@@ -66,37 +92,78 @@ fn a_manual_retry_starts_over() {
             assert!(h.due(r, r.at_ms));
         }
     }
-    assert!(h.failure().is_some());
+    assert!(h.failure().is_some(), "the card, retries behind it");
     let old = h.session();
     let new = h.retry_now(20_000);
     assert!(new > old);
     assert_eq!(h.phase(), &Phase::Resolving);
+    assert!(h.failure().is_none(), "Try again drops the card");
     let r = h.on_error(ErrorKind::Network, "x".into(), 20_001).unwrap();
     assert_eq!(r.attempt, 1, "attempts were reset");
+    assert_eq!(r.at_ms, 21_001, "the backoff starts again");
 }
 
 #[test]
-fn refusals_formats_and_catch_up_do_not_retry() {
+fn only_fatal_failures_stop_a_live_stream() {
     for kind in [
-        ErrorKind::Http(403),
-        ErrorKind::Http(401),
+        ErrorKind::Http(404),
+        ErrorKind::Http(410),
         ErrorKind::Format,
+        ErrorKind::Unavailable,
+        ErrorKind::Account,
     ] {
         let mut h = Health::new(policy());
         h.start(true, 0);
         assert_eq!(h.on_error(kind.clone(), "x".into(), 5), None, "{kind:?}");
-        assert_eq!(h.failure().map(|f| f.attempts), Some(0));
+        let f = h.failure().expect("the card");
+        assert_eq!((f.attempts, f.retrying), (0, false), "{kind:?}");
     }
-    let mut h = Health::new(policy());
-    h.start(true, 0);
-    assert!(
-        h.on_error(ErrorKind::Http(503), "x".into(), 5).is_some(),
-        "server errors retry"
-    );
+    for kind in [
+        ErrorKind::Http(401),
+        ErrorKind::Http(403),
+        ErrorKind::Http(429),
+        ErrorKind::Http(458),
+        ErrorKind::Http(503),
+        ErrorKind::Http(509),
+        ErrorKind::Network,
+        ErrorKind::Stalled,
+        ErrorKind::Resolve,
+    ] {
+        let mut h = Health::new(policy());
+        h.start(true, 0);
+        assert!(
+            h.on_error(kind.clone(), "x".into(), 5).is_some(),
+            "{kind:?}"
+        );
+        assert!(h.failure().is_none(), "{kind:?}");
+    }
+}
+
+#[test]
+fn catch_up_retries_a_few_times_only_once_it_played() {
     let mut archive = Health::new(policy());
     archive.start(false, 0);
-    assert_eq!(archive.on_error(ErrorKind::Network, "x".into(), 5), None);
+    assert_eq!(
+        archive.on_error(ErrorKind::Network, "x".into(), 5),
+        None,
+        "an archive that never played fails at once"
+    );
     assert!(archive.failure().is_some());
+    let mut h = Health::new(policy());
+    h.start(false, 0);
+    playing(&mut h, 0);
+    let mut now = 1_000;
+    for attempt in 1..=4 {
+        let r = h.on_error(ErrorKind::Http(403), "x".into(), now).unwrap();
+        assert_eq!(r.attempt, attempt);
+        assert!(h.reconnecting(), "keeps its last frame");
+        assert!(h.due(r, r.at_ms));
+        h.resolved(r.at_ms);
+        now = r.at_ms + 10;
+    }
+    assert_eq!(h.on_error(ErrorKind::Http(403), "x".into(), now), None);
+    let f = h.failure().unwrap();
+    assert_eq!((f.attempts, f.retrying), (4, false));
 }
 
 #[test]
@@ -360,7 +427,7 @@ fn a_stream_that_played_reconnects_quietly_for_a_moment() {
     assert_eq!(h.indicator(20_999), None);
     assert_eq!(
         h.indicator(21_000),
-        Some(Waiting::Reconnecting { attempt: 1, of: 4 }),
+        Some(Waiting::Reconnecting { attempt: 1 }),
         "a slow reconnect says so"
     );
     // Further attempts count from the first one's start.
@@ -370,7 +437,7 @@ fn a_stream_that_played_reconnects_quietly_for_a_moment() {
     assert_eq!(h.indicator_due(), Some(21_000));
     assert_eq!(
         h.indicator(21_500),
-        Some(Waiting::Reconnecting { attempt: 2, of: 4 })
+        Some(Waiting::Reconnecting { attempt: 2 })
     );
     assert!(h.due(r, r.at_ms));
     h.resolved(r.at_ms);
@@ -390,10 +457,7 @@ fn a_stream_that_never_played_shows_loading_and_retries_openly() {
     h.on_error(ErrorKind::Network, "ERROR_CODE_IO".into(), 500)
         .expect("retries");
     assert!(!h.reconnecting(), "nothing to keep on screen");
-    assert_eq!(
-        h.indicator(500),
-        Some(Waiting::Reconnecting { attempt: 1, of: 4 })
-    );
+    assert_eq!(h.indicator(500), Some(Waiting::Reconnecting { attempt: 1 }));
     assert_eq!(h.indicator_due(), None);
 }
 
@@ -407,8 +471,8 @@ fn buffering_failures_and_new_streams_end_a_reconnect() {
     assert_eq!(h.on_state(PlayerState::Ready, 1_500), None);
     h.on_state(PlayerState::Ended, 2_000).expect("reconnects");
     assert!(h.reconnecting());
-    // Refused: the error stays on screen, with the black shutter.
-    h.on_error(ErrorKind::Http(403), "403".into(), 2_100);
+    // Gone: the error stays on screen, with the black shutter.
+    h.on_error(ErrorKind::Http(404), "404".into(), 2_100);
     assert!(h.failure().is_some());
     assert!(!h.reconnecting());
     assert_eq!(h.indicator(9_000), None, "the failure card, not a pill");
@@ -420,7 +484,7 @@ fn buffering_failures_and_new_streams_end_a_reconnect() {
     h.start(true, 12_100);
     assert!(!h.reconnecting());
     assert_eq!(h.indicator(12_100), Some(Waiting::Loading));
-    // Catch-up never reconnects on its own.
+    // Catch-up that ends is over, not reconnected.
     h.start(false, 20_000);
     assert!(!h.live());
     playing(&mut h, 20_000);

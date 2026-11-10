@@ -152,6 +152,16 @@ or with `IPTV_RS_DEBUG_OVERLAY=1`; the matching log line is always written.
 `GDK_DEBUG=no-portals` makes the playlist-file picker GTK's own dialog
 instead of the desktop portal's.
 
+A live channel recovers by itself: after a cut or an error it keeps its
+last frame (with a small "Reconnecting…" after a second) and retries,
+fast at first and then every 20 s, for as long as it stays selected; the
+"Can't play" card shows only when a retry cannot help (the stream is gone,
+its format is not supported, the account is refused) or after 2.5 minutes
+down, and even then retries go on behind it every 30 s. Try again (OK)
+retries at once. A refusal by the provider (often the account's streams
+are all in use elsewhere) says how many streams the account allows when
+the provider told us.
+
 On Android nothing plays in the background: when the activity stops
 (Home, another app, the screen off) every player stops and closes its
 connections, and when it starts again each one reopens its stream (live at

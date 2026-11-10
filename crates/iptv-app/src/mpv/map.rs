@@ -100,8 +100,6 @@ pub fn http(headers: &[(String, String)], fallback_ua: &str) -> Http {
     }
 }
 
-/// Whether mpv may open `url`: network streams only (never local files,
-/// FFmpeg's pseudo-protocols or mpv's own `av://`, `lavfi://`...).
 /// Whether a reopen keeps the picture's last frame instead of the black
 /// shutter: the app reconnects the stream that played (`reconnect`; a
 /// portal may hand out a new address for it), or only the token changed
@@ -114,6 +112,50 @@ pub fn keeps_frame(old: Option<&str>, new: Option<&str>, reconnect: bool) -> boo
     }
 }
 
+/// Whether a failed stream keeps its last frame: a live one does (the app
+/// reconnects it and shows "Reconnecting…" or its card over the frame);
+/// catch-up and anything else go black.
+pub fn keeps_frame_on_error(live: bool) -> bool {
+    live
+}
+
+/// How much a live stream's cache reads ahead, s. A live stream cannot
+/// read past its live edge, so this is a cap, not a wait.
+pub const LIVE_CACHE_SECS: u32 = 20;
+
+/// mpv's options for one load (set as properties before `loadfile`).
+/// The cache is on for every stream, and playback starts as soon as the
+/// first frame decodes (`cache-pause-initial=no`: zapping waits for
+/// nothing more). A live stream keeps up to [`LIVE_CACHE_SECS`] ahead and
+/// after running dry waits for 2 s of it (not 1), so a stream with
+/// hiccups settles a little further behind live instead of stuttering. A
+/// reopen of a live stream (`reconnect`) starts three HLS segments back
+/// from the newest, as a first open does, rather than at the live edge;
+/// every load clears the spare's options of the bridge
+/// ([`super::worker`]).
+pub fn load_options(live: bool, reconnect: bool) -> Vec<(&'static str, String)> {
+    let (cache_secs, pause_wait) = if live {
+        (LIVE_CACHE_SECS.to_string(), "2")
+    } else {
+        // mpv's defaults: catch-up reads ahead as far as memory allows.
+        ("1000".to_owned(), "1")
+    };
+    let lavf = if live && reconnect {
+        "live_start_index=-3"
+    } else {
+        ""
+    };
+    vec![
+        ("cache", "yes".to_owned()),
+        ("cache-pause-initial", "no".to_owned()),
+        ("cache-secs", cache_secs),
+        ("cache-pause-wait", pause_wait.to_owned()),
+        ("demuxer-lavf-o", lavf.to_owned()),
+    ]
+}
+
+/// Whether mpv may open `url`: network streams only (never local files,
+/// FFmpeg's pseudo-protocols or mpv's own `av://`, `lavfi://`...).
 pub fn playable(url: &str) -> bool {
     const SCHEMES: &[&str] = &[
         "http", "https", "rtmp", "rtmps", "rtsp", "rtsps", "rtp", "udp", "srt", "mms",
@@ -316,6 +358,54 @@ mod tests {
     }
 
     #[test]
+    fn a_live_error_keeps_the_last_frame_and_catch_up_goes_black() {
+        assert!(keeps_frame_on_error(true));
+        assert!(!keeps_frame_on_error(false));
+    }
+
+    fn option<'a>(options: &'a [(&'static str, String)], name: &str) -> Option<&'a str> {
+        options
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, v)| v.as_str())
+    }
+
+    #[test]
+    fn load_options_buffer_live_streams_without_delaying_the_first_frame() {
+        for (live, reconnect) in [(true, false), (true, true), (false, false), (false, true)] {
+            let o = load_options(live, reconnect);
+            assert_eq!(option(&o, "cache"), Some("yes"));
+            assert_eq!(
+                option(&o, "cache-pause-initial"),
+                Some("no"),
+                "zapping waits for the first frame only"
+            );
+            let names: Vec<_> = o.iter().map(|(n, _)| *n).collect();
+            let mut unique = names.clone();
+            unique.dedup();
+            assert_eq!(names, unique);
+        }
+        let live = load_options(true, false);
+        assert_eq!(option(&live, "cache-secs"), Some("20"));
+        assert_eq!(option(&live, "cache-pause-wait"), Some("2"));
+        assert_eq!(
+            option(&live, "demuxer-lavf-o"),
+            Some(""),
+            "a first open: ffmpeg's own start, and no spare's options"
+        );
+        let again = load_options(true, true);
+        assert_eq!(
+            option(&again, "demuxer-lavf-o"),
+            Some("live_start_index=-3"),
+            "a reopen starts segments back, not at the live edge"
+        );
+        let archive = load_options(false, true);
+        assert_eq!(option(&archive, "cache-secs"), Some("1000"));
+        assert_eq!(option(&archive, "cache-pause-wait"), Some("1"));
+        assert_eq!(option(&archive, "demuxer-lavf-o"), Some(""));
+    }
+
+    #[test]
     fn picture_sizes_match_the_android_frame() {
         assert_eq!(picture("normal", Some(1.5)), picture("anything", None));
         assert!(!picture("full", None).keepaspect);
@@ -371,6 +461,12 @@ mod tests {
         }
     }
 
+    fn gone_404() -> Clues {
+        let mut c = Clues::default();
+        c.hear("http: HTTP error 404 Not Found");
+        c
+    }
+
     #[test]
     fn failures_classify_as_on_android() {
         let mut c = Clues::default();
@@ -381,7 +477,15 @@ mod tests {
         let mut c = Clues::default();
         c.hear("Server returned 403 Forbidden (access denied)");
         assert_eq!(kind(&c, MPV_LOADING), ErrorKind::Http(403));
-        assert!(!kind(&c, MPV_LOADING).retryable());
+        assert_eq!(
+            kind(&c, MPV_LOADING).cause(),
+            iptv_core::playback::Cause::Refused,
+            "refused for now: retried"
+        );
+        assert!(
+            !kind(&gone_404(), MPV_LOADING).retryable(),
+            "gone: no retry"
+        );
 
         let mut c = Clues::default();
         c.hear("tcp: Connection to tcp://127.0.0.1:9 failed: Connection refused");

@@ -22,7 +22,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use futures_channel::oneshot;
-use iptv_core::playback::{ChannelHistory, ErrorKind, Health, PlaySource, PlayerState, Retry};
+use iptv_core::playback::{ChannelHistory, ErrorKind, Health, PlaySource, Retry};
 use iptv_core::player_info::StreamFormat as Format;
 use iptv_core::tracks::{Choice, Tracks};
 use iptv_guide::EpgSchedule;
@@ -37,6 +37,11 @@ use nsh_core::prelude::*;
 
 use crate::guide::Schedule;
 use crate::{Playback, Ui, ViewMode};
+
+mod recover;
+
+use recover::{fail, watch_stall};
+pub use recover::{failed, on_error, on_state, retry, retry_surface, surface_failed};
 
 const LAST_CHANNEL_FILE: &str = "last_channel";
 
@@ -68,6 +73,8 @@ pub struct Stream {
     /// Where the open stream is (ms from where it was opened), as the
     /// player last reported.
     pub position_ms: Signal<u64>,
+    /// A retry that came due while the app was away ([`recover::resume`]).
+    parked: Signal<Option<Retry>>,
     /// What the open stream offers and what the viewer chose (`media.rs`).
     pub tracks: Signal<Tracks>,
     pub choice: Signal<Choice>,
@@ -87,6 +94,7 @@ impl Stream {
             channel: signal(None),
             size: signal(None),
             position_ms: signal(0),
+            parked: signal(None),
             tracks: signal(Tracks::default()),
             choice: signal(Choice::default()),
             format: signal(Format::default()),
@@ -255,6 +263,7 @@ pub fn stop_surface(ui: Ui, surface: usize) {
 fn close(ui: Ui, surface: usize) {
     let stream = ui.player.stream(surface);
     stream.health.update(Health::stop);
+    stream.parked.set(None);
     stream.source.set(None);
     if stream.size.with_untracked(Option::is_some) {
         stream.size.set(None);
@@ -400,145 +409,10 @@ fn resolve_link(
                     session,
                     StalkerLink::source(&portal, url, &channel_headers),
                 ),
-                Err(kind) => fail(ui, surface, session, ErrorKind::Resolve, kind),
+                Err(kind) => fail(ui, surface, session, ErrorKind::from_resolve(&kind), kind),
             }
         })
     });
-}
-
-fn fail(ui: Ui, surface: usize, session: u64, kind: ErrorKind, detail: String) {
-    let health = ui.player.stream(surface).health;
-    if health.with_untracked(|h| h.session()) != session {
-        return;
-    }
-    log::warn!("iptv player {surface}: {kind:?} ({detail})");
-    let now = ui.now_ms();
-    let mut retry = None;
-    health.update(|h| retry = h.on_error(kind, detail, now));
-    if let Some(r) = retry {
-        schedule_retry(ui, surface, r);
-    }
-}
-
-fn schedule_retry(ui: Ui, surface: usize, retry: Retry) {
-    log::info!(
-        "iptv player {surface} retry {} in {} ms",
-        retry.attempt,
-        retry.at_ms.saturating_sub(ui.now_ms())
-    );
-    let wait = retry.at_ms.saturating_sub(ui.now_ms());
-    watch_indicator(ui, surface);
-    later(ui, Duration::from_millis(wait), move || {
-        let now = ui.now_ms();
-        let mut due = false;
-        ui.player
-            .stream(surface)
-            .health
-            .update(|h| due = h.due(retry, now));
-        if due {
-            open(ui, surface, retry.session);
-        }
-    });
-}
-
-/// Shows the waiting indicator once a quiet reconnect has taken long
-/// enough (`Health::indicator`).
-fn watch_indicator(ui: Ui, surface: usize) {
-    let health = ui.player.stream(surface).health;
-    let Some(at) = health.with_untracked(|h| h.indicator_due()) else {
-        return;
-    };
-    let wait = at.saturating_sub(ui.now_ms());
-    later(ui, Duration::from_millis(wait), move || {
-        if health.with_untracked(|h| h.indicator_due()) == Some(at) {
-            // Nothing changed but the time: the overlays read it again.
-            health.update(|_| {});
-        }
-    });
-}
-
-/// Arms one stall check at the current deadline (each wait gets its own; a
-/// check whose deadline moved does nothing).
-fn watch_stall(ui: Ui, surface: usize) {
-    let health = ui.player.stream(surface).health;
-    let Some(at) = health.with_untracked(|h| h.stall_deadline()) else {
-        return;
-    };
-    let wait = at.saturating_sub(ui.now_ms());
-    later(ui, Duration::from_millis(wait), move || {
-        let now = ui.now_ms();
-        let mut retry = None;
-        health.update(|h| retry = h.tick(now));
-        if let Some(r) = retry {
-            log::warn!("iptv player {surface}: stalled");
-            schedule_retry(ui, surface, r);
-        }
-    });
-}
-
-/// The host's `state` event from `surface`.
-pub fn on_state(ui: Ui, surface: usize, name: &str) {
-    let Some(state) = PlayerState::parse(name) else {
-        return;
-    };
-    let health = ui.player.stream(surface).health;
-    let now = ui.now_ms();
-    let before = health.with_untracked(|h| h.stall_deadline());
-    let mut retry = None;
-    health.update(|h| retry = h.on_state(state, now));
-    if let Some(r) = retry {
-        schedule_retry(ui, surface, r);
-    } else if health.with_untracked(|h| h.stall_deadline()) != before {
-        watch_stall(ui, surface);
-    }
-}
-
-/// The host's `error` event from `surface`: Media3's code name and the
-/// HTTP status.
-pub fn on_error(ui: Ui, surface: usize, code: &str, http: Option<u16>) {
-    let kind = ErrorKind::from_player_code(code, http);
-    let session = ui
-        .player
-        .stream(surface)
-        .health
-        .with_untracked(|h| h.session());
-    let detail = match http {
-        Some(status) => format!("{code} {status}"),
-        None => code.to_owned(),
-    };
-    fail(ui, surface, session, kind, detail);
-}
-
-/// The full-screen player's stream failed (retries stopped).
-pub fn failed(ui: &Ui) -> bool {
-    ui.playing.get_untracked().is_some() && surface_failed(*ui, 0)
-}
-
-/// `surface`'s stream failed (retries stopped).
-pub fn surface_failed(ui: Ui, surface: usize) -> bool {
-    ui.player
-        .stream(surface)
-        .health
-        .with_untracked(|h| h.failure().is_some())
-}
-
-/// The viewer's Retry: starts over with a fresh attempt count.
-pub fn retry(ui: Ui) {
-    retry_surface(ui, 0);
-}
-
-/// Retry on `surface`.
-pub fn retry_surface(ui: Ui, surface: usize) {
-    if target(ui, surface).is_none() {
-        return;
-    }
-    let now = ui.now_ms();
-    let mut session = 0;
-    ui.player
-        .stream(surface)
-        .health
-        .update(|h| session = h.retry_now(now));
-    open(ui, surface, session);
 }
 
 /// Plays the channel before the current one (again: back).
@@ -652,6 +526,10 @@ pub fn bind(ui: Ui) {
                     .update(|h| h.set_paused(held, now));
                 if !held {
                     watch_stall(ui, surface);
+                }
+                if !away {
+                    // Out of the effect: a retry opens the stream.
+                    later(ui, Duration::ZERO, move || recover::resume(ui, surface));
                 }
             }
         });

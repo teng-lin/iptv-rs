@@ -70,6 +70,12 @@ pub fn account_streams(meta: &SourceMeta) -> Option<u32> {
     }
 }
 
+/// The streams the shown source's account allows at once, if known: the
+/// failure card names it when the provider refuses a stream.
+pub fn account_limit() -> Option<u32> {
+    ACCOUNT_STREAMS.with(Cell::get)
+}
+
 /// The source on screen changed its account's allowance (`data.rs`).
 pub fn set_account_streams(allowed: Option<u32>) {
     ACCOUNT_STREAMS.with(|a| a.set(allowed));
