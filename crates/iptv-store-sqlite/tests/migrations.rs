@@ -14,11 +14,12 @@ mod common;
 
 use std::path::Path;
 
-use iptv_providers::model::{SourceConfig, SourceKind};
+use iptv_providers::model::{ContentKind, SourceConfig, SourceKind};
 use iptv_providers::{ContentId, GroupId};
 use iptv_store_sqlite::migrate::schema_dump;
 use iptv_store_sqlite::{
-    ChannelQuery, ChannelScope, ImportErrorKind, SCHEMA_VERSION, SourceId, Store,
+    ChannelOrder, ChannelQuery, ChannelScope, EpgOverride, ImportErrorKind, SCHEMA_VERSION,
+    SourceId, Store,
 };
 
 #[test]
@@ -61,6 +62,10 @@ const HISTORY: &[Version] = &[
     Version {
         version: 2,
         data: &["data_v1.sql", "data_v2.sql"],
+    },
+    Version {
+        version: 3,
+        data: &["data_v1.sql", "data_v2.sql", "data_v3.sql"],
     },
 ];
 
@@ -125,6 +130,7 @@ fn check_provider_data(store: &Store) {
             SRC,
             &ChannelQuery {
                 include_hidden: true,
+                order: ChannelOrder::Provider,
                 ..Default::default()
             },
         )
@@ -160,15 +166,22 @@ fn check_provider_data(store: &Store) {
     );
 }
 
-/// Overlays written by v2 builds.
-fn check_overlays(store: &Store) {
+/// Overlays written by v2 builds (and what v3 data changes about them).
+fn check_overlays(store: &Store, version: u32) {
     let visible = store.load_channels(SRC, &ChannelQuery::default()).unwrap();
+    let expected: &[&str] = if version >= 3 {
+        // v3 data adds a manual order of the all-channels list.
+        &["Fixture Sport", "My News"]
+    } else {
+        &["My News", "Fixture Sport"]
+    };
     assert_eq!(
         visible.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
-        ["My News", "Fixture Sport"]
+        expected
     );
-    assert_eq!(visible[1].number, Some(10));
-    assert!(visible[1].blocked);
+    let sport = visible.iter().find(|r| r.name == "Fixture Sport").unwrap();
+    assert_eq!(sport.number, Some(10));
+    assert!(sport.blocked);
     let favourites = store
         .load_channels(
             SRC,
@@ -186,14 +199,76 @@ fn check_overlays(store: &Store) {
         ["xt:live:102", "xt:live:101"]
     );
     let orphans = store.orphaned_overlays(Some(SRC)).unwrap();
-    assert_eq!(orphans.len(), 1);
-    assert_eq!(orphans[0].channel_id, id("xt:live:999"));
-    assert!(orphans[0].favourite && orphans[0].customised);
+    let gone = orphans
+        .iter()
+        .find(|o| o.channel_id == id("xt:live:999"))
+        .unwrap();
+    assert!(gone.favourite && gone.customised);
+    assert_eq!(gone.ordered && gone.in_custom_group, version >= 3);
+    assert_eq!(orphans.len(), if version >= 3 { 2 } else { 1 });
     assert_eq!(
         store.search_channels(Some(SRC), "my news", 5).unwrap()[0]
             .channel
             .id,
         id("xt:live:101")
+    );
+    let news = store.channel(SRC, &id("xt:live:101")).unwrap().unwrap();
+    if version < 3 {
+        assert_eq!(news.epg_override, None, "v3 columns default to automatic");
+    }
+}
+
+/// Organisation data written by v3 builds.
+fn check_organisation(store: &Store) {
+    let news = store.channel(SRC, &id("xt:live:101")).unwrap().unwrap();
+    assert_eq!(
+        news.epg_override,
+        Some(EpgOverride::Xmltv {
+            epg_source: "epg-fixture".into(),
+            epg_channel: "alt.news.example".into()
+        })
+    );
+    let groups = store.custom_groups(SRC).unwrap();
+    assert_eq!(groups.len(), 1);
+    assert_eq!(
+        (groups[0].name.as_str(), groups[0].channel_count),
+        ("Evening", 2)
+    );
+    let members = store
+        .load_channels(
+            SRC,
+            &ChannelQuery {
+                scope: ChannelScope::Custom(groups[0].id),
+                include_hidden: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        members
+            .iter()
+            .map(|r| r.channel.id.as_str())
+            .collect::<Vec<_>>(),
+        ["xt:live:103", "xt:live:101"]
+    );
+    let recent = store.recent(Some(SRC), None, 10).unwrap();
+    assert_eq!(
+        recent
+            .iter()
+            .map(|h| (h.item_id.as_str(), h.watched_at))
+            .collect::<Vec<_>>(),
+        [
+            ("xt:live:101", 1_700_000_900),
+            ("xt:movie:5", 1_700_000_800)
+        ]
+    );
+    assert_eq!(recent[1].position_secs, Some(1200));
+    assert_eq!(
+        store
+            .recent(None, Some(ContentKind::Live), 10)
+            .unwrap()
+            .len(),
+        1
     );
 }
 
@@ -215,7 +290,10 @@ fn every_historical_version_migrates_with_its_data() {
         );
         check_provider_data(&store);
         if v.version >= 2 {
-            check_overlays(&store);
+            check_overlays(&store, v.version);
+        }
+        if v.version >= 3 {
+            check_organisation(&store);
         }
         drop(store);
 
@@ -223,14 +301,22 @@ fn every_historical_version_migrates_with_its_data() {
         let again = Store::open(&path).unwrap();
         check_provider_data(&again);
         if v.version >= 2 {
-            check_overlays(&again);
+            check_overlays(&again, v.version);
+        }
+        if v.version >= 3 {
+            check_organisation(&again);
         }
     }
 }
 
 #[test]
 fn overlays_survive_the_first_refresh_after_upgrading() {
-    let v = HISTORY.iter().find(|v| v.version == 2).unwrap();
+    for v in HISTORY.iter().filter(|v| v.version >= 2) {
+        first_refresh_after_upgrading(v);
+    }
+}
+
+fn first_refresh_after_upgrading(v: &Version) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("old.db");
     build_old_file(&path, v);
@@ -257,10 +343,32 @@ fn overlays_survive_the_first_refresh_after_upgrading() {
         .replace_catalog(SRC, &groups, &catalog, &[], &[])
         .unwrap();
     check_overlays_after_return(&store);
+    if v.version >= 3 {
+        let evening = &store.custom_groups(SRC).unwrap()[0];
+        assert_eq!(
+            evening.channel_count, 3,
+            "the returning member counts again"
+        );
+        let order = store.load_channels(SRC, &ChannelQuery::default()).unwrap();
+        assert_eq!(
+            order
+                .iter()
+                .map(|r| r.channel.id.as_str())
+                .collect::<Vec<_>>(),
+            ["xt:live:102", "xt:live:999", "xt:live:101"],
+            "the returning channel regains its manual place"
+        );
+    }
 }
 
 fn check_overlays_after_return(store: &Store) {
-    assert!(store.orphaned_overlays(Some(SRC)).unwrap().is_empty());
+    assert!(
+        store
+            .orphaned_overlays(Some(SRC))
+            .unwrap()
+            .iter()
+            .all(|o| o.channel_id != id("xt:live:999"))
+    );
     let returned = store.channel(SRC, &id("xt:live:999")).unwrap().unwrap();
     assert_eq!(returned.name, "Gone For Now");
     assert!(returned.favourite);

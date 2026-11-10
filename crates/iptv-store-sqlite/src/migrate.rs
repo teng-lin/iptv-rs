@@ -36,6 +36,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "overlays",
         sql: include_str!("../migrations/0002_overlays.sql"),
     },
+    Migration {
+        version: 3,
+        name: "organisation",
+        sql: include_str!("../migrations/0003_organisation.sql"),
+    },
 ];
 
 /// The schema version this build writes.
@@ -155,6 +160,7 @@ mod tests {
         let snapshots = [
             include_str!("../tests/fixtures/schema_v1.sql"),
             include_str!("../tests/fixtures/schema_v2.sql"),
+            include_str!("../tests/fixtures/schema_v3.sql"),
         ];
         assert_eq!(snapshots.len(), MIGRATIONS.len(), "snapshot every version");
         for (i, snapshot) in snapshots.iter().enumerate() {

@@ -22,8 +22,10 @@ mod catalog;
 mod channels;
 mod codec;
 mod error;
+mod history;
 pub mod migrate;
 mod order;
+mod organise;
 mod overlay;
 mod search;
 mod sources;
@@ -35,8 +37,10 @@ use rusqlite::{Connection, OpenFlags};
 
 pub use channels::{ChannelOrder, ChannelQuery, ChannelRow, ChannelScope};
 pub use error::{Result, StoreError};
+pub use history::{HISTORY_LIMIT, HistoryEntry, PRUNE_SLACK};
 pub use migrate::SCHEMA_VERSION;
-pub use overlay::OrphanedOverlay;
+pub use organise::{CustomGroup, CustomGroupId, OrderScope};
+pub use overlay::{EpgOverride, OrphanedOverlay};
 pub use search::SearchBackend;
 pub use sources::{CatalogCounts, ImportErrorKind, ImportStatus, SourceSummary, StoredSource};
 

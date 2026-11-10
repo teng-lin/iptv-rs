@@ -1,4 +1,5 @@
-//! User overlays: favourites, hidden, blocked, custom name and number.
+//! User overlays: favourites, hidden, blocked, custom name and number, EPG
+//! override, and the orphan report over every overlay table.
 //!
 //! Setters accept any channel id, present or not: overlays are keyed by
 //! stable id and may be written before the channel is (re)imported, for
@@ -17,7 +18,37 @@ use crate::{SourceId, Store, search};
 
 /// A `channel_overlays` row with nothing customised left.
 const EMPTY_OVERLAY: &str = "custom_name IS NULL AND custom_number IS NULL \
-    AND hidden = 0 AND blocked = 0";
+    AND hidden = 0 AND blocked = 0 AND epg_mode IS NULL";
+
+/// Which guide a channel uses instead of automatic matching.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EpgOverride {
+    /// Show no guide for this channel.
+    Disabled,
+    /// Use channel `epg_channel` of the EPG source keyed `epg_source`
+    /// (an opaque key chosen by the EPG layer, never a URL with secrets).
+    Xmltv {
+        epg_source: String,
+        epg_channel: String,
+    },
+}
+
+impl EpgOverride {
+    pub(crate) fn from_columns(
+        mode: Option<String>,
+        source: Option<String>,
+        channel: Option<String>,
+    ) -> Option<Self> {
+        match mode.as_deref() {
+            Some("none") => Some(Self::Disabled),
+            Some("xmltv") => Some(Self::Xmltv {
+                epg_source: source.unwrap_or_default(),
+                epg_channel: channel.unwrap_or_default(),
+            }),
+            _ => None,
+        }
+    }
+}
 
 /// Customisations whose channel is not in the current catalog. They are
 /// kept and apply again when the id returns.
@@ -27,36 +58,69 @@ pub struct OrphanedOverlay {
     pub source_id: SourceId,
     pub channel_id: ContentId,
     pub favourite: bool,
-    /// Name, number, hidden or blocked.
+    /// Name, number, hidden, blocked or EPG override.
     pub customised: bool,
+    /// Has a place in a manual order.
+    pub ordered: bool,
+    /// Member of at least one custom group.
+    pub in_custom_group: bool,
 }
 
-/// Overlay tables and what each row means for [`OrphanedOverlay`].
-const OVERLAY_TABLES: &[(&str, &str)] = &[
-    ("favourites", "1 AS favourite, 0 AS customised"),
-    ("channel_overlays", "0, 1"),
+/// Every overlay table as `(source_id, channel_id, favourite, customised,
+/// ordered, in_custom_group)` rows.
+const OVERLAY_ROWS: &str = "
+    SELECT source_id, channel_id, 1 AS favourite, 0 AS customised, 0 AS ordered, 0 AS grouped
+        FROM favourites
+    UNION ALL SELECT source_id, channel_id, 0, 1, 0, 0 FROM channel_overlays
+    UNION ALL SELECT source_id, channel_id, 0, 0, 1, 0 FROM manual_order
+    UNION ALL SELECT g.source_id, m.channel_id, 0, 0, 0, 1
+        FROM custom_group_members m JOIN custom_groups g ON g.id = m.group_id";
+
+/// Deletes a source's orphans, one statement per overlay table.
+const PURGE_ORPHANS: &[&str] = &[
+    "DELETE FROM favourites WHERE source_id = ?1 AND NOT EXISTS (
+         SELECT 1 FROM channels c WHERE c.source_id = ?1 AND c.id = favourites.channel_id)",
+    "DELETE FROM channel_overlays WHERE source_id = ?1 AND NOT EXISTS (
+         SELECT 1 FROM channels c WHERE c.source_id = ?1 AND c.id = channel_overlays.channel_id)",
+    "DELETE FROM manual_order WHERE source_id = ?1 AND NOT EXISTS (
+         SELECT 1 FROM channels c WHERE c.source_id = ?1 AND c.id = manual_order.channel_id)",
+    "DELETE FROM custom_group_members
+     WHERE group_id IN (SELECT id FROM custom_groups WHERE source_id = ?1) AND NOT EXISTS (
+         SELECT 1 FROM channels c WHERE c.source_id = ?1 AND c.id = custom_group_members.channel_id)",
 ];
 
-/// Sets one `channel_overlays` column, then drops the row if it became
-/// empty. `column` is a fixed identifier from this module.
-fn set_overlay_column(
+/// Sets `channel_overlays` columns, then drops the row if it became empty.
+/// Column names are fixed identifiers from this module.
+fn set_overlay_columns(
     conn: &Connection,
     source: SourceId,
     id: &ContentId,
-    column: &str,
-    value: Value,
+    columns: &[(&str, Value)],
     now: i64,
 ) -> Result<()> {
     ensure_source(conn, source)?;
-    conn.execute(
-        &format!(
-            "INSERT INTO channel_overlays (source_id, channel_id, {column}, updated_at)
-             VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT (source_id, channel_id) DO UPDATE
-             SET {column} = excluded.{column}, updated_at = excluded.updated_at"
-        ),
-        params![source.0, id.as_str(), value, now],
-    )?;
+    let names: Vec<&str> = columns.iter().map(|(c, _)| *c).collect();
+    let placeholders: Vec<String> = (0..columns.len()).map(|i| format!("?{}", i + 4)).collect();
+    let updates: Vec<String> = names
+        .iter()
+        .map(|c| format!("{c} = excluded.{c}"))
+        .collect();
+    let sql = format!(
+        "INSERT INTO channel_overlays (source_id, channel_id, updated_at, {})
+         VALUES (?1, ?2, ?3, {})
+         ON CONFLICT (source_id, channel_id) DO UPDATE
+         SET updated_at = excluded.updated_at, {}",
+        names.join(", "),
+        placeholders.join(", "),
+        updates.join(", ")
+    );
+    let mut args = vec![
+        Value::Integer(source.0),
+        Value::Text(id.as_str().to_owned()),
+        Value::Integer(now),
+    ];
+    args.extend(columns.iter().map(|(_, v)| v.clone()));
+    conn.execute(&sql, rusqlite::params_from_iter(args))?;
     conn.execute(
         &format!(
             "DELETE FROM channel_overlays WHERE source_id = ?1 AND channel_id = ?2 AND {EMPTY_OVERLAY}"
@@ -85,7 +149,7 @@ impl Store {
     ) -> Result<()> {
         let now = self.now();
         let tx = self.conn.transaction()?;
-        set_overlay_column(&tx, source, id, column, value, now)?;
+        set_overlay_columns(&tx, source, id, &[(column, value)], now)?;
         tx.commit()?;
         Ok(())
     }
@@ -184,7 +248,7 @@ impl Store {
             .filter(|n| !n.is_empty())
             .map_or(Value::Null, |n| Value::Text(n.to_owned()));
         let tx = self.conn.transaction()?;
-        set_overlay_column(&tx, source, id, "custom_name", value, now)?;
+        set_overlay_columns(&tx, source, id, &[("custom_name", value)], now)?;
         search::reindex_channel(&tx, fts, source, id)?;
         tx.commit()?;
         Ok(())
@@ -201,17 +265,50 @@ impl Store {
         self.set_column(source, id, "custom_number", value)
     }
 
+    /// Overrides which guide the channel shows; `None` restores automatic
+    /// matching.
+    pub fn set_epg_override(
+        &mut self,
+        source: SourceId,
+        id: &ContentId,
+        epg: Option<&EpgOverride>,
+    ) -> Result<()> {
+        let (mode, epg_source, epg_channel) = match epg {
+            None => (Value::Null, Value::Null, Value::Null),
+            Some(EpgOverride::Disabled) => (Value::Text("none".into()), Value::Null, Value::Null),
+            Some(EpgOverride::Xmltv {
+                epg_source,
+                epg_channel,
+            }) => (
+                Value::Text("xmltv".into()),
+                epg_source.clone().into(),
+                epg_channel.clone().into(),
+            ),
+        };
+        let now = self.now();
+        let tx = self.conn.transaction()?;
+        set_overlay_columns(
+            &tx,
+            source,
+            id,
+            &[
+                ("epg_mode", mode),
+                ("epg_source", epg_source),
+                ("epg_channel", epg_channel),
+            ],
+            now,
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Overlay rows whose channel is not in the current catalog, for one
     /// source or all.
     pub fn orphaned_overlays(&self, source: Option<SourceId>) -> Result<Vec<OrphanedOverlay>> {
-        let union = OVERLAY_TABLES
-            .iter()
-            .map(|(table, flags)| format!("SELECT source_id, channel_id, {flags} FROM {table}"))
-            .collect::<Vec<_>>()
-            .join(" UNION ALL ");
         let sql = format!(
-            "SELECT x.source_id, x.channel_id, MAX(x.favourite), MAX(x.customised)
-             FROM ({union}) x
+            "SELECT x.source_id, x.channel_id, MAX(x.favourite), MAX(x.customised),
+                 MAX(x.ordered), MAX(x.grouped)
+             FROM ({OVERLAY_ROWS}) x
              WHERE (?1 IS NULL OR x.source_id = ?1)
                AND NOT EXISTS (SELECT 1 FROM channels c
                                WHERE c.source_id = x.source_id AND c.id = x.channel_id)
@@ -225,6 +322,8 @@ impl Store {
                 channel_id: ContentId::from_stored(r.get::<_, String>(1)?),
                 favourite: r.get(2)?,
                 customised: r.get(3)?,
+                ordered: r.get(4)?,
+                in_custom_group: r.get(5)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
@@ -234,14 +333,8 @@ impl Store {
     pub fn purge_orphaned_overlays(&mut self, source: SourceId) -> Result<usize> {
         let tx = self.conn.transaction()?;
         let mut removed = 0;
-        for (table, _) in OVERLAY_TABLES {
-            removed += tx.execute(
-                &format!(
-                    "DELETE FROM {table} WHERE source_id = ?1 AND NOT EXISTS (
-                         SELECT 1 FROM channels c WHERE c.source_id = ?1 AND c.id = {table}.channel_id)"
-                ),
-                [source.0],
-            )?;
+        for sql in PURGE_ORPHANS {
+            removed += tx.execute(sql, [source.0])?;
         }
         tx.commit()?;
         Ok(removed)

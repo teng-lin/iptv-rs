@@ -9,6 +9,8 @@ use rusqlite::types::Value;
 
 use crate::codec::{catch_up_from_json, group_ids_from_json, narrow, stream_from_json};
 use crate::error::Result;
+use crate::organise::CustomGroupId;
+use crate::overlay::EpgOverride;
 use crate::search::{fts_query, like_pattern, words};
 use crate::{SourceId, Store};
 
@@ -29,6 +31,8 @@ pub struct ChannelRow {
     pub hidden: bool,
     /// Parental block; the UI asks for the PIN before playing.
     pub blocked: bool,
+    /// `None`: automatic EPG matching on `channel.epg_id`/`epg_name`.
+    pub epg_override: Option<EpgOverride>,
 }
 
 /// Leaves out the stream locator: its URL and headers may carry
@@ -56,15 +60,21 @@ pub enum ChannelScope {
     All,
     /// One provider group.
     Group(GroupId),
+    /// One custom group, in its own member order.
+    Custom(CustomGroupId),
 }
 
 /// Sort order of a channel list.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ChannelOrder {
-    /// The user's order where they set one (favourites order for a
-    /// favourites list), else provider order.
+    /// The user's order where they set one, else provider order: the
+    /// manual order of the list (all channels or a group), the favourites
+    /// order for an all-channels favourites list, member order for a custom
+    /// group. Channels without a manual place follow in provider order.
     #[default]
     Effective,
+    /// The provider's order, ignoring manual orders.
+    Provider,
     /// Displayed name, case-insensitive; ties in provider order.
     Name,
     /// Displayed number; unnumbered channels last, in provider order.
@@ -90,7 +100,7 @@ pub struct ChannelQuery {
 pub(crate) const ROW_COLUMNS: &str = "c.source_id, c.id, c.provider_id, c.name, c.number, \
     c.logo, c.group_ids, c.stream, c.epg_id, c.epg_name, c.epg_shift_minutes, c.catch_up, \
     c.radio, o.custom_name, o.custom_number, COALESCE(o.hidden, 0), COALESCE(o.blocked, 0), \
-    f.channel_id IS NOT NULL";
+    f.channel_id IS NOT NULL, o.epg_mode, o.epg_source, o.epg_channel";
 
 pub(crate) const OVERLAY_JOINS: &str = "
     LEFT JOIN channel_overlays o ON o.source_id = c.source_id AND o.channel_id = c.id
@@ -123,6 +133,7 @@ pub(crate) fn decode(row: &rusqlite::Row<'_>) -> Result<ChannelRow> {
         hidden: row.get(15)?,
         blocked: row.get(16)?,
         favourite: row.get(17)?,
+        epg_override: EpgOverride::from_columns(row.get(18)?, row.get(19)?, row.get(20)?),
         channel,
     })
 }
@@ -140,14 +151,29 @@ fn collect(stmt: &mut rusqlite::Statement<'_>, args: Vec<Value>) -> Result<Vec<C
 /// appended to `args`.
 fn build(source: SourceId, q: &ChannelQuery, args: &mut Vec<Value>) -> (String, String) {
     args.push(Value::Integer(source.0));
+    // The manual-order join is only needed to sort in effective order.
+    let manual = |scope: &str| {
+        if q.order == ChannelOrder::Effective {
+            format!(
+                " LEFT JOIN manual_order mo ON mo.source_id = c.source_id
+                     AND mo.scope = {scope} AND mo.channel_id = c.id"
+            )
+        } else {
+            String::new()
+        }
+    };
+    let by_manual = "mo.position IS NULL, mo.position";
     let (mut from, effective) = match &q.scope {
-        ChannelScope::All => (
+        ChannelScope::All if q.favourites_only => (
             format!("FROM channels c {OVERLAY_JOINS} WHERE c.source_id = ?1"),
-            if q.favourites_only {
-                "f.position"
-            } else {
-                "c.position"
-            },
+            "f.position",
+        ),
+        ChannelScope::All => (
+            format!(
+                "FROM channels c {OVERLAY_JOINS}{} WHERE c.source_id = ?1",
+                manual("''")
+            ),
+            by_manual,
         ),
         ChannelScope::Group(g) => {
             args.push(Value::Text(g.as_str().to_owned()));
@@ -155,10 +181,24 @@ fn build(source: SourceId, q: &ChannelQuery, args: &mut Vec<Value>) -> (String, 
                 format!(
                     "FROM channel_groups m
                      JOIN channels c ON c.source_id = m.source_id AND c.id = m.channel_id
-                     {OVERLAY_JOINS}
-                     WHERE m.source_id = ?1 AND m.group_id = ?2"
+                     {OVERLAY_JOINS}{}
+                     WHERE m.source_id = ?1 AND m.group_id = ?2",
+                    manual("?2")
                 ),
-                "c.position",
+                by_manual,
+            )
+        }
+        ChannelScope::Custom(g) => {
+            args.push(Value::Integer(g.0));
+            (
+                format!(
+                    "FROM custom_group_members cm
+                     JOIN custom_groups cg ON cg.id = cm.group_id
+                     JOIN channels c ON c.source_id = cg.source_id AND c.id = cm.channel_id
+                     {OVERLAY_JOINS}
+                     WHERE cg.source_id = ?1 AND cm.group_id = ?2"
+                ),
+                "cm.position",
             )
         }
     };
@@ -173,6 +213,7 @@ fn build(source: SourceId, q: &ChannelQuery, args: &mut Vec<Value>) -> (String, 
     }
     let order = match q.order {
         ChannelOrder::Effective => format!("{effective}, c.position"),
+        ChannelOrder::Provider => "c.position".into(),
         ChannelOrder::Name => "COALESCE(o.custom_name, c.name) COLLATE NOCASE, c.position".into(),
         ChannelOrder::Number => "COALESCE(o.custom_number, c.number) IS NULL, \
              COALESCE(o.custom_number, c.number), c.position"
