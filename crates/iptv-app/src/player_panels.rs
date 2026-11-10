@@ -50,7 +50,8 @@ fn with(name: &str, value: Option<String>) -> String {
 /// reference shows one.
 fn label(ui: Ui, control: Control) -> String {
     use Control::*;
-    let tracks = ui.media.tracks;
+    let main = ui.player.main();
+    let tracks = main.tracks;
     match control {
         Search => "Search".to_owned(),
         ChannelList => "Channels".to_owned(),
@@ -58,14 +59,14 @@ fn label(ui: Ui, control: Control) -> String {
         Multiview => "Multiview".to_owned(),
         PictureInPicture => "Picture in picture".to_owned(),
         VideoTracks => {
-            let playing = ui.video_size.get().map(|(_, h)| format!("{h}p"));
+            let playing = main.size.get().map(|(_, h)| format!("{h}p"));
             with(
                 "Video",
                 tracks.with(|t| t.summary(Track::Video)).or(playing),
             )
         }
         AudioTracks => {
-            let ch = ui.media.format.with(|f| f.channels);
+            let ch = main.format.with(|f| f.channels);
             let layout = (ch > 0).then(|| audio_layout(ch));
             with("Audio", tracks.with(|t| t.summary(Track::Audio)).or(layout))
         }
@@ -105,8 +106,9 @@ fn is_favorite(ui: Ui) -> bool {
 
 /// Whether a control can act now; the rest show disabled.
 pub fn enabled(ui: Ui, control: Control) -> bool {
-    let choice = |k| ui.media.tracks.with(|t| t.has_choice(k));
+    let choice = |k| ui.player.main().tracks.with(|t| t.has_choice(k));
     match control {
+        Control::Multiview => ui.playing.get().is_some(),
         Control::Search
         | Control::ChannelList
         | Control::Favorite
@@ -117,16 +119,15 @@ pub fn enabled(ui: Ui, control: Control) -> bool {
         Control::Captions => choice(Track::Text),
         Control::AudioOffset => crate::media::AUDIO_DELAY && ui.playing.get().is_some(),
         Control::Recordings
-        | Control::Multiview
         | Control::PictureInPicture
         | Control::ChannelOptions
         | Control::Settings => false,
     }
 }
 
-/// The panels as shown: hidden outside full screen.
+/// The panels as shown: hidden outside full screen and in multiview.
 fn shown(ui: Ui) -> Shown {
-    if ui.mode.get() == ViewMode::Fullscreen {
+    if ui.mode.get() == ViewMode::Fullscreen && !crate::multiview::is_open(ui) {
         ui.panels.with(|p| p.shown)
     } else {
         Shown::Hidden
@@ -314,8 +315,9 @@ fn info_card(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> impl IntoElem
     let next = move || crate::schedule().program_at(channel(), now().end);
     let secondary = move || tint(WHITE, TEXT_SECONDARY_ALPHA);
     let format = move || {
-        let (width, height) = ui.video_size.get().unwrap_or((0, 0));
-        let f = ui.media.format.get();
+        let main = ui.player.main();
+        let (width, height) = main.size.get().unwrap_or((0, 0));
+        let f = main.format.get();
         StreamFormat { width, height, ..f }
     };
     view()
@@ -777,7 +779,7 @@ enum Status {
 }
 
 /// Our own wording for a failure.
-fn failure_message(kind: &ErrorKind, catch_up: bool) -> &'static str {
+pub(crate) fn failure_message(kind: &ErrorKind, catch_up: bool) -> &'static str {
     match kind {
         ErrorKind::Unavailable if catch_up => "This programme can't be replayed.",
         ErrorKind::Unavailable => "This channel has no stream address.",
@@ -800,8 +802,11 @@ fn status_of(ui: Ui) -> Status {
     if ui.mode.get() == ViewMode::Overlay {
         return Status::Hidden; // the guide covers the video
     }
+    if crate::multiview::is_open(ui) {
+        return Status::Hidden; // each tile shows its own
+    }
     let catch_up = matches!(ui.playback.get(), Playback::CatchUp { .. });
-    ui.player.health.with(|h| match h.phase() {
+    ui.player.main().health.with(|h| match h.phase() {
         Phase::Idle if catch_up => Status::Over,
         Phase::Idle | Phase::Playing => Status::Hidden,
         Phase::Resolving | Phase::Loading => Status::Waiting("Loading…".into()),

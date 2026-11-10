@@ -60,7 +60,10 @@ import com.longbridge.nsh.NshComponentContext
  * while playing), `tracks` (whenever they change; [PlayerTracks.event])
  * and `format` {fps?, channels?} for what plays. Subtitles of the chosen
  * text track show in a [SubtitleView] over the picture. Each component has
- * its own player and state (several may play at once). Recovers by itself from BEHIND_LIVE_WINDOW, and retries once with
+ * its own player and state (several may play at once: multiview mounts one
+ * per tile, two on a TV box by default, and mutes all but the active one;
+ * a component's [destroy] releases its decoders). Recovers by itself from
+ * BEHIND_LIVE_WINDOW, and retries once with
  * the other kind of stream (a container it could not parse as HLS, a
  * playlist it could not parse as progressive); everything else goes to the
  * app, which owns the retry policy. The picture is black from a new source
