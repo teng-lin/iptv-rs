@@ -154,19 +154,35 @@ fn is_http(s: &str) -> bool {
         .is_ok_and(|u| matches!(u.scheme(), "http" | "https") && u.host_str().is_some())
 }
 
+/// Sets `utc`/`lutc` on `raw` by editing the string: earlier `utc`/`lutc`
+/// pairs are dropped, every other query byte is kept as written (signed
+/// tokens break when a URL library re-encodes them).
 fn set_utc_params(raw: &str, vars: &Vars) -> Result<String, CatchupError> {
-    let mut url = url::Url::parse(raw.trim()).map_err(|_| CatchupError::MalformedUrl)?;
-    let kept: Vec<(String, String)> = url
-        .query_pairs()
-        .filter(|(k, _)| k != "utc" && k != "lutc")
-        .map(|(k, v)| (k.into_owned(), v.into_owned()))
-        .collect();
-    url.query_pairs_mut()
-        .clear()
-        .extend_pairs(kept)
-        .append_pair("utc", &vars.from.to_string())
-        .append_pair("lutc", &vars.now.to_string());
-    Ok(url.to_string())
+    let raw = raw.trim();
+    if !is_http(raw) {
+        return Err(CatchupError::MalformedUrl);
+    }
+    let (head, fragment) = match raw.split_once('#') {
+        Some((h, f)) => (h, Some(f)),
+        None => (raw, None),
+    };
+    let (base, query) = head.split_once('?').unwrap_or((head, ""));
+    let mut out = String::with_capacity(raw.len() + 32);
+    out.push_str(base);
+    out.push('?');
+    for pair in query.split('&').filter(|p| !p.is_empty()) {
+        let key = pair.split_once('=').map_or(pair, |(k, _)| k);
+        if key != "utc" && key != "lutc" {
+            out.push_str(pair);
+            out.push('&');
+        }
+    }
+    out.push_str(&format!("utc={}&lutc={}", vars.from, vars.now));
+    if let Some(fragment) = fragment {
+        out.push('#');
+        out.push_str(fragment);
+    }
+    Ok(out)
 }
 
 fn flussonic(live: &str, vars: &Vars) -> Result<String, CatchupError> {

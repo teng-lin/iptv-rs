@@ -297,3 +297,24 @@ fn date_parts_use_the_viewer_clock() {
         Ok("http://arc.example.com/20231115-034320/2023-11-15_03:43/06/1700000000/1700010000")
     );
 }
+
+#[test]
+fn shift_keeps_query_bytes() {
+    // A signed token whose bytes a re-encoding would change.
+    let live = "http://live.example.com/ch/1.m3u8?sig=ab~c%2fd%7e&k=a=b&flag&utc=5#frag";
+    let ch = channel(r#"catchup="shift" catchup-days="1""#, live);
+    assert_eq!(
+        build_catchup_url(&ch, REQ).as_deref(),
+        Ok(
+            "http://live.example.com/ch/1.m3u8?sig=ab~c%2fd%7e&k=a=b&flag&utc=1700000000&lutc=1700010000#frag"
+        )
+    );
+    let ch = channel(
+        r#"catchup="shift" catchup-days="1""#,
+        "http://live.example.com/ch/2.ts",
+    );
+    assert_eq!(
+        build_catchup_url(&ch, REQ).as_deref(),
+        Ok("http://live.example.com/ch/2.ts?utc=1700000000&lutc=1700010000")
+    );
+}
