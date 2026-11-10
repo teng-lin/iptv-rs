@@ -15,6 +15,9 @@ pub enum Context {
     Groups,
     /// Full-screen playback.
     Player,
+    /// The control row over full-screen video (Left/Right/OK move and
+    /// press its buttons; Up/Down still zap).
+    Controls,
 }
 
 /// What the app should do.
@@ -79,7 +82,7 @@ impl Keymap {
     /// iptv-rs's default remote map.
     pub fn defaults() -> Keymap {
         use Action as A;
-        use Context::{Guide, Player};
+        use Context::{Controls, Guide, Player};
         use Press::{Long, Short};
         use RemoteKey as K;
         let g = None;
@@ -116,6 +119,9 @@ impl Keymap {
             b(Some(Player), K::Left, Short, A::ShowGuide),
             b(Some(Player), K::Right, Short, A::ShowGuide),
             b(Some(Player), K::Ok, Long, A::ShowMenu),
+            // Control row: directions/OK use the global moves; Up/Down zap.
+            b(Some(Controls), K::Up, Short, A::ChannelUp),
+            b(Some(Controls), K::Down, Short, A::ChannelDown),
         ];
         defaults.extend((0..=9).map(|d| b(g, K::Digit(d), Short, A::Digit(d))));
         Keymap {
@@ -165,7 +171,7 @@ impl Keymap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use Context::{Groups, Guide, Player};
+    use Context::{Controls, Groups, Guide, Player};
 
     #[test]
     fn context_defaults_win_over_global_ones() {
@@ -185,6 +191,27 @@ mod tests {
         assert_eq!(
             k.resolve(Groups, RemoteKey::Ok, Press::Short),
             Some(Action::Select)
+        );
+    }
+
+    #[test]
+    fn the_control_row_moves_with_left_right_and_zaps_with_up_down() {
+        let k = Keymap::defaults();
+        assert_eq!(
+            k.resolve(Controls, RemoteKey::Left, Press::Short),
+            Some(Action::MoveLeft)
+        );
+        assert_eq!(
+            k.resolve(Controls, RemoteKey::Ok, Press::Short),
+            Some(Action::Select)
+        );
+        assert_eq!(
+            k.resolve(Controls, RemoteKey::Down, Press::Short),
+            Some(Action::ChannelDown)
+        );
+        assert!(
+            !k.has_long(Controls, RemoteKey::Ok),
+            "OK presses the button at once"
         );
     }
 

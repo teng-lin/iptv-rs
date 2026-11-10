@@ -5,6 +5,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use iptv_core::panels::Control;
 use iptv_nav::{Action, Context, Keymap, Phase, PressDetector, RemoteKey};
 use nsh_core::prelude::*;
 
@@ -42,6 +43,7 @@ struct Nav {
 /// The surface that owns input now.
 pub fn context(ui: &Ui) -> Context {
     match (ui.mode.get(), ui.focus.with(|f| f.pane)) {
+        (ViewMode::Fullscreen, _) if ui.panels.with(|p| p.captures_input()) => Context::Controls,
         (ViewMode::Fullscreen, _) => Context::Player,
         (_, Pane::Groups) => Context::Groups,
         _ => Context::Guide,
@@ -132,8 +134,14 @@ fn apply(ui: Ui, action: Action) {
         }
         ui.input.set(Input::Keys);
     }
+    // Any key while panels show keeps them up.
+    ui.update_panels(|p, now| p.touch(now));
+    let controls = ui.panels.with(|p| p.captures_input()) && ui.mode.get() == ViewMode::Fullscreen;
     let mv = |m: Move| ui.focus.update(|f| f.apply(m));
     match action {
+        Action::MoveLeft if controls => ui.update_panels(|p, now| p.move_focus(-1, now)),
+        Action::MoveRight if controls => ui.update_panels(|p, now| p.move_focus(1, now)),
+        Action::Select if controls => press_control(ui, ui.panels.with(|p| p.focused())),
         Action::MoveUp => mv(Move::Up),
         Action::MoveDown => mv(Move::Down),
         Action::MoveLeft => mv(Move::Left),
@@ -142,13 +150,17 @@ fn apply(ui: Ui, action: Action) {
             Pane::Groups => ui.focus.update(Focus::enter_group),
             Pane::Guide => ui.watch(),
         },
-        // No panels or menus yet: the guide over the video stands in.
-        Action::ShowPanels | Action::ShowGuide => ui.mode.set(match ui.mode.get() {
+        Action::ShowPanels => ui.update_panels(|p, now| p.show_controls(now)),
+        Action::ShowInfo if ui.mode.get() == ViewMode::Fullscreen => {
+            ui.update_panels(|p, now| p.show_info(now))
+        }
+        Action::ShowGuide => ui.mode.set(match ui.mode.get() {
             ViewMode::Fullscreen => ViewMode::Overlay,
             _ => ViewMode::Guide,
         }),
         Action::ShowGroups => ui.focus.update(|f| f.pane = Pane::Groups),
         Action::ReturnToPlayer if ui.playing.get().is_some() => ui.mode.set(ViewMode::Fullscreen),
+        Action::PlayPause => ui.paused.update(|p| *p = !*p),
         Action::ChannelUp => zap(ui, -1),
         Action::ChannelDown => zap(ui, 1),
         Action::PageUp => page(ui, -1),
@@ -170,6 +182,23 @@ fn zap(ui: Ui, step: isize) {
         f.cursor = 0;
     });
     ui.playing.set(Some(to));
+    ui.paused.set(false);
+    // Channel-change feedback over full-screen video.
+    if ui.mode.get() == ViewMode::Fullscreen {
+        ui.update_panels(|p, now| p.show_info(now));
+    }
+}
+
+/// OK (or a tap) on a control-row button.
+pub fn press_control(ui: Ui, control: Control) {
+    ui.update_panels(|p, now| p.touch(now));
+    match control {
+        Control::PlayPause => ui.paused.update(|p| *p = !*p),
+        // Live streams resume at the live edge when unpaused; catch-up later.
+        Control::GoLive => ui.paused.set(false),
+        Control::Guide => ui.mode.set(ViewMode::Overlay),
+        other => log::info!("iptv control {other:?} not implemented yet"),
+    }
 }
 
 /// Page up/down: moves the focus by the rows on screen.

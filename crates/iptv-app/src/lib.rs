@@ -9,9 +9,13 @@ pub mod theme;
 mod grid;
 mod input;
 mod panels;
+mod player_panels;
 mod video;
 
+use std::time::{Duration, Instant};
+
 use guide::{Airing, Focus, Pane};
+use iptv_core::panels::Panels;
 use nsh_core::prelude::*;
 use theme::Theme;
 
@@ -59,6 +63,13 @@ pub struct Ui {
     pub player_status: Signal<String>,
     /// The guide rows on screen, as the list reports them.
     pub visible_rows: Signal<Option<(usize, usize)>>,
+    /// Player panels over full-screen video.
+    pub panels: Signal<Panels>,
+    pub paused: Signal<bool>,
+    /// The playing video's size, from the player.
+    pub video_size: Signal<Option<(u32, u32)>>,
+    /// The app's monotonic clock origin (core state machines take ms).
+    pub epoch: Instant,
 }
 
 impl Ui {
@@ -72,6 +83,7 @@ impl Ui {
         }
         if self.playing.get() == Some(channel) {
             self.mode.set(ViewMode::Fullscreen);
+            self.update_panels(|p, now| p.show_info(now));
         } else {
             self.playing.set(Some(channel));
         }
@@ -96,6 +108,31 @@ impl Ui {
             ViewMode::Guide | ViewMode::Fullscreen => 0x00,
         };
         tint(rgb_hex, alpha)
+    }
+
+    pub fn now_ms(&self) -> u64 {
+        self.epoch.elapsed().as_millis() as u64
+    }
+
+    /// Changes the panels and (re)schedules their auto-hide.
+    pub fn update_panels(&self, f: impl FnOnce(&mut Panels, u64)) {
+        let now = self.now_ms();
+        self.panels.update(|p| f(p, now));
+        if let Some(at) = self.panels.with(|p| p.hide_at_ms()) {
+            let ui = *self;
+            let _ = set_timeout(Duration::from_millis(at.saturating_sub(now)), move || {
+                let now = ui.now_ms();
+                // Later input moved the deadline: this tick is a no-op then.
+                if ui
+                    .panels
+                    .with(|p| p.hide_at_ms().is_some_and(|at| now >= at))
+                {
+                    ui.panels.update(|p| {
+                        p.tick(now);
+                    });
+                }
+            });
+        }
     }
 
     pub(crate) fn toggle(&self, mode: ViewMode) {
@@ -130,7 +167,17 @@ pub fn App() -> impl IntoElement {
         stats: signal(Stats::default()),
         player_status: signal("idle".to_owned()),
         visible_rows: signal(None),
+        panels: signal(Panels::default()),
+        paused: signal(false),
+        video_size: signal(None),
+        epoch: Instant::now(),
     };
+    // Leaving full screen closes the panels.
+    effect(move || {
+        if ui.mode.get() != ViewMode::Fullscreen {
+            ui.panels.update(|p| p.hide());
+        }
+    });
     input::bind(ui);
     bind_back(ui);
 
@@ -192,7 +239,7 @@ pub fn App() -> impl IntoElement {
                 .child(panels::info_panel(ui)),
         )
         .child(
-            // Full screen: a tap anywhere returns to the guide.
+            // Full screen: a tap toggles the player panels.
             view()
                 .absolute()
                 .inset_0()
@@ -205,17 +252,30 @@ pub fn App() -> impl IntoElement {
                 })
                 .on_press(move || {
                     ui.touched();
-                    ui.mode.set(ViewMode::Guide);
+                    if ui.panels.with(|p| p.shown) == iptv_core::panels::Shown::Hidden {
+                        ui.update_panels(|p, now| p.show_controls(now));
+                    } else {
+                        ui.panels.update(|p| p.hide());
+                    }
                 }),
         )
+        .child(player_panels::layer(ui))
 }
 
-/// Back: full screen/overlay → guide; guide → groups; groups → leave the app.
+/// Back: player panels → hidden; full screen/overlay → guide; guide →
+/// groups; groups → leave the app.
 fn bind_back(ui: Ui) {
-    let back_target = computed(move || (ui.mode.get(), ui.focus.with(|f| f.pane)));
+    let back_target = computed(move || {
+        let panels = ui.panels.with(|p| p.shown) != iptv_core::panels::Shown::Hidden;
+        (ui.mode.get(), ui.focus.with(|f| f.pane), panels)
+    });
     effect(move || match back_target.get() {
-        (ViewMode::Guide, Pane::Groups) => {}
-        (ViewMode::Guide, Pane::Guide) => on_back_press(move || {
+        (ViewMode::Fullscreen, _, true) => on_back_press(move || {
+            ui.panels.update(|p| p.hide());
+            true
+        }),
+        (ViewMode::Guide, Pane::Groups, _) => {}
+        (ViewMode::Guide, Pane::Guide, _) => on_back_press(move || {
             ui.focus.update(|f| f.pane = Pane::Groups);
             true
         }),

@@ -46,10 +46,17 @@ pub fn layer(ui: Ui) -> impl IntoElement {
                 .get()
                 .map_or(Value::Null, |ch| json!(stream_url(ch)))
         })
+        .prop("paused", move || json!(ui.paused.get()))
         .on_native_event(move |e: &NativeEvent| {
             let status = match &*e.name {
                 "state" => e.data["state"].as_str().unwrap_or("?").to_owned(),
-                "size" => format!("{}×{}", e.data["width"], e.data["height"]),
+                "size" => {
+                    let (w, h) = (e.data["width"].as_u64(), e.data["height"].as_u64());
+                    if let (Some(w), Some(h)) = (w, h) {
+                        ui.video_size.set(Some((w as u32, h as u32)));
+                    }
+                    format!("{}×{}", e.data["width"], e.data["height"])
+                }
                 "error" => format!("error {}", e.data["code"].as_str().unwrap_or("?")),
                 _ => return,
             };
