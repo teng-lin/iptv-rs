@@ -1,0 +1,87 @@
+//! The play bar's icons: our own simple drawings on a 24-unit grid in the
+//! spirit of Material's (filled media shapes, 2-unit strokes), coloured by
+//! the text colour.
+
+use nsh_core::element::ImageSrc;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Icon {
+    Volume,
+    Muted,
+    Rewind,
+    Play,
+    Pause,
+    Forward,
+    Star,
+    StarFilled,
+    Subtitles,
+    Info,
+    PictureSize,
+    ChannelList,
+    Guide,
+    FullScreen,
+    ExitFullScreen,
+}
+
+/// Strokes and fills, as SVG markup.
+fn body(icon: Icon) -> &'static str {
+    match icon {
+        Icon::Volume => {
+            "<path fill='currentColor' stroke='none' d='M3 9h4l5-4v14l-5-4H3z'/>\
+             <path d='M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13'/>"
+        }
+        Icon::Muted => {
+            "<path fill='currentColor' stroke='none' d='M3 9h4l5-4v14l-5-4H3z'/>\
+             <path d='M16 9l6 6M22 9l-6 6'/>"
+        }
+        Icon::Rewind => {
+            "<path fill='currentColor' stroke='none' d='M11.5 6v12L3 12zM21 6v12l-8.5-6z'/>"
+        }
+        Icon::Play => "<path fill='currentColor' stroke='none' d='M7 4.5v15L19.5 12z'/>",
+        Icon::Pause => {
+            "<path fill='currentColor' stroke='none' d='M6 4.5h4v15H6zM14 4.5h4v15h-4z'/>"
+        }
+        Icon::Forward => {
+            "<path fill='currentColor' stroke='none' d='M12.5 6v12L21 12zM3 6v12l8.5-6z'/>"
+        }
+        Icon::Star => {
+            "<path d='M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z'/>"
+        }
+        Icon::StarFilled => {
+            "<path fill='currentColor' d='M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z'/>"
+        }
+        Icon::Subtitles => {
+            "<rect x='3' y='5' width='18' height='14' rx='2'/>\
+             <path d='M7 12h3M12 12h5M7 15.5h7M16 15.5h1'/>"
+        }
+        Icon::Info => {
+            "<circle cx='12' cy='12' r='9'/>\
+             <path d='M12 11v6'/><circle fill='currentColor' stroke='none' cx='12' cy='7.5' r='1.3'/>"
+        }
+        Icon::PictureSize => {
+            "<rect x='2.5' y='5' width='19' height='14' rx='2'/>\
+             <path d='M6 11V8.5h3M18 13v2.5h-3'/>"
+        }
+        Icon::ChannelList => {
+            "<path d='M8 6.5h13M8 12h13M8 17.5h13'/>\
+             <circle fill='currentColor' stroke='none' cx='4' cy='6.5' r='1.3'/>\
+             <circle fill='currentColor' stroke='none' cx='4' cy='12' r='1.3'/>\
+             <circle fill='currentColor' stroke='none' cx='4' cy='17.5' r='1.3'/>"
+        }
+        Icon::Guide => {
+            "<rect x='3' y='4' width='18' height='16' rx='2'/>\
+             <path d='M3 9h18M3 14.5h18M9 9v11M15 14.5V20'/>"
+        }
+        Icon::FullScreen => "<path d='M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5'/>",
+        Icon::ExitFullScreen => "<path d='M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5'/>",
+    }
+}
+
+pub fn src(icon: Icon) -> ImageSrc {
+    ImageSrc::svg_markup(&format!(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24' \
+         fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' \
+         stroke-linejoin='round'>{}</svg>",
+        body(icon)
+    ))
+}

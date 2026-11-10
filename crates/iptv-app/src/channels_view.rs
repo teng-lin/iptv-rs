@@ -208,7 +208,6 @@ pub fn layer(ui: Ui) -> impl IntoElement {
         .pt_safe_area()
         .py(px(16.0))
         .bg(panel)
-        .pointer_events(PointerEvents::Auto)
         .child(heading(Box::new(|| "Groups".to_owned())).px(px(22.0)))
         .child(
             virtual_list(
@@ -228,7 +227,6 @@ pub fn layer(ui: Ui) -> impl IntoElement {
         .px(px(12.0))
         .py(px(16.0))
         .bg(panel)
-        .pointer_events(PointerEvents::Auto)
         .child(
             heading(Box::new(move || {
                 if groups() {
@@ -258,6 +256,10 @@ pub fn layer(ui: Ui) -> impl IntoElement {
             .element_ref(&rows)
             .flex_1(),
         );
+    // Mounted while closed: no view in it may say `PointerEvents::Auto`
+    // (NSH's pointer events inherit as CSS's, so one would take presses
+    // through the closed layer's `None`); in the open layer's `BoxNone`
+    // they take presses by default.
     view()
         .absolute()
         .inset_0()
@@ -278,7 +280,6 @@ pub fn layer(ui: Ui) -> impl IntoElement {
             // back to full screen.
             view()
                 .flex_1()
-                .pointer_events(PointerEvents::Auto)
                 .on_press(move || {
                     ui.touched();
                     close(ui);

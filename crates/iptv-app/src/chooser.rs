@@ -284,6 +284,8 @@ pub fn layer(ui: Ui) -> impl IntoElement {
         })
     };
     let kind = move || ui.chooser.with(|c| c.as_ref().map(|c| c.kind));
+    // Mounted while closed: nothing in it says `PointerEvents::Auto`
+    // (`channels_view::layer`).
     view()
         .absolute()
         .inset_0()
@@ -314,7 +316,6 @@ pub fn layer(ui: Ui) -> impl IntoElement {
                 .rounded(px(RADIUS_LARGE))
                 // Translucent over moving video, like the reference's choosers.
                 .bg(move || tint(ui.theme.with(|t| t.background.panel), 0xD0))
-                .pointer_events(PointerEvents::Auto)
                 .child(
                     text(move || kind().map_or("", title))
                         .px(px(16.0))

@@ -17,6 +17,7 @@ pub mod lists;
 pub mod menu;
 pub mod multiview;
 pub mod panels;
+pub mod play_bar;
 pub mod playback;
 pub mod player_info;
 pub mod player_options;

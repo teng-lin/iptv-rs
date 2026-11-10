@@ -30,3 +30,9 @@ libc = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 nsh-platform-linux.workspace = true
+
+[dev-dependencies]
+# Headless runs of the app: what a press reaches (tests/pointer.rs).
+nsh-engine.workspace = true
+nsh-testing.workspace = true
+tempfile.workspace = true

@@ -26,6 +26,7 @@ mod mpv;
 mod multiview;
 mod multiview_view;
 mod panels;
+mod play_bar;
 mod player;
 mod player_panels;
 mod playlists_view;
@@ -125,6 +126,8 @@ pub struct Ui {
     pub visible_rows: Signal<Option<(usize, usize)>>,
     /// Player panels over full-screen video.
     pub panels: Signal<Panels>,
+    /// The pointer's play bar over full-screen video (`play_bar.rs`).
+    pub play_bar: Signal<iptv_core::play_bar::PlayBar>,
     pub paused: Signal<bool>,
     /// A catch-up seek being chosen: the target, in seconds into the
     /// programme, opened once the keys pause (`seek.rs`).
@@ -351,6 +354,7 @@ pub fn App() -> impl IntoElement {
         player_status: signal("idle".to_owned()),
         visible_rows: signal(None),
         panels: signal(Panels::default()),
+        play_bar: signal(Default::default()),
         paused: signal(false),
         seek_target: signal(None),
         epoch: Instant::now(),
@@ -392,6 +396,7 @@ pub fn App() -> impl IntoElement {
     data::start(ui);
     time::start(ui);
     player::bind(ui);
+    play_bar::bind(ui);
     multiview::bind(ui);
     bind_back(ui);
 
@@ -469,7 +474,8 @@ pub fn App() -> impl IntoElement {
                 ),
         )
         .child(
-            // Full screen: a tap toggles the player panels.
+            // Full screen: a tap toggles the play bar (the panels where
+            // there is no pointer).
             view()
                 .absolute()
                 .inset_0()
@@ -480,6 +486,7 @@ pub fn App() -> impl IntoElement {
                         PointerEvents::None
                     }
                 })
+                .label("Video")
                 .on_press(move |e: &PressEvent| {
                     ui.touched();
                     toggle_panels(ui);
@@ -492,6 +499,7 @@ pub fn App() -> impl IntoElement {
         )
         .child(player_panels::status(ui))
         .child(player_panels::layer(ui))
+        .child(play_bar::layer(ui))
         .child(multiview_view::layer(ui))
         .child(channels_view::layer(ui))
         .child(search_view::layer(ui))
@@ -507,10 +515,15 @@ pub fn App() -> impl IntoElement {
         .child(wizard_view::layer(ui))
 }
 
-/// A tap on full-screen video: the card and its buttons, or nothing
-/// (multiview takes its own taps; beside its tiles nothing happens).
+/// A tap on full-screen video: the play bar on a device with a pointer,
+/// else the card and its buttons; nothing in multiview (it takes its own
+/// taps; beside its tiles nothing happens).
 fn toggle_panels(ui: Ui) {
     if untracked(|| multiview::is_open(ui)) {
+        return;
+    }
+    if play_bar::available() {
+        play_bar::tapped(ui);
         return;
     }
     if ui.panels.with(|p| p.shown) == iptv_core::panels::Shown::Hidden {
@@ -522,7 +535,7 @@ fn toggle_panels(ui: Ui) {
 }
 
 /// The mouse moved: over full-screen video with nothing open above the
-/// panels, it shows them (and keeps them while it moves).
+/// panels, it shows the play bar (and keeps it while it moves).
 fn pointer_moved(ui: Ui, e: &MouseEvent) {
     let open = ui.menu.with_untracked(Option::is_some)
         || ui.chooser.with_untracked(Option::is_some)
@@ -546,11 +559,11 @@ fn pointer_moved(ui: Ui, e: &MouseEvent) {
     if ui.input.get_untracked() != Input::Touch {
         ui.touched();
     }
-    ui.update_panels(|p, now| p.pointer_moved(now));
+    play_bar::pointer_moved(ui);
 }
 
 /// Back: dialogs close; a full screen window becomes a window again (the
-/// desktop's Escape); player panels → hidden; full screen/overlay → guide;
+/// desktop's Escape); player panels or the play bar → hidden; full screen/overlay → guide;
 /// then the guide screen's chain (`browse.rs`): hint card → guide → groups →
 /// rail → leave the app (no handler, so the platform's Back leaves; with
 /// `general.confirm_exit` the first press only asks for a second). The
@@ -558,7 +571,8 @@ fn pointer_moved(ui: Ui, e: &MouseEvent) {
 /// so a handler stays while one is pending, even where Back would leave.
 fn bind_back(ui: Ui) {
     let back_target = computed(move || {
-        let panels = ui.panels.with(|p| p.shown) != iptv_core::panels::Shown::Hidden;
+        let panels =
+            ui.panels.with(|p| p.shown) != iptv_core::panels::Shown::Hidden || play_bar::shows(ui);
         let menu = ui.menu.with(Option::is_some)
             || ui.description.with(Option::is_some)
             || ui.chooser.with(Option::is_some)
@@ -595,7 +609,8 @@ fn bind_back(ui: Ui) {
 /// `false` where Back leaves the app.
 pub(crate) fn go_back(ui: Ui) -> bool {
     untracked(|| {
-        let panels = ui.panels.with(|p| p.shown) != iptv_core::panels::Shown::Hidden;
+        let panels =
+            ui.panels.with(|p| p.shown) != iptv_core::panels::Shown::Hidden || play_bar::shows(ui);
         let menu = ui.menu.with(Option::is_some)
             || ui.description.with(Option::is_some)
             || ui.chooser.with(Option::is_some)
@@ -634,6 +649,7 @@ pub(crate) fn go_back(ui: Ui) -> bool {
             _ if multiview::is_open(ui) => multiview::back(ui),
             (ViewMode::Fullscreen, _, true) => {
                 ui.panels.update(|p| p.hide());
+                ui.play_bar.update(iptv_core::play_bar::PlayBar::hide);
                 true
             }
             // Hint, past programme → now, guide → groups → rail → leave
