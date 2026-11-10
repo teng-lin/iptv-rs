@@ -151,21 +151,23 @@ fn open(ui: Ui, session: u64) {
         return;
     };
     let schedule = crate::schedule();
-    let archive = match ui.playback.get_untracked() {
-        Playback::Live => None,
-        Playback::CatchUp { start } => Some(schedule.program_at(channel, start)),
+    let (archive, offset) = match ui.playback.get_untracked() {
+        Playback::Live => (None, 0),
+        Playback::CatchUp { start, offset } => (Some(schedule.program_at(channel, start)), offset),
     };
     let Some(epg) = real_schedule(&schedule) else {
         // The synthetic guide plays the local test streams.
         let url = match ui.playback.get_untracked() {
             Playback::Live => crate::video::stream_url(channel),
-            Playback::CatchUp { start } => crate::video::catchup_url(channel, start),
+            Playback::CatchUp { start, offset } => {
+                crate::video::catchup_url(channel, start, offset)
+            }
         };
         load(ui, session, PlaySource::new(url));
         return;
     };
     let at = archive.map(|p| crate::guide::unix_of(&*schedule, p.start));
-    match epg.resolve(channel, archive, clock(at)) {
+    match epg.resolve_from(channel, archive, i64::from(offset), clock(at)) {
         Resolution::Play(source) => load(ui, session, source),
         Resolution::StalkerLink(link) => resolve_link(ui, session, link, schedule.clone()),
         Resolution::Unavailable(why) => {
@@ -188,6 +190,7 @@ fn load(ui: Ui, session: u64, source: PlaySource) {
         source.headers.len()
     );
     ui.player.token.update(|t| *t += 1);
+    ui.position_ms.set(0);
     ui.player.source.set(Some(source));
     let now = ui.now_ms();
     ui.player.health.update(|h| h.resolved(now));

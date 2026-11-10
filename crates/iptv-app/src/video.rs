@@ -19,11 +19,11 @@ pub fn stream_url(channel: usize) -> String {
 /// The synthetic archive URL (`tools/mock-server.py` serves `/archive/*`)
 /// for the synthetic guide; imported channels resolve through
 /// `iptv_guide::playback`.
-pub fn catchup_url(channel: usize, start: i32) -> String {
+pub fn catchup_url(channel: usize, start: i32, offset: i32) -> String {
     let s = crate::schedule();
     let p = s.program_at(channel, start);
-    let utc = crate::guide::unix_of(&*s, p.start);
-    let duration = (p.end - p.start) * 60;
+    let utc = crate::guide::unix_of(&*s, p.start) + i64::from(offset);
+    let duration = (p.end - p.start) * 60 - offset;
     format!(
         "http://10.0.2.2:8089/archive/ch{}/index.m3u8?utc={utc}&duration={duration}",
         channel % 3
@@ -79,6 +79,13 @@ pub fn layer(ui: Ui) -> impl IntoElement {
             json!(ui.picture.with(|p| p.for_channel(ch)).key())
         })
         .on_native_event(move |e: &NativeEvent| {
+            // Once a second while playing: not logged.
+            if e.name.as_ref() == "position" {
+                if let Some(ms) = e.data["ms"].as_u64() {
+                    ui.position_ms.set(ms);
+                }
+                return;
+            }
             let status = match &*e.name {
                 "state" => {
                     let state = e.data["state"].as_str().unwrap_or("?");

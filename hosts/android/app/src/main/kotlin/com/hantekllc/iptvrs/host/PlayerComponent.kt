@@ -3,6 +3,8 @@ package com.hantekllc.iptvrs.host
 import android.content.Context
 import android.graphics.Color
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.SurfaceView
 import android.view.View
@@ -40,7 +42,8 @@ import com.longbridge.nsh.NshComponentContext
  *
  * Events: `state` {state: idle|buffering|ready|ended}, `error` {code, http?}
  * (code is Media3's error code name; no URLs or messages), `size` {width,
- * height}. Recovers by itself from BEHIND_LIVE_WINDOW, and retries once with
+ * height}, `position` {ms} (from where the stream opened; once a second
+ * while playing). Recovers by itself from BEHIND_LIVE_WINDOW, and retries once with
  * the other kind of stream (a container it could not parse as HLS, a
  * playlist it could not parse as progressive); everything else goes to the
  * app, which owns the retry policy. The picture is black from a new source
@@ -166,9 +169,21 @@ class PlayerComponent(
         }
     }
 
+    /** Reports where the stream is once a second while it plays (catch-up seeking). */
+    private val ticker = Handler(Looper.getMainLooper())
+    private val tick = object : Runnable {
+        override fun run() {
+            if (player.isPlaying) {
+                nsh.emit("position", mapOf("ms" to player.currentPosition.coerceAtLeast(0)))
+            }
+            ticker.postDelayed(this, 1_000)
+        }
+    }
+
     // After `listener` is initialised: build() registers it.
     init {
         player = build(context)
+        ticker.postDelayed(tick, 1_000)
     }
 
     override fun view(): View = root
@@ -224,6 +239,7 @@ class PlayerComponent(
     }
 
     override fun destroy() {
+        ticker.removeCallbacks(tick)
         player.removeListener(listener)
         player.release()
     }

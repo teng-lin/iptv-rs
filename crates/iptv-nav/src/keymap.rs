@@ -57,6 +57,9 @@ pub enum Action {
     Stop,
     SeekBack,
     SeekForward,
+    /// One step back/forward along a replayed programme's time bar.
+    TimeBarBack,
+    TimeBarForward,
     Record,
     ToggleFavorite,
     Digit(u8),

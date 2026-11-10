@@ -112,6 +112,7 @@ pub fn perform(ui: Ui, item: MenuItem) {
                 origin.channel,
                 crate::Playback::CatchUp {
                     start: origin.program_start,
+                    offset: 0,
                 },
             );
             ui.mode.set(ViewMode::Fullscreen);

@@ -303,4 +303,18 @@ fn catchup_urls_carry_epoch_times_and_numbers_come_from_the_playlist() {
             NOW + 900
         )
     );
+    // A seek 10 minutes in opens the archive from there to the same end.
+    let sought = s
+        .resolve_from(1, Some(past), 600, s.clock_at(15))
+        .ready()
+        .expect("archived programme");
+    assert_eq!(
+        sought.url,
+        format!(
+            "http://archive.example.com/a?utc={}&end={}&now={}",
+            NOW - 7200 + 600,
+            NOW - 3600,
+            NOW + 900
+        )
+    );
 }

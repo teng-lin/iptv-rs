@@ -416,7 +416,7 @@ fn choose(ui: Ui, id: ResultId) {
         Outcome::Live(channel) => watch(ui, channel, Playback::Live),
         Outcome::CatchUp { channel, start } => {
             let start = guide_minute(start, guide_epoch());
-            watch(ui, channel, Playback::CatchUp { start });
+            watch(ui, channel, Playback::CatchUp { start, offset: 0 });
         }
         Outcome::Details { channel, start } => ui.description.set(Some(Origin {
             channel,

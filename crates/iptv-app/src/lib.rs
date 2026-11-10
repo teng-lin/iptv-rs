@@ -16,6 +16,7 @@ mod panels;
 mod player;
 mod player_panels;
 mod search_view;
+mod seek;
 pub mod time;
 mod video;
 mod wizard_view;
@@ -64,9 +65,11 @@ pub enum ViewMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Playback {
     Live,
-    /// An archived programme from its start (guide minutes).
+    /// An archived programme (its start in guide minutes), from `offset`
+    /// seconds into it.
     CatchUp {
         start: i32,
+        offset: i32,
     },
 }
 
@@ -94,6 +97,12 @@ pub struct Ui {
     pub panels: Signal<Panels>,
     pub paused: Signal<bool>,
     /// The playing video's size, from the player.
+    /// Where the open stream is (ms from where it was opened), as the
+    /// player last reported.
+    pub position_ms: Signal<u64>,
+    /// A catch-up seek being chosen: the target, in seconds into the
+    /// programme, opened once the keys pause (`seek.rs`).
+    pub seek_target: Signal<Option<i32>>,
     pub video_size: Signal<Option<(u32, u32)>>,
     /// The app's monotonic clock origin (core state machines take ms).
     pub epoch: Instant,
@@ -145,6 +154,7 @@ impl Ui {
                     channel,
                     Playback::CatchUp {
                         start: program.start,
+                        offset: 0,
                     },
                 );
                 self.mode.set(ViewMode::Fullscreen);
@@ -282,6 +292,8 @@ pub fn App() -> impl IntoElement {
         panels: signal(Panels::default()),
         paused: signal(false),
         video_size: signal(None),
+        position_ms: signal(0),
+        seek_target: signal(None),
         epoch: Instant::now(),
         menu: signal(None),
         description: signal(None),

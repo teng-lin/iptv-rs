@@ -169,7 +169,7 @@ fn info_card(
     let live_now = move || ui.focus.with(|f| f.now);
     let minute = move || match ui.playback.get() {
         crate::Playback::Live => live_now(),
-        crate::Playback::CatchUp { start } => start,
+        crate::Playback::CatchUp { start, .. } => start,
     };
     let now = move || crate::schedule().program_at(channel(), minute());
     let next = move || crate::schedule().program_at(channel(), now().end);
@@ -224,6 +224,13 @@ fn info_card(
                                         .h_full()
                                         .rounded(px(2.0))
                                         .w(move || {
+                                            // Catch-up: where the archive plays
+                                            // (or the seek being chosen).
+                                            if let Some((at, length)) = crate::seek::elapsed(ui) {
+                                                return percentage(
+                                                    at as f32 / length.max(1) as f32,
+                                                );
+                                            }
                                             let p = now();
                                             let at = live_now();
                                             let done = if p.airing(at) == Airing::Live {
@@ -235,6 +242,24 @@ fn info_card(
                                         })
                                         .bg(move || rgb(ui.theme.with(|t| t.accent.main))),
                                 ),
+                        )
+                        .child(
+                            // Catch-up: position / length, and a seek target.
+                            text(move || match crate::seek::elapsed(ui) {
+                                Some((at, length)) => format!(
+                                    "{}{} / {}",
+                                    if ui.seek_target.get().is_some() {
+                                        "⇢ "
+                                    } else {
+                                        ""
+                                    },
+                                    crate::seek::hms(at),
+                                    crate::seek::hms(length)
+                                ),
+                                None => String::new(),
+                            })
+                            .text_size(px(14.0))
+                            .text_color(rgb(WHITE)),
                         )
                         .child(
                             text(move || line("Next: ", next()))

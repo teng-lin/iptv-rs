@@ -176,11 +176,24 @@ impl EpgSchedule {
         archive: Option<Program>,
         clock: playback::Clock,
     ) -> playback::Resolution {
+        self.resolve_from(channel, archive, 0, clock)
+    }
+
+    /// [`Self::resolve`], an archived programme from `offset` seconds after
+    /// its start (a seek: archive addresses are time-based, so a seek opens
+    /// the archive again from the new time).
+    pub fn resolve_from(
+        &self,
+        channel: usize,
+        archive: Option<Program>,
+        offset: i64,
+        clock: playback::Clock,
+    ) -> playback::Resolution {
         let Some(c) = self.source_channel(channel) else {
             return playback::Resolution::Unavailable(playback::Unavailable::NoChannel);
         };
         let archive = archive.map(|p| playback::Archive {
-            start: self.unix(p.start),
+            start: self.unix(p.start) + offset.max(0),
             end: self.unix(p.end),
         });
         playback::resolve(self.playback.as_deref(), c, archive, clock)

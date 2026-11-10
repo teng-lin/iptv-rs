@@ -128,7 +128,7 @@ fn key_event(ui: Ui, nav: &Rc<RefCell<Nav>>, key: RemoteKey, phase: Phase) {
         let action = nav
             .detector
             .feed(key, phase, now, has_long)
-            .and_then(|(k, press)| nav.keymap.resolve(ctx, k, press));
+            .and_then(|(k, press)| catch_up_keys(&ui, ctx, k, nav.keymap.resolve(ctx, k, press)));
         let deadline = (phase == Phase::Down)
             .then(|| nav.detector.long_deadline_ms())
             .flatten()
@@ -172,6 +172,22 @@ fn key_event(ui: Ui, nav: &Rc<RefCell<Nav>>, key: RemoteKey, phase: Phase) {
         ui.mode.get(),
         ui.panels.with(|p| p.shown)
     );
+}
+
+/// While a programme plays from the archive, Left/Right in the player step
+/// along its time bar (`catchup.seek_keys` = left_right, the default)
+/// instead of bringing the guide.
+fn catch_up_keys(ui: &Ui, ctx: Context, key: RemoteKey, action: Option<Action>) -> Option<Action> {
+    let catch_up = matches!(ui.playback.get_untracked(), crate::Playback::CatchUp { .. });
+    match (ctx, key, action) {
+        (Context::Player, RemoteKey::Left, Some(Action::ShowGuide)) if catch_up => {
+            Some(Action::TimeBarBack)
+        }
+        (Context::Player, RemoteKey::Right, Some(Action::ShowGuide)) if catch_up => {
+            Some(Action::TimeBarForward)
+        }
+        _ => action,
+    }
 }
 
 fn apply(ui: Ui, action: Action) {
@@ -279,6 +295,19 @@ fn apply(ui: Ui, action: Action) {
         }),
         Action::ReturnToPlayer if ui.playing.get().is_some() => ui.mode.set(ViewMode::Fullscreen),
         Action::PlayPause => ui.paused.update(|p| *p = !*p),
+        // Catch-up seeking (`seek.rs`); nothing to seek in a live stream.
+        Action::SeekBack => {
+            crate::seek::step(ui, -crate::seek::REWIND_STEP);
+        }
+        Action::SeekForward => {
+            crate::seek::step(ui, crate::seek::FORWARD_STEP);
+        }
+        Action::TimeBarBack => {
+            crate::seek::step(ui, -crate::seek::TIMEBAR_STEP);
+        }
+        Action::TimeBarForward => {
+            crate::seek::step(ui, crate::seek::TIMEBAR_STEP);
+        }
         Action::ChannelUp => zap(ui, -1),
         Action::ChannelDown => zap(ui, 1),
         Action::PreviousChannel => crate::player::previous_channel(ui),
