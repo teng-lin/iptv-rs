@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 iptv-core.workspace = true
+iptv-nav.workspace = true
 nsh-core.workspace = true
 nsh-base.workspace = true
 env_logger.workspace = true

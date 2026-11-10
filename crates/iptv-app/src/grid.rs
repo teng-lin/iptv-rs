@@ -19,7 +19,8 @@ pub fn guide(ui: Ui, rows: ElementRef) -> impl IntoElement {
     let scale = computed(move || width.get() / VISIBLE as f32);
     let window = computed(move || ui.focus.with(|f| f.window));
     let focused = computed(move || {
-        ui.focus.with(|f| (f.pane == Pane::Guide).then(|| (f.channel, f.program().start)))
+        ui.focus
+            .with(|f| (f.pane == Pane::Guide).then(|| (f.channel, f.program().start)))
     });
     view()
         .flex_1()
@@ -33,7 +34,9 @@ pub fn guide(ui: Ui, rows: ElementRef) -> impl IntoElement {
                     virtual_list(CHANNELS, move |at| row(ui, at, window, scale, focused))
                         .estimated_item_size(px(ROW_H))
                         .element_ref(&rows)
-                        .on_viewable_items_change(move |v: &ViewableItems| ui.visible_rows.set(v.viewable))
+                        .on_viewable_items_change(move |v: &ViewableItems| {
+                            ui.visible_rows.set(v.viewable)
+                        })
                         .flex_1(),
                 )
                 .child(
@@ -94,7 +97,13 @@ fn time_bar(ui: Ui, window: Memo<i32>, scale: Memo<f32>, width: Signal<f32>) -> 
         )
 }
 
-fn row(ui: Ui, at: Position, window: Memo<i32>, scale: Memo<f32>, focused: Memo<Option<(usize, i32)>>) -> impl IntoElement {
+fn row(
+    ui: Ui,
+    at: Position,
+    window: Memo<i32>,
+    scale: Memo<f32>,
+    focused: Memo<Option<(usize, i32)>>,
+) -> impl IntoElement {
     let programs = computed(move || visible_programs(at.index(), window.get()));
     let cell = move |i: usize| {
         let program = move || programs.with(|ps| ps.get(i).copied());
@@ -102,11 +111,15 @@ fn row(ui: Ui, at: Position, window: Memo<i32>, scale: Memo<f32>, focused: Memo<
             program().map_or((0.0, 0.0), |p: Program| {
                 let from = window.get();
                 let (start, end) = (p.start.max(from), p.end.min(from + VISIBLE));
-                ((start - from) as f32 * scale.get(), (end - start) as f32 * scale.get())
+                (
+                    (start - from) as f32 * scale.get(),
+                    (end - start) as f32 * scale.get(),
+                )
             })
         };
         let is_focused = move || {
-            program().is_some_and(|p| focused.get() == Some((at.index(), p.start))) && ui.keys_shown()
+            program().is_some_and(|p| focused.get() == Some((at.index(), p.start)))
+                && ui.keys_shown()
         };
         let airing = move || program().map(|p| p.airing());
         view()
@@ -136,13 +149,21 @@ fn row(ui: Ui, at: Position, window: Memo<i32>, scale: Memo<f32>, focused: Memo<
                 ui.watch();
             })
             .child(
-                text(move || program().map_or(String::new(), |p| format!("Show {}", p.start.rem_euclid(97))))
-                    .number_of_lines(1)
-                    .text_size(px(TEXT_SIZE))
-                    .text_color(move || {
-                        let alpha = if airing() == Some(Airing::Ended) { TEXT_SECONDARY_ALPHA } else { 0xFF };
-                        tint(WHITE, alpha)
-                    }),
+                text(move || {
+                    program().map_or(String::new(), |p| {
+                        format!("Show {}", p.start.rem_euclid(97))
+                    })
+                })
+                .number_of_lines(1)
+                .text_size(px(TEXT_SIZE))
+                .text_color(move || {
+                    let alpha = if airing() == Some(Airing::Ended) {
+                        TEXT_SECONDARY_ALPHA
+                    } else {
+                        0xFF
+                    };
+                    tint(WHITE, alpha)
+                }),
             )
     };
     let playing = move || ui.playing.get() == Some(at.index());
@@ -164,7 +185,11 @@ fn row(ui: Ui, at: Position, window: Memo<i32>, scale: Memo<f32>, focused: Memo<
                         .number_of_lines(1)
                         .text_size(px(TEXT_SIZE))
                         .text_color(move || {
-                            if playing() { rgb(ui.theme.with(|t| t.accent.light)) } else { rgb(WHITE) }
+                            if playing() {
+                                rgb(ui.theme.with(|t| t.accent.light))
+                            } else {
+                                rgb(WHITE)
+                            }
                         }),
                 ),
         )

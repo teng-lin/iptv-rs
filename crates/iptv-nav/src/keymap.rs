@@ -1,0 +1,257 @@
+//! The layered key → action map: user overrides, then the context's
+//! defaults, then global defaults. Defaults are iptv-rs's own choices; the
+//! context-specific ones follow the reference UX's documented instructions
+//! (Long OK opens the menu in the guide, Left shows groups, Long Left browses
+//! past programmes, Long Back returns to the player).
+
+use crate::{Press, RemoteKey};
+
+/// The surface that owns the remote's input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Context {
+    /// The guide grid (also when shown over video).
+    Guide,
+    /// The group list.
+    Groups,
+    /// Full-screen playback.
+    Player,
+}
+
+/// What the app should do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Action {
+    MoveUp,
+    MoveDown,
+    MoveLeft,
+    MoveRight,
+    /// OK on the focused item.
+    Select,
+    Back,
+    ShowMenu,
+    ShowGroups,
+    ShowGuide,
+    ShowInfo,
+    /// Info and control panels over full-screen video.
+    ShowPanels,
+    ChannelUp,
+    ChannelDown,
+    PageUp,
+    PageDown,
+    PastPrograms,
+    ReturnToNow,
+    ReturnToPlayer,
+    PlayPause,
+    Stop,
+    SeekBack,
+    SeekForward,
+    Record,
+    ToggleFavorite,
+    Digit(u8),
+    /// Bound explicitly to do nothing (a user override).
+    Ignore,
+}
+
+/// One mapping. `context: None` applies everywhere.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Binding {
+    pub context: Option<Context>,
+    pub key: RemoteKey,
+    pub press: Press,
+    pub action: Action,
+}
+
+const fn b(context: Option<Context>, key: RemoteKey, press: Press, action: Action) -> Binding {
+    Binding {
+        context,
+        key,
+        press,
+        action,
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Keymap {
+    defaults: Vec<Binding>,
+    overrides: Vec<Binding>,
+}
+
+impl Keymap {
+    /// iptv-rs's default remote map.
+    pub fn defaults() -> Keymap {
+        use Action as A;
+        use Context::{Guide, Player};
+        use Press::{Long, Short};
+        use RemoteKey as K;
+        let g = None;
+        let mut defaults = vec![
+            b(g, K::Up, Short, A::MoveUp),
+            b(g, K::Down, Short, A::MoveDown),
+            b(g, K::Left, Short, A::MoveLeft),
+            b(g, K::Right, Short, A::MoveRight),
+            b(g, K::Ok, Short, A::Select),
+            b(g, K::Back, Short, A::Back),
+            b(g, K::Menu, Short, A::ShowMenu),
+            b(g, K::Guide, Short, A::ShowGuide),
+            b(g, K::Info, Short, A::ShowInfo),
+            b(g, K::ChannelUp, Short, A::ChannelUp),
+            b(g, K::ChannelDown, Short, A::ChannelDown),
+            b(g, K::PageUp, Short, A::PageUp),
+            b(g, K::PageDown, Short, A::PageDown),
+            b(g, K::PlayPause, Short, A::PlayPause),
+            b(g, K::Play, Short, A::PlayPause),
+            b(g, K::Pause, Short, A::PlayPause),
+            b(g, K::Stop, Short, A::Stop),
+            b(g, K::Rewind, Short, A::SeekBack),
+            b(g, K::FastForward, Short, A::SeekForward),
+            b(g, K::Record, Short, A::Record),
+            b(g, K::Red, Short, A::ToggleFavorite),
+            // Guide: the reference UX's documented long presses.
+            b(Some(Guide), K::Ok, Long, A::ShowMenu),
+            b(Some(Guide), K::Left, Long, A::PastPrograms),
+            b(Some(Guide), K::Back, Long, A::ReturnToPlayer),
+            // Full screen: OK shows panels, Up/Down zap, Left/Right bring the guide.
+            b(Some(Player), K::Ok, Short, A::ShowPanels),
+            b(Some(Player), K::Up, Short, A::ChannelUp),
+            b(Some(Player), K::Down, Short, A::ChannelDown),
+            b(Some(Player), K::Left, Short, A::ShowGuide),
+            b(Some(Player), K::Right, Short, A::ShowGuide),
+            b(Some(Player), K::Ok, Long, A::ShowMenu),
+        ];
+        defaults.extend((0..=9).map(|d| b(g, K::Digit(d), Short, A::Digit(d))));
+        Keymap {
+            defaults,
+            overrides: Vec::new(),
+        }
+    }
+
+    /// Adds or replaces a user override (same context, key and press).
+    pub fn set_override(&mut self, binding: Binding) {
+        self.overrides.retain(|o| {
+            (o.context, o.key, o.press) != (binding.context, binding.key, binding.press)
+        });
+        self.overrides.push(binding);
+    }
+
+    pub fn clear_overrides(&mut self) {
+        self.overrides.clear();
+    }
+
+    pub fn overrides(&self) -> &[Binding] {
+        &self.overrides
+    }
+
+    /// The action for `key` pressed `press` in `context`: overrides before
+    /// defaults, the context's before global ones.
+    pub fn resolve(&self, context: Context, key: RemoteKey, press: Press) -> Option<Action> {
+        let find = |list: &[Binding], ctx: Option<Context>| {
+            list.iter()
+                .find(|b| b.context == ctx && b.key == key && b.press == press)
+                .map(|b| b.action)
+        };
+        find(&self.overrides, Some(context))
+            .or_else(|| find(&self.overrides, None))
+            .or_else(|| find(&self.defaults, Some(context)))
+            .or_else(|| find(&self.defaults, None))
+            .filter(|a| *a != Action::Ignore)
+    }
+
+    /// Whether `key` has a long action in `context` (the press detector then
+    /// defers its short action until release).
+    pub fn has_long(&self, context: Context, key: RemoteKey) -> bool {
+        self.resolve(context, key, Press::Long).is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use Context::{Groups, Guide, Player};
+
+    #[test]
+    fn context_defaults_win_over_global_ones() {
+        let k = Keymap::defaults();
+        assert_eq!(
+            k.resolve(Guide, RemoteKey::Up, Press::Short),
+            Some(Action::MoveUp)
+        );
+        assert_eq!(
+            k.resolve(Player, RemoteKey::Up, Press::Short),
+            Some(Action::ChannelUp)
+        );
+        assert_eq!(
+            k.resolve(Player, RemoteKey::Ok, Press::Short),
+            Some(Action::ShowPanels)
+        );
+        assert_eq!(
+            k.resolve(Groups, RemoteKey::Ok, Press::Short),
+            Some(Action::Select)
+        );
+    }
+
+    #[test]
+    fn long_presses_exist_only_where_bound() {
+        let k = Keymap::defaults();
+        assert!(k.has_long(Guide, RemoteKey::Ok));
+        assert!(k.has_long(Guide, RemoteKey::Left));
+        assert!(
+            !k.has_long(Groups, RemoteKey::Ok),
+            "OK is immediate in the group list"
+        );
+        assert!(
+            !k.has_long(Guide, RemoteKey::Down),
+            "directions scroll on repeat"
+        );
+        assert_eq!(
+            k.resolve(Guide, RemoteKey::Back, Press::Long),
+            Some(Action::ReturnToPlayer)
+        );
+    }
+
+    #[test]
+    fn overrides_win_and_ignore_unbinds() {
+        let mut k = Keymap::defaults();
+        k.set_override(Binding {
+            context: None,
+            key: RemoteKey::Red,
+            press: Press::Short,
+            action: Action::Record,
+        });
+        assert_eq!(
+            k.resolve(Guide, RemoteKey::Red, Press::Short),
+            Some(Action::Record)
+        );
+        k.set_override(Binding {
+            context: Some(Guide),
+            key: RemoteKey::Ok,
+            press: Press::Long,
+            action: Action::Ignore,
+        });
+        assert!(!k.has_long(Guide, RemoteKey::Ok));
+        assert!(
+            k.has_long(Player, RemoteKey::Ok),
+            "the override is scoped to the guide"
+        );
+        k.set_override(Binding {
+            context: None,
+            key: RemoteKey::Red,
+            press: Press::Short,
+            action: Action::ShowInfo,
+        });
+        assert_eq!(k.overrides().len(), 2, "same slot replaced, not duplicated");
+        k.clear_overrides();
+        assert_eq!(
+            k.resolve(Guide, RemoteKey::Red, Press::Short),
+            Some(Action::ToggleFavorite)
+        );
+    }
+
+    #[test]
+    fn digits_and_unknown_combinations() {
+        let k = Keymap::defaults();
+        assert_eq!(
+            k.resolve(Guide, RemoteKey::Digit(7), Press::Short),
+            Some(Action::Digit(7))
+        );
+        assert_eq!(k.resolve(Groups, RemoteKey::Digit(7), Press::Long), None);
+    }
+}

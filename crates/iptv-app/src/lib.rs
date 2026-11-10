@@ -7,12 +7,11 @@ pub use iptv_core::guide;
 pub mod theme;
 
 mod grid;
+mod input;
 mod panels;
 mod video;
 
-use std::time::Instant;
-
-use guide::{Airing, Focus, Move, Pane};
+use guide::{Airing, Focus, Pane};
 use nsh_core::prelude::*;
 use theme::Theme;
 
@@ -99,8 +98,9 @@ impl Ui {
         tint(rgb_hex, alpha)
     }
 
-    fn toggle(&self, mode: ViewMode) {
-        self.mode.update(|m| *m = if *m == mode { ViewMode::Guide } else { mode });
+    pub(crate) fn toggle(&self, mode: ViewMode) {
+        self.mode
+            .update(|m| *m = if *m == mode { ViewMode::Guide } else { mode });
     }
 }
 
@@ -131,7 +131,8 @@ pub fn App() -> impl IntoElement {
         player_status: signal("idle".to_owned()),
         visible_rows: signal(None),
     };
-    bind_keys(ui);
+    input::bind(ui);
+    bind_back(ui);
 
     let rows = element_ref();
     let groups = element_ref();
@@ -145,9 +146,16 @@ pub fn App() -> impl IntoElement {
         if !ui.keys_shown() {
             return;
         }
-        let Some((first, last)) = ui.visible_rows.get_untracked() else { return };
+        let Some((first, last)) = ui.visible_rows.get_untracked() else {
+            return;
+        };
         if ch < first + EDGE {
-            rows.scroll_to_index(ch.saturating_sub(EDGE) as u32, percentage(0.0), px(0.0), false);
+            rows.scroll_to_index(
+                ch.saturating_sub(EDGE) as u32,
+                percentage(0.0),
+                px(0.0),
+                false,
+            );
         } else if ch + EDGE > last {
             let target = (ch + EDGE).min(guide::CHANNELS - 1);
             rows.scroll_to_index(target as u32, percentage(1.0), px(0.0), false);
@@ -166,7 +174,13 @@ pub fn App() -> impl IntoElement {
             view()
                 .flex_1()
                 .opacity(move || if fullscreen() { 0.0_f32 } else { 1.0 })
-                .pointer_events(move || if fullscreen() { PointerEvents::None } else { PointerEvents::Auto })
+                .pointer_events(move || {
+                    if fullscreen() {
+                        PointerEvents::None
+                    } else {
+                        PointerEvents::Auto
+                    }
+                })
                 .child(panels::top_bar(ui))
                 .child(
                     view()
@@ -182,7 +196,13 @@ pub fn App() -> impl IntoElement {
             view()
                 .absolute()
                 .inset_0()
-                .pointer_events(move || if fullscreen() { PointerEvents::Auto } else { PointerEvents::None })
+                .pointer_events(move || {
+                    if fullscreen() {
+                        PointerEvents::Auto
+                    } else {
+                        PointerEvents::None
+                    }
+                })
                 .on_press(move || {
                     ui.touched();
                     ui.mode.set(ViewMode::Guide);
@@ -190,55 +210,8 @@ pub fn App() -> impl IntoElement {
         )
 }
 
-fn bind_keys(ui: Ui) {
-    let timed = move |name: &'static str, f: &dyn Fn()| {
-        let t = Instant::now();
-        f();
-        let us = t.elapsed().as_micros();
-        ui.stats.update(|s| {
-            s.keys += 1;
-            s.last_us = us;
-            s.max_us = s.max_us.max(us);
-        });
-        log::info!("iptv key={name} n={} handler_us={us}", ui.stats.with(|s| s.keys));
-    };
-    // The first key after touch starts from a row on screen.
-    let from_touch = move || {
-        if ui.input.get() == Input::Touch {
-            if let Some((first, last)) = ui.visible_rows.get() {
-                ui.focus.update(|f| f.adopt_rows(first, last));
-            }
-            ui.input.set(Input::Keys);
-        }
-    };
-    let repeat = KeyOptions { repeat: true, ..Default::default() };
-    for (name, m) in [("up", Move::Up), ("down", Move::Down), ("left", Move::Left), ("right", Move::Right)] {
-        on_key_with(name, repeat, move |_| {
-            timed(name, &|| {
-                from_touch();
-                // In full screen the directions first bring the guide back.
-                if ui.mode.get() == ViewMode::Fullscreen {
-                    ui.mode.set(ViewMode::Overlay);
-                    return;
-                }
-                ui.focus.update(|f| f.apply(m));
-            })
-        });
-    }
-    // OK: Enter, or the D-pad centre with the NSH keymap patch.
-    on_key("enter", move |_| {
-        timed("enter", &|| {
-            from_touch();
-            match ui.focus.with(|f| f.pane) {
-                Pane::Groups => ui.focus.update(Focus::enter_group),
-                Pane::Guide => ui.watch(),
-            }
-        })
-    });
-    // Keyboard shortcuts for the spike (remote keys come with Phase 0).
-    on_key("o", move |_| ui.toggle(ViewMode::Overlay));
-    on_key("f", move |_| ui.toggle(ViewMode::Fullscreen));
-    // Back: full screen/overlay → guide; guide → groups; groups → leave.
+/// Back: full screen/overlay → guide; guide → groups; groups → leave the app.
+fn bind_back(ui: Ui) {
     let back_target = computed(move || (ui.mode.get(), ui.focus.with(|f| f.pane)));
     effect(move || match back_target.get() {
         (ViewMode::Guide, Pane::Groups) => {}

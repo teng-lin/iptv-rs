@@ -20,10 +20,32 @@ pub fn layer(ui: Ui) -> impl IntoElement {
     native("tv.player")
         .absolute()
         .left(move || px(if full() { 0.0 } else { INFO_PAD_X }))
-        .top(move || px(if full() { 0.0 } else { window().height.0 - INFO_H + INFO_PAD_Y }))
-        .w(move || if full() { window().width } else { px(PREVIEW_W) })
-        .h(move || if full() { window().height } else { px(PREVIEW_H) })
-        .prop("url", move || ui.playing.get().map_or(Value::Null, |ch| json!(stream_url(ch))))
+        .top(move || {
+            px(if full() {
+                0.0
+            } else {
+                window().height.0 - INFO_H + INFO_PAD_Y
+            })
+        })
+        .w(move || {
+            if full() {
+                window().width
+            } else {
+                px(PREVIEW_W)
+            }
+        })
+        .h(move || {
+            if full() {
+                window().height
+            } else {
+                px(PREVIEW_H)
+            }
+        })
+        .prop("url", move || {
+            ui.playing
+                .get()
+                .map_or(Value::Null, |ch| json!(stream_url(ch)))
+        })
         .on_native_event(move |e: &NativeEvent| {
             let status = match &*e.name {
                 "state" => e.data["state"].as_str().unwrap_or("?").to_owned(),

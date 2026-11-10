@@ -29,7 +29,12 @@ const fn a(name: &'static str, light: u32, main: u32) -> Accent {
     Accent { name, light, main }
 }
 const fn b(name: &'static str, panel: u32, window: u32, alt: u32) -> Background {
-    Background { name, panel, window, alt }
+    Background {
+        name,
+        panel,
+        window,
+        alt,
+    }
 }
 
 pub const ACCENTS: [Accent; 16] = [
@@ -95,7 +100,10 @@ pub struct Theme {
 
 impl Default for Theme {
     fn default() -> Self {
-        Theme { accent: ACCENTS[2], background: BACKGROUNDS[6] } // Blue on Dark
+        Theme {
+            accent: ACCENTS[2],
+            background: BACKGROUNDS[6],
+        } // Blue on Dark
     }
 }
 

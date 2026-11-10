@@ -68,7 +68,10 @@ fn program_seq(channel: usize) -> impl Iterator<Item = Program> {
     let mut start = -offset - 180;
     (0u64..).map(move |n| {
         let len = LENGTHS[(mix((channel as u64) << 20 | n) % 8) as usize];
-        let p = Program { start, end: start + len };
+        let p = Program {
+            start,
+            end: start + len,
+        };
         start += len;
         p
     })
@@ -77,7 +80,9 @@ fn program_seq(channel: usize) -> impl Iterator<Item = Program> {
 /// The programme of `channel` airing at `minute` (clamped to the horizon).
 pub fn program_at(channel: usize, minute: i32) -> Program {
     let minute = minute.clamp(0, HORIZON - 1);
-    program_seq(channel).find(|p| p.end > minute).expect("endless")
+    program_seq(channel)
+        .find(|p| p.end > minute)
+        .expect("endless")
 }
 
 /// The programmes of `channel` overlapping `[from, from + VISIBLE)`.
@@ -120,7 +125,13 @@ pub struct Focus {
 impl Default for Focus {
     /// The guide at the first channel, now, with half an hour of the past shown.
     fn default() -> Self {
-        Focus { pane: Pane::Guide, group: 0, channel: 0, cursor: 0, window: -PAST }
+        Focus {
+            pane: Pane::Guide,
+            group: 0,
+            channel: 0,
+            cursor: 0,
+            window: -PAST,
+        }
     }
 }
 
@@ -249,7 +260,10 @@ mod tests {
 
     #[test]
     fn left_from_the_current_programme_moves_to_groups_and_back() {
-        let mut f = Focus { channel: 9, ..Focus::default() };
+        let mut f = Focus {
+            channel: 9,
+            ..Focus::default()
+        };
         f.apply(Move::Right);
         f.apply(Move::Left);
         assert_eq!(f.pane, Pane::Guide);
@@ -257,7 +271,10 @@ mod tests {
         assert_eq!(f.pane, Pane::Groups);
         f.apply(Move::Down);
         f.apply(Move::Right);
-        assert_eq!((f.pane, f.channel, f.cursor), (Pane::Guide, group_start(1), 0));
+        assert_eq!(
+            (f.pane, f.channel, f.cursor),
+            (Pane::Guide, group_start(1), 0)
+        );
     }
 
     #[test]
@@ -280,7 +297,10 @@ mod tests {
 
     #[test]
     fn airing_and_progress() {
-        let live = Program { start: -15, end: 45 };
+        let live = Program {
+            start: -15,
+            end: 45,
+        };
         assert_eq!(live.airing(), Airing::Live);
         assert!((live.progress() - 0.25).abs() < 1e-6);
         assert_eq!(Program { start: -60, end: 0 }.airing(), Airing::Ended);
@@ -289,7 +309,10 @@ mod tests {
 
     #[test]
     fn a_tap_focuses_in_place_without_moving_the_window() {
-        let mut f = Focus { pane: Pane::Groups, ..Focus::default() };
+        let mut f = Focus {
+            pane: Pane::Groups,
+            ..Focus::default()
+        };
         f.tap(321, 50);
         assert_eq!((f.pane, f.channel, f.window), (Pane::Guide, 321, -PAST));
         let p = f.program();
@@ -310,7 +333,10 @@ mod tests {
 
     #[test]
     fn keys_after_a_touch_scroll_start_from_a_visible_row() {
-        let mut f = Focus { channel: 10, ..Focus::default() };
+        let mut f = Focus {
+            channel: 10,
+            ..Focus::default()
+        };
         f.adopt_rows(1740, 1760);
         assert_eq!(f.channel, 1740);
         f.channel = 4000;
@@ -337,7 +363,10 @@ mod tests {
     fn right_then_left_into_the_groups_keeps_the_past_shown() {
         // The device sequence: Channel 15, Right x3, Left x4 (the last opens the groups).
         for channel in [14, 0, 1, 2, 77] {
-            let mut f = Focus { channel, ..Focus::default() };
+            let mut f = Focus {
+                channel,
+                ..Focus::default()
+            };
             for _ in 0..3 {
                 f.apply(Move::Right);
             }

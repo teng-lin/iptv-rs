@@ -62,10 +62,17 @@ pub fn top_bar(ui: Ui) -> impl IntoElement {
                         .text_color(rgb(WHITE)),
                 )
                 .child(
-                    text(move || ui.stats.with(|s| format!("keys {} · handler {} µs (max {})", s.keys, s.last_us, s.max_us)))
-                        .flex_1()
-                        .text_size(px(12.0))
-                        .text_color(secondary()),
+                    text(move || {
+                        ui.stats.with(|s| {
+                            format!(
+                                "keys {} · handler {} µs (max {})",
+                                s.keys, s.last_us, s.max_us
+                            )
+                        })
+                    })
+                    .flex_1()
+                    .text_size(px(12.0))
+                    .text_color(secondary()),
                 )
                 .child(text(clock(0)).text_size(px(16.0)).text_color(rgb(WHITE))),
         )
@@ -74,7 +81,8 @@ pub fn top_bar(ui: Ui) -> impl IntoElement {
 pub fn group_column(ui: Ui, groups: ElementRef) -> impl IntoElement {
     virtual_list(GROUPS, move |at| {
         let current = move || ui.focus.with(|f| f.group) == at.index();
-        let focused = move || current() && ui.focus.with(|f| f.pane) == Pane::Groups && ui.keys_shown();
+        let focused =
+            move || current() && ui.focus.with(|f| f.pane) == Pane::Groups && ui.keys_shown();
         view()
             .h(px(48.0))
             .mx(px(8.0))
@@ -83,7 +91,11 @@ pub fn group_column(ui: Ui, groups: ElementRef) -> impl IntoElement {
             .rounded(px(RADIUS))
             .justify_center()
             .bg(move || {
-                if focused() { tint(ui.theme.with(|t| t.accent.main), FOCUS_ALPHA) } else { tint(WHITE, 0) }
+                if focused() {
+                    tint(ui.theme.with(|t| t.accent.main), FOCUS_ALPHA)
+                } else {
+                    tint(WHITE, 0)
+                }
             })
             .on_press(move || {
                 ui.touched();
@@ -93,7 +105,11 @@ pub fn group_column(ui: Ui, groups: ElementRef) -> impl IntoElement {
                 text(move || format!("Group {:02}", at.index() + 1))
                     .text_size(px(TEXT_SIZE))
                     .text_color(move || {
-                        if current() { rgb(ui.theme.with(|t| t.accent.light)) } else { secondary() }
+                        if current() {
+                            rgb(ui.theme.with(|t| t.accent.light))
+                        } else {
+                            secondary()
+                        }
                     }),
             )
     })
@@ -122,9 +138,15 @@ pub fn info_panel(ui: Ui) -> impl IntoElement {
             }
         })
         .child(
-            text(move || if ui.playing.get().is_none() { "Nothing playing".to_owned() } else { String::new() })
-                .text_size(px(TEXT_SIZE))
-                .text_color(secondary()),
+            text(move || {
+                if ui.playing.get().is_none() {
+                    "Nothing playing".to_owned()
+                } else {
+                    String::new()
+                }
+            })
+            .text_size(px(TEXT_SIZE))
+            .text_color(secondary()),
         );
     let details = view()
         .flex_1()
@@ -142,7 +164,13 @@ pub fn info_panel(ui: Ui) -> impl IntoElement {
                         Airing::Upcoming => "Upcoming",
                         Airing::Ended => "Ended",
                     };
-                    format!("{} · {}–{} · {}", channel_name(*ch), clock(p.start), clock(p.end), state)
+                    format!(
+                        "{} · {}–{} · {}",
+                        channel_name(*ch),
+                        clock(p.start),
+                        clock(p.end),
+                        state
+                    )
                 })
             })
             .text_size(px(TEXT_SIZE))
@@ -155,7 +183,13 @@ pub fn info_panel(ui: Ui) -> impl IntoElement {
                 .h(px(4.0))
                 .rounded(px(2.0))
                 .bg(tint(WHITE, RESTING_ALPHA * 2))
-                .opacity(move || if program.with(|(_, p)| p.airing() == Airing::Live) { 1.0_f32 } else { 0.0 })
+                .opacity(move || {
+                    if program.with(|(_, p)| p.airing() == Airing::Live) {
+                        1.0_f32
+                    } else {
+                        0.0
+                    }
+                })
                 .child(
                     view()
                         .h_full()
@@ -166,8 +200,17 @@ pub fn info_panel(ui: Ui) -> impl IntoElement {
         )
         .child(
             text(move || match ui.playing.get() {
-                Some(ch) => format!("Playing {} · player {} · mode {:?}", channel_name(ch), ui.player_status.get(), ui.mode.get()),
-                None => format!("player {} · mode {:?}", ui.player_status.get(), ui.mode.get()),
+                Some(ch) => format!(
+                    "Playing {} · player {} · mode {:?}",
+                    channel_name(ch),
+                    ui.player_status.get(),
+                    ui.mode.get()
+                ),
+                None => format!(
+                    "player {} · mode {:?}",
+                    ui.player_status.get(),
+                    ui.mode.get()
+                ),
             })
             .text_size(px(12.0))
             .text_color(secondary()),

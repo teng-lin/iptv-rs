@@ -1572,6 +1572,7 @@ version = "0.1.0"
 dependencies = [
  "env_logger",
  "iptv-core",
+ "iptv-nav",
  "log",
  "nsh-base",
  "nsh-core",
@@ -1581,6 +1582,10 @@ dependencies = [
 
 [[package]]
 name = "iptv-core"
+version = "0.1.0"
+
+[[package]]
+name = "iptv-nav"
 version = "0.1.0"
 
 [[package]]
