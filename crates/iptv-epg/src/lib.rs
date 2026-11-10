@@ -14,6 +14,7 @@
 //! time-dependent call takes `now` from the caller.
 
 mod decode;
+mod extra;
 mod intern;
 mod matching;
 mod normalize;
@@ -30,8 +31,8 @@ pub use matching::{
 pub use normalize::{normalize_name, strip_tag_prefix};
 pub use parser::{ParseOptions, ParseStats, ParseWarnings, ParsedXmltv, XmltvParser, parse_xmltv};
 pub use store::{
-    EpgSource, GuideStore, IngestReport, NowNext, ProgrammeRef, ScheduleRef, SourceBuilder,
-    StoreOptions,
+    EpgSource, GuideStore, IngestReport, NowNext, ProgrammeData, ProgrammeRef, ScheduleRef,
+    SourceBuilder, StoreOptions,
 };
 pub use time::{DAY, TimePolicy, UnixTime, format_xmltv_time, parse_xmltv_time};
 pub use xmltv::{EpisodeNum, Rating, XmltvChannel, XmltvItem, XmltvProgramme};
