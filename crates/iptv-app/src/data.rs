@@ -4,6 +4,9 @@
 //! development playlist on the local mock server (`tools/mock-server.py`
 //! with `tools/make-iptv-fixtures.py`). On failure the synthetic guide stays.
 
+#[allow(dead_code)] // used by the wizard screen (next commit)
+mod wizard_map;
+
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
