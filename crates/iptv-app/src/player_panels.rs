@@ -3,9 +3,9 @@
 //! time), the info card (logo, programme, times, progress, minutes left,
 //! number and name, stream badges, next programme), a full-width time bar
 //! and the quick actions (TV guide, History); Down swaps the card for the
-//! control row. On a pointer (desktop mouse, tablet touch) the quick row
-//! also carries play/pause and mute, and on the desktop volume and window
-//! full screen. State lives in `iptv_core::panels`; this only draws it.
+//! control row. A pointer (desktop mouse, tablet touch) has the play bar
+//! instead (`play_bar.rs`). State lives in `iptv_core::panels`; this only
+//! draws it.
 //! Panels are views over the video SurfaceView (never alpha on the video).
 //! [`status`] draws the waiting and error states of `player.rs`.
 
@@ -25,11 +25,6 @@ const WHITE: u32 = 0xFFFFFF;
 const PANEL_ALPHA: u8 = 0xE0;
 const LOGO_W: f32 = 112.0;
 const LOGO_H: f32 = 63.0;
-/// The desktop's volume bar.
-const VOLUME_W: f32 = 96.0;
-/// Pointer controls (play/pause, mute) on every platform; volume and
-/// window full screen where the app owns them (the desktop).
-const DESKTOP: bool = cfg!(target_os = "linux");
 
 fn quick_label(action: QuickAction) -> &'static str {
     match action {
@@ -569,10 +564,9 @@ fn pill(
         })
 }
 
-/// TV guide and History; on a pointer, the playback controls at the right.
+/// TV guide and History (a pointer has the play bar, `play_bar.rs`).
 fn quick_row(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> impl IntoElement {
-    let pointer = move || !ui.keys_shown();
-    let actions = view()
+    view()
         .flex_row()
         .items_center()
         .gap(px(10.0))
@@ -595,140 +589,8 @@ fn quick_row(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> impl IntoElem
                     input::press_quick(ui, action);
                 },
             )
-        }));
-    view()
-        .flex_row()
-        .items_center()
-        .pointer_events(PointerEvents::BoxNone)
-        .child(actions)
-        .child(view().flex_1().pointer_events(PointerEvents::None))
-        .child(when(pointer, move || transport(ui, panel)))
-}
-
-/// Pointer playback controls: play/pause and mute everywhere; volume and
-/// window full screen on the desktop.
-fn transport(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> impl IntoElement {
-    let none = || false;
-    let level = move || ui.media.volume.with(|v| v.effective());
-    view()
-        .flex_row()
-        .items_center()
-        .gap(px(8.0))
-        .px(px(8.0))
-        .py(px(4.0))
-        .rounded(px(RADIUS_LARGE))
-        .bg(panel)
-        .child(pill(
-            ui,
-            move || {
-                if ui.paused.get() {
-                    "▶  Play"
-                } else {
-                    "❚❚  Pause"
-                }
-                .to_owned()
-            },
-            none,
-            none,
-            move || {
-                ui.paused.update(|p| *p = !*p);
-                ui.update_panels(|p, now| p.touch(now));
-            },
-        ))
-        .child(pill(
-            ui,
-            move || {
-                if ui.media.volume.with(|v| v.muted) {
-                    "Unmute"
-                } else {
-                    "Mute"
-                }
-                .to_owned()
-            },
-            none,
-            none,
-            move || {
-                crate::media::toggle_mute(ui);
-                ui.update_panels(|p, now| p.touch(now));
-            },
-        ))
-        .child(when(
-            || DESKTOP,
-            move || {
-                view()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(8.0))
-                    .child(pill(
-                        ui,
-                        || "−".to_owned(),
-                        none,
-                        none,
-                        move || volume(ui, false),
-                    ))
-                    .child(
-                        // Click anywhere on the bar to set the volume there.
-                        view()
-                            .w(px(VOLUME_W))
-                            .h(px(20.0))
-                            .justify_center()
-                            .child(
-                                view()
-                                    .h(px(4.0))
-                                    .rounded(px(2.0))
-                                    .bg(tint(WHITE, RESTING_ALPHA * 2))
-                                    .child(
-                                        view()
-                                            .h_full()
-                                            .rounded(px(2.0))
-                                            .w(move || percentage(f32::from(level()) / 100.0))
-                                            .bg(rgb(WHITE)),
-                                    ),
-                            )
-                            .on_press(move |e: &PressEvent| {
-                                ui.touched();
-                                let at = (e.position.x.0 / VOLUME_W * 100.0).round() as i32;
-                                ui.media.volume.update(|v| v.set(at));
-                                ui.update_panels(|p, now| p.touch(now));
-                            }),
-                    )
-                    .child(
-                        text(move || format!("{:>3}%", level()))
-                            .w(px(40.0))
-                            .text_size(px(13.0))
-                            .text_color(rgb(WHITE)),
-                    )
-                    .child(pill(
-                        ui,
-                        || "+".to_owned(),
-                        none,
-                        none,
-                        move || volume(ui, true),
-                    ))
-                    .child(pill(
-                        ui,
-                        move || {
-                            if crate::desktop::fullscreen() {
-                                "Exit full screen"
-                            } else {
-                                "Full screen"
-                            }
-                            .to_owned()
-                        },
-                        none,
-                        none,
-                        move || {
-                            crate::desktop::toggle_fullscreen();
-                            ui.update_panels(|p, now| p.touch(now));
-                        },
-                    ))
-            },
-        ))
-}
-
-fn volume(ui: Ui, up: bool) {
-    crate::media::step_volume(ui, up);
-    ui.update_panels(|p, now| p.touch(now));
+        }))
+        .self_start()
 }
 
 /// The control row: a horizontal list that keeps the focused control
@@ -860,6 +722,8 @@ pub fn status(ui: Ui) -> impl IntoElement {
             .bg(panel)
             .text_size(size(16.0))
             .text_color(rgb(WHITE))
+            // Taps go through to the video (the play bar).
+            .pointer_events(PointerEvents::None)
         }))
         .child(when(card, move || {
             let failed = move || matches!(status.get(), Status::Failed { .. });

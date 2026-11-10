@@ -87,9 +87,17 @@ Over full-screen video: OK shows the info card with TV guide and
 History, Down the control row (Up back), Menu the control row at once,
 Long OK the menu; Left the guide's list (Left in it: the groups), Long
 Left the list beside the video, Right the most recent channel, Up/Down
-change channel, Long Back stops. During catch-up Left/Right seek. Moving
-the mouse shows the panels with play/pause, mute, volume and full screen
-buttons; they hide 3 s after the mouse rests.
+change channel, Long Back stops. During catch-up Left/Right seek.
+
+With a mouse or a touchscreen (never on a TV) the video has a play bar:
+moving the mouse shows it, a tap or click on the video shows it and
+another hides it; it hides 3 s after the last input, but not while the
+mouse rests on it. It has mute and (desktop) volume, the stream's
+quality, the channel, rewind/play-pause/fast-forward (catch-up), the
+favourite star, tracks, programme details, picture size, the channel
+list, the guide, (desktop) window full screen and the frame rate; under
+it the programme's progress, where a click or a drag seeks in catch-up.
+Any remote key hides it; OK still shows the info card.
 
 Multiview (the control row's Multiview): the playing channel becomes the
 first tile and the channel list opens to add the next. Arrows choose the

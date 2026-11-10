@@ -1,0 +1,471 @@
+//! The pointer's play bar at the bottom of full-screen video: on the
+//! desktop the mouse moving over the video shows it, on a tablet a tap
+//! (a click on the desktop) shows it and another hides it; it hides after
+//! a few seconds without input, but not while the mouse rests on it
+//! (`iptv_core::play_bar`). A TV never shows it: its remote keeps the info
+//! card and the control row (`player_panels.rs`), and any key hides the
+//! bar.
+//!
+//! Left: mute and (desktop) volume, the stream's quality, the channel.
+//! Centre: rewind, play/pause, fast-forward (catch-up only; `seek.rs`).
+//! Right: favourite, subtitles and tracks, programme details, picture size,
+//! channel list, guide, (desktop) window full screen, frame rate. Under
+//! it the programme's progress: where the archive plays (click or drag to
+//! seek) or how far the live programme is, with its times. It acts on
+//! the full-screen player (surface 0); while multiview is open it does not
+//! show (the tiles take the taps).
+
+mod icons;
+mod progress;
+
+use std::time::Duration;
+
+use iptv_core::channel_list::ListMode;
+use iptv_core::menu::Origin;
+use iptv_core::panels::QuickAction;
+use iptv_core::play_bar::PlayBar;
+use iptv_core::tracks::{Kind as Track, fps_label, resolution_class};
+use nsh_core::TouchEvent;
+use nsh_core::platform::Idiom;
+use nsh_core::prelude::*;
+
+use crate::theme::{RADIUS_LARGE, RESTING_ALPHA, TEXT_DISABLED_ALPHA};
+use crate::theme::{TEXT_SECONDARY_ALPHA, TEXT_SIZE};
+use crate::{Playback, Ui, ViewMode, channel_name, tint};
+use icons::Icon;
+
+const WHITE: u32 = 0xFFFFFF;
+const PANEL_ALPHA: u8 = 0xE0;
+/// Volume and window full screen are the app's on the desktop only
+/// (Android keeps the system volume).
+const DESKTOP: bool = cfg!(target_os = "linux");
+
+/// Whether the device has a pointer for the bar: anything but a TV (its
+/// remote has the panels) and a terminal.
+pub fn available() -> bool {
+    !matches!(idiom(), Idiom::Tv | Idiom::Terminal)
+}
+
+/// A button's side: a finger's target on touch devices, smaller under a
+/// mouse.
+fn target() -> f32 {
+    if idiom() == Idiom::Desktop {
+        40.0
+    } else {
+        48.0
+    }
+}
+
+/// Whether the bar is on screen.
+pub fn shows(ui: Ui) -> bool {
+    ui.mode.get() == ViewMode::Fullscreen
+        && !ui.keys_shown()
+        && ui.play_bar.with(|b| b.shown)
+        && !crate::multiview::is_open(ui)
+        && available()
+}
+
+/// Leaving full screen or a key hides the bar.
+pub fn bind(ui: Ui) {
+    effect(move || {
+        let away = ui.mode.get() != ViewMode::Fullscreen || ui.keys_shown();
+        if away && ui.play_bar.with_untracked(|b| b.shown) {
+            ui.play_bar.update(PlayBar::hide);
+        }
+    });
+}
+
+/// Changes the bar's state and (re)schedules its hiding.
+fn update(ui: Ui, f: impl FnOnce(&mut PlayBar, u64)) {
+    let now = ui.now_ms();
+    ui.play_bar.update(|b| f(b, now));
+    let Some(at) = ui.play_bar.with_untracked(PlayBar::hide_at_ms) else {
+        return;
+    };
+    let _ = set_timeout(Duration::from_millis(at.saturating_sub(now)), move || {
+        let now = ui.now_ms();
+        // Later input moved the deadline: then this does nothing.
+        if ui
+            .play_bar
+            .with_untracked(|b| b.hide_at_ms().is_some_and(|at| now >= at))
+        {
+            ui.play_bar.update(|b| {
+                b.tick(now);
+            });
+        }
+    });
+}
+
+/// The bar replaces the remote's panels while a pointer is used.
+fn show(ui: Ui, f: impl FnOnce(&mut PlayBar, u64)) {
+    if ui.panels.with_untracked(|p| p.shown) != iptv_core::panels::Shown::Hidden {
+        ui.panels.update(|p| p.hide());
+    }
+    update(ui, f);
+}
+
+/// The mouse moved over full-screen video.
+pub fn pointer_moved(ui: Ui) {
+    show(ui, PlayBar::pointer_moved);
+}
+
+/// A tap or a click on full-screen video.
+pub fn tapped(ui: Ui) {
+    show(ui, PlayBar::tapped);
+}
+
+/// A control of the bar acted.
+fn used(ui: Ui) {
+    update(ui, PlayBar::used);
+}
+
+pub fn layer(ui: Ui) -> impl IntoElement {
+    let shown = computed(move || shows(ui));
+    when(move || shown.get(), move || bar(ui))
+}
+
+fn bar(ui: Ui) -> impl IntoElement {
+    let panel = move || tint(ui.theme.with(|t| t.background.panel), PANEL_ALPHA);
+    view()
+        .absolute()
+        .left(px(0.0))
+        .right(px(0.0))
+        .bottom(px(0.0))
+        .px(px(24.0))
+        .pb_safe_area_plus(px(16.0))
+        // Only the panel takes presses: around it they reach the video.
+        .pointer_events(PointerEvents::BoxNone)
+        .child(
+            view()
+                .px(px(12.0))
+                .pt(px(6.0))
+                .pb(px(10.0))
+                .gap(px(4.0))
+                .rounded(px(RADIUS_LARGE))
+                .bg(panel)
+                .on_mouse_enter(move |_: &MouseEvent| update(ui, |b, now| b.hover(true, now)))
+                .on_mouse_leave(move |_: &MouseEvent| update(ui, |b, now| b.hover(false, now)))
+                .child(
+                    view()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(8.0))
+                        .child(left(ui))
+                        .child(centre(ui))
+                        .child(right(ui)),
+                )
+                .child(progress::line(ui)),
+        )
+}
+
+/// An icon button; `enabled` dims it and keeps it from acting.
+fn button(
+    ui: Ui,
+    name: &'static str,
+    icon: impl Fn() -> Icon + 'static,
+    enabled: impl Fn() -> bool + Copy + 'static,
+    size: f32,
+    act: impl Fn() + 'static,
+) -> View {
+    view()
+        .w(px(size))
+        .h(px(size))
+        .rounded(px(size / 2.0))
+        .items_center()
+        .justify_center()
+        .label(name)
+        .hover(|s| s.bg(tint(WHITE, RESTING_ALPHA * 2)))
+        .on_press(move || {
+            ui.touched();
+            log::info!("iptv play bar: {name}");
+            if enabled() {
+                act();
+            }
+            used(ui);
+        })
+        .child(
+            svg(move || icons::src(icon()))
+                .size(px(size * 0.55))
+                .text_color(move || {
+                    tint(WHITE, if enabled() { 0xFF } else { TEXT_DISABLED_ALPHA })
+                }),
+        )
+}
+
+fn always() -> bool {
+    true
+}
+
+fn badge(value: impl Fn() -> Option<String> + Copy + 'static) -> impl IntoElement {
+    text(move || value().unwrap_or_default())
+        .px(move || px(if value().is_some() { 6.0 } else { 0.0 }))
+        .py(px(1.0))
+        .rounded(px(4.0))
+        .text_size(px(12.0))
+        .font_weight(FontWeight::BOLD)
+        .text_color(rgb(WHITE))
+        .bg(move || {
+            tint(
+                WHITE,
+                if value().is_some() {
+                    RESTING_ALPHA * 3
+                } else {
+                    0
+                },
+            )
+        })
+}
+
+/// Mute, volume, quality, channel.
+fn left(ui: Ui) -> impl IntoElement {
+    let size = target();
+    let muted = move || ui.media.volume.with(|v| v.muted || v.effective() == 0);
+    let height = move || {
+        ui.player
+            .main()
+            .size
+            .get()
+            .map(|(_, h)| h)
+            .filter(|h| *h > 0)
+    };
+    let lines = move || height().map(|h| format!("{h}p"));
+    let class = move || {
+        ui.player
+            .main()
+            .size
+            .get()
+            .filter(|(w, h)| *w > 0 && *h > 0)
+            .map(|(w, h)| resolution_class(w, h).to_owned())
+    };
+    view()
+        .flex_1()
+        .flex_row()
+        .items_center()
+        .gap(px(8.0))
+        .child(button(
+            ui,
+            "Mute",
+            move || if muted() { Icon::Muted } else { Icon::Volume },
+            always,
+            size,
+            move || crate::media::toggle_mute(ui),
+        ))
+        .child(when(|| DESKTOP, move || volume(ui)))
+        .child(badge(lines))
+        .child(badge(class))
+        .child(
+            text(move || {
+                ui.data_version.get();
+                ui.playing.get().map(channel_name).unwrap_or_default()
+            })
+            .flex_shrink(1.0)
+            .number_of_lines(1)
+            .text_size(px(TEXT_SIZE))
+            .text_color(rgb(WHITE)),
+        )
+}
+
+/// The desktop's volume: press or drag along it.
+fn volume(ui: Ui) -> impl IntoElement {
+    const W: f32 = 96.0;
+    let level = move || f32::from(ui.media.volume.with(|v| v.effective())) / 100.0;
+    let set = move |e: &TouchEvent| {
+        if let Some(p) = e.points.iter().find(|p| p.changed) {
+            let at = (p.location.x.0 / W * 100.0).round() as i32;
+            ui.media.volume.update(|v| v.set(at));
+            used(ui);
+        }
+    };
+    view()
+        .w(px(W))
+        .h(px(24.0))
+        .justify_center()
+        .label("Volume")
+        .child(
+            view()
+                .h(px(4.0))
+                .rounded(px(2.0))
+                .bg(tint(WHITE, RESTING_ALPHA * 2))
+                .child(
+                    view()
+                        .h_full()
+                        .rounded(px(2.0))
+                        .w(move || percentage(level()))
+                        .bg(rgb(WHITE)),
+                ),
+        )
+        // On top, for touches' places along the whole bar.
+        .child(view().absolute().inset_0().on_touch(set))
+}
+
+/// Rewind, play/pause, fast-forward.
+fn centre(ui: Ui) -> impl IntoElement {
+    let size = target();
+    let catch_up = move || matches!(ui.playback.get(), Playback::CatchUp { .. });
+    let seek = move |forward: bool| {
+        let steps = crate::seek::steps();
+        let delta = if forward {
+            steps.forward
+        } else {
+            -steps.rewind
+        };
+        crate::seek::step(ui, delta);
+    };
+    view()
+        .flex_row()
+        .items_center()
+        .gap(px(6.0))
+        .child(button(
+            ui,
+            "Rewind",
+            || Icon::Rewind,
+            catch_up,
+            size,
+            move || seek(false),
+        ))
+        .child(button(
+            ui,
+            "Play or pause",
+            move || {
+                if ui.paused.get() {
+                    Icon::Play
+                } else {
+                    Icon::Pause
+                }
+            },
+            always,
+            size + 8.0,
+            move || ui.paused.update(|p| *p = !*p),
+        ))
+        .child(button(
+            ui,
+            "Fast-forward",
+            || Icon::Forward,
+            catch_up,
+            size,
+            move || seek(true),
+        ))
+}
+
+/// Favourite, tracks, details, picture size, channels, guide, window full
+/// screen, frame rate.
+fn right(ui: Ui) -> impl IntoElement {
+    use crate::chooser::{self, Kind};
+    let size = target();
+    let favourite = move || {
+        ui.playing
+            .get()
+            .is_some_and(|ch| ui.favorites.with(|f| f.contains(&ch)))
+    };
+    let tracks = move || {
+        [Track::Text, Track::Audio, Track::Video]
+            .into_iter()
+            .find(|k| ui.player.main().tracks.with(|t| t.has_choice(*k)))
+    };
+    let playing = move || ui.playing.get().is_some();
+    view()
+        .flex_1()
+        .flex_row()
+        .items_center()
+        .justify_end()
+        .gap(px(2.0))
+        .child(button(
+            ui,
+            "Favourite",
+            move || {
+                if favourite() {
+                    Icon::StarFilled
+                } else {
+                    Icon::Star
+                }
+            },
+            playing,
+            size,
+            move || {
+                if let Some(ch) = ui.playing.get_untracked() {
+                    crate::favorites::toggle(ui, ch);
+                }
+            },
+        ))
+        .child(button(
+            ui,
+            "Subtitles and tracks",
+            || Icon::Subtitles,
+            move || tracks().is_some(),
+            size,
+            move || {
+                if let Some(kind) = untracked(tracks) {
+                    chooser::open(ui, Kind::Track(kind));
+                }
+            },
+        ))
+        .child(button(
+            ui,
+            "Programme details",
+            || Icon::Info,
+            playing,
+            size,
+            move || details(ui),
+        ))
+        .child(button(
+            ui,
+            "Picture size",
+            || Icon::PictureSize,
+            always,
+            size,
+            move || chooser::open(ui, Kind::Picture),
+        ))
+        .child(button(
+            ui,
+            "Channel list",
+            || Icon::ChannelList,
+            always,
+            size,
+            move || {
+                crate::channels_view::open(ui, ListMode::Overlay);
+                ui.play_bar.update(PlayBar::hide);
+            },
+        ))
+        .child(button(
+            ui,
+            "TV guide",
+            || Icon::Guide,
+            always,
+            size,
+            move || crate::input::press_quick(ui, QuickAction::Guide),
+        ))
+        .child(when(
+            || DESKTOP,
+            move || {
+                button(
+                    ui,
+                    "Full screen",
+                    || {
+                        if crate::desktop::fullscreen() {
+                            Icon::ExitFullScreen
+                        } else {
+                            Icon::FullScreen
+                        }
+                    },
+                    always,
+                    size,
+                    crate::desktop::toggle_fullscreen,
+                )
+            },
+        ))
+        .child(
+            text(move || fps_label(ui.player.main().format.with(|f| f.fps)).unwrap_or_default())
+                .ml(px(6.0))
+                .text_size(px(12.0))
+                .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA)),
+        )
+}
+
+/// The playing programme's details (the description popover).
+fn details(ui: Ui) {
+    let (channel, p) = untracked(|| progress::programme(ui));
+    ui.description.set(Some(Origin {
+        channel,
+        program_start: p.start,
+    }));
+}

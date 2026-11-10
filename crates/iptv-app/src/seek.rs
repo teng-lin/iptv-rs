@@ -93,17 +93,55 @@ pub fn step(ui: Ui, delta: i32) -> bool {
         offset.saturating_add(played)
     });
     ui.seek_target.set(Some((from + delta).clamp(0, limit)));
-    ui.update_panels(|p, now| p.show_info(now));
+    show_info(ui);
+    commit_later(ui, COMMIT_AFTER);
+    true
+}
+
+/// The programme playing from the archive: its length in seconds and how
+/// far into it a seek may go now. `None` unless one plays.
+pub fn span(ui: Ui) -> Option<(i32, i32)> {
+    programme(ui).map(|(_, length, limit)| (length, limit))
+}
+
+/// A seek to `target` seconds into the archived programme being chosen
+/// (the play bar's progress bar under a finger or the mouse): shown at
+/// once, opened once `commit` says so or the pointer pauses.
+pub fn to(ui: Ui, target: i32, commit_now: bool) -> bool {
+    let Some((_, _, limit)) = programme(ui) else {
+        return false;
+    };
+    ui.seek_target.set(Some(target.clamp(0, limit)));
+    commit_later(
+        ui,
+        if commit_now {
+            Duration::ZERO
+        } else {
+            COMMIT_AFTER
+        },
+    );
+    true
+}
+
+/// Opens the archive at the target after `wait`, unless another seek came.
+fn commit_later(ui: Ui, wait: Duration) {
     let press = PRESSES.with(|p| {
         p.set(p.get() + 1);
         p.get()
     });
-    let _ = set_timeout(COMMIT_AFTER, move || {
+    let _ = set_timeout(wait, move || {
         if PRESSES.with(Cell::get) == press {
             commit(ui);
         }
     });
-    true
+}
+
+/// The info card shows where a remote's seek goes; a pointer's shows on
+/// the play bar.
+fn show_info(ui: Ui) {
+    if ui.keys_shown() {
+        ui.update_panels(|p, now| p.show_info(now));
+    }
 }
 
 /// Opens the archive at the chosen target.
@@ -127,7 +165,7 @@ fn commit(ui: Ui) {
         },
     );
     ui.seek_target.set(None);
-    ui.update_panels(|p, now| p.show_info(now));
+    show_info(ui);
 }
 
 /// `m:ss` or `h:mm:ss`.

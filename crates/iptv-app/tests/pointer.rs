@@ -12,6 +12,7 @@
 use std::time::Duration;
 
 use nsh_core::picker::PickedFile;
+use nsh_core::platform::Idiom;
 use nsh_core::{ImageData, Size, element::Root, prelude::*};
 use nsh_engine::EngineConfig;
 use nsh_testing::Headless;
@@ -64,6 +65,28 @@ fn clicks_reach_the_guide_under_the_hidden_layers() {
     step(app.wait_for("text:Test Channel Two"));
     step(app.press("text:Test Channel Two"));
     step(app.wait_for("text:▶"));
+
+    // The playing channel's name again: full screen. A tap on the video
+    // shows the play bar, whose buttons act; another tap hides it.
+    step(app.press("text:Test Channel Two"));
+    step(app.press("label:Video"));
+    step(app.wait_for("label:Mute"));
+    step(app.press("label:Play or pause"));
+    step(app.press("label:Favourite"));
+    step(app.wait_for("text:★ Test Channel Two"));
+    step(app.press("label:Video"));
+    step(app.wait_for_gone("label:Mute", Duration::from_secs(2)));
+    // A TV has no pointer: a press there (an assistive one) shows the
+    // remote's card instead, whose TV guide goes back to the guide.
+    step(app.set_environment("a TV", |e| e.idiom = Idiom::Tv));
+    step(app.press("label:Video"));
+    step(app.wait_for("text:TV guide"));
+    assert!(
+        !app.screen().matches("label:Mute").unwrap(),
+        "no play bar on a TV"
+    );
+    step(app.set_environment("a desktop", |e| e.idiom = Idiom::Desktop));
+    step(app.press("text:TV guide"));
 
     // The list name in the header (under the hidden player panels' top
     // bar) opens the groups and the rail; a group shows its channels.
