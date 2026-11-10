@@ -7,6 +7,7 @@ pub use iptv_core::guide;
 pub mod theme;
 
 mod chooser;
+mod data;
 mod fav_editor;
 mod grid;
 mod input;
@@ -284,6 +285,7 @@ pub fn App() -> impl IntoElement {
         }
     });
     input::bind(ui);
+    data::start(ui);
     bind_back(ui);
 
     let rows = element_ref();

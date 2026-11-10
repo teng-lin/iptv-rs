@@ -75,6 +75,15 @@ pub trait Schedule {
     fn channel_name(&self, channel: usize) -> String;
     fn group_name(&self, group: usize) -> String;
     fn title(&self, channel: usize, program: Program) -> String;
+    /// The channel's live stream URL, when the schedule knows it.
+    fn stream_url(&self, _channel: usize) -> Option<String> {
+        None
+    }
+    /// The archive URL that plays `program` from its start, when the
+    /// channel has catch-up and the schedule can build it.
+    fn catchup_url(&self, _channel: usize, _program: Program) -> Option<String> {
+        None
+    }
 }
 
 /// Deterministic synthetic guide data: [`CHANNELS`] channels in [`GROUPS`]

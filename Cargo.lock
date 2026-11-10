@@ -1743,13 +1743,21 @@ name = "iptv-app"
 version = "0.1.0"
 dependencies = [
  "env_logger",
+ "futures-channel",
  "iptv-core",
+ "iptv-epg",
+ "iptv-guide",
+ "iptv-import",
  "iptv-nav",
+ "iptv-net",
+ "iptv-providers",
+ "iptv-store-sqlite",
  "log",
  "nsh-base",
  "nsh-core",
  "nsh-platform-linux",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]

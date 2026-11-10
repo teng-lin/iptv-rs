@@ -28,6 +28,8 @@ pub struct GuideChannel {
 
 pub struct EpgSchedule {
     channels: Vec<GuideChannel>,
+    /// The imported channel behind each guide channel (stream and catch-up).
+    sources: Vec<Option<Channel>>,
     group_names: Vec<String>,
     /// The index of each group's first channel; channels are stored grouped.
     group_starts: Vec<usize>,
@@ -48,6 +50,7 @@ impl EpgSchedule {
             channels.extend(members);
         }
         EpgSchedule {
+            sources: vec![None; channels.len()],
             channels,
             group_names,
             group_starts,
@@ -64,31 +67,40 @@ impl EpgSchedule {
         store: GuideStore,
         now: UnixTime,
     ) -> Self {
-        let mut buckets: Vec<(String, Vec<GuideChannel>)> = groups
-            .iter()
-            .map(|g| (g.name.clone(), Vec::new()))
-            .collect();
-        let mut other = Vec::new();
+        let mut buckets: Vec<Vec<&Channel>> = vec![Vec::new(); groups.len() + 1];
         for c in channels {
-            let guide = GuideChannel {
-                key: ChannelKey::new(c.id.as_str()),
-                name: c.name.clone(),
-                catchup_days: c.catch_up.as_ref().map_or(0, |cu| {
-                    cu.window_days(iptv_providers::m3u::DEFAULT_CATCHUP_WINDOW_DAYS)
-                        .min(u32::from(u8::MAX)) as u8
-                }),
-            };
             let slot = c
                 .groups
                 .first()
                 .and_then(|gid| groups.iter().position(|g| &g.id == gid));
-            match slot {
-                Some(i) => buckets[i].1.push(guide),
-                None => other.push(guide),
-            }
+            buckets[slot.unwrap_or(groups.len())].push(c);
         }
-        buckets.push(("Other".to_owned(), other));
-        EpgSchedule::new(buckets, store, now)
+        let names = groups
+            .iter()
+            .map(|g| g.name.clone())
+            .chain(["Other".to_owned()]);
+        let mut ordered = Vec::new();
+        let grouped = names
+            .zip(buckets)
+            .map(|(name, members)| {
+                let guide = members
+                    .iter()
+                    .map(|c| GuideChannel {
+                        key: ChannelKey::new(c.id.as_str()),
+                        name: c.name.clone(),
+                        catchup_days: c.catch_up.as_ref().map_or(0, |cu| {
+                            cu.window_days(iptv_providers::m3u::DEFAULT_CATCHUP_WINDOW_DAYS)
+                                .min(u32::from(u8::MAX)) as u8
+                        }),
+                    })
+                    .collect::<Vec<_>>();
+                ordered.extend(members.into_iter().cloned());
+                (name, guide)
+            })
+            .collect();
+        let mut schedule = EpgSchedule::new(grouped, store, now);
+        schedule.sources = ordered.into_iter().map(Some).collect();
+        schedule
     }
 
     pub fn now(&self) -> UnixTime {
@@ -205,6 +217,24 @@ impl Schedule for EpgSchedule {
 
     fn group_name(&self, group: usize) -> String {
         self.group_names.get(group).cloned().unwrap_or_default()
+    }
+
+    fn stream_url(&self, channel: usize) -> Option<String> {
+        match &self.sources.get(channel)?.as_ref()?.stream {
+            iptv_providers::model::StreamLocator::Url { url, .. } => Some(url.clone()),
+            // Xtream and Stalker URLs need their clients (session tokens).
+            _ => None,
+        }
+    }
+
+    fn catchup_url(&self, channel: usize, program: Program) -> Option<String> {
+        let c = self.sources.get(channel)?.as_ref()?;
+        let req = iptv_providers::m3u::CatchupRequest::new(
+            self.unix(program.start),
+            self.unix(program.end),
+            self.now,
+        );
+        iptv_providers::m3u::build_catchup_url(c, req).ok()
     }
 
     fn title(&self, channel: usize, program: Program) -> String {

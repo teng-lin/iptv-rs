@@ -57,8 +57,21 @@ pub fn layer(ui: Ui) -> impl IntoElement {
             ui.playing
                 .get()
                 .map_or(Value::Null, |ch| match ui.playback.get() {
-                    crate::Playback::Live => json!(stream_url(ch)),
-                    crate::Playback::CatchUp { start } => json!(catchup_url(ch, start)),
+                    crate::Playback::Live => {
+                        json!(
+                            crate::schedule()
+                                .stream_url(ch)
+                                .unwrap_or_else(|| stream_url(ch))
+                        )
+                    }
+                    crate::Playback::CatchUp { start } => {
+                        let s = crate::schedule();
+                        let program = s.program_at(ch, start);
+                        json!(
+                            s.catchup_url(ch, program)
+                                .unwrap_or_else(|| catchup_url(ch, start))
+                        )
+                    }
                 })
         })
         .prop("paused", move || json!(ui.paused.get()))

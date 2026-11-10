@@ -8,6 +8,14 @@ publish.workspace = true
 [dependencies]
 iptv-core.workspace = true
 iptv-nav.workspace = true
+iptv-guide.workspace = true
+iptv-epg.workspace = true
+iptv-providers.workspace = true
+iptv-import.workspace = true
+iptv-net.workspace = true
+iptv-store-sqlite.workspace = true
+futures-channel = "0.3"
+tokio = { version = "1", default-features = false, features = ["rt"] }
 nsh-core.workspace = true
 nsh-base.workspace = true
 env_logger.workspace = true
