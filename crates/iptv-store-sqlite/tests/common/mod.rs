@@ -90,8 +90,10 @@ pub fn m3u_channel(i: usize, groups: usize, password: &str) -> Channel {
         epg_shift_minutes: None,
         catch_up: i.is_multiple_of(3).then_some(CatchUp {
             kind: CatchUpKind::Xtream,
-            days: 3,
+            // Both catch-up fields round-trip through the store.
+            days: if i % 6 == 3 { None } else { Some(3) },
             source: None,
+            correction_secs: if i.is_multiple_of(2) { 0 } else { 3600 },
         }),
         radio: false,
     }
