@@ -12,6 +12,8 @@ mod fav_editor;
 mod grid;
 mod input;
 mod menu_view;
+#[cfg(target_os = "linux")]
+mod mpv;
 mod panels;
 mod player;
 mod player_panels;
@@ -40,6 +42,14 @@ use theme::Theme;
 #[native_module("iptv-rs/native")]
 fn native_module(registry: &mut Registry) {
     registry.register::<App>();
+}
+
+/// The Linux desktop's native components: `tv.player` on libmpv (the
+/// Android host registers its own in Kotlin).
+#[cfg(target_os = "linux")]
+#[native_components(linux)]
+pub fn components(components: &nsh_platform_linux::Components) {
+    mpv::register(components);
 }
 
 /// The last kind of input: the focus fill only shows for keys, as in
