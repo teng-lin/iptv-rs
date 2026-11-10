@@ -10,6 +10,12 @@ out="$root/hosts/android/app/build/nsh"
 export JAVA_HOME=${JAVA_HOME:-/usr/lib/jvm/default}
 export ANDROID_HOME=${ANDROID_HOME:-$HOME/Android/Sdk}
 export ANDROID_NDK_HOME=${ANDROID_NDK_HOME:-$ANDROID_HOME/ndk/30.0.16248370}
+# C code in dependencies (ring for TLS, bundled SQLite) needs the NDK compiler per target.
+toolchain="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+export CC_x86_64_linux_android=${CC_x86_64_linux_android:-$toolchain/x86_64-linux-android26-clang}
+export AR_x86_64_linux_android=${AR_x86_64_linux_android:-$toolchain/llvm-ar}
+export CC_aarch64_linux_android=${CC_aarch64_linux_android:-$toolchain/aarch64-linux-android26-clang}
+export AR_aarch64_linux_android=${AR_aarch64_linux_android:-$toolchain/llvm-ar}
 export CARGO_PROFILE_RELEASE_LTO=${CARGO_PROFILE_RELEASE_LTO:-thin}
 export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=${CARGO_PROFILE_RELEASE_CODEGEN_UNITS:-16}
 

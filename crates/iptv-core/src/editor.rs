@@ -42,10 +42,10 @@ impl FavoritesEditor {
 
     /// OK: star or unstar the focused channel.
     pub fn toggle(&self, favorites: &mut BTreeSet<usize>) {
-        if let Some(ch) = self.focused() {
-            if !favorites.remove(&ch) {
-                favorites.insert(ch);
-            }
+        if let Some(ch) = self.focused()
+            && !favorites.remove(&ch)
+        {
+            favorites.insert(ch);
         }
     }
 
