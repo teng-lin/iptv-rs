@@ -252,6 +252,9 @@ impl Schedule for ListView {
     fn follows_wall_clock(&self) -> bool {
         self.catalog.follows_wall_clock()
     }
+    fn browsable(&self, now: i32) -> (i32, i32) {
+        self.catalog.browsable(now)
+    }
     fn channel_count(&self) -> usize {
         self.list.len()
     }

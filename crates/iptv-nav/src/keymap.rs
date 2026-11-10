@@ -3,6 +3,11 @@
 //! context-specific ones follow the reference UX's documented instructions
 //! (Long OK opens the menu in the guide, Left shows groups, Long Left browses
 //! past programmes, Long Back returns to the player).
+//!
+//! Two profiles ([`Profile`]): a TV remote keeps that model; a desktop
+//! keyboard (no long presses) walks Left into earlier programmes and days
+//! instead, and opens the groups with Tab. The keyboard's own keys (Home,
+//! Tab, Shift/Ctrl + arrows) are bound in both: a remote never sends them.
 
 use crate::{Press, RemoteKey};
 
@@ -31,6 +36,17 @@ pub enum Context {
     /// Multiview's tiles: the arrows move between them, OK opens the
     /// tile's menu, Long OK enlarges or reduces it.
     Multiview,
+}
+
+/// Whose keys: a TV remote's (Android) or a desktop keyboard's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Profile {
+    /// Left on the live programme shows the groups, Long Left goes back
+    /// in time (the reference UX).
+    Remote,
+    /// Left and Right always move through the programmes, into earlier
+    /// days too; Tab shows the groups.
+    Keyboard,
 }
 
 /// What the app should do.
@@ -63,6 +79,16 @@ pub enum Action {
     PageDown,
     PastPrograms,
     ReturnToNow,
+    /// The focused channel's live programme in the default window (Home).
+    JumpToNow,
+    /// The time column an hour back/forward (Shift + Left/Right).
+    HourBack,
+    HourForward,
+    /// The same time a day back/forward (Ctrl + Left/Right).
+    DayBack,
+    DayForward,
+    /// The groups column, or back to the grid from it (Tab).
+    ToggleGroups,
     ReturnToPlayer,
     PlayPause,
     Stop,
@@ -105,7 +131,24 @@ pub struct Keymap {
 }
 
 impl Keymap {
-    /// iptv-rs's default remote map.
+    /// The map of `profile`'s keys.
+    pub fn for_profile(profile: Profile) -> Keymap {
+        let mut map = Keymap::defaults();
+        if profile == Profile::Keyboard {
+            // Left steps to the previous programme wherever the focus is
+            // (into earlier days), never to the groups.
+            let left = b(
+                Some(Context::Guide),
+                RemoteKey::Left,
+                Press::Short,
+                Action::PastPrograms,
+            );
+            map.defaults.insert(0, left);
+        }
+        map
+    }
+
+    /// iptv-rs's default map: the remote's ([`Profile::Remote`]).
     pub fn defaults() -> Keymap {
         use Action as A;
         use Context::{Controls, Groups, Guide, Menu, Multiview, Player};
@@ -177,6 +220,19 @@ impl Keymap {
             b(Some(Menu), K::Right, Short, A::Ignore),
             // Multiview: Long OK enlarges the tile (the reference's).
             b(Some(Multiview), K::Ok, Long, A::ToggleEnlarge),
+            // A keyboard's own keys in the guide: now, hours, days, groups.
+            b(Some(Guide), K::Home, Short, A::JumpToNow),
+            b(Some(Groups), K::Home, Short, A::JumpToNow),
+            b(Some(Guide), K::ShiftLeft, Short, A::HourBack),
+            b(Some(Guide), K::ShiftRight, Short, A::HourForward),
+            b(Some(Guide), K::CtrlLeft, Short, A::DayBack),
+            b(Some(Guide), K::CtrlRight, Short, A::DayForward),
+            b(Some(Guide), K::Tab, Short, A::ToggleGroups),
+            b(Some(Guide), K::ShiftTab, Short, A::ToggleGroups),
+            b(Some(Groups), K::Tab, Short, A::ToggleGroups),
+            b(Some(Groups), K::ShiftTab, Short, A::ToggleGroups),
+            // Shift + Left stands in for Long Left over video.
+            b(Some(Player), K::ShiftLeft, Short, A::ShowChannelsPreview),
         ];
         defaults.extend((0..=9).map(|d| b(g, K::Digit(d), Short, A::Digit(d))));
         Keymap {
@@ -227,6 +283,69 @@ impl Keymap {
 mod tests {
     use super::*;
     use Context::{ChannelList, Controls, Groups, Guide, Menu, Player};
+
+    #[test]
+    fn the_keyboards_left_walks_back_where_the_remotes_opens_the_groups() {
+        let remote = Keymap::for_profile(Profile::Remote);
+        let keyboard = Keymap::for_profile(Profile::Keyboard);
+        let left = |k: &Keymap, ctx| k.resolve(ctx, RemoteKey::Left, Press::Short);
+        // The remote: Left is a move (the focus model opens the groups on
+        // the live programme), Long Left the earlier programmes.
+        assert_eq!(left(&remote, Guide), Some(Action::MoveLeft));
+        assert_eq!(
+            remote.resolve(Guide, RemoteKey::Left, Press::Long),
+            Some(Action::PastPrograms)
+        );
+        // The keyboard: always the previous programme.
+        assert_eq!(left(&keyboard, Guide), Some(Action::PastPrograms));
+        // Elsewhere both move as before.
+        for ctx in [Groups, ChannelList, Controls, Context::Editor] {
+            assert_eq!(left(&keyboard, ctx), left(&remote, ctx), "{ctx:?}");
+        }
+        assert_eq!(left(&keyboard, Player), Some(Action::ShowChannels));
+        for k in [&remote, &keyboard] {
+            assert_eq!(
+                k.resolve(Guide, RemoteKey::Right, Press::Short),
+                Some(Action::MoveRight)
+            );
+            assert_eq!(
+                k.resolve(Guide, RemoteKey::Back, Press::Short),
+                Some(Action::Back)
+            );
+        }
+    }
+
+    #[test]
+    fn a_keyboards_own_keys_move_in_time_and_open_the_groups() {
+        let k = Keymap::for_profile(Profile::Keyboard);
+        let r = |ctx, key| k.resolve(ctx, key, Press::Short);
+        assert_eq!(r(Guide, RemoteKey::Home), Some(Action::JumpToNow));
+        assert_eq!(r(Groups, RemoteKey::Home), Some(Action::JumpToNow));
+        assert_eq!(r(Guide, RemoteKey::ShiftLeft), Some(Action::HourBack));
+        assert_eq!(r(Guide, RemoteKey::ShiftRight), Some(Action::HourForward));
+        assert_eq!(r(Guide, RemoteKey::CtrlLeft), Some(Action::DayBack));
+        assert_eq!(r(Guide, RemoteKey::CtrlRight), Some(Action::DayForward));
+        for ctx in [Guide, Groups] {
+            assert_eq!(r(ctx, RemoteKey::Tab), Some(Action::ToggleGroups));
+            assert_eq!(r(ctx, RemoteKey::ShiftTab), Some(Action::ToggleGroups));
+        }
+        assert_eq!(r(Guide, RemoteKey::PageDown), Some(Action::PageDown));
+        assert_eq!(r(Guide, RemoteKey::PageUp), Some(Action::PageUp));
+        // Over video Shift + Left is Long Left's channel preview.
+        assert_eq!(
+            r(Player, RemoteKey::ShiftLeft),
+            Some(Action::ShowChannelsPreview)
+        );
+        // Nothing elsewhere, and no long presses.
+        assert_eq!(r(Menu, RemoteKey::Tab), None);
+        assert!(!k.has_long(Guide, RemoteKey::Home));
+        // The remote's map has them too (a remote never sends them).
+        let remote = Keymap::for_profile(Profile::Remote);
+        assert_eq!(
+            remote.resolve(Guide, RemoteKey::CtrlLeft, Press::Short),
+            Some(Action::DayBack)
+        );
+    }
 
     #[test]
     fn the_players_remote_defaults() {
