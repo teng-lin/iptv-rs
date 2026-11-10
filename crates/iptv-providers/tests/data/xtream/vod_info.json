@@ -1,0 +1,4 @@
+{
+  "info": {"movie_image": "http://img.example.com/201-big.jpg", "plot": "N/A", "genre": "Drama", "cast": "-", "director": "A. Synthetic", "releasedate": "2015-06-01", "duration_secs": 5400, "rating": "0", "tmdb_id": "12345", "backdrop_path": ["http://img.example.com/b1.jpg"], "youtube_trailer": ""},
+  "movie_data": {"stream_id": "201", "name": "Movie Alpha", "container_extension": "mkv", "added": "1690000000", "category_id": "10"}
+}

@@ -25,14 +25,17 @@
 //! Known assumption: Stalker `tv_archive_duration` is read as hours
 //! (converted to whole days, rounded up).
 
+mod b64;
 pub mod error;
 pub mod http;
 pub mod id;
+mod lenient;
 pub mod m3u;
 pub mod model;
 pub mod secret;
 pub mod time;
 mod urlenc;
+pub mod xtream;
 
 pub use error::{ProviderError, StalkerError, StalkerErrorKind};
 pub use http::{HttpRequest, HttpResponse, Method};

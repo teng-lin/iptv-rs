@@ -1,0 +1,9 @@
+{
+  "epg_listings": [
+    {"id": "2", "epg_id": "5", "title": "Plain title!", "start": "2023-11-15 03:13:20", "end": "2023-11-15 04:13:20", "has_archive": "1", "channel_id": "news.example"},
+    {"id": "1", "epg_id": "5", "title": "TW9ybmluZyBOZXdz", "lang": "en", "start": "2023-11-15 01:13:20", "end": "2023-11-15 02:13:20", "description": "U3ludGhldGljIG1vcm5pbmcgc2hvdy4=", "channel_id": "news.example", "start_timestamp": "1700000000", "stop_timestamp": "1700003600"},
+    {"id": "3", "title": "w4l2ZW5pbmcgVGFsaw==", "start_timestamp": 1700010000, "stop_timestamp": 1700013600, "description": ""},
+    {"id": "4", "title": "No times", "start": "soon"},
+    {"id": "5", "title": "Backwards", "start_timestamp": 1700020000, "stop_timestamp": 1700010000}
+  ]
+}

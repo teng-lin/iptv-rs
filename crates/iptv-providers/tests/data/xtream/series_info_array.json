@@ -1,0 +1,9 @@
+{
+  "seasons": [],
+  "info": [],
+  "episodes": [
+    [{"id": 5001, "episode_num": 1, "title": "B S1E1", "container_extension": "ts", "season": 1}],
+    [{"id": 5101, "episode_num": 1, "title": "B S2E1", "container_extension": "ts", "season": 2, "direct_source": "https://cdn.example.net/b/s2e1.mp4"}],
+    {"id": 5002, "episode_num": 2, "title": "B S1E2", "container_extension": "ts", "season": 1}
+  ]
+}
