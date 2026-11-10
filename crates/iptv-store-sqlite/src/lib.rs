@@ -23,6 +23,8 @@ mod channels;
 mod codec;
 mod error;
 pub mod migrate;
+mod order;
+mod overlay;
 mod search;
 mod sources;
 
@@ -31,9 +33,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, OpenFlags};
 
-pub use channels::{ChannelQuery, ChannelRow, ChannelScope};
+pub use channels::{ChannelOrder, ChannelQuery, ChannelRow, ChannelScope};
 pub use error::{Result, StoreError};
 pub use migrate::SCHEMA_VERSION;
+pub use overlay::OrphanedOverlay;
 pub use search::SearchBackend;
 pub use sources::{CatalogCounts, ImportErrorKind, ImportStatus, SourceSummary, StoredSource};
 

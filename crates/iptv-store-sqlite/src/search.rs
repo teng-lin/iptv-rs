@@ -7,7 +7,8 @@
 //! `channels.rowid`. Every connection maintains it when it exists, whatever
 //! backend that connection queries with.
 
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
+use iptv_providers::ContentId;
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use crate::SourceId;
 use crate::error::Result;
@@ -26,7 +27,10 @@ pub enum SearchBackend {
 
 /// Rows to index: the effective (displayed) name, plus the provider name
 /// when a custom name hides it.
-const INDEX_ROWS: &str = "SELECT c.rowid, c.name, NULL FROM channels c";
+const INDEX_ROWS: &str = "SELECT c.rowid, COALESCE(o.custom_name, c.name),
+        CASE WHEN o.custom_name IS NOT NULL THEN c.name END
+    FROM channels c LEFT JOIN channel_overlays o
+        ON o.source_id = c.source_id AND o.channel_id = c.id";
 
 fn fts5_available(conn: &Connection) -> Result<bool> {
     let used: i64 = conn.query_row("SELECT sqlite_compileoption_used('ENABLE_FTS5')", [], |r| {
@@ -101,6 +105,29 @@ pub(crate) fn index_source(conn: &Connection, fts: bool, source: SourceId) -> Re
                 "INSERT INTO channel_fts (rowid, name, original) {INDEX_ROWS} WHERE c.source_id = ?1"
             ),
             [source.0],
+        )?;
+    }
+    Ok(())
+}
+
+/// Re-indexes one channel after its custom name changed. A no-op for an
+/// id that is not in the catalog.
+pub(crate) fn reindex_channel(
+    conn: &Connection,
+    fts: bool,
+    source: SourceId,
+    id: &ContentId,
+) -> Result<()> {
+    if fts {
+        conn.execute(
+            "DELETE FROM channel_fts WHERE rowid = (SELECT rowid FROM channels WHERE source_id = ?1 AND id = ?2)",
+            params![source.0, id.as_str()],
+        )?;
+        conn.execute(
+            &format!(
+                "INSERT INTO channel_fts (rowid, name, original) {INDEX_ROWS} WHERE c.source_id = ?1 AND c.id = ?2"
+            ),
+            params![source.0, id.as_str()],
         )?;
     }
     Ok(())

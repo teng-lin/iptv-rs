@@ -1,4 +1,4 @@
-//! Channel reads.
+//! Channel reads with user overlays merged in.
 
 use std::fmt;
 
@@ -12,12 +12,23 @@ use crate::error::Result;
 use crate::search::{fts_query, like_pattern, words};
 use crate::{SourceId, Store};
 
-/// A channel as the UI shows it.
+/// A channel as the UI shows it: provider data plus the user's overlay.
 #[derive(Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ChannelRow {
     pub source_id: SourceId,
-    /// Provider data as imported.
+    /// Provider data as imported (`channel.name` is the provider's name).
     pub channel: Channel,
+    /// Displayed name: the custom name, else the provider name.
+    pub name: String,
+    /// Displayed number: the custom number, else the provider number.
+    pub number: Option<u32>,
+    pub custom_name: Option<String>,
+    pub custom_number: Option<u32>,
+    pub favourite: bool,
+    pub hidden: bool,
+    /// Parental block; the UI asks for the PIN before playing.
+    pub blocked: bool,
 }
 
 /// Leaves out the stream locator: its URL and headers may carry
@@ -27,15 +38,19 @@ impl fmt::Debug for ChannelRow {
         f.debug_struct("ChannelRow")
             .field("source_id", &self.source_id)
             .field("id", &self.channel.id)
-            .field("name", &self.channel.name)
-            .field("number", &self.channel.number)
+            .field("name", &self.name)
+            .field("number", &self.number)
             .field("groups", &self.channel.groups)
+            .field("favourite", &self.favourite)
+            .field("hidden", &self.hidden)
+            .field("blocked", &self.blocked)
             .finish_non_exhaustive()
     }
 }
 
 /// Which channels to list.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ChannelScope {
     #[default]
     All,
@@ -43,18 +58,45 @@ pub enum ChannelScope {
     Group(GroupId),
 }
 
+/// Sort order of a channel list.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ChannelOrder {
+    /// The user's order where they set one (favourites order for a
+    /// favourites list), else provider order.
+    #[default]
+    Effective,
+    /// Displayed name, case-insensitive; ties in provider order.
+    Name,
+    /// Displayed number; unnumbered channels last, in provider order.
+    Number,
+}
+
+/// A channel list request. The default lists every visible channel of the
+/// source in effective order.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ChannelQuery {
     pub scope: ChannelScope,
+    pub favourites_only: bool,
+    /// Include hidden channels (edit mode).
+    pub include_hidden: bool,
+    /// Drop blocked channels (they are listed, flagged, by default).
+    pub exclude_blocked: bool,
+    pub order: ChannelOrder,
     pub offset: u32,
     /// `None` returns every row from `offset`.
     pub limit: Option<u32>,
 }
 
-const ROW_COLUMNS: &str = "c.source_id, c.id, c.provider_id, c.name, c.number, c.logo, \
-    c.group_ids, c.stream, c.epg_id, c.epg_name, c.epg_shift_minutes, c.catch_up, c.radio";
+pub(crate) const ROW_COLUMNS: &str = "c.source_id, c.id, c.provider_id, c.name, c.number, \
+    c.logo, c.group_ids, c.stream, c.epg_id, c.epg_name, c.epg_shift_minutes, c.catch_up, \
+    c.radio, o.custom_name, o.custom_number, COALESCE(o.hidden, 0), COALESCE(o.blocked, 0), \
+    f.channel_id IS NOT NULL";
 
-fn decode(row: &rusqlite::Row<'_>) -> Result<ChannelRow> {
+pub(crate) const OVERLAY_JOINS: &str = "
+    LEFT JOIN channel_overlays o ON o.source_id = c.source_id AND o.channel_id = c.id
+    LEFT JOIN favourites f ON f.source_id = c.source_id AND f.channel_id = c.id";
+
+pub(crate) fn decode(row: &rusqlite::Row<'_>) -> Result<ChannelRow> {
     let catch_up: Option<String> = row.get(11)?;
     let channel = Channel {
         id: ContentId::from_stored(row.get::<_, String>(1)?),
@@ -70,49 +112,95 @@ fn decode(row: &rusqlite::Row<'_>) -> Result<ChannelRow> {
         catch_up: catch_up.as_deref().map(catch_up_from_json).transpose()?,
         radio: row.get(12)?,
     };
+    let custom_name: Option<String> = row.get(13)?;
+    let custom_number: Option<u32> = narrow(row.get(14)?, "channel_overlays.custom_number")?;
     Ok(ChannelRow {
         source_id: SourceId(row.get(0)?),
+        name: custom_name.clone().unwrap_or_else(|| channel.name.clone()),
+        number: custom_number.or(channel.number),
+        custom_name,
+        custom_number,
+        hidden: row.get(15)?,
+        blocked: row.get(16)?,
+        favourite: row.get(17)?,
         channel,
     })
 }
 
-/// FROM/WHERE for a query; parameters are appended to `args`.
-fn scope_sql(source: SourceId, query: &ChannelQuery, args: &mut Vec<Value>) -> String {
+fn collect(stmt: &mut rusqlite::Statement<'_>, args: Vec<Value>) -> Result<Vec<ChannelRow>> {
+    let mut rows = stmt.query(params_from_iter(args))?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next()? {
+        out.push(decode(row)?);
+    }
+    Ok(out)
+}
+
+/// `FROM … WHERE …` and the `ORDER BY` terms for a query; parameters are
+/// appended to `args`.
+fn build(source: SourceId, q: &ChannelQuery, args: &mut Vec<Value>) -> (String, String) {
     args.push(Value::Integer(source.0));
-    match &query.scope {
-        ChannelScope::All => "FROM channels c WHERE c.source_id = ?1".to_owned(),
+    let (mut from, effective) = match &q.scope {
+        ChannelScope::All => (
+            format!("FROM channels c {OVERLAY_JOINS} WHERE c.source_id = ?1"),
+            if q.favourites_only {
+                "f.position"
+            } else {
+                "c.position"
+            },
+        ),
         ChannelScope::Group(g) => {
             args.push(Value::Text(g.as_str().to_owned()));
-            "FROM channel_groups m JOIN channels c ON c.source_id = m.source_id AND c.id = m.channel_id
-             WHERE m.source_id = ?1 AND m.group_id = ?2"
-                .to_owned()
+            (
+                format!(
+                    "FROM channel_groups m
+                     JOIN channels c ON c.source_id = m.source_id AND c.id = m.channel_id
+                     {OVERLAY_JOINS}
+                     WHERE m.source_id = ?1 AND m.group_id = ?2"
+                ),
+                "c.position",
+            )
         }
+    };
+    if q.favourites_only {
+        from.push_str(" AND f.channel_id IS NOT NULL");
     }
+    if !q.include_hidden {
+        from.push_str(" AND COALESCE(o.hidden, 0) = 0");
+    }
+    if q.exclude_blocked {
+        from.push_str(" AND COALESCE(o.blocked, 0) = 0");
+    }
+    let order = match q.order {
+        ChannelOrder::Effective => format!("{effective}, c.position"),
+        ChannelOrder::Name => "COALESCE(o.custom_name, c.name) COLLATE NOCASE, c.position".into(),
+        ChannelOrder::Number => "COALESCE(o.custom_number, c.number) IS NULL, \
+             COALESCE(o.custom_number, c.number), c.position"
+            .into(),
+    };
+    (from, order)
 }
 
 impl Store {
-    /// Channels of one source in provider order.
+    /// Channels of one source with overlays applied, filtered, in the
+    /// requested order, paged. Overlays of channels that are not in the
+    /// catalog are never returned (see [`Store::orphaned_overlays`]).
     pub fn load_channels(&self, source: SourceId, query: &ChannelQuery) -> Result<Vec<ChannelRow>> {
         let mut args = Vec::new();
-        let from = scope_sql(source, query, &mut args);
+        let (from, order) = build(source, query, &mut args);
         let sql = format!(
-            "SELECT {ROW_COLUMNS} {from} ORDER BY c.position LIMIT {} OFFSET {}",
+            "SELECT {ROW_COLUMNS} {from} ORDER BY {order} LIMIT {} OFFSET {}",
             query.limit.map_or(-1, i64::from),
             query.offset
         );
         let mut stmt = self.conn.prepare_cached(&sql)?;
-        let mut rows = stmt.query(params_from_iter(args))?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(decode(row)?);
-        }
-        Ok(out)
+        collect(&mut stmt, args)
     }
 
     /// Rows `load_channels` would return without paging.
     pub fn channel_count(&self, source: SourceId, query: &ChannelQuery) -> Result<u64> {
         let mut args = Vec::new();
-        let from = scope_sql(source, query, &mut args);
+        let (from, _) = build(source, query, &mut args);
         let mut stmt = self
             .conn
             .prepare_cached(&format!("SELECT COUNT(*) {from}"))?;
@@ -120,17 +208,27 @@ impl Store {
         Ok(n.max(0) as u64)
     }
 
-    /// One channel by stable id.
+    /// One channel by stable id, whatever its flags.
     pub fn channel(&self, source: SourceId, id: &ContentId) -> Result<Option<ChannelRow>> {
-        let sql =
-            format!("SELECT {ROW_COLUMNS} FROM channels c WHERE c.source_id = ?1 AND c.id = ?2");
+        let sql = format!(
+            "SELECT {ROW_COLUMNS} FROM channels c {OVERLAY_JOINS}
+             WHERE c.source_id = ?1 AND c.id = ?2"
+        );
         let mut stmt = self.conn.prepare_cached(&sql)?;
-        let mut rows = stmt.query(rusqlite::params![source.0, id.as_str()])?;
-        rows.next()?.map(decode).transpose()
+        let mut rows = collect(
+            &mut stmt,
+            vec![
+                Value::Integer(source.0),
+                Value::Text(id.as_str().to_owned()),
+            ],
+        )?;
+        Ok(rows.pop())
     }
 
-    /// Channels whose name contains every word of `text`, best match first.
-    /// `source = None` searches every source.
+    /// Visible channels whose displayed or provider name contains every
+    /// word of `text`, best match first. `source = None` searches every
+    /// source. Hidden channels are skipped; blocked ones are returned
+    /// flagged.
     pub fn search_channels(
         &self,
         source: Option<SourceId>,
@@ -149,31 +247,32 @@ impl Store {
             }
             None => "",
         };
+        let visible = "AND COALESCE(o.hidden, 0) = 0";
         let sql = if self.fts {
             args.push(Value::Text(fts_query(&words)));
             let at = args.len();
             format!(
-                "SELECT {ROW_COLUMNS} FROM channel_fts f JOIN channels c ON c.rowid = f.rowid
-                 WHERE channel_fts MATCH ?{at} {source_filter}
-                 ORDER BY f.rank, c.source_id, c.position LIMIT ?1"
+                "SELECT {ROW_COLUMNS} FROM channel_fts s
+                 JOIN channels c ON c.rowid = s.rowid {OVERLAY_JOINS}
+                 WHERE channel_fts MATCH ?{at} {source_filter} {visible}
+                 ORDER BY s.rank, c.source_id, c.position LIMIT ?1"
             )
         } else {
             let mut filters = String::new();
             for w in &words {
                 args.push(Value::Text(like_pattern(w)));
-                filters.push_str(&format!(" AND c.name LIKE ?{} ESCAPE '\\'", args.len()));
+                let at = args.len();
+                filters.push_str(&format!(
+                    " AND (c.name LIKE ?{at} ESCAPE '\\' OR o.custom_name LIKE ?{at} ESCAPE '\\')"
+                ));
             }
             format!(
-                "SELECT {ROW_COLUMNS} FROM channels c WHERE 1 = 1 {source_filter} {filters}
+                "SELECT {ROW_COLUMNS} FROM channels c {OVERLAY_JOINS}
+                 WHERE 1 = 1 {source_filter} {visible} {filters}
                  ORDER BY c.source_id, c.position LIMIT ?1"
             )
         };
         let mut stmt = self.conn.prepare(&sql)?;
-        let mut rows = stmt.query(params_from_iter(args))?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(decode(row)?);
-        }
-        Ok(out)
+        collect(&mut stmt, args)
     }
 }

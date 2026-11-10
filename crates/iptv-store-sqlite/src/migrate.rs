@@ -25,11 +25,18 @@ pub(crate) struct Migration {
     pub sql: &'static str,
 }
 
-pub(crate) const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "provider_data",
-    sql: include_str!("../migrations/0001_provider_data.sql"),
-}];
+pub(crate) const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "provider_data",
+        sql: include_str!("../migrations/0001_provider_data.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "overlays",
+        sql: include_str!("../migrations/0002_overlays.sql"),
+    },
+];
 
 /// The schema version this build writes.
 pub const SCHEMA_VERSION: u32 = MIGRATIONS.len() as u32;
@@ -105,13 +112,15 @@ pub(crate) fn migrate_to(conn: &mut Connection, target: u32, now: i64) -> Result
     Ok(reached)
 }
 
-/// `sqlite_master` DDL in a stable order, without SQLite internals and the
-/// derived search index. Used to compare a migrated file with a fresh one.
+/// `sqlite_master` DDL in a stable, executable order (tables, then
+/// indexes, then the rest), without SQLite internals and the derived search
+/// index. Used for the historical snapshots and to compare a migrated file
+/// with a fresh one.
 pub fn schema_dump(conn: &Connection) -> Result<String> {
     let mut stmt = conn.prepare(
         "SELECT type, name, sql FROM sqlite_master
          WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'channel_fts%'
-         ORDER BY type, name",
+         ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 ELSE 2 END, name",
     )?;
     let rows = stmt.query_map([], |row| {
         Ok(format!(
@@ -143,7 +152,10 @@ mod tests {
     /// version N must reproduce the historical snapshot of version N.
     #[test]
     fn historical_snapshots_match_migrations() {
-        let snapshots = [include_str!("../tests/fixtures/schema_v1.sql")];
+        let snapshots = [
+            include_str!("../tests/fixtures/schema_v1.sql"),
+            include_str!("../tests/fixtures/schema_v2.sql"),
+        ];
         assert_eq!(snapshots.len(), MIGRATIONS.len(), "snapshot every version");
         for (i, snapshot) in snapshots.iter().enumerate() {
             let mut conn = Connection::open_in_memory().unwrap();
