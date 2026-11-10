@@ -5,7 +5,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use iptv_core::panels::Control;
+use iptv_core::channel_list::ListMode;
+use iptv_core::panels::{Control, QuickAction, Shown};
+use iptv_core::tracks::Kind as Track;
 use iptv_nav::{Action, Context, Keymap, Phase, PressDetector, RemoteKey};
 use nsh_core::keymap::KeyPhase;
 use nsh_core::prelude::*;
@@ -57,6 +59,8 @@ const KEYS: &[(&str, RemoteKey)] = &[
     ("space", RemoteKey::PlayPause),
     ("p", RemoteKey::Previous),
     ("n", RemoteKey::Next),
+    ("[", RemoteKey::Rewind),
+    ("]", RemoteKey::FastForward),
 ];
 
 struct Nav {
@@ -81,6 +85,9 @@ pub fn context(ui: &Ui) -> Context {
         || ui.chooser.with(Option::is_some);
     if overlay {
         return Context::Menu;
+    }
+    if crate::channels_view::is_open(*ui) {
+        return Context::ChannelList;
     }
     if crate::search_view::is_open(*ui) {
         return Context::Editor; // Up/Down/Left/Right, OK and digits
@@ -123,6 +130,17 @@ pub fn bind(ui: Ui) {
     on_key("backspace", move |_| {
         crate::go_back(ui);
     });
+    // Long Left's stand-in where keys have no long press (the desktop).
+    on_key("shift+left", move |_| {
+        if context(&ui) == Context::Player {
+            crate::channels_view::open(ui, ListMode::Preview);
+        }
+    });
+    // Desktop sound keys (remotes and tablets use the system volume). F11
+    // (window full screen) is the platform's.
+    on_key("ctrl+m", move |_| crate::media::toggle_mute(ui));
+    on_key("ctrl+up", move |_| crate::media::step_volume(ui, true));
+    on_key("ctrl+down", move |_| crate::media::step_volume(ui, false));
     // Spike shortcuts for the view modes.
     on_key("o", move |_| ui.toggle(ViewMode::Overlay));
     on_key("f", move |_| ui.toggle(ViewMode::Fullscreen));
@@ -144,15 +162,17 @@ fn key_event(ui: Ui, nav: &Rc<RefCell<Nav>>, key: RemoteKey, phase: Phase) {
         let action = nav
             .detector
             .feed(key, phase, now, has_long)
-            .and_then(|(k, press)| catch_up_keys(&ui, ctx, k, nav.keymap.resolve(ctx, k, press)));
+            .and_then(|(k, press)| {
+                catch_up_keys(&ui, ctx, k, nav.keymap.resolve(ctx, k, press)).map(|a| (k, a))
+            });
         let deadline = (phase == Phase::Down)
             .then(|| nav.detector.long_deadline_ms())
             .flatten()
             .map(|at| at.saturating_sub(now));
         (action, deadline)
     };
-    if let Some(action) = action {
-        apply(ui, action);
+    if let Some((key, action)) = action {
+        apply(ui, key, action);
     }
     // IR remotes never auto-repeat: decide long press on a timer too. If the
     // key was released (or a repeat already fired it), the poll finds nothing.
@@ -164,11 +184,11 @@ fn key_event(ui: Ui, nav: &Rc<RefCell<Nav>>, key: RemoteKey, phase: Phase) {
                 let now = nav.start.elapsed().as_millis() as u64;
                 nav.detector
                     .poll(now)
-                    .and_then(|(k, press)| nav.keymap.resolve(ctx, k, press))
+                    .and_then(|(k, press)| nav.keymap.resolve(ctx, k, press).map(|a| (k, a)))
             };
-            if let Some(action) = action {
+            if let Some((key, action)) = action {
                 log::info!("iptv long press by timer: {action:?}");
-                apply(ui, action);
+                apply(ui, key, action);
             }
         });
     }
@@ -181,6 +201,7 @@ fn key_event(ui: Ui, nav: &Rc<RefCell<Nav>>, key: RemoteKey, phase: Phase) {
         s.last_us = us;
         s.max_us = s.max_us.max(us);
     });
+    let action = action.map(|(_, a)| a);
     log::info!(
         "iptv key={} phase={phase:?} ctx={ctx:?} action={action:?} n={} handler_us={us} mode={:?} panels={:?}",
         key.name(),
@@ -192,7 +213,7 @@ fn key_event(ui: Ui, nav: &Rc<RefCell<Nav>>, key: RemoteKey, phase: Phase) {
 
 /// While a programme plays from the archive, the keys `catchup.seek_keys`
 /// names step along its time bar in the player: Left/Right (the default,
-/// instead of bringing the guide) or Down/Up (instead of zapping). With
+/// instead of the channel list and the most recent channel) or Down/Up (instead of zapping). With
 /// `transport` only the media keys seek (Rewind/Fast-forward always do).
 fn catch_up_keys(ui: &Ui, ctx: Context, key: RemoteKey, action: Option<Action>) -> Option<Action> {
     let catch_up = matches!(ui.playback.get_untracked(), crate::Playback::CatchUp { .. });
@@ -210,15 +231,15 @@ fn catch_up_keys(ui: &Ui, ctx: Context, key: RemoteKey, action: Option<Action>) 
 /// choice `scheme`.
 fn seek_key(scheme: &str, key: RemoteKey, action: Option<Action>) -> Option<Action> {
     match (scheme, key, action) {
-        ("left_right", RemoteKey::Left, Some(Action::ShowGuide))
+        ("left_right", RemoteKey::Left, Some(Action::ShowChannels))
         | ("down_up", RemoteKey::Down, Some(Action::ChannelDown)) => Some(Action::TimeBarBack),
-        ("left_right", RemoteKey::Right, Some(Action::ShowGuide))
+        ("left_right", RemoteKey::Right, Some(Action::PreviousChannel))
         | ("down_up", RemoteKey::Up, Some(Action::ChannelUp)) => Some(Action::TimeBarForward),
         _ => action,
     }
 }
 
-fn apply(ui: Ui, action: Action) {
+fn apply(ui: Ui, key: RemoteKey, action: Action) {
     // The first key after touch starts from a row on screen.
     if ui.input.get() == Input::Touch {
         if let Some((first, last)) = ui.visible_rows.get() {
@@ -229,6 +250,7 @@ fn apply(ui: Ui, action: Action) {
     // Any key while panels show keeps them up.
     ui.update_panels(|p, now| p.touch(now));
     let controls = ui.panels.with(|p| p.captures_input()) && ui.mode.get() == ViewMode::Fullscreen;
+    let card = controls && ui.panels.with(|p| p.shown) == Shown::Card;
     let mv = |m: Move| crate::lists::navigate(ui, m);
     if crate::wizard_view::is_open(ui) {
         crate::wizard_view::key(ui, action);
@@ -294,6 +316,10 @@ fn apply(ui: Ui, action: Action) {
         }
         return;
     }
+    if crate::channels_view::is_open(ui) {
+        crate::channels_view::key(ui, action);
+        return;
+    }
     if crate::search_view::is_open(ui) {
         crate::search_view::key(ui, action);
         return;
@@ -311,6 +337,15 @@ fn apply(ui: Ui, action: Action) {
         Action::ShowMenu => crate::menu_view::open(ui),
         Action::MoveLeft if controls => ui.update_panels(|p, now| p.move_focus(-1, now)),
         Action::MoveRight if controls => ui.update_panels(|p, now| p.move_focus(1, now)),
+        // Over the buttons Up and Down move between the quick actions and
+        // the control row.
+        Action::MoveUp if controls => ui.update_panels(|p, now| {
+            p.up(now);
+        }),
+        Action::MoveDown if controls => ui.update_panels(|p, now| {
+            p.down(now);
+        }),
+        Action::Select if card => press_quick(ui, ui.panels.with(|p| p.quick_focused())),
         Action::Select if controls => press_control(ui, ui.panels.with(|p| p.focused())),
         Action::MoveUp => mv(Move::Up),
         Action::MoveDown => mv(Move::Down),
@@ -319,7 +354,11 @@ fn apply(ui: Ui, action: Action) {
         Action::Select => crate::lists::ok(ui),
         // Over a failed stream, OK retries.
         Action::ShowPanels if crate::player::failed(&ui) => crate::player::retry(ui),
-        Action::ShowPanels => ui.update_panels(|p, now| p.show_controls(now)),
+        // Menu opens the control row at once (observed); OK the card.
+        Action::ShowPanels if key == RemoteKey::Menu => {
+            ui.update_panels(|p, now| p.show_controls(now))
+        }
+        Action::ShowPanels => ui.update_panels(|p, now| p.show_card(now)),
         Action::ShowInfo if ui.mode.get() == ViewMode::Fullscreen => {
             ui.update_panels(|p, now| p.show_info(now))
         }
@@ -356,6 +395,9 @@ fn apply(ui: Ui, action: Action) {
         Action::ChannelUp => zap(ui, -1),
         Action::ChannelDown => zap(ui, 1),
         Action::PreviousChannel => crate::player::previous_channel(ui),
+        Action::ShowChannels => crate::channels_view::open(ui, ListMode::Overlay),
+        Action::ShowChannelsPreview => crate::channels_view::open(ui, ListMode::Preview),
+        Action::Stop => stop_playback(ui),
         Action::GoLive => crate::player::go_live(ui),
         Action::PageUp => page(ui, -1),
         Action::PageDown => page(ui, 1),
@@ -363,10 +405,21 @@ fn apply(ui: Ui, action: Action) {
     }
 }
 
+/// Long Back (or Stop): nothing plays; back to the guide.
+fn stop_playback(ui: Ui) {
+    if ui.playing.get_untracked().is_none() {
+        return;
+    }
+    log::info!("iptv player: stopped by the viewer");
+    ui.playing.set(None);
+    crate::player::stop(ui);
+    ui.mode.set(ViewMode::Guide);
+}
+
 /// Channel up/down: switches playback and keeps the focus on it. Wraps
 /// within the list on screen (from the playing channel's row, else the
 /// focused one); a channel the list does not have zaps within its group.
-fn zap(ui: Ui, step: isize) {
+pub(crate) fn zap(ui: Ui, step: isize) {
     let list = ui.list.get();
     let playing = ui.playing.get();
     let from_row = playing
@@ -389,14 +442,37 @@ fn zap(ui: Ui, step: isize) {
     }
 }
 
+/// OK (or a tap) on a quick action under the info card.
+pub fn press_quick(ui: Ui, action: QuickAction) {
+    ui.update_panels(|p, now| p.touch(now));
+    match action {
+        QuickAction::Guide => {
+            if let Some(ch) = ui.playing.get() {
+                crate::lists::show_channel(ui, ch);
+            }
+            ui.mode.set(ViewMode::Guide);
+        }
+        QuickAction::History => crate::chooser::open(ui, crate::chooser::Kind::History),
+    }
+}
+
 /// OK (or a tap) on a control-row button.
 pub fn press_control(ui: Ui, control: Control) {
+    use crate::chooser::Kind;
     ui.update_panels(|p, now| p.touch(now));
+    if !crate::player_panels::enabled(ui, control) {
+        log::info!("iptv control {control:?} not available");
+        return;
+    }
     match control {
         Control::Search => crate::search_view::open(ui),
-        Control::ChannelList => ui.mode.set(ViewMode::Overlay),
-        Control::Scaling => crate::chooser::open(ui, crate::chooser::Kind::Picture),
-        Control::SleepTimer => crate::chooser::open(ui, crate::chooser::Kind::Sleep),
+        Control::ChannelList => crate::channels_view::open(ui, ListMode::Overlay),
+        Control::Scaling => crate::chooser::open(ui, Kind::Picture),
+        Control::SleepTimer => crate::chooser::open(ui, Kind::Sleep),
+        Control::VideoTracks => crate::chooser::open(ui, Kind::Track(Track::Video)),
+        Control::AudioTracks => crate::chooser::open(ui, Kind::Track(Track::Audio)),
+        Control::Captions => crate::chooser::open(ui, Kind::Track(Track::Text)),
+        Control::AudioOffset => crate::chooser::open(ui, Kind::AudioDelay),
         Control::Favorite => {
             if let Some(ch) = ui.playing.get() {
                 crate::favorites::toggle(ui, ch);
@@ -422,24 +498,25 @@ mod tests {
 
     #[test]
     fn seek_keys_choose_the_time_bar_keys() {
-        let guide = Some(Action::ShowGuide);
+        // The player's Left/Right: the channel list and the most recent channel.
+        let (list, recent) = (Some(Action::ShowChannels), Some(Action::PreviousChannel));
         let (up, down) = (Some(Action::ChannelUp), Some(Action::ChannelDown));
         let back = Some(Action::TimeBarBack);
         let forward = Some(Action::TimeBarForward);
-        // Left/Right (default): instead of the guide; Up/Down still zap.
-        assert_eq!(seek_key("left_right", RemoteKey::Left, guide), back);
-        assert_eq!(seek_key("left_right", RemoteKey::Right, guide), forward);
+        // Left/Right (default): instead of those; Up/Down still zap.
+        assert_eq!(seek_key("left_right", RemoteKey::Left, list), back);
+        assert_eq!(seek_key("left_right", RemoteKey::Right, recent), forward);
         assert_eq!(seek_key("left_right", RemoteKey::Up, up), up);
-        // Down/Up: instead of zapping; Left/Right still bring the guide.
+        // Down/Up: instead of zapping; Left/Right keep their meaning.
         assert_eq!(seek_key("down_up", RemoteKey::Down, down), back);
         assert_eq!(seek_key("down_up", RemoteKey::Up, up), forward);
-        assert_eq!(seek_key("down_up", RemoteKey::Left, guide), guide);
+        assert_eq!(seek_key("down_up", RemoteKey::Left, list), list);
         // Page keys zap whatever the choice.
         assert_eq!(seek_key("down_up", RemoteKey::PageUp, up), up);
         // Transport keys only: the arrows keep their meaning.
         for (key, action) in [
-            (RemoteKey::Left, guide),
-            (RemoteKey::Right, guide),
+            (RemoteKey::Left, list),
+            (RemoteKey::Right, recent),
             (RemoteKey::Up, up),
             (RemoteKey::Down, down),
         ] {

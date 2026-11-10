@@ -12,17 +12,26 @@ import android.widget.FrameLayout
 import kotlin.math.max
 import kotlin.math.roundToInt
 import androidx.annotation.OptIn
+import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
+import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.ResolvingDataSource
+import androidx.media3.exoplayer.DecoderReuseEvaluation
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.analytics.AnalyticsListener
+import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.ui.SubtitleView
 import com.longbridge.nsh.NshComponent
 import com.longbridge.nsh.NshComponentContext
 
@@ -39,11 +48,19 @@ import com.longbridge.nsh.NshComponentContext
  * - `paused` (bool), `userAgent` (fallback when the source sends none),
  * - `pictureSize` ("normal", "full", "zoom", "cinema", "reduced", "4:3",
  *   "16:9", "2.35:1"; sizes the surface by layout, never by transform).
+ * - `videoTrack` ("auto" or a video track id), `audioTrack` ("auto" or an
+ *   audio track id), `textTrack` ("off" or a text track id), for the open
+ *   stream ([PlayerTracks]; a new source starts again from auto/auto/off).
+ * - `muted` (bool; the volume is the system's: `volume` is ignored here),
+ *   `audioDelay` (ms, positive: the sound later; [DelayedAudioSink]).
  *
  * Events: `state` {state: idle|buffering|ready|ended}, `error` {code, http?}
  * (code is Media3's error code name; no URLs or messages), `size` {width,
  * height}, `position` {ms} (from where the stream opened; once a second
- * while playing). Recovers by itself from BEHIND_LIVE_WINDOW, and retries once with
+ * while playing), `tracks` (whenever they change; [PlayerTracks.event])
+ * and `format` {fps?, channels?} for what plays. Subtitles of the chosen
+ * text track show in a [SubtitleView] over the picture. Each component has
+ * its own player and state (several may play at once). Recovers by itself from BEHIND_LIVE_WINDOW, and retries once with
  * the other kind of stream (a container it could not parse as HLS, a
  * playlist it could not parse as progressive); everything else goes to the
  * app, which owns the retry policy. The picture is black from a new source
@@ -72,9 +89,15 @@ class PlayerComponent(
         setBackgroundColor(Color.BLACK)
         visibility = View.GONE
     }
+    /** The chosen text track's cues, over the picture. */
+    private val subtitles = SubtitleView(context).apply {
+        setUserDefaultStyle()
+        setUserDefaultTextSize()
+    }
     private val root = PictureFrame(context).apply {
         setBackgroundColor(Color.BLACK)
         addView(surface, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
+        addView(subtitles, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
         addView(shutter, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
     }
 
@@ -85,6 +108,11 @@ class PlayerComponent(
     @Volatile private var headers = Headers(null, emptyMap())
     /** Set after the one format fallback (HLS or progressive) for the current stream. */
     private var triedOtherFormat = false
+    /** The viewer's track choices for the open stream. */
+    private var choice = PlayerTracks.Choice()
+    /** This player's audio sink (made when the player is built). */
+    private var sink: DelayedAudioSink? = null
+    private var audioDelayUs = 0L
     private val player: ExoPlayer
 
     private fun headersFor(uri: Uri): Map<String, String> {
@@ -103,7 +131,22 @@ class PlayerComponent(
         val withHeaders = ResolvingDataSource.Factory(http) { spec ->
             spec.withAdditionalHeaders(headersFor(spec.uri))
         }
-        return ExoPlayer.Builder(context)
+        // The audio sink carries the audio delay (one per player).
+        val renderers = object : DefaultRenderersFactory(context) {
+            override fun buildAudioSink(
+                context: Context,
+                enableFloatOutput: Boolean,
+                enableAudioTrackPlaybackParams: Boolean,
+            ): AudioSink? {
+                val base = super.buildAudioSink(context, enableFloatOutput, enableAudioTrackPlaybackParams)
+                    ?: return null
+                return DelayedAudioSink(base).also {
+                    it.delayUs = audioDelayUs
+                    sink = it
+                }
+            }
+        }
+        return ExoPlayer.Builder(context, renderers)
             .setMediaSourceFactory(
                 DefaultMediaSourceFactory(context).setDataSourceFactory(withHeaders),
             )
@@ -113,8 +156,39 @@ class PlayerComponent(
                 // Live streams that end are reconnected by the app.
                 p.repeatMode = Player.REPEAT_MODE_OFF
                 p.playWhenReady = true
+                // Subtitles only when the viewer picks a text track.
+                p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                    .build()
                 p.addListener(listener)
+                p.addAnalyticsListener(formats)
             }
+    }
+
+    /** The viewer's choices on the stream's current tracks. */
+    private fun applyChoice() {
+        val next = PlayerTracks.parameters(player.trackSelectionParameters, player.currentTracks, choice)
+        if (next != player.trackSelectionParameters) player.trackSelectionParameters = next
+    }
+
+    private fun emitFormat(video: Format?, audio: Format?) {
+        val format = PlayerTracks.format(video, audio)
+        if (format.isNotEmpty()) nsh.emit("format", format)
+    }
+
+    /** Frame rate and audio channels as the decoders get them. */
+    private val formats = object : AnalyticsListener {
+        override fun onVideoInputFormatChanged(
+            eventTime: AnalyticsListener.EventTime,
+            format: Format,
+            decoderReuseEvaluation: DecoderReuseEvaluation?,
+        ) = emitFormat(format, null)
+
+        override fun onAudioInputFormatChanged(
+            eventTime: AnalyticsListener.EventTime,
+            format: Format,
+            decoderReuseEvaluation: DecoderReuseEvaluation?,
+        ) = emitFormat(null, format)
     }
 
     private val listener = object : Player.Listener {
@@ -131,6 +205,21 @@ class PlayerComponent(
 
         override fun onRenderedFirstFrame() {
             shutter.visibility = View.GONE
+            // Again for each stream: the app forgets the last one's.
+            val size = player.videoSize
+            if (size.width > 0 && size.height > 0) {
+                nsh.emit("size", mapOf("width" to size.width, "height" to size.height))
+            }
+            emitFormat(player.videoFormat, player.audioFormat)
+        }
+
+        override fun onTracksChanged(tracks: Tracks) {
+            applyChoice()
+            nsh.emit("tracks", PlayerTracks.event(tracks, choice))
+        }
+
+        override fun onCues(cueGroup: CueGroup) {
+            subtitles.setCues(cueGroup.cues)
         }
 
         override fun onVideoSizeChanged(size: VideoSize) {
@@ -193,11 +282,26 @@ class PlayerComponent(
             "source" -> setSource(value as? Map<*, *>)
             "paused" -> player.playWhenReady = value != true
             "pictureSize" -> root.mode = (value as? String) ?: "normal"
+            "videoTrack" -> choose(choice.copy(video = (value as? String) ?: PlayerTracks.AUTO))
+            "audioTrack" -> choose(choice.copy(audio = (value as? String) ?: PlayerTracks.AUTO))
+            "textTrack" -> choose(choice.copy(text = (value as? String) ?: PlayerTracks.OFF))
+            "muted" -> player.volume = if (value == true) 0f else 1f
+            "audioDelay" -> {
+                audioDelayUs = ((value as? Number)?.toLong() ?: 0L).coerceIn(-10_000L, 10_000L) * 1000
+                sink?.delayUs = audioDelayUs
+            }
             "userAgent" -> {
                 userAgent = (value as? String)?.takeIf { it.isNotBlank() } ?: DEFAULT_UA
                 applyHeaders()
             }
         }
+    }
+
+    private fun choose(next: PlayerTracks.Choice) {
+        if (next == choice) return
+        choice = next
+        applyChoice()
+        nsh.emit("tracks", PlayerTracks.event(player.currentTracks, choice))
     }
 
     private fun setSource(source: Map<*, *>?) {
@@ -214,6 +318,10 @@ class PlayerComponent(
         applyHeaders()
         if (!changed) return
         triedOtherFormat = false
+        // A new stream: default tracks, no old cues.
+        choice = PlayerTracks.Choice()
+        applyChoice()
+        subtitles.setCues(emptyList())
         shutter.visibility = View.VISIBLE
         if (next == null) {
             player.stop()
@@ -241,6 +349,7 @@ class PlayerComponent(
     override fun destroy() {
         ticker.removeCallbacks(tick)
         player.removeListener(listener)
+        player.removeAnalyticsListener(formats)
         player.release()
     }
 }

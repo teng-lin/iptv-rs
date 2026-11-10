@@ -117,6 +117,8 @@ fn action_name(action: Action) -> &'static str {
         Action::ShowMenu => "Menu",
         Action::ShowGroups => "Groups",
         Action::ShowGuide => "Guide",
+        Action::ShowChannels => "Channel list over the video",
+        Action::ShowChannelsPreview => "Channel list beside the video",
         Action::ShowInfo => "Programme information",
         Action::ShowPanels => "Player controls",
         Action::ChannelUp => "Channel up",

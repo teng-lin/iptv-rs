@@ -2,7 +2,21 @@
 //! the Android host, `hosts/android`, and on Linux by `mpv`), laid out per view mode — the preview
 //! rectangle in the guide's header, or the whole screen under an overlay or under
 //! nothing. Changing modes changes layout only; the player is never recreated.
-//! What it plays comes from `player.rs` (resolution, retries).
+//! What it plays comes from `player.rs` (resolution, retries); its tracks,
+//! format and sound from `media.rs`.
+//!
+//! The `tv.player` contract (both hosts):
+//! - props `source` `{url, headers, token}` or null, `paused`, `userAgent`,
+//!   `pictureSize`; `videoTrack` (`auto` or a video track id),
+//!   `audioTrack` (`auto` or an audio track id), `textTrack` (`off` or a
+//!   text track id) for the open stream (a new source starts again from
+//!   `auto`/`auto`/`off`); `volume` (0–100; the desktop's, Android keeps
+//!   the system volume), `muted`, `audioDelay` (ms, positive: sound later);
+//! - events `state` {state}, `size` {width, height}, `error` {code, http?},
+//!   `position` {ms}; `tracks` {video: [{id, label, width, height, fps,
+//!   bitrate}], audio: [{id, label, language, channels, codec}], text:
+//!   [{id, label, language}], selected: {video, audio, text}} whenever they
+//!   change; `format` {fps?, channels?} for what plays.
 
 use nsh_core::prelude::*;
 use serde_json::{Value, json};
@@ -41,7 +55,8 @@ pub fn catchup_url(channel: usize, start: i32, offset: i32) -> String {
 pub fn rect(ui: Ui) -> (f32, f32, f32, f32) {
     let w = window();
     if ui.mode.get() != ViewMode::Guide {
-        (0.0, 0.0, w.width.0, w.height.0)
+        crate::channels_view::preview_rect(ui, w.width.0, w.height.0)
+            .unwrap_or((0.0, 0.0, w.width.0, w.height.0))
     } else {
         crate::panels::preview_rect()
     }
@@ -79,13 +94,30 @@ pub fn layer(ui: Ui) -> impl IntoElement {
             let ch = ui.playing.get().unwrap_or(0);
             json!(ui.picture.with(|p| p.for_channel(ch)).key())
         })
+        .prop("videoTrack", move || {
+            json!(ui.media.choice.with(|c| c.video.clone()))
+        })
+        .prop("audioTrack", move || {
+            json!(ui.media.choice.with(|c| c.audio.clone()))
+        })
+        .prop("textTrack", move || {
+            json!(ui.media.choice.with(|c| c.text.clone()))
+        })
+        .prop("volume", move || json!(ui.media.volume.with(|v| v.level)))
+        .prop("muted", move || json!(ui.media.volume.with(|v| v.muted)))
+        .prop("audioDelay", move || json!(ui.media.delay_ms.get()))
         .on_native_event(move |e: &NativeEvent| {
-            // Once a second while playing: not logged.
-            if e.name.as_ref() == "position" {
-                if let Some(ms) = e.data["ms"].as_u64() {
-                    ui.position_ms.set(ms);
+            match e.name.as_ref() {
+                // Once a second while playing: not logged.
+                "position" => {
+                    if let Some(ms) = e.data["ms"].as_u64() {
+                        ui.position_ms.set(ms);
+                    }
+                    return;
                 }
-                return;
+                "tracks" => return crate::media::on_tracks(ui, &e.data),
+                "format" => return crate::media::on_format(ui, &e.data),
+                _ => {}
             }
             let status = match &*e.name {
                 "state" => {

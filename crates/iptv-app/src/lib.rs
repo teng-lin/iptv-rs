@@ -7,14 +7,17 @@
 pub use iptv_core::guide;
 pub mod theme;
 
+mod channels_view;
 mod chooser;
 mod data;
+mod desktop;
 mod fav_editor;
 mod favorites;
 mod grid;
 mod header;
 mod input;
 mod lists;
+mod media;
 mod menu_view;
 #[cfg(target_os = "linux")]
 mod mpv;
@@ -162,6 +165,10 @@ pub struct Ui {
     pub settings_screen: Signal<Option<iptv_settings::screen::Screen>>,
     /// Stream, health and history of playback (`player.rs`).
     pub player: player::Player,
+    /// The stream's tracks and format, track choices and sound (`media.rs`).
+    pub media: media::Media,
+    /// The channel list over full-screen video, while open.
+    pub channels: Signal<Option<iptv_core::channel_list::ChannelList>>,
 }
 
 impl Ui {
@@ -356,8 +363,11 @@ pub fn App() -> impl IntoElement {
         settings: signal(0),
         settings_screen: signal(None),
         player: player::Player::new(),
+        media: media::Media::new(),
+        channels: signal(None),
     };
     settings::bind(ui);
+    desktop::bind();
     // Leaving full screen closes the panels.
     effect(move || {
         if ui.mode.get() != ViewMode::Fullscreen {
@@ -412,6 +422,8 @@ pub fn App() -> impl IntoElement {
     view()
         .flex_1()
         .bg(move || rgb(ui.theme.with(|t| t.background.window)))
+        // A moving mouse over full-screen video shows the player panels.
+        .on_mouse_move(move |e: &MouseEvent| pointer_moved(ui, e))
         // Layers, bottom to top: opaque backdrop, video, UI, full-screen tap catcher.
         .child(panels::backdrop(ui))
         .child(video::layer(ui))
@@ -448,18 +460,19 @@ pub fn App() -> impl IntoElement {
                         PointerEvents::None
                     }
                 })
-                .on_press(move || {
+                .on_press(move |e: &PressEvent| {
                     ui.touched();
-                    if ui.panels.with(|p| p.shown) == iptv_core::panels::Shown::Hidden {
-                        ui.update_panels(|p, now| p.show_controls(now));
-                    } else {
-                        log::info!("iptv panels hidden by a tap");
-                        ui.panels.update(|p| p.hide());
+                    toggle_panels(ui);
+                    // A double click on the desktop: window full screen (the
+                    // first click's panels go again).
+                    if e.clicks == 2 && cfg!(target_os = "linux") {
+                        desktop::toggle_fullscreen();
                     }
                 }),
         )
         .child(player_panels::status(ui))
         .child(player_panels::layer(ui))
+        .child(channels_view::layer(ui))
         .child(search_view::layer(ui))
         .child(menu_view::layer(ui))
         .child(chooser::layer(ui))
@@ -470,9 +483,43 @@ pub fn App() -> impl IntoElement {
         .child(wizard_view::layer(ui))
 }
 
-/// Back: player panels → hidden; full screen/overlay → guide; then the
-/// guide screen's chain (`browse.rs`): hint card → guide → groups → rail →
-/// leave the app (no handler, so the platform's Back leaves; with
+/// A tap on full-screen video: the card and its buttons, or nothing.
+fn toggle_panels(ui: Ui) {
+    if ui.panels.with(|p| p.shown) == iptv_core::panels::Shown::Hidden {
+        ui.update_panels(|p, now| p.show_card(now));
+    } else {
+        log::info!("iptv panels hidden by a tap");
+        ui.panels.update(|p| p.hide());
+    }
+}
+
+/// The mouse moved: over full-screen video with nothing open above the
+/// panels, it shows them (and keeps them while it moves).
+fn pointer_moved(ui: Ui, e: &MouseEvent) {
+    let open = ui.menu.with_untracked(Option::is_some)
+        || ui.chooser.with_untracked(Option::is_some)
+        || ui.editor.with_untracked(Option::is_some)
+        || ui.wizard.with_untracked(Option::is_some)
+        || untracked(|| {
+            search_view::is_open(ui) || playlists_view::is_open(ui) || settings_view::is_open(ui)
+        });
+    let (x, y) = (e.page_position.x.0, e.page_position.y.0);
+    if ui.mode.get_untracked() != ViewMode::Fullscreen
+        || open
+        || !desktop::pointer_moved(x, y, ui.now_ms())
+    {
+        return;
+    }
+    if ui.input.get_untracked() != Input::Touch {
+        ui.touched();
+    }
+    ui.update_panels(|p, now| p.pointer_moved(now));
+}
+
+/// Back: dialogs close; a full screen window becomes a window again (the
+/// desktop's Escape); player panels → hidden; full screen/overlay → guide;
+/// then the guide screen's chain (`browse.rs`): hint card → guide → groups →
+/// rail → leave the app (no handler, so the platform's Back leaves; with
 /// `general.confirm_exit` the first press only asks for a second).
 fn bind_back(ui: Ui) {
     let back_target = computed(move || {
@@ -481,7 +528,8 @@ fn bind_back(ui: Ui) {
             || ui.description.with(Option::is_some)
             || ui.chooser.with(Option::is_some)
             || ui.editor.with(Option::is_some)
-            || ui.focus.with(|f| f.hint);
+            || ui.focus.with(|f| f.hint)
+            || channels_view::is_open(ui);
         (ui.mode.get(), ui.focus.with(|f| f.pane), panels || menu)
     });
     effect(move || {
@@ -493,7 +541,8 @@ fn bind_back(ui: Ui) {
             && !ui.description.with(Option::is_some)
             && !search_view::is_open(ui)
             && !playlists_view::is_open(ui)
-            && !settings_view::is_open(ui);
+            && !settings_view::is_open(ui)
+            && !desktop::fullscreen();
         let confirm = settings::read(ui).bool(
             iptv_settings::keys::CONFIRM_EXIT,
             &iptv_settings::Target::Global,
@@ -531,6 +580,14 @@ pub(crate) fn go_back(ui: Ui) -> bool {
             }
             _ if search_view::is_open(ui) => {
                 search_view::apply(ui, iptv_search::SearchAction::Back);
+                true
+            }
+            _ if channels_view::is_open(ui) => {
+                channels_view::key(ui, iptv_nav::Action::Back);
+                true
+            }
+            _ if desktop::fullscreen() => {
+                desktop::set_fullscreen(false);
                 true
             }
             (ViewMode::Fullscreen, _, true) => {

@@ -5,14 +5,20 @@
 //! as above any view. Layout changes resize the area; the mpv instance
 //! lives as long as the component.
 //!
-//! Same contract as the Android host's `PlayerComponent.kt`:
+//! Same contract as the Android host's `PlayerComponent.kt` (summed up in
+//! `video.rs`):
 //! - props `source` `{url, headers, token}` or null (a new url or token
 //!   reopens), `paused`, `userAgent` (fallback when the source sends none),
-//!   `pictureSize` (see [`map::picture`]);
+//!   `pictureSize` (see [`map::picture`]); `videoTrack` / `audioTrack`
+//!   (`auto` or a track id: mpv's `vid` / `aid`), `textTrack` (`off` or an
+//!   id: `sid`), each starting again from the default with a new source;
+//!   `volume` (0–100), `muted`, `audioDelay` (ms: mpv's `audio-delay`);
 //! - events `state` {state: idle|buffering|ready|ended}, `size` {width,
 //!   height}, `error` {code, http?} with Media3's code names
-//!   ([`map::Clues::error`]), never addresses or messages, and `position`
-//!   {ms} once a second while playing (from where the source opened).
+//!   ([`map::Clues::error`]), never addresses or messages, `position`
+//!   {ms} once a second while playing (from where the source opened),
+//!   `tracks` (from mpv's `track-list`, [`map::tracks`]) and `format`
+//!   {fps?, channels?}.
 //!
 //! The picture is black from a new source or an error until the stream
 //! plays again. mpv sends a stream's headers with all of its requests
@@ -128,6 +134,13 @@ struct State {
     paused: bool,
     /// mpv's error for the current file, reported after the log is read.
     failed: Option<i32>,
+    /// The viewer left the video track to mpv (`videoTrack` `auto`).
+    video_auto: bool,
+    /// The current file's frame rate and audio channels (0: unknown).
+    fps: f64,
+    channels: i64,
+    /// The frame rate and channels last sent in `format`.
+    format_sent: (f64, i64),
 }
 
 struct Inner {
@@ -201,6 +214,10 @@ impl Player {
                 audio_out: None,
                 paused: false,
                 failed: None,
+                video_auto: true,
+                fps: 0.0,
+                channels: 0,
+                format_sent: (0.0, 0),
             }),
             waker,
         });
@@ -263,6 +280,35 @@ impl NativeComponent for Player {
                 p.state.borrow_mut().user_agent = ua.unwrap_or(DEFAULT_UA).to_owned();
                 p.apply_http();
             }
+            "videoTrack" => {
+                let vid = map::track_choice(value.and_then(Value::as_str));
+                p.state.borrow_mut().video_auto = vid == "auto";
+                p.send(Cmd::Set("vid", vid));
+            }
+            "audioTrack" => {
+                let aid = map::track_choice(value.and_then(Value::as_str));
+                p.send(Cmd::Set("aid", aid));
+            }
+            "textTrack" => {
+                let sid = map::text_choice(value.and_then(Value::as_str));
+                p.send(Cmd::Set("sid", sid));
+            }
+            "volume" => {
+                let level = value.and_then(Value::as_f64).unwrap_or(100.0);
+                p.send(Cmd::Set(
+                    "volume",
+                    format!("{:.0}", level.clamp(0.0, 100.0)),
+                ));
+            }
+            "muted" => {
+                let muted = value.and_then(Value::as_bool).unwrap_or(false);
+                p.send(Cmd::Set("mute", if muted { "yes" } else { "no" }.into()));
+            }
+            "audioDelay" => {
+                let ms = value.and_then(Value::as_f64).unwrap_or(0.0);
+                let secs = ms.clamp(-10_000.0, 10_000.0) / 1000.0;
+                p.send(Cmd::Set("audio-delay", format!("{secs:.3}")));
+            }
             _ => {}
         }
     }
@@ -273,6 +319,21 @@ impl NativeComponent for Player {
 type Out = Vec<(&'static str, Value)>;
 
 impl State {
+    /// `format` with what changed since it was last sent.
+    fn format(&mut self, out: &mut Out) {
+        let mut format = serde_json::Map::new();
+        if self.fps > 0.0 && self.fps != self.format_sent.0 {
+            format.insert("fps".into(), json!(self.fps));
+        }
+        if self.channels > 0 && self.channels != self.format_sent.1 {
+            format.insert("channels".into(), json!(self.channels));
+        }
+        self.format_sent = (self.fps, self.channels);
+        if !format.is_empty() {
+            out.push(("format", Value::Object(format)));
+        }
+    }
+
     fn state(&mut self, out: &mut Out, name: &'static str) {
         if self.last_state != name {
             self.last_state = name;
@@ -335,6 +396,11 @@ impl Inner {
             st.failed = None;
             st.expected = None;
             st.deferred = false;
+            // The load starts from mpv's default tracks.
+            st.video_auto = true;
+            st.fps = 0.0;
+            st.channels = 0;
+            st.format_sent = (0.0, 0);
             st.url.clone()
         };
         self.area.queue_render();
@@ -564,6 +630,33 @@ impl Inner {
                     self.state.borrow_mut().clues.hear(&text);
                 }
             }
+            Note::Tracks(json) => {
+                let st = self.state.borrow();
+                if !self.current(&st) {
+                    return; // a file the viewer left
+                }
+                if let Some(tracks) = map::tracks(&json, st.video_auto) {
+                    out.push(("tracks", tracks));
+                }
+            }
+            Note::Fps(fps) => {
+                let mut st = self.state.borrow_mut();
+                if fps.is_finite() && fps > 0.0 {
+                    st.fps = fps;
+                    if self.current(&st) {
+                        st.format(out);
+                    }
+                }
+            }
+            Note::Channels(channels) => {
+                let mut st = self.state.borrow_mut();
+                if channels > 0 {
+                    st.channels = channels;
+                    if self.current(&st) {
+                        st.format(out);
+                    }
+                }
+            }
             Note::Position(seconds) => {
                 if self.playing() {
                     let ms = (seconds.max(0.0) * 1000.0).round() as u64;
@@ -617,6 +710,10 @@ impl Inner {
         if !st.buffering {
             st.state(out, "ready");
         }
+        // What the file plays: seen before it started (kept, not sent), or
+        // unchanged from the last file (not observed again): ask.
+        st.format(out);
+        self.send(Cmd::Format);
         if ao.is_some() && ao != st.audio_out {
             log::info!("iptv mpv: audio output {}", ao.as_deref().unwrap_or("?"));
             st.audio_out = ao;

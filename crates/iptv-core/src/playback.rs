@@ -440,30 +440,40 @@ impl Health {
     }
 }
 
-/// The last two channels played, by content identity (stable keys), for
-/// "previous channel".
+/// How many channels the recent-channels list keeps.
+pub const RECENT_MAX: usize = 30;
+
+/// The channels played live, newest first, by content identity (stable
+/// keys): "previous channel" and the player's History list.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ChannelHistory {
-    current: Option<String>,
-    previous: Option<String>,
+    recent: Vec<String>,
 }
 
 impl ChannelHistory {
-    /// `key` started playing. Replaying the current channel changes nothing.
+    /// `key` started playing: it moves to the front. Replaying the current
+    /// channel changes nothing.
     pub fn played(&mut self, key: &str) {
-        if self.current.as_deref() == Some(key) {
+        if self.current() == Some(key) {
             return;
         }
-        self.previous = self.current.replace(key.to_owned());
+        self.recent.retain(|k| k != key);
+        self.recent.insert(0, key.to_owned());
+        self.recent.truncate(RECENT_MAX);
     }
 
     pub fn current(&self) -> Option<&str> {
-        self.current.as_deref()
+        self.recent.first().map(String::as_str)
     }
 
     /// The channel before the current one (pressing it again comes back).
     pub fn previous(&self) -> Option<&str> {
-        self.previous.as_deref()
+        self.recent.get(1).map(String::as_str)
+    }
+
+    /// Every channel played, newest (the current one) first.
+    pub fn recent(&self) -> &[String] {
+        &self.recent
     }
 }
 

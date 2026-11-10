@@ -25,7 +25,7 @@ Android video/input research: [`docs/research/android-video-and-input.md`](docs/
 | `crates/iptv-search` | Channel and programme search (folded, ranked, favourites first), history, search-screen state. Wasm-safe |
 | `crates/iptv-app` | NSH shell: screens, placeholder theme, video layer; on Linux the `tv.player` component on libmpv (`src/mpv/`) |
 | `hosts/android` | Kotlin host: `NshView`, Media3 `tv.player` component, TV launcher manifest |
-| `tools/` | `sync-host.sh`, `make-hls-fixtures.sh`, `make-iptv-fixtures.py`, `mock-server.py`, `mock-xtream.py`, `burst.sh` |
+| `tools/` | `sync-host.sh`, `make-hls-fixtures.sh`, `make-track-fixtures.sh`, `make-iptv-fixtures.py`, `mock-server.py`, `mock-xtream.py`, `burst.sh` |
 
 ## Prerequisites
 
@@ -44,6 +44,8 @@ cargo build -p iptv-core --target wasm32-unknown-unknown  # portability check
 cargo run -p iptv-app                                     # Linux desktop (see below)
 
 tools/make-hls-fixtures.sh --serve &                      # synthetic HLS on :8089
+tools/make-track-fixtures.sh --serve &                    # several video/audio/subtitle tracks on :8097
+                                                          # (--host 10.0.2.2:8097 for the emulators)
 tools/sync-host.sh                                        # build libnsh.so (x86_64, arm64) into the host
 (cd hosts/android && ./gradlew assembleDebug)
 adb -s emulator-5554 install -r hosts/android/app/build/outputs/apk/debug/app-debug.apk
@@ -72,7 +74,20 @@ from the guide's menu (Menu, `m`).
 | Play/pause | Space |
 | Info, Guide | `i`, `g` |
 | Previous channel, back to live | `p`, `n` |
+| Rewind / fast-forward (catch-up) | `[`, `]` |
+| Stop (Long Back on a remote) | the Stop media key |
+| Long Left over video (channel list beside it) | Shift+Left |
+| Volume up / down, mute (desktop only) | Ctrl+Up, Ctrl+Down, Ctrl+M |
+| Window full screen | F11, a double click on the video (Escape leaves it first) |
 | Overlay / full screen (development) | `o`, `f` |
+
+Over full-screen video: OK shows the info card with TV guide and
+History, Down the control row (Up back), Menu the control row at once,
+Long OK the menu; Left the channel list (Left in it: the groups), Long
+Left the list beside the video, Right the most recent channel, Up/Down
+change channel, Long Back stops. During catch-up Left/Right seek. Moving
+the mouse shows the panels with play/pause, mute, volume and full screen
+buttons; they hide 3 s after the mouse rests.
 
 Environment: `IPTV_RS_AUDIO=null` mutes the player (mpv `ao`; use it for
 tests), `IPTV_RS_HWDEC` sets mpv's `hwdec` (default `auto-copy-safe`),

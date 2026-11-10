@@ -285,6 +285,8 @@ pub fn timeouts_of(s: &Settings) -> Timeouts {
     Timeouts {
         info_ms: ms(keys::INFO_PANEL_TIMEOUT),
         controls_ms: ms(keys::CONTROLS_PANEL_TIMEOUT),
+        // Not a setting: the desktop's controls hide soon after the mouse rests.
+        ..Timeouts::default()
     }
 }
 
@@ -386,7 +388,8 @@ mod tests {
             timeouts_of(&s),
             Timeouts {
                 info_ms: 9_000,
-                controls_ms: 20_000
+                controls_ms: 20_000,
+                ..Timeouts::default()
             }
         );
     }

@@ -8,6 +8,7 @@
 //! settings and view models as separate crates.
 
 pub mod browse;
+pub mod channel_list;
 pub mod clock;
 pub mod editor;
 pub mod favorites;
@@ -16,6 +17,9 @@ pub mod lists;
 pub mod menu;
 pub mod panels;
 pub mod playback;
+pub mod player_info;
 pub mod player_options;
 pub mod reorder;
+pub mod sound;
+pub mod tracks;
 pub mod wizard;
