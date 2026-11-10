@@ -313,7 +313,7 @@ pub fn layer(ui: Ui) -> impl IntoElement {
                 .rounded(px(RADIUS_LARGE))
                 // Translucent over moving video, like the reference's choosers.
                 .bg(move || tint(ui.theme.with(|t| t.background.panel), 0xD0))
-                .pointer_events(PointerEvents::Auto)
+                .pointer_events(move || crate::pointer_if(open()))
                 .child(
                     text(move || kind().map_or("", title))
                         .px(px(16.0))

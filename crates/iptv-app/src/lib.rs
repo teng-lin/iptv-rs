@@ -74,6 +74,18 @@ pub fn components(components: &nsh_platform_macos::Components) {
     mpv::register(components);
 }
 
+/// `Auto` while `on`, else `None`: for the parts of a layer that hides
+/// (opacity 0) that say `Auto`. NSH's `pointerEvents` is CSS's: a view
+/// that says `Auto` takes presses even inside a `None` one, so a hidden
+/// layer's panels would still catch the clicks meant for what is below.
+pub(crate) fn pointer_if(on: bool) -> PointerEvents {
+    if on {
+        PointerEvents::Auto
+    } else {
+        PointerEvents::None
+    }
+}
+
 /// The last kind of input: the focus fill only shows for keys, as in
 /// Android's touch mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

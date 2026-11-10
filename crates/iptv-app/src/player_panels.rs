@@ -229,7 +229,7 @@ fn top_bar(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> impl IntoElemen
         .py(px(10.0))
         .rounded(px(RADIUS_LARGE))
         .bg(panel)
-        .pointer_events(PointerEvents::Auto)
+        .pointer_events(move || crate::pointer_if(shown(ui) != Shown::Hidden))
         .child(
             text(move || {
                 ui.data_version.get();
@@ -326,7 +326,7 @@ fn info_card(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> impl IntoElem
         .py(px(16.0))
         .rounded(px(RADIUS_LARGE))
         .bg(panel)
-        .pointer_events(PointerEvents::Auto)
+        .pointer_events(move || crate::pointer_if(shown(ui) != Shown::Hidden))
         .child(
             // The logo slot stays when a channel has none.
             view()
@@ -491,7 +491,7 @@ fn time_bar(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> impl IntoEleme
         .py(px(8.0))
         .rounded(px(RADIUS_LARGE))
         .bg(panel)
-        .pointer_events(PointerEvents::Auto)
+        .pointer_events(move || crate::pointer_if(shown(ui) != Shown::Hidden))
         .child(
             text(move || ends().0)
                 .text_size(px(13.0))
@@ -572,7 +572,7 @@ fn quick_row(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> impl IntoElem
         .py(px(6.0))
         .rounded(px(RADIUS_LARGE))
         .bg(panel)
-        .pointer_events(PointerEvents::Auto)
+        .pointer_events(move || crate::pointer_if(shown(ui) != Shown::Hidden))
         .children(QUICK_ACTIONS.iter().enumerate().map(move |(i, action)| {
             let action = *action;
             let focused = move || {
@@ -611,7 +611,7 @@ fn transport(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> impl IntoElem
         .py(px(4.0))
         .rounded(px(RADIUS_LARGE))
         .bg(panel)
-        .pointer_events(PointerEvents::Auto)
+        .pointer_events(move || crate::pointer_if(shown(ui) != Shown::Hidden))
         .child(pill(
             ui,
             move || {
