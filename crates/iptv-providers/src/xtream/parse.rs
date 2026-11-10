@@ -221,8 +221,9 @@ pub fn parse_live_streams(response: &HttpResponse) -> Result<Import<Channel>, Pr
         let days = o.u32("tv_archive_duration").unwrap_or(0);
         let catch_up = (o.flag("tv_archive") && days > 0).then_some(CatchUp {
             kind: CatchUpKind::Xtream,
-            days,
+            days: Some(days),
             source: None,
+            correction_secs: 0,
         });
         out.items.push(Channel {
             id: ContentId::from_provider(
@@ -572,7 +573,8 @@ pub fn parse_vod_info(response: &HttpResponse, vod_id: u64) -> Result<VodDetails
 /// `get_short_epg` and `get_simple_data_table`. Titles and descriptions are
 /// base64 (kept as-is when they are not). `start_timestamp`/`stop_timestamp`
 /// win; otherwise `start`/`end` (or `stop`) are read in the panel's clock
-/// (`server_offset_minutes`, `0` when unknown). Sorted by start.
+/// (`server_offset_minutes`; pass the viewer's offset when the panel's is
+/// unknown). Sorted by start.
 pub fn parse_epg(
     response: &HttpResponse,
     server_offset_minutes: i32,

@@ -22,7 +22,8 @@
 //! - Every API request carries a User-Agent; blank overrides fall back to a
 //!   VLC signature because some panels sit behind WAFs that allowlist
 //!   player clients.
-//! - Catch-up `{start}` is the panel's wall clock, not the viewer's.
+//! - Catch-up `{start}` is the panel's wall clock, not the viewer's; only
+//!   when the panel's offset is unknown is the viewer's clock used.
 
 mod parse;
 
@@ -479,18 +480,22 @@ impl XtreamClient {
     }
 
     /// Archive URL for `[start, end)` (Unix seconds) on a live stream.
-    /// `server_offset_minutes` comes from [`ServerClock::offset_minutes`];
-    /// pass the viewer's offset when that is `None`.
+    /// `server_offset_minutes` is [`ServerClock::offset_minutes`]; when it is
+    /// `None` the `{start}` is written in the viewer's clock,
+    /// `viewer_offset_secs` (IPTVnator's fallback), never silently UTC.
     pub fn catchup_url(
         &self,
         stream_id: u64,
         start: i64,
         end: i64,
         variant: CatchupVariant,
-        server_offset_minutes: i32,
+        server_offset_minutes: Option<i32>,
+        viewer_offset_secs: i32,
     ) -> String {
         let minutes = catchup_duration_minutes(start, end);
-        let when = format_catchup_start(start, server_offset_minutes);
+        let offset_secs =
+            server_offset_minutes.map_or(viewer_offset_secs, |m| m.saturating_mul(60));
+        let when = format_catchup_start(start.saturating_add(i64::from(offset_secs)), 0);
         let ext = match variant {
             CatchupVariant::RestTs | CatchupVariant::LegacyTs => Some("ts"),
             CatchupVariant::RestM3u8 | CatchupVariant::LegacyM3u8 => Some("m3u8"),

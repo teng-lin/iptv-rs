@@ -20,7 +20,8 @@
 //! errors never quote bodies.
 //!
 //! Behaviour follows IPTVnator's documented provider compatibility rules,
-//! rewritten in Rust.
+//! rewritten in Rust. M3U catch-up follows Kodi pvr.iptvsimple's documented
+//! modes where the two differ (see [`m3u::build_catchup_url`]).
 //!
 //! Known assumption: Stalker `tv_archive_duration` is read as hours
 //! (converted to whole days, rounded up).
@@ -38,7 +39,7 @@ pub mod time;
 mod urlenc;
 pub mod xtream;
 
-pub use error::{ProviderError, StalkerError, StalkerErrorKind};
+pub use error::{CatchupError, ProviderError, StalkerError, StalkerErrorKind};
 pub use http::{HttpRequest, HttpResponse, Method};
 pub use id::{ContentId, GroupId};
 pub use secret::{Secret, SecretUrl};

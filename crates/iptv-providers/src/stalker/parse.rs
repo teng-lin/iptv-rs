@@ -398,8 +398,9 @@ fn channel_row(o: Obj<'_>) -> Result<Channel, &'static str> {
     let hours = o.u32("tv_archive_duration").unwrap_or(0);
     let catch_up = (o.flag("tv_archive") && hours > 0).then(|| CatchUp {
         kind: CatchUpKind::Stalker,
-        days: hours.div_ceil(24),
+        days: Some(hours.div_ceil(24)),
         source: None,
+        correction_secs: 0,
     });
     Ok(Channel {
         id: ContentId::from_provider(SourceKind::Stalker, ContentKind::Live, &id),

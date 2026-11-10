@@ -153,10 +153,23 @@ pub struct StalkerLinkFlags {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CatchUp {
     pub kind: CatchUpKind,
-    /// Archive window in days (always > 0 when present).
-    pub days: u32,
+    /// Archive window in days (> 0). `None` when the source declares
+    /// catch-up without a window (an M3U `catchup` type but no
+    /// `catchup-days`); the caller's default applies, see
+    /// [`CatchUp::window_days`].
+    pub days: Option<u32>,
     /// M3U `catchup-source` template, if declared.
     pub source: Option<String>,
+    /// M3U `catchup-correction` (hours, may be fractional) in seconds, added
+    /// to the programme times written into catch-up URLs. `0` when absent.
+    pub correction_secs: i32,
+}
+
+impl CatchUp {
+    /// The archive window to use: the declared one, else `default_days`.
+    pub fn window_days(&self, default_days: u32) -> u32 {
+        self.days.unwrap_or(default_days)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -174,6 +187,9 @@ pub enum CatchUpKind {
     Xtream,
     /// Stalker `tv_archive`; replay goes through the portal.
     Stalker,
+    /// `catchup="vod"`: `source` (default `{catchup-id}`) is the complete
+    /// URL of a recording, played as a video.
+    Vod,
     /// A declared type this crate does not understand; replay unavailable.
     Unsupported(String),
 }
