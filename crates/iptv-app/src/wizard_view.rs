@@ -90,8 +90,12 @@ pub fn send(ui: Ui, event: WizardEvent) {
     prefill(ui);
 }
 
-/// The M3U link form starts with the development playlist's URL.
+/// The M3U link form starts with the development playlist's URL, when the
+/// build has one ([`data::DEV_PLAYLIST`]).
 fn prefill(ui: Ui) {
+    let Some(url) = data::DEV_PLAYLIST.filter(|u| !u.is_empty()) else {
+        return;
+    };
     let due = read(ui, |w| {
         w.step() == Step::Form
             && w.kind() == PlaylistKind::M3uUrl
@@ -105,7 +109,7 @@ fn prefill(ui: Ui) {
                 open.prefilled = true;
                 open.wizard.handle(WizardEvent::SetField {
                     field: Field::PlaylistUrl,
-                    value: data::EXAMPLE_PLAYLIST.to_owned(),
+                    value: url.to_owned(),
                 });
             }
         });

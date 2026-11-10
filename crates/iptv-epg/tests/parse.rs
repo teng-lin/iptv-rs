@@ -283,3 +283,16 @@ fn tiny_chunks_stay_linear() {
     assert_eq!(r.programmes[0].desc.as_deref(), Some(desc.trim()));
     assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
 }
+
+#[test]
+fn superscript_badges_in_titles_are_folded_at_import() {
+    let xml = r#"<tv><channel id="a"><display-name>A</display-name></channel>
+<programme start="20260301120000 +0000" stop="20260301130000 +0000" channel="a"><title>Cup Finalᴸᶦᵛᵉ</title><sub-title>ᴺᵉʷ Episode</sub-title></programme>
+<programme start="20260301130000 +0000" stop="20260301140000 +0000" channel="a"><title>H₂O Facts</title></programme>
+</tv>"#;
+    // Fed a byte at a time: a badge split across chunks folds the same.
+    let r = parse_chunked(xml.as_bytes(), 1, ParseOptions::default());
+    assert_eq!(r.programmes[0].title, "Cup Final Live");
+    assert_eq!(r.programmes[0].sub_title.as_deref(), Some("New Episode"));
+    assert_eq!(r.programmes[1].title, "H₂O Facts");
+}

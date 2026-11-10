@@ -26,6 +26,7 @@ mod menu_view;
 mod mpv;
 mod multiview;
 mod multiview_view;
+mod numbers;
 mod panels;
 mod play_bar;
 mod player;
@@ -40,6 +41,7 @@ pub mod time;
 mod video;
 mod wizard_view;
 
+pub use header::debug_overlay;
 pub use time::clock;
 #[doc(hidden)]
 pub use video::opens as player_opens;

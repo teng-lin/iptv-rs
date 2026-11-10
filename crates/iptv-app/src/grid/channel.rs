@@ -9,8 +9,6 @@ use crate::fonts::{CHANNEL, SANS};
 use crate::theme::BRIGHT_TEXT;
 use crate::{Ui, channel_name};
 
-/// The channel number before the logo (5 digits fit).
-pub(super) const NUMBER_W: f32 = 50.0;
 /// The logo box: missing or broken logos leave it empty.
 const LOGO_W: f32 = 66.0;
 const LOGO_H: f32 = 53.0;
@@ -28,10 +26,11 @@ fn no_logo() -> String {
         .to_owned()
 }
 
-/// The width the name has in a column `column` wide.
-fn name_width(column: f32, playing: bool) -> f32 {
+/// The width the name has in a column `column` wide after a number
+/// `number` wide (`numbers.rs`).
+fn name_width(column: f32, number: f32, playing: bool) -> f32 {
     let marker = if playing { MARKER_W } else { 0.0 };
-    column - 2.0 * PAD - NUMBER_W - LOGO_W - 2.0 * GAP - marker
+    column - 2.0 * PAD - number - LOGO_W - 2.0 * GAP - marker
 }
 
 pub(super) fn cell(
@@ -39,6 +38,7 @@ pub(super) fn cell(
     at: Position,
     channel: Memo<Option<usize>>,
     column: fn() -> f32,
+    number_w: Memo<f32>,
 ) -> impl IntoElement {
     let playing = move || channel.get().is_some() && ui.playing.get() == channel.get();
     let colour = move || {
@@ -73,7 +73,7 @@ pub(super) fn cell(
         .child(
             // The place in the list on screen.
             text(move || (at.index() + 1).to_string())
-                .w(px(NUMBER_W))
+                .w(move || px(number_w.get()))
                 .number_of_lines(1)
                 .text_right()
                 .font_family(SANS)
@@ -106,7 +106,11 @@ pub(super) fn cell(
                 };
                 let star = ui.favorites.with(|f| f.contains(&ch));
                 let name = format!("{}{}", if star { "★ " } else { "" }, channel_name(ch));
-                crate::fonts::fit(&name, name_width(column(), playing()), CHANNEL)
+                crate::fonts::fit(
+                    &name,
+                    name_width(column(), number_w.get(), playing()),
+                    CHANNEL,
+                )
             })
             .flex_shrink(1.0)
             .number_of_lines(1)
@@ -128,8 +132,14 @@ mod tests {
 
     #[test]
     fn names_have_the_room_the_column_leaves() {
-        // A 1280 dp window: 40 % is 512 dp.
-        assert_eq!(name_width(512.0, false), 512.0 - 16.0 - 50.0 - 66.0 - 28.0);
-        assert_eq!(name_width(512.0, true), name_width(512.0, false) - MARKER_W);
+        // A 1280 dp window: 40 % is 512 dp; three digits take about 50.
+        assert_eq!(
+            name_width(512.0, 50.0, false),
+            512.0 - 16.0 - 50.0 - 66.0 - 28.0
+        );
+        assert_eq!(
+            name_width(512.0, 50.0, true),
+            name_width(512.0, 50.0, false) - MARKER_W
+        );
     }
 }

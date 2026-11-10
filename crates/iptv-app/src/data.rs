@@ -56,14 +56,11 @@ pub use wizard_map::source_from_draft;
 
 use crate::Ui;
 
-/// The URL the wizard's M3U form starts with: the synthetic development
-/// playlist on the local mock server (`tools/mock-server.py` with
-/// `tools/make-iptv-fixtures.py`); the emulator reaches the host as
-/// 10.0.2.2. Development only: remove before release.
-#[cfg(target_os = "android")]
-pub const EXAMPLE_PLAYLIST: &str = "http://10.0.2.2:8089/iptv/playlist.m3u";
-#[cfg(not(target_os = "android"))]
-pub const EXAMPLE_PLAYLIST: &str = "http://127.0.0.1:8089/iptv/playlist.m3u";
+/// A development playlist the wizard's M3U form starts with, set when the
+/// app is built (`IPTV_RS_DEV_PLAYLIST=http://10.0.2.2:8089/iptv/playlist.m3u`
+/// for the mock server, `tools/mock-server.py`, from an emulator). Without
+/// it, as in every release build, the link field starts empty.
+pub const DEV_PLAYLIST: Option<&str> = option_env!("IPTV_RS_DEV_PLAYLIST");
 
 /// How often the UI picks up the import thread's reports.
 const POLL: Duration = Duration::from_millis(100);

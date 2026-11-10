@@ -66,6 +66,8 @@ pub fn guide(ui: Ui, rows: ElementRef) -> impl IntoElement {
     });
     // Read where used: a memo of it went stale on window resizes.
     let column: fn() -> f32 = channel_width;
+    // Rows are numbered by place: the list's length is its widest number.
+    let number_w = computed(move || crate::numbers::column_width(ui.list.with(|l| l.len())));
     let now_x = computed(move || {
         let at = now.get() - window.get();
         let rows = ui.list.with(|l| !l.is_empty());
@@ -83,7 +85,7 @@ pub fn guide(ui: Ui, rows: ElementRef) -> impl IntoElement {
                 .child(
                     virtual_list(
                         move || ui.list.with(|l| l.len()),
-                        move |at| row(ui, at, column, window, scale, focused),
+                        move |at| row(ui, at, column, window, scale, focused, number_w),
                     )
                     .estimated_item_size(px(ROW_H))
                     .element_ref(&rows)
@@ -184,6 +186,7 @@ fn row(
     window: Memo<i32>,
     scale: Memo<f32>,
     focused: Memo<Option<(usize, i32)>>,
+    number_w: Memo<f32>,
 ) -> impl IntoElement {
     // The catalog channel behind this row of the list on screen.
     let channel = computed(move || ui.list.with(|l| l.channel(at.index())));
@@ -266,6 +269,6 @@ fn row(
     view()
         .h(px(ROW_H))
         .flex_row()
-        .child(channel::cell(ui, at, channel, column))
+        .child(channel::cell(ui, at, channel, column, number_w))
         .child(view().flex_1().children((0..MAX_CELLS).map(cell)))
 }

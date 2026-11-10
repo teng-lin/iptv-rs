@@ -371,3 +371,45 @@ fn catchup_urls_carry_epoch_times_and_numbers_come_from_the_playlist() {
         )
     );
 }
+
+#[test]
+fn titles_stored_with_superscript_badges_show_them_as_words() {
+    // A guide stored before import folded badges: the title still carries
+    // "ᴸᶦᵛᵉ", which the guide, header, info card and play bar show as text.
+    let mut parsed = parse_xmltv(xmltv().as_bytes(), ParseOptions::default()).expect("parses");
+    parsed.programmes[0].title = "Alpha Newsᴸᶦᵛᵉ".to_owned();
+    let mut builder = SourceBuilder::new(SourceId(1), 0, StoreOptions::default(), NOW);
+    parsed
+        .channels
+        .into_iter()
+        .for_each(|c| builder.push_channel(c));
+    parsed
+        .programmes
+        .into_iter()
+        .for_each(|p| builder.push_programme(p));
+    let source = builder.finish();
+    let a = ChannelKey::new("a");
+    let mut index = MatchIndex::new();
+    index.add_source(source.id(), source.priority(), source.channels());
+    let matched = index.match_channels(
+        [PlaylistChannel {
+            key: &a,
+            tvg_id: Some("a.test"),
+            name: "Alpha",
+            tvg_name: None,
+        }],
+        &Overrides::default(),
+    );
+    let mut store = GuideStore::new();
+    store.replace_source(source);
+    store.set_matches(matched.matches);
+    let channel = GuideChannel {
+        key: a,
+        name: "Alpha".to_owned(),
+        number: 0,
+        catchup_days: 0,
+    };
+    let s = EpgSchedule::new(vec![("News".to_owned(), vec![channel])], store, NOW);
+    assert_eq!(s.title(0, s.program_at(0, 0)), "Alpha News Live");
+    assert_eq!(s.title(0, s.program_at(0, 45)), "Alpha Talk");
+}

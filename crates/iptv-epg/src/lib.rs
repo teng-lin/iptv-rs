@@ -28,6 +28,7 @@ mod parser;
 mod settle;
 mod settled_source;
 mod store;
+mod superscript;
 mod time;
 mod xmltv;
 
@@ -44,5 +45,6 @@ pub use store::{
     EpgSource, GuideStore, IngestReport, NowNext, ProgrammeData, ProgrammeRef, ScheduleRef,
     SourceBuilder, StoreOptions,
 };
+pub use superscript::fold_superscripts;
 pub use time::{DAY, TimePolicy, UnixTime, format_xmltv_time, parse_xmltv_time};
 pub use xmltv::{EpisodeNum, Rating, XmltvChannel, XmltvItem, XmltvProgramme};

@@ -32,6 +32,7 @@ use iptv_net::NetClient;
 use iptv_providers::model::SourceConfig;
 use iptv_providers::xtream::StreamFormat;
 use iptv_store_sqlite::SourceId;
+use nsh_core::platform::Lifecycle;
 use nsh_core::prelude::*;
 
 use crate::guide::Schedule;
@@ -291,14 +292,17 @@ fn open(ui: Ui, surface: usize, session: u64) {
         Playback::CatchUp { start, offset } => (Some(schedule.program_at(channel, start)), offset),
     };
     let Some(epg) = real_schedule(&schedule) else {
-        // The synthetic guide plays the local test streams.
-        let url = match playback {
-            Playback::Live => crate::video::stream_url(channel),
-            Playback::CatchUp { start, offset } => {
-                crate::video::catchup_url(channel, start, offset)
-            }
-        };
-        load(ui, surface, session, PlaySource::new(url));
+        // The synthetic guide plays the local test streams (debug builds).
+        match crate::video::synthetic_url(channel, playback) {
+            Some(url) => load(ui, surface, session, PlaySource::new(url)),
+            None => fail(
+                ui,
+                surface,
+                session,
+                ErrorKind::Unavailable,
+                "no stream".into(),
+            ),
+        }
         return;
     };
     let at = archive.map(|p| crate::guide::unix_of(&*schedule, p.start));
@@ -637,17 +641,29 @@ pub fn bind(ui: Ui) {
     });
     effect(move || {
         let paused = ui.paused.get();
+        let away = stopped_in_background(lifecycle());
         let now = ui.now_ms();
         untracked(|| {
-            ui.player
-                .main()
-                .health
-                .update(|h| h.set_paused(paused, now));
-            if !paused {
-                watch_stall(ui, 0);
+            for surface in 0..SURFACES {
+                let held = away || (surface == 0 && paused);
+                ui.player
+                    .stream(surface)
+                    .health
+                    .update(|h| h.set_paused(held, now));
+                if !held {
+                    watch_stall(ui, surface);
+                }
             }
         });
     });
+}
+
+/// Whether the host stops its players in `lifecycle`: Android's does while
+/// the activity is stopped (`TvActivity`, `PlayerComponent.background`) and
+/// reopens them after, so waiting then is no stall. Desktop players play on
+/// in a minimised window.
+fn stopped_in_background(lifecycle: Lifecycle) -> bool {
+    cfg!(target_os = "android") && lifecycle == Lifecycle::Background
 }
 
 fn follow_playing(ui: Ui) {

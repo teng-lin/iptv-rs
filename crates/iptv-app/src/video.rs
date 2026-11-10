@@ -28,6 +28,12 @@
 //!   bitrate}], audio: [{id, label, language, channels, codec}], text:
 //!   [{id, label, language}], selected: {video, audio, text}} whenever they
 //!   change; `format` {fps?, channels?} for what plays.
+//!
+//! In the background (`lifecycle()` Background) Android's host stops every
+//! player, closing its connections, and reopens it when the app comes back
+//! (live at the live edge, catch-up where it was) with no events between:
+//! the app only pauses its stall checks (`player::bind`). Desktop players
+//! play on in a minimised window.
 
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -38,30 +44,37 @@ use serde_json::{Value, json};
 use crate::{Ui, ViewMode};
 
 /// The local mock server (`tools/mock-server.py`) as the player reaches it:
-/// through the Android emulator's host alias, or on this machine.
-#[cfg(target_os = "android")]
+/// through the Android emulator's host alias, or on this machine. Debug
+/// builds only: the synthetic guide's channels have no streams in a release.
+#[cfg(all(debug_assertions, target_os = "android"))]
 const MOCK_SERVER: &str = "http://10.0.2.2:8089";
-#[cfg(not(target_os = "android"))]
+#[cfg(all(debug_assertions, not(target_os = "android")))]
 const MOCK_SERVER: &str = "http://127.0.0.1:8089";
 
-/// Synthetic local HLS from `tools/make-hls-fixtures.sh --serve`. Three
-/// test patterns cycle by channel.
-pub fn stream_url(channel: usize) -> String {
-    format!("{MOCK_SERVER}/ch{}/index.m3u8", channel % 3)
+/// What a channel of the synthetic guide (shown before any playlist is
+/// imported) plays: in debug builds the mock server's test streams
+/// (`tools/make-hls-fixtures.sh --serve`; three test patterns cycle by
+/// channel, `/archive/*` for catch-up), else nothing.
+#[cfg(debug_assertions)]
+pub fn synthetic_url(channel: usize, playback: crate::Playback) -> Option<String> {
+    Some(match playback {
+        crate::Playback::Live => format!("{MOCK_SERVER}/ch{}/index.m3u8", channel % 3),
+        crate::Playback::CatchUp { start, offset } => {
+            let s = crate::schedule();
+            let p = s.program_at(channel, start);
+            let utc = crate::guide::unix_of(&*s, p.start) + i64::from(offset);
+            let duration = (p.end - p.start) * 60 - offset;
+            format!(
+                "{MOCK_SERVER}/archive/ch{}/index.m3u8?utc={utc}&duration={duration}",
+                channel % 3
+            )
+        }
+    })
 }
 
-/// The synthetic archive URL (`tools/mock-server.py` serves `/archive/*`)
-/// for the synthetic guide; imported channels resolve through
-/// `iptv_guide::playback`.
-pub fn catchup_url(channel: usize, start: i32, offset: i32) -> String {
-    let s = crate::schedule();
-    let p = s.program_at(channel, start);
-    let utc = crate::guide::unix_of(&*s, p.start) + i64::from(offset);
-    let duration = (p.end - p.start) * 60 - offset;
-    format!(
-        "{MOCK_SERVER}/archive/ch{}/index.m3u8?utc={utc}&duration={duration}",
-        channel % 3
-    )
+#[cfg(not(debug_assertions))]
+pub fn synthetic_url(_channel: usize, _playback: crate::Playback) -> Option<String> {
+    None
 }
 
 /// The full-screen player's rectangle (x, y, width, height in px) for the
