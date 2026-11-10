@@ -143,6 +143,12 @@ impl Keymap {
             // Control row: directions/OK use the global moves; Up/Down zap.
             b(Some(Controls), K::Up, Short, A::ChannelUp),
             b(Some(Controls), K::Down, Short, A::ChannelDown),
+            // Over video there is no list to page: Page Up/Down (CH+/CH- on
+            // many remotes, and a PC keyboard's) zap, as in the guide's rows.
+            b(Some(Player), K::PageUp, Short, A::ChannelUp),
+            b(Some(Player), K::PageDown, Short, A::ChannelDown),
+            b(Some(Controls), K::PageUp, Short, A::ChannelUp),
+            b(Some(Controls), K::PageDown, Short, A::ChannelDown),
             // Menus: Left and Right do nothing (observed); Back closes.
             b(Some(Menu), K::Left, Short, A::Ignore),
             b(Some(Menu), K::Right, Short, A::Ignore),
@@ -237,6 +243,25 @@ mod tests {
             !k.has_long(Controls, RemoteKey::Ok),
             "OK presses the button at once"
         );
+    }
+
+    #[test]
+    fn page_keys_page_the_guide_and_zap_over_video() {
+        let k = Keymap::defaults();
+        assert_eq!(
+            k.resolve(Context::Guide, RemoteKey::PageDown, Press::Short),
+            Some(Action::PageDown)
+        );
+        for ctx in [Context::Player, Controls] {
+            assert_eq!(
+                k.resolve(ctx, RemoteKey::PageUp, Press::Short),
+                Some(Action::ChannelUp)
+            );
+            assert_eq!(
+                k.resolve(ctx, RemoteKey::PageDown, Press::Short),
+                Some(Action::ChannelDown)
+            );
+        }
     }
 
     #[test]

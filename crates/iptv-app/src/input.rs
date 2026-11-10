@@ -28,6 +28,8 @@ const KEYS: &[(&str, RemoteKey)] = &[
     ("enter", RemoteKey::Ok),
     ("pageup", RemoteKey::PageUp),
     ("pagedown", RemoteKey::PageDown),
+    // A remote's Menu, and a PC keyboard's context-menu key ("contextmenu"
+    // names the same key).
     ("menu", RemoteKey::Menu),
     ("guide", RemoteKey::Guide),
     ("info", RemoteKey::Info),
@@ -113,6 +115,11 @@ pub fn bind(ui: Ui) {
             key_event(ui, &nav, key, phase)
         });
     }
+    // Back on a PC keyboard: Escape is the platform's (NSH), Backspace ours
+    // (it does not fire while a text field edits).
+    on_key("backspace", move |_| {
+        crate::go_back(ui);
+    });
     // Spike shortcuts for the view modes.
     on_key("o", move |_| ui.toggle(ViewMode::Overlay));
     on_key("f", move |_| ui.toggle(ViewMode::Fullscreen));

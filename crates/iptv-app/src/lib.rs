@@ -420,7 +420,8 @@ pub fn App() -> impl IntoElement {
 }
 
 /// Back: player panels → hidden; full screen/overlay → guide; guide →
-/// groups; groups → leave the app.
+/// groups; groups → leave the app (no handler, so the platform's Back
+/// leaves).
 fn bind_back(ui: Ui) {
     let back_target = computed(move || {
         let panels = ui.panels.with(|p| p.shown) != iptv_core::panels::Shown::Hidden;
@@ -430,44 +431,66 @@ fn bind_back(ui: Ui) {
             || ui.editor.with(Option::is_some);
         (ui.mode.get(), ui.focus.with(|f| f.pane), panels || menu)
     });
-    effect(move || match back_target.get() {
-        _ if ui.wizard.with(Option::is_some) => on_back_press(move || wizard_view::back(ui)),
-        _ if ui.editor.with(Option::is_some) => on_back_press(move || {
-            fav_editor::close(ui);
-            true
-        }),
-        _ if ui.chooser.with(Option::is_some) => on_back_press(move || {
-            chooser::close(ui);
-            true
-        }),
-        _ if ui.menu.with(Option::is_some) || ui.description.with(Option::is_some) => {
-            on_back_press(move || {
+    effect(move || {
+        let leaves = matches!(back_target.get(), (ViewMode::Guide, Pane::Groups, _))
+            && !ui.wizard.with(Option::is_some)
+            && !ui.editor.with(Option::is_some)
+            && !ui.chooser.with(Option::is_some)
+            && !ui.menu.with(Option::is_some)
+            && !ui.description.with(Option::is_some)
+            && !search_view::is_open(ui);
+        if !leaves {
+            on_back_press(move || go_back(ui));
+        }
+    });
+}
+
+/// One step back (the platform's Back, or a key standing in for it);
+/// `false` where Back leaves the app.
+pub(crate) fn go_back(ui: Ui) -> bool {
+    untracked(|| {
+        let panels = ui.panels.with(|p| p.shown) != iptv_core::panels::Shown::Hidden;
+        let menu = ui.menu.with(Option::is_some)
+            || ui.description.with(Option::is_some)
+            || ui.chooser.with(Option::is_some)
+            || ui.editor.with(Option::is_some);
+        match (ui.mode.get(), ui.focus.with(|f| f.pane), panels || menu) {
+            _ if ui.wizard.with(Option::is_some) => wizard_view::back(ui),
+            _ if ui.editor.with(Option::is_some) => {
+                fav_editor::close(ui);
+                true
+            }
+            _ if ui.chooser.with(Option::is_some) => {
+                chooser::close(ui);
+                true
+            }
+            _ if ui.menu.with(Option::is_some) || ui.description.with(Option::is_some) => {
                 menu_view::close(ui);
                 true
-            })
-        }
-        _ if search_view::is_open(ui) => on_back_press(move || {
-            search_view::apply(ui, iptv_search::SearchAction::Back);
-            true
-        }),
-        (ViewMode::Fullscreen, _, true) => on_back_press(move || {
-            ui.panels.update(|p| p.hide());
-            true
-        }),
-        (ViewMode::Guide, Pane::Groups, _) => {}
-        (ViewMode::Guide, Pane::Guide, _) => on_back_press(move || {
-            // Back on a past/future programme returns to now; on now, to the groups.
-            let mut moved = false;
-            ui.focus
-                .update(|f| moved = f.return_to_now(&*crate::schedule()));
-            if !moved {
-                ui.focus.update(|f| f.pane = Pane::Groups);
             }
-            true
-        }),
-        _ => on_back_press(move || {
-            ui.mode.set(ViewMode::Guide);
-            true
-        }),
-    });
+            _ if search_view::is_open(ui) => {
+                search_view::apply(ui, iptv_search::SearchAction::Back);
+                true
+            }
+            (ViewMode::Fullscreen, _, true) => {
+                ui.panels.update(|p| p.hide());
+                true
+            }
+            (ViewMode::Guide, Pane::Groups, _) => false,
+            (ViewMode::Guide, Pane::Guide, _) => {
+                // Back on a past/future programme returns to now; on now, to the groups.
+                let mut moved = false;
+                ui.focus
+                    .update(|f| moved = f.return_to_now(&*crate::schedule()));
+                if !moved {
+                    ui.focus.update(|f| f.pane = Pane::Groups);
+                }
+                true
+            }
+            _ => {
+                ui.mode.set(ViewMode::Guide);
+                true
+            }
+        }
+    })
 }
