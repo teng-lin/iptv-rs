@@ -1,7 +1,7 @@
-//! `tv.player` on the desktop: one persistent libmpv player per component
+//! `tv.player` on the desktops: one persistent libmpv player per component
 //! drawing through mpv's render API (OpenGL) into the native view NSH hosts
 //! in the video layer's view (`video.rs`): a `GtkGLArea` on Linux
-//! ([`gtk`]).
+//! ([`gtk`]), an `NSView` backed by a `CAOpenGLLayer` on macOS ([`mac`]).
 //! In-process; the app's UI draws above it as above any view. Layout
 //! changes resize the view; the mpv instance lives as long as the
 //! component. Nothing is process-wide but the registry mpv's threads find
@@ -43,6 +43,10 @@ mod worker;
 mod gtk;
 #[cfg(target_os = "linux")]
 use gtk as platform;
+#[cfg(target_os = "macos")]
+mod mac;
+#[cfg(target_os = "macos")]
+use mac as platform;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;

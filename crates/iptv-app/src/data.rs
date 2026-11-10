@@ -180,8 +180,9 @@ fn now_unix() -> i64 {
         .map_or(0, |d| d.as_secs() as i64)
 }
 
-/// Where the app keeps its files: the Android app's files directory, or
-/// `~/.local/share/iptv-rs` on the desktop.
+/// Where the app keeps its files: the Android app's files directory,
+/// `~/Library/Application Support/iptv-rs` on macOS, or
+/// `~/.local/share/iptv-rs` on the other desktops.
 pub fn data_dir() -> PathBuf {
     #[cfg(target_os = "android")]
     {
@@ -201,7 +202,11 @@ pub fn data_dir() -> PathBuf {
         let home = std::env::var_os("HOME")
             .map(PathBuf::from)
             .unwrap_or_else(std::env::temp_dir);
-        home.join(".local/share/iptv-rs")
+        if cfg!(target_os = "macos") {
+            home.join("Library/Application Support/iptv-rs")
+        } else {
+            home.join(".local/share/iptv-rs")
+        }
     }
 }
 

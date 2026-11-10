@@ -21,7 +21,7 @@ mod input;
 mod lists;
 mod media;
 mod menu_view;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod mpv;
 mod panels;
 mod player;
@@ -63,6 +63,14 @@ fn native_module(registry: &mut Registry) {
 #[cfg(target_os = "linux")]
 #[native_components(linux)]
 pub fn components(components: &nsh_platform_linux::Components) {
+    mpv::register(components);
+}
+
+/// The macOS desktop's native components: `tv.player` on libmpv, as on
+/// Linux.
+#[cfg(target_os = "macos")]
+#[native_components(macos)]
+pub fn components(components: &nsh_platform_macos::Components) {
     mpv::register(components);
 }
 
