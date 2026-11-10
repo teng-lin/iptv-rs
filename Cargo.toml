@@ -9,6 +9,7 @@ members = [
     "crates/iptv-guide",
     "crates/iptv-import",
     "crates/iptv-net",
+    "crates/iptv-store-sqlite",
     "crates/iptv-app",
 ]
 # nsh generates its own Cargo workspaces under the app crate.
@@ -41,3 +42,7 @@ sha1_smol = "1"
 # Import pipeline (core, wasm-safe) and its native network adapter
 iptv-import = { path = "crates/iptv-import" }
 iptv-net = { path = "crates/iptv-net" }
+# iptv-store-sqlite (native adapter; bundled SQLite builds for Android via the NDK)
+iptv-store-sqlite = { path = "crates/iptv-store-sqlite" }
+rusqlite = { version = "0.41", default-features = false, features = ["bundled", "cache"] }
+tempfile = "3"

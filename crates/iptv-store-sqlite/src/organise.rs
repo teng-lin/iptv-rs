@@ -1,0 +1,307 @@
+//! Manual channel order per list and custom groups.
+//!
+//! Both keep ids of channels that are currently gone, in place, so a
+//! returning channel gets its old position back. Positions are rewritten
+//! densely on every move: cheap for groups and favourites, ~one write per
+//! channel for a manual order of the whole source.
+
+use std::collections::HashSet;
+
+use iptv_providers::{ContentId, GroupId};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
+
+use crate::error::{Result, StoreError};
+use crate::order::move_to;
+use crate::overlay::present_ids;
+use crate::sources::ensure_source;
+use crate::{SourceId, Store};
+
+/// A list whose order the user can set.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OrderScope {
+    /// The all-channels list.
+    All,
+    /// One provider group.
+    Group(GroupId),
+}
+
+impl OrderScope {
+    pub(crate) fn key(&self) -> &str {
+        match self {
+            Self::All => "",
+            Self::Group(g) => g.as_str(),
+        }
+    }
+}
+
+/// Row id of a custom group.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct CustomGroupId(pub i64);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CustomGroup {
+    pub id: CustomGroupId,
+    pub source_id: SourceId,
+    pub name: String,
+    /// Members present in the current catalog (hidden ones included).
+    pub channel_count: u32,
+}
+
+fn ids(conn: &Connection, sql: &str, args: impl rusqlite::Params) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare_cached(sql)?;
+    let rows = stmt.query_map(args, |r| r.get(0))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// Current channels of a scope in provider order.
+fn scope_channels(conn: &Connection, source: SourceId, scope: &OrderScope) -> Result<Vec<String>> {
+    match scope {
+        OrderScope::All => ids(
+            conn,
+            "SELECT id FROM channels WHERE source_id = ?1 ORDER BY position",
+            [source.0],
+        ),
+        OrderScope::Group(g) => ids(
+            conn,
+            "SELECT channel_id FROM channel_groups WHERE source_id = ?1 AND group_id = ?2
+             ORDER BY position",
+            params![source.0, g.as_str()],
+        ),
+    }
+}
+
+fn stored_order(conn: &Connection, source: SourceId, scope: &OrderScope) -> Result<Vec<String>> {
+    ids(
+        conn,
+        "SELECT channel_id FROM manual_order WHERE source_id = ?1 AND scope = ?2 ORDER BY position",
+        params![source.0, scope.key()],
+    )
+}
+
+fn write_order(
+    tx: &Transaction<'_>,
+    source: SourceId,
+    scope: &OrderScope,
+    list: &[String],
+) -> Result<()> {
+    tx.execute(
+        "DELETE FROM manual_order WHERE source_id = ?1 AND scope = ?2",
+        params![source.0, scope.key()],
+    )?;
+    let mut stmt = tx.prepare_cached(
+        "INSERT OR IGNORE INTO manual_order (source_id, scope, channel_id, position)
+         VALUES (?1, ?2, ?3, ?4)",
+    )?;
+    for (position, id) in list.iter().enumerate() {
+        stmt.execute(params![source.0, scope.key(), id, position as i64])?;
+    }
+    Ok(())
+}
+
+fn group_source(conn: &Connection, group: CustomGroupId) -> Result<SourceId> {
+    conn.query_row(
+        "SELECT source_id FROM custom_groups WHERE id = ?1",
+        [group.0],
+        |r| r.get(0),
+    )
+    .optional()?
+    .map(SourceId)
+    .ok_or(StoreError::CustomGroupNotFound(group.0))
+}
+
+fn members(conn: &Connection, group: CustomGroupId) -> Result<Vec<String>> {
+    ids(
+        conn,
+        "SELECT channel_id FROM custom_group_members WHERE group_id = ?1 ORDER BY position",
+        [group.0],
+    )
+}
+
+fn write_members(tx: &Transaction<'_>, group: CustomGroupId, list: &[String]) -> Result<()> {
+    let mut stmt = tx.prepare_cached(
+        "UPDATE custom_group_members SET position = ?3 WHERE group_id = ?1 AND channel_id = ?2",
+    )?;
+    for (position, id) in list.iter().enumerate() {
+        stmt.execute(params![group.0, id, position as i64])?;
+    }
+    Ok(())
+}
+
+impl Store {
+    /// Moves a channel to `index` in a list as shown in effective order
+    /// (hidden channels included). The first move materialises the list's
+    /// current order. Returns `false` if the channel is not in the list.
+    pub fn move_channel(
+        &mut self,
+        source: SourceId,
+        scope: &OrderScope,
+        id: &ContentId,
+        index: usize,
+    ) -> Result<bool> {
+        let tx = self.conn.transaction()?;
+        ensure_source(&tx, source)?;
+        let current = scope_channels(&tx, source, scope)?;
+        let present: HashSet<String> = current.iter().cloned().collect();
+        let mut list = stored_order(&tx, source, scope)?;
+        let listed: HashSet<String> = list.iter().cloned().collect();
+        list.extend(current.into_iter().filter(|c| !listed.contains(c)));
+        if !move_to(&mut list, &present, id.as_str(), index) {
+            return Ok(false);
+        }
+        write_order(&tx, source, scope, &list)?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    /// Sets a list's whole order (edit-mode commit). Gone channels that had
+    /// a place keep one after the given ids; channels not named sort after
+    /// them in provider order.
+    pub fn set_manual_order(
+        &mut self,
+        source: SourceId,
+        scope: &OrderScope,
+        order: &[ContentId],
+    ) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        ensure_source(&tx, source)?;
+        let present = present_ids(&tx, source)?;
+        let mut seen = HashSet::new();
+        let mut list: Vec<String> = order
+            .iter()
+            .map(|c| c.as_str().to_owned())
+            .filter(|c| seen.insert(c.clone()))
+            .collect();
+        list.extend(
+            stored_order(&tx, source, scope)?
+                .into_iter()
+                .filter(|c| !present.contains(c) && !seen.contains(c)),
+        );
+        write_order(&tx, source, scope, &list)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Back to provider order for that list.
+    pub fn reset_manual_order(&mut self, source: SourceId, scope: &OrderScope) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM manual_order WHERE source_id = ?1 AND scope = ?2",
+            params![source.0, scope.key()],
+        )?;
+        Ok(())
+    }
+
+    /// Creates an empty custom group at the end of the source's list.
+    pub fn create_custom_group(&mut self, source: SourceId, name: &str) -> Result<CustomGroupId> {
+        ensure_source(&self.conn, source)?;
+        let now = self.now();
+        self.conn.execute(
+            "INSERT INTO custom_groups (source_id, name, position, created_at)
+             VALUES (?1, ?2, (SELECT COALESCE(MAX(position) + 1, 0) FROM custom_groups
+                              WHERE source_id = ?1), ?3)",
+            params![source.0, name, now],
+        )?;
+        Ok(CustomGroupId(self.conn.last_insert_rowid()))
+    }
+
+    pub fn rename_custom_group(&mut self, group: CustomGroupId, name: &str) -> Result<()> {
+        let changed = self.conn.execute(
+            "UPDATE custom_groups SET name = ?2 WHERE id = ?1",
+            params![group.0, name],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::CustomGroupNotFound(group.0));
+        }
+        Ok(())
+    }
+
+    /// Deletes the group and its membership (not the channels).
+    pub fn delete_custom_group(&mut self, group: CustomGroupId) -> Result<bool> {
+        Ok(self
+            .conn
+            .execute("DELETE FROM custom_groups WHERE id = ?1", [group.0])?
+            > 0)
+    }
+
+    /// Moves a custom group to `index` in its source's list.
+    pub fn move_custom_group(&mut self, group: CustomGroupId, index: usize) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        let source = group_source(&tx, group)?;
+        let mut list = ids(
+            &tx,
+            "SELECT CAST(id AS TEXT) FROM custom_groups WHERE source_id = ?1 ORDER BY position, id",
+            [source.0],
+        )?;
+        let present: HashSet<String> = list.iter().cloned().collect();
+        move_to(&mut list, &present, &group.0.to_string(), index);
+        {
+            let mut stmt =
+                tx.prepare_cached("UPDATE custom_groups SET position = ?2 WHERE id = ?1")?;
+            for (position, id) in list.iter().enumerate() {
+                stmt.execute(params![id, position as i64])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// A source's custom groups in list order.
+    pub fn custom_groups(&self, source: SourceId) -> Result<Vec<CustomGroup>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT g.id, g.name, (SELECT COUNT(*) FROM custom_group_members m
+                 JOIN channels c ON c.source_id = g.source_id AND c.id = m.channel_id
+                 WHERE m.group_id = g.id)
+             FROM custom_groups g WHERE g.source_id = ?1 ORDER BY g.position, g.id",
+        )?;
+        let rows = stmt.query_map([source.0], |r| {
+            Ok(CustomGroup {
+                id: CustomGroupId(r.get(0)?),
+                source_id: source,
+                name: r.get(1)?,
+                channel_count: r.get(2)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Appends a channel to a custom group. Returns `false` if it was
+    /// already a member.
+    pub fn add_to_custom_group(&mut self, group: CustomGroupId, id: &ContentId) -> Result<bool> {
+        group_source(&self.conn, group)?;
+        Ok(self.conn.execute(
+            "INSERT OR IGNORE INTO custom_group_members (group_id, channel_id, position)
+             VALUES (?1, ?2, (SELECT COALESCE(MAX(position) + 1, 0) FROM custom_group_members
+                              WHERE group_id = ?1))",
+            params![group.0, id.as_str()],
+        )? > 0)
+    }
+
+    pub fn remove_from_custom_group(
+        &mut self,
+        group: CustomGroupId,
+        id: &ContentId,
+    ) -> Result<bool> {
+        Ok(self.conn.execute(
+            "DELETE FROM custom_group_members WHERE group_id = ?1 AND channel_id = ?2",
+            params![group.0, id.as_str()],
+        )? > 0)
+    }
+
+    /// Moves a member to `index` among the group's present channels.
+    pub fn move_in_custom_group(
+        &mut self,
+        group: CustomGroupId,
+        id: &ContentId,
+        index: usize,
+    ) -> Result<bool> {
+        let tx = self.conn.transaction()?;
+        let source = group_source(&tx, group)?;
+        let mut list = members(&tx, group)?;
+        let present = present_ids(&tx, source)?;
+        if !move_to(&mut list, &present, id.as_str(), index) {
+            return Ok(false);
+        }
+        write_members(&tx, group, &list)?;
+        tx.commit()?;
+        Ok(true)
+    }
+}
