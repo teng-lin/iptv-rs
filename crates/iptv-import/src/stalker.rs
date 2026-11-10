@@ -176,7 +176,7 @@ fn config(e: ProviderError) -> ImportError {
 }
 
 /// Runs the session's auth loop to `Ready`.
-async fn authenticate<F: Fetch, P: ProgressSink>(
+pub(crate) async fn authenticate<F: Fetch, P: ProgressSink>(
     ctx: &mut Ctx<'_, F, P>,
     session: &mut StalkerSession,
 ) -> Result<(), ImportError> {
@@ -203,7 +203,7 @@ async fn authenticate<F: Fetch, P: ProgressSink>(
 }
 
 /// One API call; a token rejection re-authenticates and retries once.
-async fn call<F: Fetch, P: ProgressSink, T>(
+pub(crate) async fn call<F: Fetch, P: ProgressSink, T>(
     ctx: &mut Ctx<'_, F, P>,
     session: &mut StalkerSession,
     step: Step,

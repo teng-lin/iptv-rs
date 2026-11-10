@@ -2,8 +2,10 @@
 //! player state, clock), an info card (channel, now/next with progress) and
 //! the control row. State lives in `iptv_core::panels`; this only draws it.
 //! Panels are views over the video SurfaceView (never alpha on the video).
+//! [`status`] draws the waiting and error states of `player.rs`.
 
 use iptv_core::panels::{CONTROLS, Control, Shown};
+use iptv_core::playback::{ErrorKind, Phase};
 use nsh_core::prelude::*;
 
 use crate::guide::Airing;
@@ -301,4 +303,158 @@ fn button(ui: Ui, index: usize, control: Control) -> impl IntoElement {
             ui.panels.update(|p| p.focus = index);
             input::press_control(ui, control);
         })
+}
+
+/// What the status layer shows over the video.
+#[derive(Clone, Debug, PartialEq)]
+enum Status {
+    Hidden,
+    Waiting(String),
+    Failed {
+        title: String,
+        message: &'static str,
+        detail: String,
+    },
+    /// A replayed programme reached its end.
+    Over,
+}
+
+/// Our own wording for a failure.
+fn failure_message(kind: &ErrorKind, catch_up: bool) -> &'static str {
+    match kind {
+        ErrorKind::Unavailable if catch_up => "This programme can't be replayed.",
+        ErrorKind::Unavailable => "This channel has no stream address.",
+        ErrorKind::Http(401 | 403) => "The provider refused this stream.",
+        ErrorKind::Http(404 | 410) => "The provider doesn't have this stream.",
+        ErrorKind::Http(_) => "The provider answered with an error.",
+        ErrorKind::Network => "The stream can't be reached.",
+        ErrorKind::Format => "This stream's format isn't supported.",
+        ErrorKind::Ended => "The stream ended.",
+        ErrorKind::Stalled => "The stream stopped sending video.",
+        ErrorKind::Resolve => "The portal didn't give a stream address.",
+        ErrorKind::Other => "Playback stopped with an error.",
+    }
+}
+
+fn status_of(ui: Ui) -> Status {
+    let Some(channel) = ui.playing.get() else {
+        return Status::Hidden;
+    };
+    if ui.mode.get() == ViewMode::Overlay {
+        return Status::Hidden; // the guide covers the video
+    }
+    let catch_up = matches!(ui.playback.get(), crate::Playback::CatchUp { .. });
+    ui.player.health.with(|h| match h.phase() {
+        Phase::Idle if catch_up => Status::Over,
+        Phase::Idle | Phase::Playing => Status::Hidden,
+        Phase::Resolving | Phase::Loading => Status::Waiting("Loading…".into()),
+        Phase::Buffering => Status::Waiting("Buffering…".into()),
+        Phase::Retrying { attempt, .. } => Status::Waiting(format!(
+            "Reconnecting… ({attempt} of {})",
+            h.policy.max_attempts
+        )),
+        Phase::Failed(f) => Status::Failed {
+            title: format!("Can't play {}", channel_name(channel)),
+            message: failure_message(&f.kind, catch_up),
+            detail: match f.attempts {
+                0 => f.detail.clone(),
+                n => format!("{} · tried {n} times", f.detail),
+            },
+        },
+    })
+}
+
+/// Waiting and error states over the video, in the player's rectangle:
+/// a small pill while loading, buffering or reconnecting; a card with Retry
+/// once retries stopped (OK retries too). Compact in the guide's preview.
+pub fn status(ui: Ui) -> impl IntoElement {
+    let status = computed(move || status_of(ui));
+    let compact = move || ui.mode.get() == ViewMode::Guide;
+    let panel = move || tint(ui.theme.with(|t| t.background.panel), PANEL_ALPHA);
+    let size = move |full: f32| px(if compact() { full * 0.6 } else { full });
+    let waiting = move || matches!(status.get(), Status::Waiting(_));
+    let card = move || matches!(status.get(), Status::Failed { .. } | Status::Over);
+    view()
+        .absolute()
+        .left(move || px(crate::video::rect(ui).0))
+        .top(move || px(crate::video::rect(ui).1))
+        .w(move || px(crate::video::rect(ui).2))
+        .h(move || px(crate::video::rect(ui).3))
+        .items_center()
+        .justify_center()
+        .pointer_events(PointerEvents::BoxNone)
+        .child(when(waiting, move || {
+            text(move || match status.get() {
+                Status::Waiting(t) => t,
+                _ => String::new(),
+            })
+            .px(size(18.0))
+            .py(size(8.0))
+            .rounded(px(RADIUS_LARGE))
+            .bg(panel)
+            .text_size(size(16.0))
+            .text_color(rgb(WHITE))
+        }))
+        .child(when(card, move || {
+            let failed = move || matches!(status.get(), Status::Failed { .. });
+            view()
+                .items_center()
+                .gap(size(10.0))
+                .px(size(28.0))
+                .py(size(20.0))
+                .rounded(px(RADIUS_LARGE))
+                .bg(panel)
+                .pointer_events(PointerEvents::Auto)
+                .child(
+                    text(move || match status.get() {
+                        Status::Failed { title, .. } => title,
+                        _ => "The programme has ended".to_owned(),
+                    })
+                    .text_size(size(22.0))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(rgb(WHITE)),
+                )
+                .child(
+                    text(move || match status.get() {
+                        Status::Failed { message, .. } => message.to_owned(),
+                        _ => "Next (⏭) returns to live.".to_owned(),
+                    })
+                    .text_size(size(16.0))
+                    .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA)),
+                )
+                .child(when(
+                    move || failed() && !compact(),
+                    move || {
+                        text(move || match status.get() {
+                            Status::Failed { detail, .. } => detail,
+                            _ => String::new(),
+                        })
+                        .text_size(px(12.0))
+                        .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA))
+                    },
+                ))
+                .child(when(
+                    move || failed() && !compact(),
+                    move || {
+                        text(move || {
+                            if ui.keys_shown() {
+                                "OK  Retry".to_owned()
+                            } else {
+                                "Retry".to_owned()
+                            }
+                        })
+                        .mt(px(6.0))
+                        .px(px(22.0))
+                        .py(px(10.0))
+                        .rounded(px(RADIUS))
+                        .text_size(px(16.0))
+                        .text_color(rgb(WHITE))
+                        .bg(move || tint(ui.theme.with(|t| t.accent.main), FOCUS_ALPHA))
+                        .on_press(move || {
+                            ui.touched();
+                            crate::player::retry(ui);
+                        })
+                    },
+                ))
+        }))
 }

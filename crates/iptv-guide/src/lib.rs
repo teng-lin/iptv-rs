@@ -11,6 +11,8 @@
 //! gap is filled with hour-aligned placeholder slots clipped to the
 //! neighbouring programmes, so navigation always has a cell to land on.
 
+pub mod playback;
+
 use iptv_core::guide::{Program, Schedule};
 use iptv_epg::{ChannelKey, GuideStore, UnixTime};
 use iptv_providers::model::{Channel, Group};
@@ -43,6 +45,8 @@ pub struct EpgSchedule {
     epoch: UnixTime,
     /// Reads a description the in-memory store left out.
     describe: Option<DescriptionLookup>,
+    /// The source's account or session, for streams that need one.
+    playback: Option<playback::PlaybackContext>,
 }
 
 /// Reads the description of the programme starting at the given time on a
@@ -69,6 +73,7 @@ impl EpgSchedule {
             store,
             epoch: now - now.rem_euclid(SLOT),
             describe: None,
+            playback: None,
         }
     }
 
@@ -127,6 +132,50 @@ impl EpgSchedule {
         let mut schedule = EpgSchedule::new(grouped, store, now);
         schedule.sources = ordered.into_iter().map(Some).collect();
         schedule
+    }
+
+    /// Attaches the source's playback context (Xtream credentials and
+    /// account, Stalker session, M3U playlist headers). Without one, only
+    /// ready URLs play and they carry only the channel's own headers.
+    pub fn with_playback(mut self, context: Option<playback::PlaybackContext>) -> Self {
+        self.playback = context;
+        self
+    }
+
+    pub fn playback(&self) -> Option<&playback::PlaybackContext> {
+        self.playback.as_ref()
+    }
+
+    /// The imported channel behind a guide row.
+    pub fn source_channel(&self, channel: usize) -> Option<&Channel> {
+        self.sources.get(channel)?.as_ref()
+    }
+
+    /// What the player should open for `channel`: live, or `archive` (a
+    /// programme in guide minutes) from its start. `clock.now` is the real
+    /// time, which can be later than the schedule's minute 0.
+    pub fn resolve(
+        &self,
+        channel: usize,
+        archive: Option<Program>,
+        clock: playback::Clock,
+    ) -> playback::Resolution {
+        let Some(c) = self.source_channel(channel) else {
+            return playback::Resolution::Unavailable(playback::Unavailable::NoChannel);
+        };
+        let archive = archive.map(|p| playback::Archive {
+            start: self.unix(p.start),
+            end: self.unix(p.end),
+        });
+        playback::resolve(self.playback.as_ref(), c, archive, clock)
+    }
+
+    /// The clock for the trait's URL methods: guide minute `now`, UTC.
+    fn clock_at(&self, now: i32) -> playback::Clock {
+        playback::Clock {
+            now: self.unix(now),
+            local_offset_secs: 0,
+        }
     }
 
     /// Unix time of guide minute 0.
@@ -266,22 +315,24 @@ impl Schedule for EpgSchedule {
         self.group_names.get(group).cloned().unwrap_or_default()
     }
 
+    /// Ready URLs only (Stalker `create_link` needs a round trip: use
+    /// [`EpgSchedule::resolve`]). Times are the schedule's epoch.
     fn stream_url(&self, channel: usize) -> Option<String> {
-        match &self.sources.get(channel)?.as_ref()?.stream {
-            iptv_providers::model::StreamLocator::Url { url, .. } => Some(url.clone()),
-            // Xtream and Stalker URLs need their clients (session tokens).
-            _ => None,
-        }
+        let source = self.resolve(channel, None, self.clock_at(0)).ready()?;
+        Some(source.url)
     }
 
     fn catchup_url(&self, channel: usize, program: Program, now: i32) -> Option<String> {
-        let c = self.sources.get(channel)?.as_ref()?;
-        let req = iptv_providers::m3u::CatchupRequest::new(
-            self.unix(program.start),
-            self.unix(program.end),
-            self.unix(now),
-        );
-        iptv_providers::m3u::build_catchup_url(c, req).ok()
+        let source = self
+            .resolve(channel, Some(program), self.clock_at(now))
+            .ready()?;
+        Some(source.url)
+    }
+
+    fn channel_key(&self, channel: usize) -> Option<String> {
+        self.channels
+            .get(channel)
+            .map(|c| c.key.as_str().to_owned())
     }
 
     fn as_any(&self) -> Option<&dyn std::any::Any> {

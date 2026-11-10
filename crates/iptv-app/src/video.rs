@@ -2,6 +2,7 @@
 //! the Android host, `hosts/android`), laid out per view mode — the preview
 //! rectangle in the info panel, or the whole screen under an overlay or under
 //! nothing. Changing modes changes layout only; the player is never recreated.
+//! What it plays comes from `player.rs` (resolution, retries).
 
 use nsh_core::prelude::*;
 use serde_json::{Value, json};
@@ -15,8 +16,9 @@ pub fn stream_url(channel: usize) -> String {
     format!("http://10.0.2.2:8089/ch{}/index.m3u8", channel % 3)
 }
 
-/// The synthetic archive URL (`tools/mock-server.py` serves `/archive/*`).
-/// Placeholder until `iptv-catchup` builds real provider URLs.
+/// The synthetic archive URL (`tools/mock-server.py` serves `/archive/*`)
+/// for the synthetic guide; imported channels resolve through
+/// `iptv_guide::playback`.
 pub fn catchup_url(channel: usize, start: i32) -> String {
     let s = crate::schedule();
     let p = s.program_at(channel, start);
@@ -28,53 +30,49 @@ pub fn catchup_url(channel: usize, start: i32) -> String {
     )
 }
 
+/// The player's rectangle (x, y, width, height in px) for the view mode:
+/// the preview in the info panel, or the whole window.
+pub fn rect(ui: Ui) -> (f32, f32, f32, f32) {
+    let w = window();
+    if ui.mode.get() != ViewMode::Guide {
+        (0.0, 0.0, w.width.0, w.height.0)
+    } else {
+        (
+            INFO_PAD_X,
+            w.height.0 - INFO_H + INFO_PAD_Y,
+            PREVIEW_W,
+            PREVIEW_H,
+        )
+    }
+}
+
+/// The stream as the host's `source` prop: `{url, headers, token}`, or
+/// null when nothing plays.
+fn source_prop(ui: Ui) -> Value {
+    if ui.playing.get().is_none() {
+        return Value::Null;
+    }
+    let token = ui.player.token.get();
+    ui.player.source.with(|s| {
+        s.as_ref().map_or(Value::Null, |s| {
+            let headers: serde_json::Map<String, Value> = s
+                .headers
+                .iter()
+                .map(|(k, v)| (k.clone(), Value::String(v.clone())))
+                .collect();
+            json!({ "url": s.url, "headers": headers, "token": token })
+        })
+    })
+}
+
 pub fn layer(ui: Ui) -> impl IntoElement {
-    let full = move || ui.mode.get() != ViewMode::Guide;
     native("tv.player")
         .absolute()
-        .left(move || px(if full() { 0.0 } else { INFO_PAD_X }))
-        .top(move || {
-            px(if full() {
-                0.0
-            } else {
-                window().height.0 - INFO_H + INFO_PAD_Y
-            })
-        })
-        .w(move || {
-            if full() {
-                window().width
-            } else {
-                px(PREVIEW_W)
-            }
-        })
-        .h(move || {
-            if full() {
-                window().height
-            } else {
-                px(PREVIEW_H)
-            }
-        })
-        .prop("url", move || {
-            ui.playing
-                .get()
-                .map_or(Value::Null, |ch| match ui.playback.get() {
-                    crate::Playback::Live => {
-                        json!(
-                            crate::schedule()
-                                .stream_url(ch)
-                                .unwrap_or_else(|| stream_url(ch))
-                        )
-                    }
-                    crate::Playback::CatchUp { start } => {
-                        let s = crate::schedule();
-                        let program = s.program_at(ch, start);
-                        json!(
-                            s.catchup_url(ch, program, crate::time::now_minute())
-                                .unwrap_or_else(|| catchup_url(ch, start))
-                        )
-                    }
-                })
-        })
+        .left(move || px(rect(ui).0))
+        .top(move || px(rect(ui).1))
+        .w(move || px(rect(ui).2))
+        .h(move || px(rect(ui).3))
+        .prop("source", move || source_prop(ui))
         .prop("paused", move || json!(ui.paused.get()))
         .prop("pictureSize", move || {
             let ch = ui.playing.get().unwrap_or(0);
@@ -82,7 +80,11 @@ pub fn layer(ui: Ui) -> impl IntoElement {
         })
         .on_native_event(move |e: &NativeEvent| {
             let status = match &*e.name {
-                "state" => e.data["state"].as_str().unwrap_or("?").to_owned(),
+                "state" => {
+                    let state = e.data["state"].as_str().unwrap_or("?");
+                    crate::player::on_state(ui, state);
+                    state.to_owned()
+                }
                 "size" => {
                     let (w, h) = (e.data["width"].as_u64(), e.data["height"].as_u64());
                     if let (Some(w), Some(h)) = (w, h) {
@@ -90,7 +92,12 @@ pub fn layer(ui: Ui) -> impl IntoElement {
                     }
                     format!("{}×{}", e.data["width"], e.data["height"])
                 }
-                "error" => format!("error {}", e.data["code"].as_str().unwrap_or("?")),
+                "error" => {
+                    let code = e.data["code"].as_str().unwrap_or("?");
+                    let http = e.data["http"].as_u64().and_then(|h| u16::try_from(h).ok());
+                    crate::player::on_error(ui, code, http);
+                    format!("error {code}")
+                }
                 _ => return,
             };
             log::info!("iptv player {}: {status}", e.name);

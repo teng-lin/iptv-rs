@@ -18,7 +18,7 @@ Android video/input research: [`docs/research/android-video-and-input.md`](docs/
 | `crates/iptv-settings` | One settings schema: catalogue, scoped store, versioned backup JSON. Wasm-safe |
 | `crates/iptv-epg` | Sans-IO XMLTV parser (gzip), EPG channel matching, compact guide store. Wasm-safe |
 | `crates/iptv-providers` | Sans-IO M3U parser, Xtream and Stalker clients, stable ids, catch-up URLs. Wasm-safe |
-| `crates/iptv-guide` | The real guide schedule: imported channels + EPG store behind the `Schedule` trait, with gap filling. Wasm-safe |
+| `crates/iptv-guide` | The real guide schedule: imported channels + EPG store behind the `Schedule` trait, with gap filling; stream resolution (URL + headers, live and catch-up) per provider. Wasm-safe |
 | `crates/iptv-import` | Runtime-agnostic import pipeline: M3U/Xtream/Stalker sources and XMLTV guides into a `Catalog` and `GuideStore`, typed failures, progress, cancel; EPG refresh policy. Wasm-safe |
 | `crates/iptv-net` | Native HTTP adapter (reqwest + rustls) implementing `Fetch`; strips identity headers on cross-host redirects |
 | `crates/iptv-store-sqlite` | SQLite store: provider catalog and guide data replaced per refresh, user overlays (favourites, order, hidden, history) kept by stable id, FTS5 search, tested migrations |
@@ -39,7 +39,7 @@ Android video/input research: [`docs/research/android-video-and-input.md`](docs/
 ```sh
 cargo test -p iptv-core                                   # focus/guide model
 cargo build -p iptv-core --target wasm32-unknown-unknown  # portability check
-cargo run -p iptv-app                                     # Linux desktop (keyboard: arrows, Enter, Esc, o, f)
+cargo run -p iptv-app                                     # Linux desktop (keyboard: arrows, Enter, Esc, o, f, p last channel, n live)
 
 tools/make-hls-fixtures.sh --serve &                      # synthetic HLS on :8089
 tools/sync-host.sh                                        # build libnsh.so (x86_64, arm64) into the host

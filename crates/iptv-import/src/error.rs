@@ -24,6 +24,8 @@ pub enum Step {
     Categories(ContentKind),
     Items(ContentKind),
     Guide(SourceId),
+    /// A playback link (Stalker `create_link`), outside an import.
+    StreamLink,
 }
 
 impl fmt::Display for Step {
@@ -36,6 +38,7 @@ impl fmt::Display for Step {
             Self::Categories(k) => write!(f, "{} categories", k.slug()),
             Self::Items(k) => write!(f, "{} list", k.slug()),
             Self::Guide(id) => write!(f, "EPG source {}", id.0),
+            Self::StreamLink => f.write_str("stream link"),
         }
     }
 }

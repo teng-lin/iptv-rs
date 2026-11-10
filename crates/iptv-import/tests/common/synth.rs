@@ -334,6 +334,8 @@ pub struct StalkerSim {
     /// Pages that answer HTTP 500.
     pub failing_pages: Vec<u32>,
     pub vod: usize,
+    /// Reject the token once on the first `create_link`.
+    pub expire_on_link: bool,
     /// Simulation state (leave at the default).
     pub expired: Cell<bool>,
     pub handshakes: Cell<u32>,
@@ -351,6 +353,7 @@ impl Default for StalkerSim {
             expire_on_page: None,
             failing_pages: Vec::new(),
             vod: 0,
+            expire_on_link: false,
             expired: Cell::new(false),
             handshakes: Cell::new(0),
         }
@@ -432,6 +435,22 @@ impl StalkerSim {
                     self.channels,
                     self.page_size,
                     rows.join(",")
+                ))
+            }
+            ("itv", "create_link") => {
+                if self.expire_on_link && !self.expired.get() && self.handshakes.get() < 2 {
+                    self.expired.set(true);
+                    return SimResponse::ok("Authorization failed.");
+                }
+                let cmd = req.param("cmd").unwrap_or("");
+                let id = cmd
+                    .rsplit('/')
+                    .next()
+                    .and_then(|f| f.split('.').next())
+                    .unwrap_or("0");
+                SimResponse::ok(format!(
+                    r#"{{"js":{{"cmd":"ffmpeg http://127.0.0.1:8091/live/tmp-{id}.m3u8?play_token=t{}"}}}}"#,
+                    self.handshakes.get()
                 ))
             }
             ("vod", "get_categories") => {
