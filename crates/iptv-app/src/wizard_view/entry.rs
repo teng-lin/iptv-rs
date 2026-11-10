@@ -1,0 +1,143 @@
+//! Text entry for one wizard field: a sheet with one NSH input, focused
+//! when it opens so the platform keyboard (the TV's IME) comes up. Return
+//! or Done keeps the text, Back keeps it too (as dismissing a keyboard
+//! does), Cancel restores the field.
+
+use iptv_core::wizard::{Field, WizardEvent};
+use nsh_core::element::input;
+use nsh_core::prelude::*;
+
+use super::{RESTING, WHITE, words};
+use crate::theme::{RADIUS, RADIUS_LARGE, TEXT_SECONDARY_ALPHA};
+use crate::{Ui, tint};
+
+/// The field being typed into and its text so far.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Editing {
+    pub field: Field,
+    pub text: String,
+}
+
+pub fn begin(ui: Ui, field: Field) {
+    ui.wizard.update(|w| {
+        if let Some(open) = w {
+            let text = open.wizard.value(field).to_owned();
+            open.editing = Some(Editing { field, text });
+        }
+    });
+}
+
+pub fn is_editing(ui: Ui) -> bool {
+    ui.wizard
+        .with(|w| w.as_ref().is_some_and(|o| o.editing.is_some()))
+}
+
+/// Ends entry and gives the wizard the text.
+pub fn commit(ui: Ui) {
+    let mut done = None;
+    ui.wizard
+        .update(|w| done = w.as_mut().and_then(|o| o.editing.take()));
+    dismiss_keyboard();
+    if let Some(Editing { field, text }) = done {
+        super::send(ui, WizardEvent::SetField { field, value: text });
+    }
+}
+
+pub fn cancel(ui: Ui) {
+    ui.wizard
+        .update(|w| w.iter_mut().for_each(|o| o.editing = None));
+    dismiss_keyboard();
+}
+
+fn set_text(ui: Ui, text: &str) {
+    ui.wizard.update(|w| {
+        if let Some(e) = w.as_mut().and_then(|o| o.editing.as_mut()) {
+            e.text = text.to_owned();
+        }
+    });
+}
+
+fn button(label: &'static str, act: fn(Ui), ui: Ui) -> impl IntoElement {
+    text(label)
+        .px(px(20.0))
+        .py(px(10.0))
+        .rounded(px(RADIUS))
+        .text_size(px(15.0))
+        .text_color(rgb(WHITE))
+        .bg(tint(WHITE, RESTING))
+        .on_press(move || {
+            ui.touched();
+            act(ui);
+        })
+}
+
+/// The sheet; made when entry starts, so its input exists only then.
+pub fn sheet(ui: Ui) -> impl IntoElement {
+    let Some(field) = ui
+        .wizard
+        .with_untracked(|w| w.as_ref().and_then(|o| o.editing.as_ref().map(|e| e.field)))
+    else {
+        return view();
+    };
+    let current = move || {
+        ui.wizard.with(|w| {
+            w.as_ref()
+                .and_then(|o| o.editing.as_ref().map(|e| e.text.clone()))
+                .unwrap_or_default()
+        })
+    };
+    let keyboard = if field.is_url() {
+        KeyboardType::Url
+    } else {
+        KeyboardType::Default
+    };
+    view()
+        .absolute()
+        .inset_0()
+        .pt_safe_area()
+        .items_center()
+        // Near the top: the keyboard takes the lower half.
+        .pt(px(40.0))
+        .bg(tint(0x000000, 0xA0))
+        .child(
+            view()
+                .w(px(640.0))
+                .p(px(24.0))
+                .gap(px(14.0))
+                .rounded(px(RADIUS_LARGE))
+                .bg(move || rgb(ui.theme.with(|t| t.background.panel)))
+                .child(
+                    text(words::label(field))
+                        .text_size(px(14.0))
+                        .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA)),
+                )
+                .child(
+                    input()
+                        .value(current)
+                        .on_change(move |t: &str| set_text(ui, t))
+                        .on_submit(move |_: &str| commit(ui))
+                        .auto_focus(true)
+                        .masked(field == Field::Password)
+                        .keyboard_type(keyboard)
+                        .auto_capitalize(AutoCapitalize::None)
+                        .auto_correct(false)
+                        .placeholder(words::placeholder(field))
+                        .text_size(px(18.0))
+                        .text_color(rgb(WHITE))
+                        .px(px(14.0))
+                        .py(px(10.0))
+                        .rounded(px(RADIUS))
+                        .border_1()
+                        .border_color(move || rgb(ui.theme.with(|t| t.accent.main)))
+                        .bg(move || rgb(ui.theme.with(|t| t.background.window))),
+                )
+                .child(
+                    view()
+                        .flex_row()
+                        .gap(px(12.0))
+                        .justify_end()
+                        .child(button("Cancel", cancel, ui))
+                        .child(button("Done", commit, ui)),
+                ),
+        )
+}

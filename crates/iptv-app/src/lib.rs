@@ -15,6 +15,7 @@ mod menu_view;
 mod panels;
 mod player_panels;
 mod video;
+mod wizard_view;
 
 use std::time::{Duration, Instant};
 
@@ -110,6 +111,8 @@ pub struct Ui {
     pub chooser: Signal<Option<chooser::Open>>,
     /// The favourites editor, when open.
     pub editor: Signal<Option<FavoritesEditor>>,
+    /// The add-playlist wizard, when open.
+    pub wizard: Signal<Option<wizard_view::Open>>,
 }
 
 impl Ui {
@@ -276,6 +279,7 @@ pub fn App() -> impl IntoElement {
         sleep: signal(SleepTimer::default()),
         chooser: signal(None),
         editor: signal(None),
+        wizard: signal(None),
     };
     // Leaving full screen closes the panels.
     effect(move || {
@@ -371,6 +375,7 @@ pub fn App() -> impl IntoElement {
         .child(menu_view::layer(ui))
         .child(chooser::layer(ui))
         .child(fav_editor::layer(ui))
+        .child(wizard_view::layer(ui))
 }
 
 /// Back: player panels → hidden; full screen/overlay → guide; guide →
@@ -385,6 +390,7 @@ fn bind_back(ui: Ui) {
         (ui.mode.get(), ui.focus.with(|f| f.pane), panels || menu)
     });
     effect(move || match back_target.get() {
+        _ if ui.wizard.with(Option::is_some) => on_back_press(move || wizard_view::back(ui)),
         _ if ui.editor.with(Option::is_some) => on_back_press(move || {
             fav_editor::close(ui);
             true
