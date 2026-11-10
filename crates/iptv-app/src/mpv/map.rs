@@ -102,6 +102,18 @@ pub fn http(headers: &[(String, String)], fallback_ua: &str) -> Http {
 
 /// Whether mpv may open `url`: network streams only (never local files,
 /// FFmpeg's pseudo-protocols or mpv's own `av://`, `lavfi://`...).
+/// Whether a reopen keeps the picture's last frame instead of the black
+/// shutter: the app reconnects the stream that played (`reconnect`; a
+/// portal may hand out a new address for it), or only the token changed
+/// (a retry of the same url). A new channel, catch-up offset or stop goes
+/// black until the new stream plays.
+pub fn keeps_frame(old: Option<&str>, new: Option<&str>, reconnect: bool) -> bool {
+    match (old, new) {
+        (Some(old), Some(new)) => reconnect || old == new,
+        _ => false,
+    }
+}
+
 pub fn playable(url: &str) -> bool {
     const SCHEMES: &[&str] = &[
         "http", "https", "rtmp", "rtmps", "rtsp", "rtsps", "rtp", "udp", "srt", "mms",
@@ -281,6 +293,26 @@ mod tests {
     fn kind(clues: &Clues, error: i32) -> ErrorKind {
         let (code, http) = clues.error(error);
         ErrorKind::from_player_code(code, http)
+    }
+
+    #[test]
+    fn only_a_reopen_of_the_same_stream_keeps_the_last_frame() {
+        let (a, b) = (
+            Some("http://a.test/live/1.ts"),
+            Some("http://a.test/live/2.ts"),
+        );
+        assert!(keeps_frame(a, a, false), "a retry: only the token changed");
+        assert!(
+            keeps_frame(a, b, true),
+            "the app reconnects (a new portal link)"
+        );
+        assert!(
+            !keeps_frame(a, b, false),
+            "another channel or catch-up offset"
+        );
+        assert!(!keeps_frame(None, a, false), "the first stream");
+        assert!(!keeps_frame(None, a, true));
+        assert!(!keeps_frame(a, None, true), "a stop");
     }
 
     #[test]

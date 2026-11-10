@@ -10,7 +10,7 @@
 //! [`status`] draws the waiting and error states of `player.rs`.
 
 use iptv_core::panels::{CONTROLS, Control, QUICK_ACTIONS, QuickAction, Shown};
-use iptv_core::playback::{ErrorKind, Phase};
+use iptv_core::playback::{ErrorKind, Phase, Waiting};
 use iptv_core::player_info::{StreamFormat, badges, date_time, minutes_left};
 use iptv_core::sound::delay_label;
 use iptv_core::tracks::{Kind as Track, audio_layout};
@@ -672,15 +672,9 @@ fn status_of(ui: Ui) -> Status {
         return Status::Hidden; // each tile shows its own
     }
     let catch_up = matches!(ui.playback.get(), Playback::CatchUp { .. });
+    let now = ui.now_ms();
     ui.player.main().health.with(|h| match h.phase() {
         Phase::Idle if catch_up => Status::Over,
-        Phase::Idle | Phase::Playing => Status::Hidden,
-        Phase::Resolving | Phase::Loading => Status::Waiting("Loading…".into()),
-        Phase::Buffering => Status::Waiting("Buffering…".into()),
-        Phase::Retrying { attempt, .. } => Status::Waiting(format!(
-            "Reconnecting… ({attempt} of {})",
-            h.policy.max_attempts
-        )),
         Phase::Failed(f) => Status::Failed {
             title: format!("Can't play {}", channel_name(channel)),
             message: failure_message(&f.kind, catch_up),
@@ -689,7 +683,20 @@ fn status_of(ui: Ui) -> Status {
                 n => format!("{} · tried {n} times", f.detail),
             },
         },
+        // A quick reconnect keeps the last frame without a pill.
+        _ => h
+            .indicator(now)
+            .map_or(Status::Hidden, |w| Status::Waiting(waiting_text(&w))),
     })
+}
+
+/// The waiting pill's words.
+pub(crate) fn waiting_text(waiting: &Waiting) -> String {
+    match waiting {
+        Waiting::Loading => "Loading…".into(),
+        Waiting::Buffering => "Buffering…".into(),
+        Waiting::Reconnecting { attempt, of } => format!("Reconnecting… ({attempt} of {of})"),
+    }
 }
 
 /// Waiting and error states over the video, in the player's rectangle:

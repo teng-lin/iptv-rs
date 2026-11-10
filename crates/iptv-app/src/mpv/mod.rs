@@ -9,11 +9,13 @@
 //!
 //! Same contract as the Android host's `PlayerComponent.kt` (summed up in
 //! `video.rs`):
-//! - props `source` `{url, headers, token}` or null (a new url or token
-//!   reopens), `paused`, `userAgent` (fallback when the source sends none),
-//!   `pictureSize` (see [`map::picture`]); `videoTrack` / `audioTrack`
-//!   (`auto` or a track id: mpv's `vid` / `aid`), `textTrack` (`off` or an
-//!   id: `sid`), each starting again from the default with a new source;
+//! - props `source` `{url, headers, token, live, reconnect}` or null (a new
+//!   url or token reopens; `live` streams are bridged across connections
+//!   the server closes, see [`worker`]), `paused`, `userAgent` (fallback
+//!   when the source sends none), `pictureSize` (see [`map::picture`]);
+//!   `videoTrack` / `audioTrack` (`auto` or a track id: mpv's `vid` /
+//!   `aid`), `textTrack` (`off` or an id: `sid`), each starting again from
+//!   the default with a new source;
 //!   `volume` (0–100), `muted`, `audioDelay` (ms: mpv's `audio-delay`);
 //! - events `state` {state: idle|buffering|ready|ended}, `size` {width,
 //!   height}, `error` {code, http?} with Media3's code names
@@ -23,9 +25,12 @@
 //!   {fps?, channels?}.
 //!
 //! The picture is black from a new source or an error until the stream
-//! plays again. mpv sends a stream's headers with all of its requests
-//! ([`map::http`]). `IPTV_RS_AUDIO` names mpv's audio output (`null`
-//! mutes, for tests); `IPTV_RS_HWDEC` overrides `hwdec`.
+//! plays again; a reopen of the same stream (`reconnect`, or a new token
+//! for the same url: [`map::keeps_frame`]) keeps the last frame. mpv
+//! sends a stream's headers with all of its requests ([`map::http`]).
+//! `IPTV_RS_AUDIO` names mpv's audio output (`null` mutes, for tests);
+//! `IPTV_RS_HWDEC` overrides `hwdec`; `IPTV_RS_LIVE_BRIDGE=0` turns
+//! bridging off.
 //!
 //! The platform's main thread renders; every other mpv call runs on a
 //! control thread ([`worker`]), as mpv's render API requires. The platform
@@ -109,6 +114,8 @@ unsafe extern "C" fn on_frame(data: *mut c_void) {
 struct State {
     url: Option<String>,
     token: i64,
+    /// The source is a live channel (bridged, see [`worker`]).
+    live: bool,
     headers: Vec<(String, String)>,
     user_agent: String,
     picture: String,
@@ -223,6 +230,7 @@ impl Inner {
             state: RefCell::new(State {
                 url: None,
                 token: 0,
+                live: false,
                 headers: Vec::new(),
                 user_agent: DEFAULT_UA.to_owned(),
                 picture: "normal".to_owned(),
@@ -328,6 +336,10 @@ impl Inner {
             .map(str::to_owned)
             .filter(|u| !u.is_empty());
         let token = source.and_then(|s| s["token"].as_i64()).unwrap_or(0);
+        let live = source.and_then(|s| s["live"].as_bool()).unwrap_or(false);
+        let reconnect = source
+            .and_then(|s| s["reconnect"].as_bool())
+            .unwrap_or(false);
         let headers = source
             .and_then(|s| s["headers"].as_object())
             .map(|h| {
@@ -336,26 +348,32 @@ impl Inner {
                     .collect()
             })
             .unwrap_or_default();
-        let changed = {
+        let (changed, keep) = {
             let mut st = self.state.borrow_mut();
             let changed = url != st.url || token != st.token;
+            let keep = map::keeps_frame(st.url.as_deref(), url.as_deref(), reconnect);
             st.url = url;
             st.token = token;
+            st.live = live;
             st.headers = headers;
-            changed
+            (changed, keep)
         };
         self.apply_http();
         if changed {
-            self.open();
+            self.open(keep);
         }
     }
 
-    /// Opens the current source (or stops), behind the black shutter.
-    fn open(&self) {
+    /// Opens the current source (or stops), behind the black shutter
+    /// unless `keep_frame` (the same stream again: its last frame stays
+    /// until the new one plays; an error still blacks it out).
+    fn open(&self, keep_frame: bool) {
         let mut out = Out::new();
         let url = {
             let mut st = self.state.borrow_mut();
-            st.shutter = true;
+            if !keep_frame {
+                st.shutter = true;
+            }
             st.playing = false;
             st.buffering = false;
             st.clues = map::Clues::default();
@@ -389,8 +407,9 @@ impl Inner {
                 let mut st = self.state.borrow_mut();
                 st.loads += 1;
                 st.state(&mut out, "buffering");
+                let live = st.live;
                 drop(st);
-                self.send(Cmd::Load(url));
+                self.send(Cmd::Load { url, live });
             }
         }
         self.emit(out);
@@ -455,7 +474,7 @@ impl Inner {
         unsafe { ffi::mpv_render_context_set_update_callback(render, Some(on_frame), data) };
         self.render.set(render);
         if self.state.borrow().deferred {
-            self.open();
+            self.open(false);
         }
         true
     }
@@ -549,6 +568,16 @@ impl Inner {
                 reason,
                 error,
             } => self.end_file(entry, reason, error, out),
+            Note::Bridged(entry) => {
+                let mut st = self.state.borrow_mut();
+                if st.expected.is_some() && st.expected == st.entry {
+                    log::info!(
+                        "iptv mpv {}: the live connection closed; playing on",
+                        self.id
+                    );
+                    st.expected = Some(entry);
+                }
+            }
             Note::Restarted { audio_out } => self.restarted(audio_out, out),
             Note::Buffering(on) => {
                 let mut st = self.state.borrow_mut();
