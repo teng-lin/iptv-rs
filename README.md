@@ -91,6 +91,14 @@ change channel, Long Back stops. During catch-up Left/Right seek. Moving
 the mouse shows the panels with play/pause, mute, volume and full screen
 buttons; they hide 3 s after the mouse rests.
 
+Multiview (the control row's Multiview): the playing channel becomes the
+first tile and the channel list opens to add the next. Arrows choose the
+tile that is heard, OK opens its options (change channel, watch full
+screen, remove, try again), OK on the add cell adds one more (up to four
+on the desktop, two on Android), Back watches the active tile full
+screen. A tap makes a tile active, a second tap opens its options.
+Adding more streams than an Xtream account allows asks first.
+
 Environment: `IPTV_RS_AUDIO=null` mutes the player (mpv `ao`; use it for
 tests), `IPTV_RS_HWDEC` sets mpv's `hwdec` (default `auto-copy-safe`),
 `RUST_LOG=info` shows the player's state (never stream addresses).

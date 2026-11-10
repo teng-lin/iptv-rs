@@ -46,22 +46,26 @@ for run in 1 2 3; do
 done
 echo "median guide on screen: $(printf '%s\n' "${starts[@]}" | median) ms (budget 2000)"
 
-echo "== zap to picture (channel down x5, full screen)"
+echo "== zap to picture (channel down x5): key to first decoded frame (size) and to ready"
 pause 5
 zaps=()
 for z in 1 2 3 4 5; do
   $adb logcat -c
   key 167
-  for _ in $(seq 1 40); do
-    $adb logcat -d | grep -q 'iptv player size\|iptv player state: ready' && break
+  for _ in $(seq 1 50); do
+    $adb logcat -d | grep -q 'iptv player state: ready' && break
     pause 0.2
   done
-  down=$($adb logcat -v epoch -d | grep -m1 'iptv key=channel_down\|iptv key=channeldown' | ms)
+  down=$($adb logcat -v epoch -d | grep -m1 'iptv key=channel_down' | ms)
+  frame=$($adb logcat -v epoch -d | grep -m1 'iptv player size' | ms)
   ready=$($adb logcat -v epoch -d | grep -m1 'iptv player state: ready' | ms)
-  if [ -n "$down" ] && [ -n "$ready" ]; then zaps+=($((ready - down))); echo "zap $z: $((ready - down)) ms"; fi
+  if [ -n "$down" ] && [ -n "$frame" ]; then
+    zaps+=($((frame - down)))
+    echo "zap $z: picture $((frame - down)) ms${ready:+, ready $((ready - down)) ms}"
+  fi
   pause 3
 done
-echo "median zap: $(printf '%s\n' "${zaps[@]}" | median) ms (budget 1500)"
+echo "median zap to picture: $(printf '%s\n' "${zaps[@]}" | median) ms (budget 1500)"
 
 echo "== guide keys (30 x Down)"
 key 4; pause 2

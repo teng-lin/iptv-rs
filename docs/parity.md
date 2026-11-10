@@ -53,7 +53,7 @@ navigation rail          groups list            guide (or channel list)     play
 | --- | --- | --- | --- | --- |
 | OK / tap shows the info card | Logo, title, times, progress, minutes left, number + name, stream badges (resolution, frame rate, audio), next programme, full-width time bar; top bar with group name and date/time | same (logo from the playlist; the group is the playlist's) | done | – |
 | Quick actions under the card | TV guide, History | same; History lists the recently watched channels (the store's history, newest first; survives restarts) | done | – |
-| Down: full control row | Search, Channels list, Recordings, Multiview, Picture-in-picture, Video track, Audio track, Audio delay, Subtitles, Picture size, Sleep timer, Favourite, … | same order, current values shown; Recordings, Multiview, Picture-in-picture, Channel options, Settings disabled | partial | P1 |
+| Down: full control row | Search, Channels list, Recordings, Multiview, Picture-in-picture, Video track, Audio track, Audio delay, Subtitles, Picture size, Sleep timer, Favourite, … | same order, current values shown; Recordings, Picture-in-picture, Channel options, Settings disabled | partial | P1 |
 | Track selection (video, audio, subtitles) | Choosers | Choosers on both hosts (`tv.player` `tracks` event, `videoTrack`/`audioTrack`/`textTrack`); verified on Linux, Android compiled only | done | – |
 | Audio delay | Chooser (ms) | ±1 s in 50 ms steps; mpv `audio-delay`, Media3 through a delayed audio sink (Android unverified) | done | – |
 | Player remote defaults | OK panels, Long OK menu, Left channels list, Long Left list beside a preview, Right most recent channel, Long Back stop, Up/Down zap | same (keymap); Left's list is the guide's list (same numbers, Left in it: the guide's groups column, moving previews, OK enters). Long Back from NSH's Back key (Android; its release takes no step back), not yet verified on a device; desktop: Stop key | done | P0 |
@@ -62,7 +62,7 @@ navigation rail          groups list            guide (or channel list)     play
 | Desktop: play/pause, volume/mute, window full screen, mouse-visible controls | (TV app: n/a) | mouse shows the panels (hidden 3 s after it rests); play/pause, mute, volume bar and steps, full screen buttons; F11, double click, Escape; Ctrl+M, Ctrl+Up/Down. Keys and mouse movement verified; clicks not yet (synthetic clicks did not reach NSH's presses) | done | – |
 | Catch-up seeking | settings-driven | done (time bar, FF/RW) | done | – |
 | Picture-in-picture on Home | yes | none | missing | P2 |
-| Multiview | gated | none | missing | P1 |
+| Multiview | gated | the control row's Multiview: the playing channel is the first tile, 1+1 for two cells, 2×2 for three or four; an add cell while the device's decoders allow (Android 2, desktop 4); D-pad (or a tap) picks the active tile, which alone is heard; OK (or a second tap) opens its options: change channel, watch full screen, remove, try again after a failure; Back watches the active tile full screen; each tile has its own waiting/error state; adding past an Xtream account's `max_connections` asks first. Verified on Linux (keys); Android compiled only, touch untested on screen | done | P1 |
 
 ## 4. Library and other surfaces
 
@@ -108,7 +108,7 @@ what each core area must let the user do. Tier per row:
 | Remote control | per-context key bindings, guide: OK watch, Long OK menu, Back back, Long Back return to player, Left groups, Right later programmes, Ch± page; player: OK panels, Long OK menu, Back back, Long Back stop playback, Left channels list over video, Long Left channels list in preview, Right most recent channel; catch-up seek key schemes | **P0** defaults on TV; P1 user remapping |
 | Appearance | guide: sorting, preview on/off, numbers, names, two-line names/titles, catch-up icon, highlight current; player: channels list style, info panel, clock, panels timeout; groups sorting; logos; font size; theme; transparency | P1 (numbers, logos, preview, timeout); P2 rest |
 | General | last channel on start; confirm exit with second Back; User-Agent; backup/restore | P1 (start, exit, UA); P2 backup |
-| Multiview | add/remove/enlarge/reduce, full screen one, active audio, per-surface failure, connection-limit warning | **P1** |
+| Multiview | add/remove/enlarge/reduce, full screen one, active audio, per-surface failure, connection-limit warning | **P1** (done but enlarge/reduce: tiles are equal) |
 | Recording, reminders, VOD, My list, parental controls | – | P3 |
 
 Gaps against these tiers that no running workstream covers yet:

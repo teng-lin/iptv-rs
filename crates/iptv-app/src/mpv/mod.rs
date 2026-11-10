@@ -3,7 +3,8 @@
 //! NSH hosts in the video layer's view (`video.rs`). In-process and
 //! compositor-independent (Wayland and X11); the app's UI draws above it
 //! as above any view. Layout changes resize the area; the mpv instance
-//! lives as long as the component.
+//! lives as long as the component. Each component is its own player
+//! (multiview mounts up to four, all but one `muted`).
 //!
 //! Same contract as the Android host's `PlayerComponent.kt` (summed up in
 //! `video.rs`):
@@ -302,6 +303,7 @@ impl NativeComponent for Player {
             }
             "muted" => {
                 let muted = value.and_then(Value::as_bool).unwrap_or(false);
+                log::info!("iptv mpv {}: muted {muted}", p.id);
                 p.send(Cmd::Set("mute", if muted { "yes" } else { "no" }.into()));
             }
             "audioDelay" => {

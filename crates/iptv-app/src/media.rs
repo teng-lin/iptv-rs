@@ -1,9 +1,10 @@
-//! What the open stream offers and how it sounds: its tracks and format as
-//! the `tv.player` host reports them (`tracks` and `format` events), the
-//! viewer's track choices, volume, mute and audio delay (props). A new
+//! What the open streams offer and how they sound: each surface's tracks
+//! and format as the `tv.player` host reports them (`tracks` and `format`
+//! events, kept in its [`crate::player::Stream`]), the viewer's track
+//! choices, and the app's volume, mute and audio delay (props). A new
 //! stream forgets the old one's tracks and choices; the sound settings
-//! stay. `video.rs` binds these to the host; the panels and choosers read
-//! and change them.
+//! stay. `video.rs` binds these to the hosts; the panels and choosers read
+//! and change the full-screen player's (surface 0).
 
 use iptv_core::player_info::StreamFormat;
 use iptv_core::sound::{VOLUME_STEP, Volume};
@@ -13,14 +14,10 @@ use serde_json::Value;
 
 use crate::Ui;
 
-/// Stream and sound state beside [`Ui`]'s (signals are `Copy`).
+/// Sound state beside [`Ui`]'s (signals are `Copy`), the same for every
+/// surface; multiview mutes all but its active one.
 #[derive(Clone, Copy)]
 pub struct Media {
-    pub tracks: Signal<Tracks>,
-    /// What the viewer chose for the open stream (the track props).
-    pub choice: Signal<Choice>,
-    /// Frame rate and audio channels; the size is [`Ui::video_size`].
-    pub format: Signal<StreamFormat>,
     pub volume: Signal<Volume>,
     /// Audio delay in milliseconds (positive: sound later).
     pub delay_ms: Signal<i32>,
@@ -29,9 +26,6 @@ pub struct Media {
 impl Media {
     pub fn new() -> Self {
         Media {
-            tracks: signal(Tracks::default()),
-            choice: signal(Choice::default()),
-            format: signal(StreamFormat::default()),
             volume: signal(Volume::default()),
             delay_ms: signal(0),
         }
@@ -42,10 +36,10 @@ impl Media {
 /// desktop, Media3 through the host's delayed audio sink.
 pub const AUDIO_DELAY: bool = true;
 
-/// The player opened another stream: its tracks are not known yet and the
+/// `surface` opened another stream: its tracks are not known yet and the
 /// choices made for the last one do not apply.
-pub fn reset(ui: Ui) {
-    let m = ui.media;
+pub fn reset(ui: Ui, surface: usize) {
+    let m = ui.player.stream(surface);
     if m.tracks.with_untracked(|t| *t != Tracks::default()) {
         m.tracks.set(Tracks::default());
     }
@@ -57,10 +51,11 @@ pub fn reset(ui: Ui) {
     }
 }
 
-/// The viewer picked `value` (a track id, `auto` or `off`) for `kind`.
+/// The viewer picked `value` (a track id, `auto` or `off`) for `kind` of
+/// the full-screen player.
 pub fn choose(ui: Ui, kind: Kind, value: String) {
     log::info!("iptv tracks: {kind:?} → {value}");
-    ui.media.choice.update(|c| match kind {
+    ui.player.main().choice.update(|c| match kind {
         Kind::Video => c.video = value,
         Kind::Audio => c.audio = value,
         Kind::Text => c.text = value,
@@ -87,31 +82,34 @@ fn log_volume(ui: Ui) {
     );
 }
 
-/// The host's `tracks` event.
-pub fn on_tracks(ui: Ui, data: &Value) {
+/// The host's `tracks` event from `surface`.
+pub fn on_tracks(ui: Ui, surface: usize, data: &Value) {
     let tracks = parse_tracks(data);
     log::info!(
-        "iptv tracks: {} video, {} audio, {} subtitles",
+        "iptv tracks {surface}: {} video, {} audio, {} subtitles",
         tracks.video.len(),
         tracks.audio.len(),
         tracks.text.len()
     );
-    if ui.media.tracks.with_untracked(|t| *t != tracks) {
-        ui.media.tracks.set(tracks);
+    let m = ui.player.stream(surface);
+    if m.tracks.with_untracked(|t| *t != tracks) {
+        m.tracks.set(tracks);
     }
 }
 
-/// The host's `format` event: whichever of `fps` and `channels` it knows.
-pub fn on_format(ui: Ui, data: &Value) {
-    let mut f = ui.media.format.get_untracked();
+/// The host's `format` event from `surface`: whichever of `fps` and
+/// `channels` it knows.
+pub fn on_format(ui: Ui, surface: usize, data: &Value) {
+    let m = ui.player.stream(surface);
+    let mut f = m.format.get_untracked();
     if let Some(fps) = data["fps"].as_f64() {
         f.fps = fps as f32;
     }
     if let Some(ch) = data["channels"].as_u64() {
         f.channels = u32::try_from(ch).unwrap_or(0);
     }
-    if ui.media.format.with_untracked(|old| *old != f) {
-        ui.media.format.set(f);
+    if m.format.with_untracked(|old| *old != f) {
+        m.format.set(f);
     }
 }
 

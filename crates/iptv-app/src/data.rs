@@ -149,7 +149,8 @@ struct Imported {
 
 /// Where a new schedule gets its playback context.
 enum Streams {
-    New(Option<PlaybackContext>),
+    /// Its own, with the streams the account allows at once (when it says).
+    New(Option<PlaybackContext>, Option<u32>),
     /// The schedule on screen's (a refreshed guide of the same source).
     Current,
 }
@@ -337,7 +338,10 @@ fn show(ui: Ui, imported: Box<Imported>, generation: u64, resume: bool) {
         imported.now,
     );
     let mut schedule = match imported.playback {
-        Streams::New(context) => schedule.with_playback(context),
+        Streams::New(context, allowed) => {
+            crate::multiview::set_account_streams(allowed);
+            schedule.with_playback(context)
+        }
         Streams::Current => {
             let current = crate::schedule();
             let shared = current
@@ -643,10 +647,10 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
         Box::new(Imported {
             groups: catalog.groups.clone(),
             channels: catalog.channels.clone(),
-            playback: Streams::New(crate::player::context_for(
-                &job.source.config,
-                &catalog.source,
-            )),
+            playback: Streams::New(
+                crate::player::context_for(&job.source.config, &catalog.source),
+                crate::multiview::account_streams(&catalog.source),
+            ),
             guide,
             now,
             source: Some(id),
@@ -732,7 +736,7 @@ fn stored_view(job: &Job, id: SourceId, now: i64) -> Option<Box<Imported>> {
         groups,
         channels,
         resume: context.is_some(),
-        playback: Streams::New(context),
+        playback: Streams::New(context, None),
         guide: stored::load_guide(id, now).unwrap_or_default(),
         now,
         source: Some(id),

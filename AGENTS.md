@@ -18,7 +18,8 @@
   patches small with tests; they go upstream later.
 - **Video layer.** One persistent player surface under the UI; modes change
   layout only. Never hide, detach or re-parent the player view (see
-  `docs/research/android-video-and-input.md`).
+  `docs/research/android-video-and-input.md`). Multiview adds one
+  `tv.player` per further tile while it is open (`video.rs`).
 - **Check before finishing:** `cargo test -p iptv-core`, the wasm build of
   `iptv-core`, `cargo build -p iptv-app`, and for Android changes a run on
   `tab36` and/or `tv36`.

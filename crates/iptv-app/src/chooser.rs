@@ -99,7 +99,7 @@ fn entries(ui: Ui, kind: Kind) -> (Vec<String>, Vec<String>, usize) {
                 .map_or(0, |i| i + 1);
             (labels, Vec::new(), at)
         }
-        Kind::Track(k) => ui.media.tracks.with_untracked(|t| {
+        Kind::Track(k) => ui.player.main().tracks.with_untracked(|t| {
             let labels = t.entries(k);
             let values = (0..labels.len())
                 .map(|i| t.pick(k, i).unwrap_or_default())
@@ -226,6 +226,7 @@ fn start_sleep(ui: Ui, minutes: u32) {
         ui.sleep.update(|t| fired = t.fire_if_due(now));
         if fired {
             log::info!("iptv sleep timer: stopping playback");
+            crate::multiview::close(ui);
             ui.playing.set(None);
             ui.mode.set(crate::ViewMode::Guide);
         }

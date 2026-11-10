@@ -75,7 +75,7 @@ pub fn elapsed(ui: Ui) -> Option<(i32, i32)> {
     let p = crate::schedule().program_at(channel, start);
     let length = (p.end - p.start) * 60;
     let at = ui.seek_target.get().unwrap_or_else(|| {
-        let played = i32::try_from(ui.position_ms.get() / 1000).unwrap_or(i32::MAX);
+        let played = i32::try_from(ui.player.main().position_ms.get() / 1000).unwrap_or(i32::MAX);
         offset.saturating_add(played)
     });
     Some((at.clamp(0, length), length))
@@ -88,7 +88,8 @@ pub fn step(ui: Ui, delta: i32) -> bool {
         return false;
     };
     let from = ui.seek_target.get_untracked().unwrap_or_else(|| {
-        let played = i32::try_from(ui.position_ms.get_untracked() / 1000).unwrap_or(i32::MAX);
+        let played =
+            i32::try_from(ui.player.main().position_ms.get_untracked() / 1000).unwrap_or(i32::MAX);
         offset.saturating_add(played)
     });
     ui.seek_target.set(Some((from + delta).clamp(0, limit)));
@@ -117,7 +118,7 @@ fn commit(ui: Ui) {
         return;
     };
     log::info!("iptv seek: catch-up to {target} s into the programme");
-    ui.position_ms.set(0);
+    ui.player.main().position_ms.set(0);
     ui.play(
         channel,
         Playback::CatchUp {
