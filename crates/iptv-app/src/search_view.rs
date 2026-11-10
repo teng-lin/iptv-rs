@@ -150,6 +150,12 @@ fn badge(hit: &ProgrammeHit) -> String {
 }
 
 fn tab_label(tab: Tab, count: usize, programmes: Programmes) -> String {
+    // A full list may have been cut at the limit: not a total.
+    let count = if count >= LIMIT {
+        format!("{LIMIT}+")
+    } else {
+        count.to_string()
+    };
     match (tab, programmes) {
         (Tab::Channels, _) => format!("Channels · {count}"),
         (Tab::Programs, Programmes::Unavailable) => "Programmes · no guide data".to_owned(),
@@ -938,6 +944,11 @@ mod tests {
         assert_eq!(
             tab_label(Tab::Programs, 12, Programmes::Ready),
             "Programmes · 12"
+        );
+        // A list cut at the limit is not a total.
+        assert_eq!(
+            tab_label(Tab::Programs, LIMIT, Programmes::Ready),
+            format!("Programmes · {LIMIT}+")
         );
     }
 }
