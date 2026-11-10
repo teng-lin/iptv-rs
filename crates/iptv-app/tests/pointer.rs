@@ -156,6 +156,18 @@ fn bar_buttons(app: &mut Headless, step: impl Fn(Result<(), String>)) {
     step(app.press("label:Channel list"));
     step(gone(app, "label:Mute"));
     step(app.press_key("backspace"));
+    // Multiview opens with the playing channel and the picker for the
+    // next tile; the bar does not show over it. Back closes the picker,
+    // Back again returns to full screen, where the bar comes back.
+    step(app.press("label:Video"));
+    step(app.press("label:Multiview"));
+    step(app.wait_for("text:Add a channel"));
+    step(gone(app, "label:Mute"));
+    step(app.press_key("backspace"));
+    step(app.press_key("backspace"));
+    step(app.press("label:Video"));
+    step(app.wait_for("label:Mute"));
+    step(app.press("label:Video"));
     // The guide leaves full screen; the playing channel's name comes back.
     step(app.press("label:Video"));
     step(app.press("label:TV guide"));

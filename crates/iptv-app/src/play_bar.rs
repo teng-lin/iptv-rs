@@ -9,7 +9,7 @@
 //! Left: mute and (desktop) volume, the stream's quality, the channel.
 //! Centre: rewind, play/pause, fast-forward (catch-up only; `seek.rs`).
 //! Right: favourite, subtitles and tracks, programme details, picture size,
-//! channel list, guide, (desktop) window full screen, frame rate. Under
+//! channel list, multiview, guide, (desktop) window full screen, frame rate. Under
 //! it the programme's progress: where the archive plays (click or drag to
 //! seek) or how far the live programme is, with its times. It acts on
 //! the full-screen player (surface 0); while multiview is open it does not
@@ -371,8 +371,8 @@ fn centre(ui: Ui) -> impl IntoElement {
         ))
 }
 
-/// Favourite, tracks, details, picture size, channels, guide, window full
-/// screen, frame rate.
+/// Favourite, tracks, details, picture size, channels, multiview, guide,
+/// window full screen, frame rate.
 fn right(ui: Ui) -> impl IntoElement {
     use crate::chooser::{self, Kind};
     let size = target();
@@ -457,6 +457,17 @@ fn right(ui: Ui) -> impl IntoElement {
             move || {
                 crate::channels_view::open(ui, ListMode::Overlay);
                 ui.play_bar.update(PlayBar::hide);
+            },
+        ))
+        .child(button(
+            ui,
+            "Multiview",
+            || Icon::Multiview,
+            playing,
+            size,
+            move || {
+                ui.play_bar.update(PlayBar::hide);
+                crate::multiview::open(ui);
             },
         ))
         .child(button(
