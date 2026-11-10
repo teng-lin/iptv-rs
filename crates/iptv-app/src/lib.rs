@@ -169,6 +169,9 @@ pub struct Ui {
     pub media: media::Media,
     /// The channel list over full-screen video, while open.
     pub channels: Signal<Option<iptv_core::channel_list::ChannelList>>,
+    /// A Long Back acted: the platform's Back on its release is swallowed
+    /// (`input.rs`).
+    pub back_guard: Signal<iptv_nav::BackGuard>,
 }
 
 impl Ui {
@@ -365,6 +368,7 @@ pub fn App() -> impl IntoElement {
         player: player::Player::new(),
         media: media::Media::new(),
         channels: signal(None),
+        back_guard: signal(iptv_nav::BackGuard::default()),
     };
     settings::bind(ui);
     desktop::bind();
@@ -520,7 +524,9 @@ fn pointer_moved(ui: Ui, e: &MouseEvent) {
 /// desktop's Escape); player panels → hidden; full screen/overlay → guide;
 /// then the guide screen's chain (`browse.rs`): hint card → guide → groups →
 /// rail → leave the app (no handler, so the platform's Back leaves; with
-/// `general.confirm_exit` the first press only asks for a second).
+/// `general.confirm_exit` the first press only asks for a second). The
+/// release of a Long Back that acted takes no step (`input::swallow_back`),
+/// so a handler stays while one is pending, even where Back would leave.
 fn bind_back(ui: Ui) {
     let back_target = computed(move || {
         let panels = ui.panels.with(|p| p.shown) != iptv_core::panels::Shown::Hidden;
@@ -542,13 +548,14 @@ fn bind_back(ui: Ui) {
             && !search_view::is_open(ui)
             && !playlists_view::is_open(ui)
             && !settings_view::is_open(ui)
-            && !desktop::fullscreen();
+            && !desktop::fullscreen()
+            && !ui.back_guard.with(iptv_nav::BackGuard::armed);
         let confirm = settings::read(ui).bool(
             iptv_settings::keys::CONFIRM_EXIT,
             &iptv_settings::Target::Global,
         );
         if !leaves || confirm {
-            on_back_press(move || go_back(ui));
+            on_back_press(move || input::swallow_back(ui) || go_back(ui));
         }
     });
 }
