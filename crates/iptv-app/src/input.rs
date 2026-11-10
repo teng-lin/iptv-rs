@@ -8,7 +8,9 @@ use std::time::{Duration, Instant};
 use iptv_core::channel_list::ListMode;
 use iptv_core::panels::{Control, QuickAction, Shown};
 use iptv_core::tracks::Kind as Track;
-use iptv_nav::{Action, BackGuard, Context, Keymap, Phase, Press, PressDetector, RemoteKey};
+use iptv_nav::{
+    Action, BackGuard, Context, Keymap, Phase, Press, PressDetector, Profile, RemoteKey,
+};
 use nsh_core::keymap::KeyPhase;
 use nsh_core::prelude::*;
 
@@ -19,6 +21,14 @@ use crate::{Input, Ui, ViewMode};
 /// Android only. Elsewhere every key is a plain press and long bindings are
 /// not consulted (a deferred short press would never see its release).
 pub(crate) const LONG_PRESS: bool = cfg!(target_os = "android");
+
+/// Whose keys: a TV remote's on Android, a keyboard's on the desktops
+/// (`iptv_nav::Profile`: Left walks back through the programmes there).
+pub(crate) const PROFILE: Profile = if LONG_PRESS {
+    Profile::Remote
+} else {
+    Profile::Keyboard
+};
 
 /// NSH keystroke names and the remote keys they stand for: the remote's own
 /// keys, then keyboard stand-ins for the desktop and emulators.
@@ -64,6 +74,15 @@ const KEYS: &[(&str, RemoteKey)] = &[
     ("n", RemoteKey::Next),
     ("[", RemoteKey::Rewind),
     ("]", RemoteKey::FastForward),
+    // A desktop keyboard's own (Ctrl + arrows: Cmd on macOS, where Ctrl
+    // switches spaces).
+    ("home", RemoteKey::Home),
+    ("tab", RemoteKey::Tab),
+    ("shift+tab", RemoteKey::ShiftTab),
+    ("shift+left", RemoteKey::ShiftLeft),
+    ("shift+right", RemoteKey::ShiftRight),
+    ("mod+left", RemoteKey::CtrlLeft),
+    ("mod+right", RemoteKey::CtrlRight),
 ];
 
 struct Nav {
@@ -114,7 +133,7 @@ pub fn context(ui: &Ui) -> Context {
 
 pub fn bind(ui: Ui) {
     let nav = Rc::new(RefCell::new(Nav {
-        keymap: Keymap::defaults(),
+        keymap: Keymap::for_profile(PROFILE),
         detector: PressDetector::default(),
         start: Instant::now(),
     }));
@@ -141,12 +160,6 @@ pub fn bind(ui: Ui) {
     // (it does not fire while a text field edits).
     on_key("backspace", move |_| {
         crate::go_back(ui);
-    });
-    // Long Left's stand-in where keys have no long press (the desktop).
-    on_key("shift+left", move |_| {
-        if context(&ui) == Context::Player {
-            crate::channels_view::open(ui, ListMode::Preview);
-        }
     });
     // Desktop sound keys (remotes and tablets use the system volume). F11
     // (window full screen; Ctrl+Cmd+F on macOS) is the platform's.
@@ -475,6 +488,12 @@ fn apply(ui: Ui, key: RemoteKey, action: Action) {
                 f.return_to_now(&view);
             });
         }
+        a @ (Action::JumpToNow
+        | Action::HourBack
+        | Action::HourForward
+        | Action::DayBack
+        | Action::DayForward
+        | Action::ToggleGroups) => crate::grid::keys::apply(ui, a),
         Action::ReturnToPlayer if ui.playing.get().is_some() => ui.mode.set(ViewMode::Fullscreen),
         Action::PlayPause => ui.paused.update(|p| *p = !*p),
         // Catch-up seeking (`seek.rs`); nothing to seek in a live stream.

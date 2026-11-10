@@ -454,3 +454,26 @@ fn the_catalog_list_view_zaps_within_the_current_list() {
     assert_eq!(list.zap(last, 1).and_then(|r| list.channel(r)), Some(0));
     assert_eq!(list.zap(0, -1).and_then(|r| list.channel(r)), Some(2));
 }
+
+#[test]
+fn tab_toggles_between_the_grid_and_the_groups() {
+    let mut s = Screen::new();
+    s.mv(Move::Down);
+    s.mv(Move::Right);
+    let (row, cursor) = (s.focus.channel, s.focus.cursor);
+    assert!(s.focus.toggle_groups(&s.view));
+    assert_eq!(s.focus.pane, Pane::Groups, "also off the live programme");
+    assert!(s.focus.toggle_groups(&s.view));
+    assert_eq!(
+        (s.focus.pane, s.focus.channel, s.focus.cursor),
+        (Pane::Guide, row, cursor),
+        "back where it was"
+    );
+    s.focus.pane = Pane::Rail;
+    assert!(s.focus.toggle_groups(&s.view));
+    assert_eq!(s.focus.pane, Pane::Guide);
+    // An empty list keeps the columns.
+    s.focus.pane = Pane::Groups;
+    assert!(!s.focus.toggle_groups(&SyntheticList));
+    assert_eq!(s.focus.pane, Pane::Groups);
+}

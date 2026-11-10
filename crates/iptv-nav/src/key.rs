@@ -1,4 +1,5 @@
-//! Keys a TV remote (or a keyboard standing in for one) can send.
+//! Keys a TV remote (or a keyboard standing in for one) can send, and the
+//! few a desktop keyboard adds (a remote never sends those).
 
 /// A remote key, independent of platform key codes. Shells map their own
 /// events to these; settings persist them by [`RemoteKey::name`].
@@ -33,9 +34,18 @@ pub enum RemoteKey {
     Blue,
     /// 0–9.
     Digit(u8),
+    // A desktop keyboard's own keys and chords (no remote has them).
+    Home,
+    Tab,
+    ShiftTab,
+    ShiftLeft,
+    ShiftRight,
+    /// Ctrl + Left/Right (Cmd on macOS).
+    CtrlLeft,
+    CtrlRight,
 }
 
-const NAMED: [(RemoteKey, &str); 26] = [
+const NAMED: [(RemoteKey, &str); 33] = [
     (RemoteKey::Up, "up"),
     (RemoteKey::Down, "down"),
     (RemoteKey::Left, "left"),
@@ -62,6 +72,13 @@ const NAMED: [(RemoteKey, &str); 26] = [
     (RemoteKey::Green, "green"),
     (RemoteKey::Yellow, "yellow"),
     (RemoteKey::Blue, "blue"),
+    (RemoteKey::Home, "home"),
+    (RemoteKey::Tab, "tab"),
+    (RemoteKey::ShiftTab, "shift_tab"),
+    (RemoteKey::ShiftLeft, "shift_left"),
+    (RemoteKey::ShiftRight, "shift_right"),
+    (RemoteKey::CtrlLeft, "ctrl_left"),
+    (RemoteKey::CtrlRight, "ctrl_right"),
 ];
 
 impl RemoteKey {

@@ -256,3 +256,48 @@ fn without_pages_the_store_is_the_whole_guide() {
     assert_eq!(s.title(0, s.program_at(0, minute_of(&s, t))), title_at(t));
     assert_eq!(s.loaded_from(), None);
 }
+
+#[test]
+fn the_guide_browses_from_the_oldest_day_kept_to_past_its_last_programme() {
+    let (s, _) = paged(NOW - 3 * DAY);
+    let now = minute_of(&s, NOW);
+    // The synthetic guide ends a day (and ten minutes) after now.
+    let end = minute_of(&s, FIRST + 7 * DAY);
+    assert_eq!(
+        s.browsable(now),
+        (minute_of(&s, NOW - 3 * DAY), end + super::PAST_END)
+    );
+    // Without guide data: the default horizon; without pages: a week back.
+    let bare = EpgSchedule::new(vec![], GuideStore::new(), NOW);
+    let horizon = iptv_core::guide::HORIZON;
+    let history = iptv_core::guide::HISTORY;
+    assert_eq!(bare.browsable(0), (-history, horizon));
+    // Data ending before now still leaves a screen ahead to browse.
+    let late = end + 500;
+    let (first, last) = s.browsable(late);
+    assert_eq!(last, late + iptv_core::guide::VISIBLE);
+    assert!(first <= late);
+}
+
+#[test]
+fn a_day_back_by_key_or_pan_pages_that_day_in() {
+    let (s, requests) = paged(NOW - 7 * DAY);
+    let now = minute_of(&s, NOW);
+    let mut f = Focus::at(now);
+    // Ctrl + Left twice: two days back, past the held day.
+    f.step_time(-iptv_core::guide::moves::DAY, &s);
+    f.step_time(-iptv_core::guide::moves::DAY, &s);
+    let cells = s.programs_between(0, f.window, iptv_core::guide::VISIBLE);
+    assert!(cells.iter().all(|&p| s.title(0, p) == LOADING));
+    // The window starts an hour before that day: two days are asked for.
+    assert_eq!(requests.borrow().len(), 2, "{:?}", requests.borrow());
+    deliver(&s, &requests);
+    for p in s.programs_between(0, f.window, iptv_core::guide::VISIBLE) {
+        assert_eq!(s.title(0, p), title_at(s.unix(p.start.max(f.window))));
+    }
+    // The oldest day kept bounds the keys.
+    for _ in 0..10 {
+        f.step_time(-iptv_core::guide::moves::DAY, &s);
+    }
+    assert_eq!(f.window, minute_of(&s, NOW - 7 * DAY));
+}

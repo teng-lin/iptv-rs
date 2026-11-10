@@ -56,6 +56,17 @@ const KEYS: [RemoteKey; 26] = [
     RemoteKey::Blue,
 ];
 
+/// A desktop keyboard's own keys (`iptv_nav::Profile::Keyboard`).
+const KEYBOARD_KEYS: [RemoteKey; 7] = [
+    RemoteKey::Home,
+    RemoteKey::Tab,
+    RemoteKey::ShiftTab,
+    RemoteKey::ShiftLeft,
+    RemoteKey::ShiftRight,
+    RemoteKey::CtrlLeft,
+    RemoteKey::CtrlRight,
+];
+
 fn key_name(key: RemoteKey) -> String {
     let name = match key {
         RemoteKey::Up => "Up",
@@ -85,6 +96,15 @@ fn key_name(key: RemoteKey) -> String {
         RemoteKey::Yellow => "Yellow",
         RemoteKey::Blue => "Blue",
         RemoteKey::Digit(_) => "0–9",
+        RemoteKey::Home => "Home",
+        RemoteKey::Tab => "Tab",
+        RemoteKey::ShiftTab => "Shift+Tab",
+        RemoteKey::ShiftLeft => "Shift+Left",
+        RemoteKey::ShiftRight => "Shift+Right",
+        RemoteKey::CtrlLeft if cfg!(target_os = "macos") => "Cmd+Left",
+        RemoteKey::CtrlRight if cfg!(target_os = "macos") => "Cmd+Right",
+        RemoteKey::CtrlLeft => "Ctrl+Left",
+        RemoteKey::CtrlRight => "Ctrl+Right",
     };
     // The keyboard stands in for a remote on the desktop (`input.rs`).
     let keyboard = match key {
@@ -130,6 +150,12 @@ fn action_name(action: Action) -> &'static str {
         Action::PageDown => "Page down",
         Action::PastPrograms => "Earlier programmes",
         Action::ReturnToNow => "Back to now",
+        Action::JumpToNow => "Now on the channel",
+        Action::HourBack => "An hour earlier",
+        Action::HourForward => "An hour later",
+        Action::DayBack => "A day earlier",
+        Action::DayForward => "A day later",
+        Action::ToggleGroups => "Groups, or back to the guide",
         Action::ReturnToPlayer => "Back to the player",
         Action::PlayPause => "Play or pause",
         Action::Stop => "Stop",
@@ -164,12 +190,19 @@ fn binding(key: RemoteKey, press: Press) -> String {
 
 /// The app's keys now.
 pub fn key_lines() -> Vec<Line> {
-    lines(&Keymap::defaults(), crate::input::LONG_PRESS)
+    let map = Keymap::for_profile(crate::input::PROFILE);
+    lines(&map, crate::input::LONG_PRESS)
 }
 
-/// Every key the map gives an action, everywhere first, then per screen.
+/// Every key the map gives an action, everywhere first, then per screen;
+/// a keyboard's own keys where keys have no long press (the desktops).
 pub fn lines(map: &Keymap, long: bool) -> Vec<Line> {
-    let keys = KEYS.iter().copied().chain([RemoteKey::Digit(0)]);
+    let keyboard: &[RemoteKey] = if long { &[] } else { &KEYBOARD_KEYS };
+    let keys = KEYS
+        .iter()
+        .chain(keyboard)
+        .copied()
+        .chain([RemoteKey::Digit(0)]);
     let all: Vec<(RemoteKey, Press)> = keys
         .flat_map(|k| presses(long).iter().map(move |p| (k, *p)))
         .collect();
@@ -238,6 +271,19 @@ mod tests {
         assert!(lines.iter().any(|l| l.key.starts_with("Hold OK")));
         let short_only = super::lines(&Keymap::defaults(), false);
         assert!(!short_only.iter().any(|l| l.key.starts_with("Hold")));
+        assert!(!lines.iter().any(|l| l.key == "Home"), "a remote has none");
+        // A keyboard's own keys where keys have no long press.
+        let keyboard = Keymap::for_profile(iptv_nav::Profile::Keyboard);
+        let desk = super::lines(&keyboard, false);
+        let home = find(&desk, "Home");
+        assert!(home.iter().any(|l| l.action == "Now on the channel"));
+        assert!(
+            find(&desk, "Tab")
+                .iter()
+                .any(|l| l.action.starts_with("Groups"))
+        );
+        let left = find(&desk, "Left");
+        assert!(left.iter().any(|l| l.action == "Earlier programmes"));
         // Menu's Left/Right are bound to nothing: not listed as actions.
         assert!(!lines.iter().any(|l| l.action == "Nothing"));
     }

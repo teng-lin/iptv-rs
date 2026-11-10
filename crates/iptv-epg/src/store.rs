@@ -788,6 +788,15 @@ impl GuideStore {
             .collect()
     }
 
+    /// When the last programme held ends (any source, bound or not).
+    pub fn last_stop(&self) -> Option<UnixTime> {
+        self.sources
+            .iter()
+            .flat_map(|src| &src.schedules)
+            .filter_map(|s| s.slots.last().map(|slot| s.stop(slot)))
+            .max()
+    }
+
     /// Rough heap usage of all sources in bytes.
     pub fn heap_bytes(&self) -> usize {
         self.sources.iter().map(EpgSource::heap_bytes).sum()

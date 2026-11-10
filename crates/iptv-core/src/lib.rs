@@ -23,5 +23,6 @@ pub mod player_info;
 pub mod player_options;
 pub mod reorder;
 pub mod sound;
+pub mod timeline;
 pub mod tracks;
 pub mod wizard;

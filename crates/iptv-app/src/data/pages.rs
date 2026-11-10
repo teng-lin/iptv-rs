@@ -127,6 +127,14 @@ fn epg(schedule: &dyn Schedule) -> Option<&EpgSchedule> {
     schedule.as_any()?.downcast_ref::<EpgSchedule>()
 }
 
+/// Asks for the day holding guide `minute` before the grid shows it (where
+/// a fling of the timeline lands).
+pub fn want(schedule: &dyn Schedule, minute: i32) {
+    if let Some(s) = epg(schedule) {
+        s.ensure_loaded(s.unix(minute));
+    }
+}
+
 /// Whether the programmes around `t` are in memory on `schedule`, so a
 /// catch-up there resolves with its programme's real times; when not, its
 /// day is pinned and asked for, and `retry` runs once a page arrived.

@@ -27,6 +27,10 @@ use iptv_providers::model::{Channel, Group};
 
 /// Gap slots, and the epoch, are aligned to the hour.
 const SLOT: i64 = 3600;
+/// Minutes the guide can be browsed past its last programme.
+pub const PAST_END: i32 = 60;
+/// How far back a guide that keeps every day can be browsed (minutes).
+const MAX_BACK: i32 = 31 * 24 * 60;
 /// Title of a gap slot.
 pub const NO_INFORMATION: &str = "No information";
 /// Title of a slot whose day is still being read from the store.
@@ -59,6 +63,8 @@ pub struct EpgSchedule {
     describe: Option<DescriptionLookup>,
     /// Older days than `store` holds, read in on demand.
     pages: Pages,
+    /// When the last programme in `store` ends.
+    data_end: Option<UnixTime>,
     /// The source's account or session, for streams that need one.
     /// Shared with the next schedule of the same source (a refreshed guide),
     /// so a Stalker session renewed by one is the other's too.
@@ -82,6 +88,7 @@ impl EpgSchedule {
             channels.extend(members);
         }
         EpgSchedule {
+            data_end: store.last_stop(),
             sources: vec![None; channels.len()],
             channels,
             group_names,
@@ -374,6 +381,21 @@ impl Schedule for EpgSchedule {
 
     fn follows_wall_clock(&self) -> bool {
         true
+    }
+
+    /// From the oldest day the store keeps (a week back without pages) to
+    /// [`PAST_END`] past the last programme (the default horizon without
+    /// guide data).
+    fn browsable(&self, now: i32) -> (i32, i32) {
+        let first = match self.pages.oldest() {
+            UnixTime::MIN => now - iptv_core::guide::HISTORY,
+            oldest => self.minute(oldest).max(now - MAX_BACK),
+        };
+        let end = self.data_end.map_or(now + iptv_core::guide::HORIZON, |t| {
+            self.minute(t) + PAST_END
+        });
+        let end = end.max(now + iptv_core::guide::VISIBLE);
+        (first.min(now), end)
     }
 
     fn channel_count(&self) -> usize {
