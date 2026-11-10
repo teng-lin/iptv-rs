@@ -53,6 +53,8 @@ const KEYS: &[(&str, RemoteKey)] = &[
     ("=", RemoteKey::ChannelUp),
     ("-", RemoteKey::ChannelDown),
     ("space", RemoteKey::PlayPause),
+    ("p", RemoteKey::Previous),
+    ("n", RemoteKey::Next),
 ];
 
 struct Nav {
@@ -260,6 +262,8 @@ fn apply(ui: Ui, action: Action) {
             Pane::Groups => ui.focus.update(|f| f.enter_group(&*crate::schedule())),
             Pane::Guide => ui.watch(),
         },
+        // Over a failed stream, OK retries.
+        Action::ShowPanels if crate::player::failed(&ui) => crate::player::retry(ui),
         Action::ShowPanels => ui.update_panels(|p, now| p.show_controls(now)),
         Action::ShowInfo if ui.mode.get() == ViewMode::Fullscreen => {
             ui.update_panels(|p, now| p.show_info(now))
@@ -277,6 +281,8 @@ fn apply(ui: Ui, action: Action) {
         Action::PlayPause => ui.paused.update(|p| *p = !*p),
         Action::ChannelUp => zap(ui, -1),
         Action::ChannelDown => zap(ui, 1),
+        Action::PreviousChannel => crate::player::previous_channel(ui),
+        Action::GoLive => crate::player::go_live(ui),
         Action::PageUp => page(ui, -1),
         Action::PageDown => page(ui, 1),
         other => log::info!("iptv action {other:?} not implemented yet"),
@@ -289,8 +295,8 @@ fn zap(ui: Ui, step: isize) {
         .playing
         .get()
         .unwrap_or_else(|| ui.focus.with(|f| f.channel));
-    let to = (from as isize + step).rem_euclid(crate::schedule().channel_count().max(1) as isize)
-        as usize;
+    // Wraps within the channel's group.
+    let to = iptv_core::playback::zap_target(&*crate::schedule(), from, step);
     ui.focus.update(|f| {
         f.pane = Pane::Guide;
         f.channel = to;

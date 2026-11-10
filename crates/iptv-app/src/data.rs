@@ -74,6 +74,8 @@ pub enum Update {
 struct Imported {
     groups: Vec<Group>,
     channels: Vec<Channel>,
+    /// What the source's streams need (headers, account, session).
+    playback: Option<iptv_guide::playback::PlaybackContext>,
     guide: GuideStore,
     now: i64,
 }
@@ -187,6 +189,8 @@ pub fn start_import(ui: Ui, job: Job, on_update: impl Fn(Update) + 'static) -> C
         g.set(g.get() + 1);
         g.get()
     });
+    // A stored source's refresh may start the last channel; a new one not.
+    let refresh = job.stored.is_some();
     let (tx, rx) = mpsc::channel();
     {
         let cancel = cancel.clone();
@@ -202,9 +206,11 @@ pub fn start_import(ui: Ui, job: Job, on_update: impl Fn(Update) + 'static) -> C
             &imported.channels,
             imported.guide,
             imported.now,
-        );
+        )
+        .with_playback(imported.playback);
         log::info!("iptv data: guide switched to {channels} imported channels");
         crate::set_schedule(&ui, Rc::new(schedule));
+        crate::player::source_ready(ui, refresh);
     };
     spawn_in_app(async move {
         let mut finished = false;
@@ -342,6 +348,7 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
         Box::new(Imported {
             groups: catalog.groups.clone(),
             channels: catalog.channels.clone(),
+            playback: crate::player::context_for(&job.source.config, &catalog.source),
             guide,
             now,
         })

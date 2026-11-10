@@ -2,17 +2,23 @@ package com.hantekllc.iptvrs.host
 
 import android.content.Context
 import android.graphics.Color
+import android.net.Uri
 import android.view.Gravity
 import android.view.SurfaceView
 import android.view.View
 import android.widget.FrameLayout
 import kotlin.math.max
 import kotlin.math.roundToInt
+import androidx.annotation.OptIn
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.HttpDataSource
+import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.longbridge.nsh.NshComponent
@@ -23,11 +29,22 @@ import com.longbridge.nsh.NshComponentContext
  * black frame. The Rust app lays it out like any view and draws its UI above
  * it; changing layout never recreates the decoder.
  *
- * Props: `url` (string, null stops), `paused` (bool), `userAgent` (string),
- * `pictureSize` ("normal", "full", "zoom", "cinema", "reduced", "4:3",
- * "16:9", "2.35:1"; sizes the surface by layout, never by transform).
- * Events: `state` {state}, `error` {code, message}, `size` {width, height}.
+ * Props:
+ * - `source`: `{url, headers: {name: value}, token}` or null (stops). A new
+ *   url or token reopens the stream (the token forces a retry of the same
+ *   url). Headers go with every request; identity headers (Cookie,
+ *   Authorization, SN, X-User-Agent) only to the stream's own host.
+ * - `paused` (bool), `userAgent` (fallback when the source sends none),
+ * - `pictureSize` ("normal", "full", "zoom", "cinema", "reduced", "4:3",
+ *   "16:9", "2.35:1"; sizes the surface by layout, never by transform).
+ *
+ * Events: `state` {state: idle|buffering|ready|ended}, `error` {code, http?}
+ * (code is Media3's error code name; no URLs or messages), `size` {width,
+ * height}. Recovers by itself from BEHIND_LIVE_WINDOW, and retries a
+ * container it could not parse once as HLS; everything else goes to the app,
+ * which owns the retry policy.
  */
+@OptIn(UnstableApi::class)
 class PlayerComponent(
     context: Context,
     private val nsh: NshComponentContext,
@@ -35,7 +52,11 @@ class PlayerComponent(
     companion object {
         const val NAME = "tv.player"
         private const val DEFAULT_UA = "iptv-rs/0.1 (Media3)"
+        private val IDENTITY = setOf("cookie", "authorization", "sn", "x-user-agent")
     }
+
+    /** Headers for the current stream; read on loader threads. */
+    private class Headers(val host: String?, val all: Map<String, String>)
 
     private val surface = SurfaceView(context)
     private val root = PictureFrame(context).apply {
@@ -45,18 +66,38 @@ class PlayerComponent(
 
     private var userAgent = DEFAULT_UA
     private var url: String? = null
-    private lateinit var player: ExoPlayer
+    private var token: Long = 0
+    private var sourceHeaders: Map<String, String> = emptyMap()
+    @Volatile private var headers = Headers(null, emptyMap())
+    /** Set after the one HLS fallback for the current stream. */
+    private var triedHls = false
+    private val player: ExoPlayer
+
+    private fun headersFor(uri: Uri): Map<String, String> {
+        val h = headers
+        val own = uri.host != null && uri.host.equals(h.host, ignoreCase = true)
+        return if (own) h.all else h.all.filterKeys { it.lowercase() !in IDENTITY }
+    }
 
     private fun build(context: Context): ExoPlayer {
+        // No factory User-Agent: it would override the per-stream one.
         val http = DefaultHttpDataSource.Factory()
-            .setUserAgent(userAgent)
+            .setUserAgent(null)
             .setAllowCrossProtocolRedirects(true)
+            .setConnectTimeoutMs(8_000)
+            .setReadTimeoutMs(15_000)
+        val withHeaders = ResolvingDataSource.Factory(http) { spec ->
+            spec.withAdditionalHeaders(headersFor(spec.uri))
+        }
         return ExoPlayer.Builder(context)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(context).setDataSourceFactory(http))
+            .setMediaSourceFactory(
+                DefaultMediaSourceFactory(context).setDataSourceFactory(withHeaders),
+            )
             .build()
             .also { p ->
                 p.setVideoSurfaceView(surface)
-                p.repeatMode = Player.REPEAT_MODE_ALL
+                // Live streams that end are reconnected by the app.
+                p.repeatMode = Player.REPEAT_MODE_OFF
                 p.playWhenReady = true
                 p.addListener(listener)
             }
@@ -82,7 +123,21 @@ class PlayerComponent(
         }
 
         override fun onPlayerError(error: PlaybackException) {
-            nsh.emit("error", mapOf("code" to error.errorCodeName, "message" to (error.message ?: "")))
+            when {
+                error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW -> {
+                    player.seekToDefaultPosition()
+                    player.prepare()
+                    return
+                }
+                !triedHls && isContainerError(error.errorCode) -> {
+                    triedHls = true
+                    url?.let { start(it, MimeTypes.APPLICATION_M3U8) }
+                    return
+                }
+            }
+            val event = mutableMapOf<String, Any>("code" to error.errorCodeName)
+            httpStatus(error)?.let { event["http"] = it }
+            nsh.emit("error", event)
         }
     }
 
@@ -95,35 +150,50 @@ class PlayerComponent(
 
     override fun setProp(name: String, value: Any?) {
         when (name) {
-            "url" -> play(value as? String)
+            "source" -> setSource(value as? Map<*, *>)
             "paused" -> player.playWhenReady = value != true
             "pictureSize" -> root.mode = (value as? String) ?: "normal"
             "userAgent" -> {
-                val ua = (value as? String)?.takeIf { it.isNotBlank() } ?: DEFAULT_UA
-                if (ua != userAgent) {
-                    // The data source factory is fixed per player: rebuild once, keep the stream.
-                    userAgent = ua
-                    player.release()
-                    player = build(root.context)
-                    url?.let { start(it) }
-                }
+                userAgent = (value as? String)?.takeIf { it.isNotBlank() } ?: DEFAULT_UA
+                applyHeaders()
             }
         }
     }
 
-    private fun play(next: String?) {
-        if (next == url) return
+    private fun setSource(source: Map<*, *>?) {
+        val next = source?.get("url") as? String
+        val nextToken = (source?.get("token") as? Number)?.toLong() ?: 0
+        sourceHeaders = (source?.get("headers") as? Map<*, *>)
+            ?.entries
+            ?.mapNotNull { (k, v) -> (k as? String)?.let { key -> (v as? String)?.let { key to it } } }
+            ?.toMap()
+            ?: emptyMap()
+        val changed = next != url || nextToken != token
         url = next
+        token = nextToken
+        applyHeaders()
+        if (!changed) return
+        triedHls = false
         if (next == null) {
             player.stop()
             player.clearMediaItems()
         } else {
-            start(next)
+            start(next, null)
         }
     }
 
-    private fun start(target: String) {
-        player.setMediaItem(MediaItem.fromUri(target))
+    private fun applyHeaders() {
+        val all = LinkedHashMap(sourceHeaders)
+        if (all.keys.none { it.equals("User-Agent", ignoreCase = true) }) {
+            all["User-Agent"] = userAgent
+        }
+        headers = Headers(url?.let { Uri.parse(it).host }, all)
+    }
+
+    private fun start(target: String, mime: String?) {
+        val item = MediaItem.Builder().setUri(target)
+        if (mime != null) item.setMimeType(mime)
+        player.setMediaItem(item.build())
         player.prepare()
     }
 
@@ -131,6 +201,20 @@ class PlayerComponent(
         player.removeListener(listener)
         player.release()
     }
+}
+
+private fun isContainerError(code: Int) =
+    code == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED ||
+        code == PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED
+
+/** The HTTP status behind a playback error, if a server answered one. */
+private fun httpStatus(error: PlaybackException): Int? {
+    var cause: Throwable? = error.cause
+    while (cause != null) {
+        if (cause is HttpDataSource.InvalidResponseCodeException) return cause.responseCode
+        cause = cause.cause
+    }
+    return null
 }
 
 /**

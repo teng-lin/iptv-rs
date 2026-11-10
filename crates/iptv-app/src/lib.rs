@@ -13,6 +13,7 @@ mod grid;
 mod input;
 mod menu_view;
 mod panels;
+mod player;
 mod player_panels;
 mod search_view;
 pub mod time;
@@ -115,6 +116,8 @@ pub struct Ui {
     pub search: Signal<Option<search_view::Screen>>,
     /// The add-playlist wizard, when open.
     pub wizard: Signal<Option<wizard_view::Open>>,
+    /// Stream, health and history of playback (`player.rs`).
+    pub player: player::Player,
 }
 
 impl Ui {
@@ -156,6 +159,7 @@ impl Ui {
         self.playback.set(playback);
         self.playing.set(Some(channel));
         self.paused.set(false);
+        player::start(self);
     }
 
     /// A touch on any control.
@@ -290,6 +294,7 @@ pub fn App() -> impl IntoElement {
         editor: signal(None),
         search: signal(None),
         wizard: signal(None),
+        player: player::Player::new(),
     };
     // Leaving full screen closes the panels.
     effect(move || {
@@ -301,6 +306,7 @@ pub fn App() -> impl IntoElement {
     input::bind(ui);
     data::start(ui);
     time::start(ui);
+    player::bind(ui);
     bind_back(ui);
 
     let rows = element_ref();
@@ -382,6 +388,7 @@ pub fn App() -> impl IntoElement {
                     }
                 }),
         )
+        .child(player_panels::status(ui))
         .child(player_panels::layer(ui))
         .child(search_view::layer(ui))
         .child(menu_view::layer(ui))
