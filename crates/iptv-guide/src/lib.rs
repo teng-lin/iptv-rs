@@ -35,7 +35,13 @@ pub struct EpgSchedule {
     group_starts: Vec<usize>,
     store: GuideStore,
     now: UnixTime,
+    /// Reads a description the in-memory store left out.
+    describe: Option<DescriptionLookup>,
 }
+
+/// Reads the description of the programme starting at the given time on a
+/// channel, e.g. from the SQLite store (`Store::epg_description`).
+pub type DescriptionLookup = Box<dyn Fn(&ChannelKey, UnixTime) -> Option<String>>;
 
 impl EpgSchedule {
     /// `groups`: names with their channels, in display order. `now` is
@@ -56,7 +62,18 @@ impl EpgSchedule {
             group_starts,
             store,
             now: now - now.rem_euclid(60),
+            describe: None,
         }
+    }
+
+    /// Descriptions not held in memory (a guide loaded from the store
+    /// without them) are read with `lookup(key, programme start)`.
+    pub fn with_description_lookup(
+        mut self,
+        lookup: impl Fn(&ChannelKey, UnixTime) -> Option<String> + 'static,
+    ) -> Self {
+        self.describe = Some(Box::new(lookup));
+        self
     }
 
     /// From an imported catalog: each channel in its first group (in the
@@ -127,11 +144,15 @@ impl EpgSchedule {
         self.channels.get(channel).map(|c| &c.key)
     }
 
-    /// The description of `program`, when the EPG has one.
+    /// The description of `program`, when the EPG has one: from memory,
+    /// else from the description lookup.
     pub fn description(&self, channel: usize, program: Program) -> Option<String> {
         let key = self.key(channel)?;
         let p = self.store.programme_at(key, self.probe(program))?;
-        p.desc().map(str::to_owned)
+        match p.desc() {
+            Some(d) => Some(d.to_owned()),
+            None => self.describe.as_ref()?(key, p.start()),
+        }
     }
 
     /// A time inside `program` (its first second, or its middle if short).
