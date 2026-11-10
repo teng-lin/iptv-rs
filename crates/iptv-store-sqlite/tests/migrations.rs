@@ -11,6 +11,7 @@
 //! synthetic data in the new shape, and add it to `HISTORY` below.
 
 mod common;
+mod staged;
 
 use std::path::Path;
 
@@ -578,7 +579,7 @@ fn first_guide_refresh_after_upgrading() {
             last_modified: None,
             bytes: 10,
         }];
-        let counts = store.replace_epg(SRC, &guide, &feeds, 7).unwrap();
+        let counts = staged::replace_epg(&mut store, SRC, &guide, &feeds, 7).unwrap();
         assert_eq!((counts.channels, counts.programmes), (1, 1));
         let stored = store.epg_guide(SRC).unwrap().unwrap();
         assert_eq!((stored.feeds.len(), stored.match_fingerprint), (1, Some(7)));

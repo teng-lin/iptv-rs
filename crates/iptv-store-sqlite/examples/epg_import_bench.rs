@@ -21,7 +21,7 @@ use iptv_import::{CancelToken, ImportOptions, NoProgress, import_epg, import_sou
 use iptv_net::NetClient;
 use iptv_providers::SecretUrl;
 use iptv_providers::model::{M3uSourceConfig, Source, SourceConfig};
-use iptv_store_sqlite::{EpgFeedMeta, EpgWindow, Store};
+use iptv_store_sqlite::{EpgFeedMeta, EpgStage, EpgWindow, Store};
 
 /// A `/proc/self/status` field in KiB.
 fn status_kib(field: &str) -> u64 {
@@ -108,49 +108,62 @@ async fn main() {
     let base = status_kib("VmRSS:");
     reset_peak();
     let t = Instant::now();
+    // As the app: the download is staged next to the store.
+    let mut stage = EpgStage::create_in(&dir).expect("stage");
     let epg = import_epg(
         &net,
         &configs,
         &catalog.channels,
         &overrides,
         now,
+        &mut stage,
         &mut NoProgress,
         &cancel,
     )
     .await
     .expect("guide");
     let downloaded = t.elapsed();
+    let staged = std::fs::metadata(stage.path()).map_or(0, |m| m.len());
     let feeds = EpgFeedMeta::from_import(&epg, &configs, now);
     let counts = store
-        .replace_epg(source, &epg.guide, &feeds, fingerprint)
+        .replace_epg(source, &mut stage, &epg, &feeds, fingerprint)
         .expect("replace");
+    let replaced = t.elapsed();
+    drop(stage);
     let results: Vec<_> = epg.sources.iter().map(|o| (o.id, None)).collect();
     store
         .record_epg_feed_results(source, &results)
         .expect("results");
-    store.prune_epg(now - 7 * DAY).expect("prune");
+    let pruned = store.prune_epg(now - 7 * DAY).expect("prune");
     drop(epg);
     let stored = t.elapsed();
+    let import_peak = status_kib("VmHWM:");
     let guide = store
         .load_epg(source, &EpgWindow::from(now, 7))
         .expect("load");
     let total = t.elapsed();
     let peak = status_kib("VmHWM:");
     println!(
-        "guide: {} channels, {} programmes, {} descriptions",
-        counts.bindings, counts.programmes, counts.descriptions
+        "guide: {} channels, {} programmes, {} descriptions; stage file {:.0} MiB",
+        counts.bindings,
+        counts.programmes,
+        counts.descriptions,
+        staged as f64 / f64::from(1 << 20)
     );
     println!(
-        "time: download+parse {:.2}s, stored at {:.2}s, window loaded at {:.2}s",
+        "time: download+parse {:.2}s, replaced at {:.2}s, stored at {:.2}s ({pruned} pruned), window loaded at {:.2}s",
         downloaded.as_secs_f64(),
+        replaced.as_secs_f64(),
         stored.as_secs_f64(),
         total.as_secs_f64()
     );
     println!(
-        "rss: before {:.0} MiB, peak {:.0} MiB (+{:.0} MiB), loaded guide bound {}",
+        "rss: before {:.0} MiB, peak {:.0} MiB (+{:.0} MiB; +{:.0} MiB until stored), window held {:.0} MiB, loaded guide bound {}",
         mib(base),
         mib(peak),
         mib(peak.saturating_sub(base)),
+        mib(import_peak.saturating_sub(base)),
+        guide.heap_bytes() as f64 / f64::from(1 << 20),
         guide.bound_count()
     );
 }

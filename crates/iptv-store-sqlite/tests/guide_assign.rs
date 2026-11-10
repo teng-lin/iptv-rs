@@ -2,6 +2,7 @@
 //! feed's last download went, and a channel's guide chosen by hand.
 
 mod common;
+mod staged;
 
 use iptv_epg::{
     ChannelKey, EpgRef, GuideStore, MatchKind, SourceBuilder, StoreOptions, XmltvChannel,
@@ -78,7 +79,7 @@ fn title(store: &Store, source: SourceId, key: &str) -> Option<String> {
 #[test]
 fn every_listed_channel_is_kept_with_the_guide() {
     let (mut store, a) = store();
-    store.replace_epg(a, &guide(), &feeds(), 1).unwrap();
+    staged::replace_epg(&mut store, a, &guide(), &feeds(), 1).unwrap();
     let channel = |id: &str, name: &str, assigned| GuideChannel {
         feed: FEED,
         epg_channel: id.into(),
@@ -101,7 +102,7 @@ fn every_listed_channel_is_kept_with_the_guide() {
 fn each_feed_keeps_how_its_last_download_went() {
     let (mut store, a) = store();
     assert_eq!(store.epg_feed_results(a).unwrap(), []);
-    store.replace_epg(a, &guide(), &feeds(), 1).unwrap();
+    staged::replace_epg(&mut store, a, &guide(), &feeds(), 1).unwrap();
     let other = iptv_epg::SourceId(1001);
     store
         .record_epg_feed_results(a, &[(FEED, None), (other, Some(ImportErrorKind::Network))])
@@ -135,7 +136,7 @@ fn each_feed_keeps_how_its_last_download_went() {
     assert_eq!(store.epg_feed_results(b).unwrap().len(), 1);
     assert_eq!(store.epg_guide(b).unwrap().unwrap().replaced_at, None);
     // A new download forgets the old results; clearing forgets them all.
-    store.replace_epg(a, &guide(), &feeds(), 1).unwrap();
+    staged::replace_epg(&mut store, a, &guide(), &feeds(), 1).unwrap();
     assert_eq!(store.epg_feed_results(a).unwrap(), []);
     store.record_epg_feed_results(a, &[(FEED, None)]).unwrap();
     store.delete_epg(a).unwrap();
@@ -149,7 +150,7 @@ fn a_chosen_guide_applies_to_the_stored_guide_when_its_programmes_are_there() {
         !store.rebind_epg(a, &"k1".into(), None, 5).unwrap(),
         "no guide"
     );
-    store.replace_epg(a, &guide(), &feeds(), 1).unwrap();
+    staged::replace_epg(&mut store, a, &guide(), &feeds(), 1).unwrap();
     assert_eq!(title(&store, a, "k1").as_deref(), Some("Bulletin"));
     // Another playlist channel onto the stored news channel: at once.
     assert!(

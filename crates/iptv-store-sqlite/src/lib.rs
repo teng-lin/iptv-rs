@@ -21,7 +21,8 @@
 //! writer and any number of reader stores on the same file; WAL lets them
 //! read while the writer replaces a catalog.
 //! - **Guide data** (EPG) is stored per playlist source and replaced per
-//!   refresh ([`Store::replace_epg`]); the app loads a window of it without
+//!   refresh ([`Store::replace_epg`]) from a download staged in its own
+//!   file ([`EpgStage`]); the app loads a window of it without
 //!   descriptions ([`Store::load_epg`]) and reads descriptions on demand.
 //!   The wiring for app start and background refresh is documented in
 //!   `src/epg.rs` and the README.
@@ -31,6 +32,7 @@ mod channels;
 mod codec;
 mod epg;
 mod epg_assign;
+mod epg_stage;
 mod error;
 mod guide_sources;
 mod history;
@@ -50,6 +52,7 @@ use rusqlite::{Connection, OpenFlags};
 pub use channels::{ChannelOrder, ChannelQuery, ChannelRow, ChannelScope};
 pub use epg::{EpgCounts, EpgFeedMeta, EpgWindow, StoredEpgFeed, StoredGuide};
 pub use epg_assign::{FeedResult, GuideChannel};
+pub use epg_stage::EpgStage;
 pub use error::{Result, StoreError};
 pub use guide_sources::GuideSource;
 pub use history::{HISTORY_LIMIT, HistoryEntry, PRUNE_SLACK};
@@ -81,6 +84,9 @@ impl Default for OpenOptions {
         }
     }
 }
+
+/// Page cache per connection, KiB.
+const CACHE_KIB: i64 = 16 * 1024;
 
 /// Unix seconds from the system clock.
 fn system_now() -> i64 {
@@ -141,7 +147,7 @@ impl Store {
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         // 16 MiB page cache (default 2 MiB): a 50k-channel refresh touches
         // several index B-trees.
-        conn.pragma_update(None, "cache_size", -16384)?;
+        conn.pragma_update(None, "cache_size", -CACHE_KIB)?;
         migrate::migrate_to(&mut conn, SCHEMA_VERSION, system_now())?;
         let fts_index = search::prepare(&mut conn)?;
         Ok(Self {

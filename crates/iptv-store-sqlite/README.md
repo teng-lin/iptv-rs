@@ -36,7 +36,8 @@ the NDK. A web store is a later, separate adapter.
   columns, never values; import failures store only an error kind.
 - **Guide data is provider data.** `replace_epg` swaps a playlist source's
   whole stored guide (feeds, bound EPG channels, bindings, programmes,
-  descriptions) in one transaction; a failed download (`record_epg_failure`)
+  descriptions) in one transaction from a download staged in its own file
+  (`EpgStage`); a failed or cancelled download (`record_epg_failure`)
   keeps the stored guide. Only EPG channels a playlist channel is bound to
   are stored; channels sharing one EPG channel share its rows. Feed URLs
   can embed credentials (Xtream `xmltv.php`) and are stored like the
@@ -44,11 +45,24 @@ the NDK. A web store is a later, separate adapter.
 
 ## Guide data (EPG)
 
-- `replace_epg(source, &GuideStore, &[EpgFeedMeta], match_fingerprint)`:
-  after `iptv_import::import_epg`; `EpgFeedMeta::from_import` builds the
+- `EpgStage::create_in(dir)`: a scratch SQLite file next to the store
+  (no journal, no fsync; deleted on drop, stale ones removed at start by
+  `EpgStage::remove_stale`). It is the `iptv_import::GuideSink` of
+  `import_epg`: a writer thread stores each feed's programmes in batches
+  (at most 4096 programmes or 1 MiB of text each, two queued) as they are
+  parsed, then settles every staged channel with
+  `iptv_epg::ScheduleRules` (same start: the longest; missing stops,
+  overlaps, retention), the same rules the in-memory `SourceBuilder`
+  applies. Only programmes of EPG channels some playlist channel can match
+  are staged (`iptv_epg::MatchFilter`).
+- `replace_epg(source, &mut EpgStage, &EpgImport, &[EpgFeedMeta],
+  match_fingerprint)`: copies the bound channels' schedules from the stage
+  (attached) in one transaction; `EpgFeedMeta::from_import` builds the
   feed rows (settings the feed was fetched with, fetch time, bytes; ETag /
   Last-Modified columns exist but the network layer does not expose them
-  yet).
+  yet). The copy runs with foreign keys off (rows are consistent by
+  construction: a multi-row copy under foreign-key checks needs a
+  statement journal, 3-4x slower) and a 32 MiB page cache.
 - `load_epg(source, &EpgWindow)`: programmes overlapping `[from, to)` for
   all or some playlist channel keys, into a `GuideStore` bound by those
   keys, normally without descriptions; `epg_description(source, key,
@@ -62,14 +76,20 @@ the NDK. A web store is a later, separate adapter.
 The startup and background-refresh wiring for the app is in the module
 docs of `src/epg.rs`. Memory (`tests/epg_memory.rs`, release, Rust heap):
 
-| Guide | In memory, as imported | Stored, loaded from now − 2 d, no descriptions |
+| Guide | Whole guide in memory (`SourceBuilder`, `MemoryGuide`) | Stored, loaded from now − 2 d, no descriptions |
 | --- | --- | --- |
 | 1000 ch, 82.5k programmes | 7.5 MiB (11.5 before compaction) | 2.0 MiB |
 | 5000 ch × 9 d, 1.23M programmes | 97.6 MiB (159.4 before) | 11.9 MiB (22.3 MiB for all 9 days) |
 
 SQLite's own heap comes on top (page cache, up to `cache_size` = 16 MiB
-per connection). Replacing 1.23M programmes takes ~3.5 s (file 160 MiB
-with descriptions); loading the window ~0.25 s on a desktop CPU.
+per connection). Loading the window takes ~0.25 s on a desktop CPU.
+
+Importing a guide no longer builds it in memory: the download is staged
+on disk (above). `tests/epg_stream_memory.rs` checks that the import's
+Rust heap (~2 MiB) and SQLite heap do not grow with the guide's length;
+`examples/epg_import_bench.rs` measures the whole import (playlist, guide
+download, store, window) for time and peak RSS; results in
+`docs/perf.md`.
 
 ## Schema (v4)
 

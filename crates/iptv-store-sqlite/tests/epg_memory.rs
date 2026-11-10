@@ -12,6 +12,7 @@
 //! 1.2M programmes).
 
 mod epg_synth;
+mod staged;
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -153,7 +154,7 @@ fn stored_load(shape: Shape) -> (Report, Report) {
         bytes: 0,
     }];
     let started = Instant::now();
-    let counts = store.replace_epg(source, &guide, &feeds, 0).unwrap();
+    let counts = staged::replace_epg(&mut store, source, &guide, &feeds, 0).unwrap();
     let replaced_in = started.elapsed();
     assert_eq!(counts.programmes, programmes);
     drop(guide);
