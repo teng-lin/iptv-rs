@@ -3,8 +3,6 @@
 
 use nsh_core::prelude::*;
 
-use crate::fonts::CHANNEL as TEXT_SIZE;
-
 /// Digits the column always has room for.
 const MIN_DIGITS: usize = 3;
 /// A digit's width in em where the platform measures less: tabular
@@ -13,24 +11,26 @@ const DIGIT_EM: f32 = 0.6;
 /// Room for rounding in the platform's layout.
 const SLACK: f32 = 2.0;
 
-/// The width (px) of a number column for rows numbered up to `widest`.
-pub fn column_width(widest: usize) -> f32 {
+/// The width (px) of a number column for rows numbered up to `widest`,
+/// set at `size` sp.
+pub fn column_width(widest: usize, size: f32) -> f32 {
     let digits = digits(widest).max(MIN_DIGITS);
-    let measured = measure_text(&format!("{TEXT_SIZE}px Roboto"), &"0".repeat(digits)).0;
-    width(digits, measured)
+    let measured = measure_text(&format!("{size}px Roboto"), &"0".repeat(digits)).0;
+    width(digits, measured, size)
 }
 
 fn digits(n: usize) -> usize {
     n.checked_ilog10().map_or(1, |d| d as usize + 1)
 }
 
-fn width(digits: usize, measured: f32) -> f32 {
-    measured.max(digits as f32 * TEXT_SIZE * DIGIT_EM).ceil() + SLACK
+fn width(digits: usize, measured: f32, size: f32) -> f32 {
+    measured.max(digits as f32 * size * DIGIT_EM).ceil() + SLACK
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fonts::CHANNEL;
 
     #[test]
     fn digits_count_the_widest_number() {
@@ -45,12 +45,14 @@ mod tests {
 
     #[test]
     fn the_column_grows_with_the_digits_and_trusts_a_wider_measure() {
-        let three = width(3, 0.0);
-        let five = width(5, 0.0);
+        let three = width(3, 0.0, CHANNEL);
+        let five = width(5, 0.0, CHANNEL);
         assert!(five > three);
         // Five digits at 0.55 em (a common face) fit.
-        assert!(five >= 5.0 * TEXT_SIZE * 0.55 + 1.0);
+        assert!(five >= 5.0 * CHANNEL * 0.55 + 1.0);
         // A face measured wider than the estimate wins.
-        assert_eq!(width(5, 100.0), 102.0);
+        assert_eq!(width(5, 100.0, CHANNEL), 102.0);
+        // A smaller size (a scaled window) narrows the column.
+        assert!(width(5, 0.0, CHANNEL * 0.8) < five);
     }
 }

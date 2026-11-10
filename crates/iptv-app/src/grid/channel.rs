@@ -4,14 +4,15 @@
 
 use nsh_core::prelude::*;
 
-use super::{CELL_RADIUS, fill};
+use super::{CELL_H, CELL_RADIUS, fill};
 use crate::fonts::{CHANNEL, SANS};
+use crate::scale::Scale;
 use crate::theme::BRIGHT_TEXT;
 use crate::{Ui, channel_name};
 
-/// The logo box: missing or broken logos leave it empty.
-const LOGO_W: f32 = 66.0;
-const LOGO_H: f32 = 53.0;
+/// The logo box, as tall as a programme: missing or broken logos leave
+/// it empty (sizes at full size, scaled with the grid).
+const LOGO_W: f32 = 60.0;
 /// Inside the logo box around the logo.
 const LOGO_PAD: f32 = 4.0;
 /// Before the number, between the parts, after the name.
@@ -28,17 +29,18 @@ pub(crate) fn no_logo() -> String {
 }
 
 /// The width the name has in a column `column` wide after a number
-/// `number` wide (`numbers.rs`).
-fn name_width(column: f32, number: f32, playing: bool) -> f32 {
+/// `number` wide (`numbers.rs`), at size scale `scale`.
+fn name_width(column: f32, number: f32, playing: bool, scale: f32) -> f32 {
     let marker = if playing { MARKER_W } else { 0.0 };
-    column - 2.0 * PAD - number - LOGO_W - 3.0 * GAP - marker
+    let logo = (LOGO_W * scale).round();
+    column - number - logo - scale * (2.0 * PAD + 3.0 * GAP + marker)
 }
 
 pub(super) fn cell(
     ui: Ui,
     at: Position,
     channel: Memo<Option<usize>>,
-    column: fn() -> f32,
+    (column, size): (fn() -> f32, Scale),
     number_w: Memo<f32>,
 ) -> impl IntoElement {
     let playing = move || channel.get().is_some() && ui.playing.get() == channel.get();
@@ -58,10 +60,10 @@ pub(super) fn cell(
     };
     view()
         .w(move || px(column()))
-        .px(px(PAD))
+        .px(move || size.px(PAD))
         .flex_row()
         .items_center()
-        .gap(px(GAP))
+        .gap(move || size.px(GAP))
         .on_press(move || {
             ui.touched();
             let view = crate::lists::view(ui);
@@ -78,22 +80,22 @@ pub(super) fn cell(
                 .number_of_lines(1)
                 .text_right()
                 .font_family(SANS)
-                .text_size(px(CHANNEL))
+                .text_size(move || size.px(CHANNEL))
                 .text_color(colour),
         )
         .child(
             view()
-                .w(px(LOGO_W))
-                .h(px(LOGO_H))
-                .p(px(LOGO_PAD))
-                .rounded(px(CELL_RADIUS))
+                .w(move || px(size.whole(LOGO_W)))
+                .h(move || px(size.whole(CELL_H)))
+                .p(move || size.px(LOGO_PAD))
+                .rounded(move || size.px(CELL_RADIUS))
                 .bg(move || fill(ui, ui.theme.with(|t| t.guide().cell)))
                 .items_center()
                 .justify_center()
                 .child(
                     image(logo)
-                        .w(px(LOGO_W - 2.0 * LOGO_PAD))
-                        .h(px(LOGO_H - 2.0 * LOGO_PAD))
+                        .w(move || px(size.whole(LOGO_W) - 2.0 * size.of(LOGO_PAD)))
+                        .h(move || px(size.whole(CELL_H) - 2.0 * size.of(LOGO_PAD)))
                         .object_fit(ResizeMode::Contain),
                 ),
         )
@@ -107,22 +109,23 @@ pub(super) fn cell(
                 };
                 let star = ui.favorites.with(|f| f.contains(&ch));
                 let name = format!("{}{}", if star { "★ " } else { "" }, channel_name(ch));
+                let scale = size.get();
                 crate::fonts::fit(
                     &name,
-                    name_width(column(), number_w.get(), playing()),
-                    CHANNEL,
+                    name_width(column(), number_w.get(), playing(), scale),
+                    CHANNEL * scale,
                 )
             })
             .flex_shrink(1.0)
             .number_of_lines(1)
             .font_family(SANS)
-            .text_size(px(CHANNEL))
+            .text_size(move || size.px(CHANNEL))
             .text_color(colour),
         )
         .child(
             // The playing marker, after the name.
             text(move || if playing() { "▶" } else { "" })
-                .text_size(px(CHANNEL * 0.6))
+                .text_size(move || size.px(CHANNEL * 0.6))
                 .text_color(move || rgb(ui.theme.with(|t| t.guide().playing))),
         )
 }
@@ -133,14 +136,19 @@ mod tests {
 
     #[test]
     fn names_have_the_room_the_column_leaves() {
-        // A 1280 dp window: 40 % is 512 dp; three digits take about 50.
+        // A 1280 dp window: 36 % is 461 dp; three digits take about 42.
         assert_eq!(
-            name_width(512.0, 50.0, false),
-            512.0 - 16.0 - 50.0 - 66.0 - 3.0 * 14.0
+            name_width(461.0, 42.0, false, 1.0),
+            461.0 - 16.0 - 42.0 - 60.0 - 3.0 * 14.0
         );
         assert_eq!(
-            name_width(512.0, 50.0, true),
-            name_width(512.0, 50.0, false) - MARKER_W
+            name_width(461.0, 42.0, true, 1.0),
+            name_width(461.0, 42.0, false, 1.0) - MARKER_W
+        );
+        // Scaled: the logo in whole px, the gaps with it.
+        assert_eq!(
+            name_width(461.0, 42.0, false, 0.875),
+            461.0 - 42.0 - 53.0 - 0.875 * (16.0 + 3.0 * 14.0)
         );
     }
 }

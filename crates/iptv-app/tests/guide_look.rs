@@ -1,8 +1,10 @@
 //! The guide's look, headless: programme titles are set in the bundled
 //! Roboto Condensed, channel names and the rest in Roboto (the app's
 //! default family), every list falling back to the system's sans-serif;
-//! the sizes are the TiviMate-like ones; a name too long for the channel
-//! column ends in two dots; rows are 58 dp apart.
+//! the sizes are the TiviMate-like ones in a full-screen window and
+//! smaller in a 1280 × 720 one (`scale.rs`), following a resize; a name
+//! too long for the channel column ends in two dots; rows are 53 dp apart
+//! at full size.
 //!
 //! Synthetic data only: a playlist picked from a file, with a local XMLTV
 //! guide.
@@ -16,6 +18,8 @@ use nsh_engine::EngineConfig;
 use nsh_testing::Headless;
 
 const IMPORT: Duration = Duration::from_secs(30);
+/// The rows of the playlist.
+const FILLERS: usize = 80;
 const LONG: &str = "Synthetic Channel With A Name Far Too Long For The Column";
 
 fn guide(now: i64) -> String {
@@ -43,14 +47,20 @@ fn the_guide_uses_the_bundled_fonts_and_proportions() {
         .as_secs() as i64;
     let guide_path = home.path().join("guide.xml");
     std::fs::write(&guide_path, guide(now)).unwrap();
-    let playlist = format!(
+    let mut playlist = format!(
         "#EXTM3U url-tvg=\"{}\"\n\
          #EXTINF:-1 tvg-id=\"one\" group-title=\"News\",Test Channel One\nhttp://stream.example.test/1.m3u8\n\
          #EXTINF:-1 tvg-id=\"two\" group-title=\"News\",{LONG}\nhttp://stream.example.test/2.m3u8\n",
         guide_path.display()
     );
+    // Rows to scroll through (no programmes).
+    for n in 3..=FILLERS {
+        playlist.push_str(&format!(
+            "#EXTINF:-1 group-title=\"News\",Filler {n}\nhttp://stream.example.test/{n}.m3u8\n"
+        ));
+    }
     let config = EngineConfig {
-        viewport: Size::new(px(1280.0), px(800.0)),
+        viewport: Size::new(px(1920.0), px(1080.0)),
         ..EngineConfig::new(Root::of::<iptv_app::App>())
     };
     let mut app = Headless::start(config).unwrap();
@@ -72,43 +82,21 @@ fn the_guide_uses_the_bundled_fonts_and_proportions() {
     step(app.press("text:Watch"));
     step(app.wait_for_within("text:Golden Engine", IMPORT));
 
-    // The family, size and weight of every span reading `text` (hidden
-    // layers, such as the channel list, are mounted too).
-    let styles = |text: &str| {
-        let mut out = Vec::new();
-        while let Ok(style) = app
-            .screen()
-            .span_style(&format!("text:{text} >> nth={}", out.len()))
-        {
-            let family = style.font_family.map(|f| f.name().to_string());
-            out.push((family, style.font_size.0, style.font_weight));
-        }
-        out
-    };
-    let condensed = (
-        Some("'Roboto Condensed', Roboto, sans-serif".to_owned()),
-        26.0,
-        400,
-    );
     let roboto = Some("Roboto, sans-serif".to_owned());
-    // Programme titles: Roboto Condensed 26.
-    assert!(
-        styles("Golden Engine").contains(&condensed),
-        "{:?}",
-        styles("Golden Engine")
-    );
-    // Channel names: Roboto 26.
-    assert!(styles("Test Channel One").contains(&(roboto.clone(), 26.0, 400)));
-    // The focused programme's title: in its cell, and in the header in
-    // Roboto Medium 27.
-    let focused = styles("Quiet Harbour");
-    assert!(focused.contains(&condensed), "{focused:?}");
-    assert!(
-        focused.contains(&(roboto.clone(), 27.0, 500)),
-        "{focused:?}"
-    );
+    // Full screen: the full sizes.
+    check_sizes(&mut app, 1.0);
+    assert_eq!(row_pitch(&mut app), 53.0);
+    // A 1280 × 720 window: 7/8 of them, the rows in whole px.
+    step(app.set_viewport(Size::new(px(1280.0), px(720.0))));
+    check_sizes(&mut app, 0.875);
+    assert_eq!(row_pitch(&mut app), 46.0);
+    // Full screen again.
+    step(app.set_viewport(Size::new(px(1920.0), px(1080.0))));
+    check_sizes(&mut app, 1.0);
+    assert_eq!(row_pitch(&mut app), 53.0);
+
     // Text without a family of its own takes the app's default (font-sans).
-    let default = styles("+ Add playlist");
+    let default = styles(&mut app, "+ Add playlist");
     assert!(
         default.iter().all(|(f, _, _)| f.is_none() || *f == roboto),
         "default family: {default:?}"
@@ -125,18 +113,87 @@ fn the_guide_uses_the_bundled_fonts_and_proportions() {
     assert!(!cut.unwrap().ends_with("…"));
     assert!(app.screen().matches("text:Test Channel One").unwrap());
 
-    // Rows 58 dp apart: the two channel numbers.
-    let numbers: Vec<f32> = app
+    // Far down the list, the focused row stays on screen through resizes,
+    // and keys keep it there: the list's row math is the rows' pitch.
+    let mut focus = 1;
+    for (w, h, pitch) in [
+        (1920.0, 1080.0, 53.0),
+        (1280.0, 720.0, 46.0),
+        (1920.0, 1080.0, 53.0),
+        (1280.0, 720.0, 46.0),
+    ] {
+        step(app.set_viewport(Size::new(px(w), px(h))));
+        for _ in 0..17 {
+            step(app.press_key("down"));
+            focus += 1;
+            let y = number_y(&mut app, focus).expect("the focused row is mounted");
+            // Below the header (a third of the window) and the ruler.
+            let shown = y >= h / 3.0 && y + pitch <= h;
+            assert!(shown, "row {focus} at {y} in {w}x{h}");
+        }
+        let (above, at) = (number_y(&mut app, focus - 1), number_y(&mut app, focus));
+        assert_eq!((at.unwrap() - above.unwrap()).round(), pitch, "{w}x{h}");
+    }
+    assert!(focus < FILLERS);
+}
+
+/// The family, size and weight of every span reading `text` (hidden
+/// layers, such as the channel list, are mounted too).
+fn styles(app: &mut Headless, text: &str) -> Vec<(Option<String>, f32, u16)> {
+    let mut out = Vec::new();
+    while let Ok(style) = app
+        .screen()
+        .span_style(&format!("text:{text} >> nth={}", out.len()))
+    {
+        let family = style.font_family.map(|f| f.name().to_string());
+        out.push((family, style.font_size.0, style.font_weight));
+    }
+    out
+}
+
+/// Whether `text` has a span in `family` at `size` (to a hundredth) and
+/// `weight`.
+fn has(app: &mut Headless, text: &str, family: &str, size: f32, weight: u16) -> bool {
+    let found = styles(app, text);
+    let ok = found
+        .iter()
+        .any(|(f, s, w)| f.as_deref() == Some(family) && (s - size).abs() < 0.01 && *w == weight);
+    if !ok {
+        eprintln!("{text}: wanted {family} {size} {weight}, found {found:?}");
+    }
+    ok
+}
+
+/// The guide's type at size scale `scale`.
+fn check_sizes(app: &mut Headless, scale: f32) {
+    const ROBOTO: &str = "Roboto, sans-serif";
+    const CONDENSED: &str = "'Roboto Condensed', Roboto, sans-serif";
+    // Programme titles: Roboto Condensed 22.
+    assert!(has(app, "Golden Engine", CONDENSED, 22.0 * scale, 400));
+    // Channel names: Roboto 22.
+    assert!(has(app, "Test Channel One", ROBOTO, 22.0 * scale, 400));
+    // The focused programme's title: in its cell, and in the header in
+    // Roboto Medium 24.
+    assert!(has(app, "Quiet Harbour", CONDENSED, 22.0 * scale, 400));
+    assert!(has(app, "Quiet Harbour", ROBOTO, 24.0 * scale, 500));
+}
+
+/// Where row `row`'s channel number is (y), if it is mounted.
+fn number_y(app: &mut Headless, row: usize) -> Option<f32> {
+    let row = row.to_string();
+    let found: Vec<f32> = app
         .screen()
         .layout_nodes()
         .into_iter()
-        .filter(|n| {
-            n.text
-                .as_ref()
-                .is_some_and(|t| ["1", "2"].contains(&&*t.text.text))
-        })
+        .filter(|n| n.text.as_ref().is_some_and(|t| *t.text.text == *row))
         .map(|n| n.bounds.origin.y.0)
         .collect();
-    assert_eq!(numbers.len(), 2, "{numbers:?}");
-    assert!((numbers[1] - numbers[0] - 58.0).abs() < 0.5, "{numbers:?}");
+    assert!(found.len() <= 1, "row {row}: {found:?}");
+    found.first().copied()
+}
+
+/// The distance between the first two rows: their channel numbers.
+fn row_pitch(app: &mut Headless) -> f32 {
+    let (one, two) = (number_y(app, 1).unwrap(), number_y(app, 2).unwrap());
+    (two - one).round()
 }

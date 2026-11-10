@@ -33,6 +33,7 @@ mod player;
 mod player_panels;
 mod playlists_view;
 mod rail;
+mod scale;
 mod search_view;
 mod seek;
 mod settings;

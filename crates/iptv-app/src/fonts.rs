@@ -1,5 +1,6 @@
 //! The bundled fonts (Google's Roboto and Roboto Condensed, SIL OFL 1.1;
-//! `fonts/README.md`) and the type of each text role, in sp. They are
+//! `fonts/README.md`) and the type of each text role, in sp at full size
+//! (desktop windows smaller than full screen scale them, `scale.rs`). They are
 //! registered at startup on every platform, and Roboto becomes the app's
 //! default family (the tokens' `font-sans`). Every family list ends in
 //! `sans-serif`: the scripts the subsets leave out (Arabic, Hebrew, CJK,
@@ -15,16 +16,16 @@ pub const CONDENSED: &str = "'Roboto Condensed', Roboto, sans-serif";
 pub const MEDIUM: FontWeight = FontWeight::MEDIUM;
 
 /// Programme titles in the grid's cells.
-pub const CELL_TITLE: f32 = 26.0;
+pub const CELL_TITLE: f32 = 22.0;
 /// Channel numbers and names.
-pub const CHANNEL: f32 = 26.0;
+pub const CHANNEL: f32 = 22.0;
 /// The ruler's date and slot times.
-pub const RULER: f32 = 24.0;
+pub const RULER: f32 = 20.0;
 /// The header: the focused programme's title, its times line, and its
 /// episode line and description.
-pub const HEADER_TITLE: f32 = 27.0;
-pub const HEADER_TIMES: f32 = 20.0;
-pub const HEADER_BODY: f32 = 19.0;
+pub const HEADER_TITLE: f32 = 24.0;
+pub const HEADER_TIMES: f32 = 18.0;
+pub const HEADER_BODY: f32 = 17.0;
 
 /// The font files, WOFF2 (NSH unpacks them when it registers them).
 pub const FILES: [(&str, &[u8]); 3] = [

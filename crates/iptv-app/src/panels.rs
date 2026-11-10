@@ -23,8 +23,8 @@ pub fn groups_width(ui: Ui) -> f32 {
 /// The header's share of the window's height; the preview (16:9) at its
 /// top left: its largest share of the window's width, its margin and
 /// corner radius (dp).
-pub const HEADER_SHARE: f32 = 0.39;
-pub const PREVIEW_SHARE: f32 = 0.37;
+pub const HEADER_SHARE: f32 = 0.33;
+pub const PREVIEW_SHARE: f32 = 0.32;
 pub const PREVIEW_MARGIN: f32 = 12.0;
 pub const PREVIEW_RADIUS: f32 = 10.0;
 
@@ -156,9 +156,10 @@ mod tests {
     #[test]
     fn header_and_preview_keep_their_shares() {
         // Tablet (1920 × 1200 at 1.5 px/dp), desktop window, TV (1080p at 2).
-        assert_eq!(header_size(1280.0, 800.0), (312.0, 474.0, 267.0));
-        assert_eq!(header_size(1280.0, 720.0), (281.0, 457.0, 257.0));
-        assert_eq!(header_size(960.0, 540.0), (211.0, 332.0, 187.0));
+        assert_eq!(header_size(1280.0, 800.0), (264.0, 410.0, 231.0));
+        assert_eq!(header_size(1280.0, 720.0), (238.0, 380.0, 214.0));
+        assert_eq!(header_size(960.0, 540.0), (178.0, 274.0, 154.0));
+        assert_eq!(header_size(1920.0, 1080.0), (356.0, 590.0, 332.0));
         for (w, h) in [
             (1280.0, 800.0),
             (1280.0, 720.0),

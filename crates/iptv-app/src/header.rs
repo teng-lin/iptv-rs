@@ -11,11 +11,13 @@ use nsh_core::prelude::*;
 use crate::fonts::{HEADER_BODY, HEADER_TIMES, HEADER_TITLE, MEDIUM, SANS};
 use crate::guide::{Airing, Program};
 use crate::panels::{PREVIEW_MARGIN, PREVIEW_RADIUS, header_now};
+use crate::scale::Scale;
 use crate::theme::{BRIGHT_TEXT, RADIUS, RESTING_ALPHA, TEXT_SECONDARY_ALPHA};
 use crate::{Ui, ViewMode, clock, tint};
 
 const WHITE: u32 = 0xFFFFFF;
-/// The progress bar on the times line.
+/// The progress bar on the times line (at full size: it, the type and the
+/// gaps scale with the grid, `scale.rs`).
 const PROGRESS_W: f32 = 64.0;
 const PROGRESS_H: f32 = 4.0;
 /// Lines of description under the times.
@@ -46,7 +48,7 @@ fn left(now: i32, p: Program) -> String {
     }
 }
 
-fn preview(ui: Ui) -> impl IntoElement {
+fn preview(ui: Ui, size: Scale) -> impl IntoElement {
     // Transparent while something plays: the video layer sits under this
     // rectangle in guide mode. A tap opens full screen.
     let idle = move || ui.playing.get().is_none();
@@ -73,7 +75,7 @@ fn preview(ui: Ui) -> impl IntoElement {
         .child(
             text(move || if idle() { "Nothing playing" } else { "" })
                 .font_family(SANS)
-                .text_size(px(HEADER_TIMES))
+                .text_size(move || size.px(HEADER_TIMES))
                 .text_color(secondary()),
         )
 }
@@ -97,7 +99,7 @@ fn preview_ring(ui: Ui) -> impl IntoElement {
         .pointer_events(PointerEvents::None)
 }
 
-fn details(ui: Ui, program: Memo<Focused>) -> impl IntoElement {
+fn details(ui: Ui, program: Memo<Focused>, size: Scale) -> impl IntoElement {
     // Read once per focused programme (a stored guide reads it from disk).
     let description = computed(move || {
         program.with(|p| {
@@ -124,12 +126,12 @@ fn details(ui: Ui, program: Memo<Focused>) -> impl IntoElement {
     };
     view()
         .flex_1()
-        .gap(px(6.0))
+        .gap(move || size.px(6.0))
         .child(
             view()
                 .flex_row()
                 .items_center()
-                .gap(px(12.0))
+                .gap(move || size.px(12.0))
                 .child(
                     text(move || {
                         program.with(|p| {
@@ -142,12 +144,12 @@ fn details(ui: Ui, program: Memo<Focused>) -> impl IntoElement {
                     .number_of_lines(1)
                     .font_family(SANS)
                     .font_weight(MEDIUM)
-                    .text_size(px(HEADER_TITLE))
+                    .text_size(move || size.px(HEADER_TITLE))
                     .text_color(rgb(WHITE)),
                 )
                 .child(
                     text(move || if favourite() { "★" } else { "" })
-                        .text_size(px(HEADER_TITLE * 0.8))
+                        .text_size(move || size.px(HEADER_TITLE * 0.8))
                         .text_color(move || rgb(ui.theme.with(|t| t.accent.light))),
                 ),
         )
@@ -156,29 +158,33 @@ fn details(ui: Ui, program: Memo<Focused>) -> impl IntoElement {
             view()
                 .flex_row()
                 .items_center()
-                .gap(px(12.0))
+                .gap(move || size.px(12.0))
                 .child(
                     text(move || program.with(|p| p.map(|p| span(p.4)).unwrap_or_default()))
                         .number_of_lines(1)
                         .font_family(SANS)
-                        .text_size(px(HEADER_TIMES))
+                        .text_size(move || size.px(HEADER_TIMES))
                         .text_color(rgb(BRIGHT_TEXT)),
                 )
                 .child(
                     view()
-                        .w(move || px(if live() { PROGRESS_W } else { 0.0 }))
-                        .h(px(PROGRESS_H))
-                        .rounded(px(PROGRESS_H / 2.0))
+                        .w(move || px(if live() { size.of(PROGRESS_W) } else { 0.0 }))
+                        .h(move || size.px(PROGRESS_H))
+                        .rounded(move || size.px(PROGRESS_H / 2.0))
                         .bg(tint(WHITE, RESTING_ALPHA * 3))
                         .child(
                             view()
                                 .h_full()
-                                .rounded(px(PROGRESS_H / 2.0))
+                                .rounded(move || size.px(PROGRESS_H / 2.0))
                                 .w(move || {
                                     let done = program.with(|p| {
                                         p.map_or(0.0, |(_, now, _, _, p)| p.progress(now))
                                     });
-                                    px(if live() { PROGRESS_W * done } else { 0.0 })
+                                    px(if live() {
+                                        size.of(PROGRESS_W) * done
+                                    } else {
+                                        0.0
+                                    })
                                 })
                                 .bg(move || rgb(ui.theme.with(|t| t.accent.main))),
                         ),
@@ -190,7 +196,7 @@ fn details(ui: Ui, program: Memo<Focused>) -> impl IntoElement {
                     })
                     .number_of_lines(1)
                     .font_family(SANS)
-                    .text_size(px(HEADER_TIMES))
+                    .text_size(move || size.px(HEADER_TIMES))
                     .text_color(secondary()),
                 )
                 .child(
@@ -199,7 +205,7 @@ fn details(ui: Ui, program: Memo<Focused>) -> impl IntoElement {
                         .number_of_lines(1)
                         .text_right()
                         .font_family(SANS)
-                        .text_size(px(HEADER_TIMES))
+                        .text_size(move || size.px(HEADER_TIMES))
                         .text_color(secondary()),
                 ),
         )
@@ -207,7 +213,7 @@ fn details(ui: Ui, program: Memo<Focused>) -> impl IntoElement {
             text(move || description.get().unwrap_or_default())
                 .number_of_lines(BODY_LINES)
                 .font_family(SANS)
-                .text_size(px(HEADER_BODY))
+                .text_size(move || size.px(HEADER_BODY))
                 .text_color(secondary()),
         )
 }
@@ -276,6 +282,7 @@ mod tests {
 }
 
 pub fn header(ui: Ui) -> impl IntoElement {
+    let size = Scale::new();
     let program = computed(move || {
         let version = ui.guide_data();
         let view = crate::lists::view(ui);
@@ -293,9 +300,9 @@ pub fn header(ui: Ui) -> impl IntoElement {
                 .h(move || px(header_now().0))
                 .p(px(PREVIEW_MARGIN))
                 .flex_row()
-                .gap(px(24.0))
-                .child(preview(ui))
-                .child(details(ui, program))
+                .gap(move || size.px(24.0))
+                .child(preview(ui, size))
+                .child(details(ui, program, size))
                 .child(side(ui))
                 .child(preview_ring(ui)),
         )
