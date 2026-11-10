@@ -73,10 +73,10 @@ impl EpgSchedule {
             let guide = GuideChannel {
                 key: ChannelKey::new(c.id.as_str()),
                 name: c.name.clone(),
-                catchup_days: c
-                    .catch_up
-                    .as_ref()
-                    .map_or(0, |cu| cu.days.min(u32::from(u8::MAX)) as u8),
+                catchup_days: c.catch_up.as_ref().map_or(0, |cu| {
+                    cu.window_days(iptv_providers::m3u::DEFAULT_CATCHUP_WINDOW_DAYS)
+                        .min(u32::from(u8::MAX)) as u8
+                }),
             };
             let slot = c
                 .groups
