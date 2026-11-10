@@ -100,13 +100,32 @@ async fn redirects_relative_cross_origin_and_cross_protocol() {
     .await;
     let net = client();
     let resp = net
-        .fetch(HttpRequest::get(origin.url("/rel")).with_header("Cookie", "mac=00:1A:79:00:00:02"))
+        .fetch(
+            HttpRequest::get(origin.url("/rel?username=demo-user&password=synthetic-pass"))
+                .with_header("Cookie", "mac=00:1A:79:00:00:02")
+                .with_header("Authorization", "Bearer tok-synthetic")
+                .with_header("SN", "SERIAL-SYNTHETIC")
+                .with_header("User-Agent", "SyntheticPlayer/1.0")
+                .with_header("X-User-Agent", "Model: Synthetic"),
+        )
         .await
         .unwrap();
     assert_eq!(resp.body, b"landed /final");
-    // Identity cookies stay with the original host.
-    assert_eq!(target.requests()[0].header("cookie"), None);
-    assert!(origin.requests()[1].header("cookie").is_some());
+    // Identity stays with the original origin, across same-origin hops.
+    let same = &origin.requests()[1];
+    assert_eq!(same.path, "/abs");
+    for h in ["cookie", "authorization", "sn"] {
+        assert!(same.header(h).is_some(), "{h} kept on a same-origin hop");
+    }
+    let landed = &target.requests()[0];
+    for h in ["cookie", "authorization", "sn"] {
+        assert_eq!(landed.header(h), None, "{h} must not reach another origin");
+    }
+    // No automatic Referer: it would carry the credentials in the query.
+    assert_eq!(landed.header("referer"), None);
+    assert_eq!(same.header("referer"), None);
+    assert_eq!(landed.header("user-agent"), Some("SyntheticPlayer/1.0"));
+    assert_eq!(landed.header("x-user-agent"), Some("Model: Synthetic"));
 
     let err = net
         .fetch(HttpRequest::get(origin.url("/loop")))

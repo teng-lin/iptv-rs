@@ -12,6 +12,7 @@ use tokio::io::AsyncReadExt;
 use crate::body::{Inner, NetBody};
 use crate::error::from_reqwest;
 use crate::file;
+use crate::redirect::{self, Prepared};
 
 /// Transport settings.
 #[derive(Clone, PartialEq, Eq)]
@@ -89,7 +90,9 @@ impl NetClient {
             .tls_backend_preconfigured(tls)
             .connect_timeout(config.connect_timeout)
             .read_timeout(config.read_timeout)
-            .redirect(reqwest::redirect::Policy::limited(config.max_redirects))
+            // Redirects are followed in `redirect::execute` (header hygiene).
+            .redirect(reqwest::redirect::Policy::none())
+            .referer(false)
             .gzip(true)
             .deflate(true)
             .no_proxy();
@@ -171,12 +174,10 @@ impl NetClient {
         }
         let shown = request.redacted_url();
         let req = self.build(request)?;
-        log::debug!("{} {shown}", req.method());
-        let resp = self.client.execute(req).await.map_err(|e| {
-            let e = from_reqwest(e);
-            log::debug!("{shown}: {e}");
-            e
-        })?;
+        log::debug!("{} {shown}", req.method);
+        let resp = redirect::execute(&self.client, req, self.config.max_redirects, &shown)
+            .await
+            .inspect_err(|e| log::debug!("{shown}: {e}"))?;
         let status = resp.status().as_u16();
         log::debug!("{shown}: HTTP {status}");
         Ok(StreamingResponse {
@@ -186,7 +187,7 @@ impl NetClient {
         })
     }
 
-    fn build(&self, request: HttpRequest) -> Result<reqwest::Request, FetchError> {
+    fn build(&self, request: HttpRequest) -> Result<Prepared, FetchError> {
         let invalid = |what: &str| FetchError::new(FetchErrorKind::InvalidRequest, what);
         let url = reqwest::Url::parse(request.url.trim()).map_err(|_| invalid("invalid URL"))?;
         if !matches!(url.scheme(), "http" | "https") {
@@ -213,12 +214,12 @@ impl NetClient {
             Method::Get => reqwest::Method::GET,
             Method::Post => reqwest::Method::POST,
         };
-        let mut req = reqwest::Request::new(method, url);
-        *req.headers_mut() = headers;
-        if let Some(body) = request.body {
-            *req.body_mut() = Some(body.into());
-        }
-        Ok(req)
+        Ok(Prepared {
+            method,
+            url,
+            headers,
+            body: request.body,
+        })
     }
 }
 

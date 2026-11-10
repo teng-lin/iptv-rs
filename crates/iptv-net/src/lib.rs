@@ -12,8 +12,10 @@
 //! - **HTTP:** HTTP/1.1; `gzip`/`deflate` `Content-Encoding` decoded
 //!   transparently (a `.gz` *file* is passed through for the parsers to
 //!   detect); up to [`NetConfig::max_redirects`] redirects, including
-//!   http↔https. reqwest drops `Cookie`/`Authorization` when a redirect
-//!   leaves the original host, so portal identity never leaks to a CDN.
+//!   http↔https. A redirect to another origin drops `Cookie`,
+//!   `Authorization` and `SN`, and no `Referer` is ever added (it would
+//!   carry Xtream credentials from the query), so portal identity never
+//!   leaks to a CDN.
 //! - **Headers:** sent exactly as the request carries them (User-Agent,
 //!   Cookie, Referer…). [`NetConfig::user_agent`] applies only when the
 //!   request has none. No cookie store: `Set-Cookie` is ignored.
@@ -31,6 +33,7 @@ mod body;
 mod client;
 mod error;
 mod file;
+mod redirect;
 mod tls;
 
 pub use body::NetBody;
