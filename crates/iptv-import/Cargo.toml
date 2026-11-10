@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 iptv-providers.workspace = true
 iptv-epg.workspace = true
+iptv-settings.workspace = true
 # Pure-Rust gzip (miniz_oxide) for `.m3u.gz` playlists; builds for wasm32.
 flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 
