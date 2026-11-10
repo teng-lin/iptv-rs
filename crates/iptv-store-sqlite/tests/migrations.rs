@@ -524,6 +524,29 @@ fn check_guide(store: &Store, version: u32) {
         g.programme_at(&sport, 1_700_000_100).unwrap().icon(),
         Some("http://img.example.com/m.png")
     );
+    // A part of it (the app's narrow window, or an older day paged in):
+    // only what overlaps, read back as settled slots.
+    let part = store
+        .load_epg(
+            SRC,
+            &EpgWindow {
+                from: 1_700_004_000,
+                to: 1_700_004_001,
+                ..EpgWindow::from(0, 0)
+            },
+        )
+        .unwrap();
+    let titles: Vec<String> = part
+        .programmes(&radio, 0, i64::MAX)
+        .map(|p| p.title().to_owned())
+        .collect();
+    assert_eq!(titles, ["Fixture Midday"], "v{version}");
+    assert_eq!(
+        part.programme_at(&radio, 1_700_004_000)
+            .unwrap()
+            .season_episode(),
+        (Some(1), Some(4))
+    );
 }
 
 /// A small guide matched against the fixture channels.

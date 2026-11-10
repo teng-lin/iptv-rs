@@ -58,12 +58,12 @@ const NO_STOP: i64 = i64::MIN;
 /// One programme in a schedule: 16 bytes, times relative to the schedule
 /// base (seconds; a schedule spans at most ~136 years).
 #[derive(Clone, Copy, Debug)]
-struct Slot {
-    start: u32,
-    dur: u32,
-    title: Sym,
+pub(crate) struct Slot {
+    pub(crate) start: u32,
+    pub(crate) dur: u32,
+    pub(crate) title: Sym,
     /// Offset of the packed extras ([`extra`]), or [`NO_EXTRA`].
-    extra: u32,
+    pub(crate) extra: u32,
 }
 
 /// One programme's fields as plain values: what [`SourceBuilder::push_data`]
@@ -133,9 +133,9 @@ impl<'a> ProgrammeData<'a> {
 }
 
 #[derive(Default)]
-struct Schedule {
-    base: i64,
-    slots: Vec<Slot>,
+pub(crate) struct Schedule {
+    pub(crate) base: i64,
+    pub(crate) slots: Vec<Slot>,
 }
 
 impl Schedule {
@@ -210,6 +210,30 @@ impl EpgSource {
             + self.by_epg_id.keys().map(|k| k.len() + 24).sum::<usize>()
     }
 
+    /// A source from schedules built elsewhere (`crate::settled_source`).
+    pub(crate) fn from_parts(
+        id: SourceId,
+        priority: i32,
+        mut strings: Interner,
+        mut extras: Vec<u32>,
+        schedules: Vec<Schedule>,
+        by_epg_id: HashMap<Box<str>, u32>,
+        report: IngestReport,
+    ) -> Self {
+        strings.freeze();
+        extras.shrink_to_fit();
+        EpgSource {
+            id,
+            priority,
+            strings,
+            extras,
+            schedules,
+            by_epg_id,
+            channels: Vec::new(),
+            report,
+        }
+    }
+
     fn prune(&mut self, cutoff: i64) {
         for s in &mut self.schedules {
             let cut = s
@@ -218,6 +242,34 @@ impl EpgSource {
             s.slots.drain(..cut);
         }
     }
+}
+
+/// Interns `p`'s title and packs its extras (the description only with
+/// `descriptions`): its slot's `title` and `extra`.
+pub(crate) fn intern_programme(
+    strings: &mut Interner,
+    extras: &mut Vec<u32>,
+    p: &ProgrammeData<'_>,
+    descriptions: bool,
+) -> (Sym, u32) {
+    let mut e = Extra {
+        season: p.season.unwrap_or(0),
+        episode: p.episode.unwrap_or(0),
+        ..Extra::default()
+    };
+    let desc = p.desc.filter(|_| descriptions);
+    for (field, value) in [
+        (Field::SubTitle, p.sub_title),
+        (Field::Desc, desc),
+        (Field::Category, p.category),
+        (Field::Icon, p.icon),
+        (Field::Rating, p.rating),
+        (Field::CatchupId, p.catchup_id),
+    ] {
+        e.set(field, value.map_or(NONE, |v| strings.intern(v)));
+    }
+    let extra = extra::push(extras, &e);
+    (strings.intern(p.title), extra)
 }
 
 struct RawProgramme {
@@ -295,25 +347,12 @@ impl SourceBuilder {
             return;
         }
         let stop = p.stop.unwrap_or(NO_STOP);
-        let s = &mut self.strings;
-        let mut e = Extra {
-            season: p.season.unwrap_or(0),
-            episode: p.episode.unwrap_or(0),
-            ..Extra::default()
-        };
-        let desc = p.desc.filter(|_| self.opts.store_descriptions);
-        for (field, value) in [
-            (Field::SubTitle, p.sub_title),
-            (Field::Desc, desc),
-            (Field::Category, p.category),
-            (Field::Icon, p.icon),
-            (Field::Rating, p.rating),
-            (Field::CatchupId, p.catchup_id),
-        ] {
-            e.set(field, value.map_or(NONE, |v| s.intern(v)));
-        }
-        let extra = extra::push(&mut self.extras, &e);
-        let title = s.intern(p.title);
+        let (title, extra) = intern_programme(
+            &mut self.strings,
+            &mut self.extras,
+            p,
+            self.opts.store_descriptions,
+        );
         let next = self.raw.len() as u32;
         let ch = match self.by_epg_id.get(channel) {
             Some(&ch) => ch,

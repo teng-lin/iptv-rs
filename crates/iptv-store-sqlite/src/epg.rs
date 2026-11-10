@@ -87,7 +87,7 @@
 use std::collections::{HashMap, HashSet};
 
 use iptv_epg::{
-    ChannelKey, EpgRef, GuideStore, MatchKind, ProgrammeData, SourceBuilder, StoreOptions,
+    ChannelKey, EpgRef, GuideStore, MatchKind, ProgrammeData, SettledBuilder, StoreOptions,
     TimePolicy, UnixTime,
 };
 use iptv_import::{EpgImport, EpgSourceConfig, FailureKind, GuideState};
@@ -634,18 +634,16 @@ impl Store {
             });
         }
         drop(rows);
-        let opts = StoreOptions {
-            store_descriptions: window.descriptions,
-            past_days_to_keep: None,
-        };
-        let mut builders: HashMap<u32, SourceBuilder> = HashMap::new();
+        // Stored rows are settled (`replace_epg` wrote them so): they go
+        // straight into their slots, in start order.
+        let mut builders: HashMap<u32, SettledBuilder> = HashMap::new();
         let mut feeds = self
             .conn
             .prepare_cached("SELECT feed_id, priority FROM epg_feeds WHERE source_id = ?1")?;
         let mut rows = feeds.query([source.0])?;
         while let Some(r) = rows.next()? {
             let id: u32 = r.get(0)?;
-            let b = SourceBuilder::new(iptv_epg::SourceId(id), r.get(1)?, opts, 0);
+            let b = SettledBuilder::new(iptv_epg::SourceId(id), r.get(1)?, window.descriptions);
             builders.insert(id, b);
         }
         drop(rows);
@@ -663,6 +661,7 @@ impl Store {
             if !loaded.insert(b.channel) {
                 continue;
             }
+            builder.channel(&b.epg_channel);
             let mut rows = progs.query(params![b.channel, window.from, window.to])?;
             while let Some(r) = rows.next()? {
                 let data = ProgrammeData {
@@ -678,7 +677,7 @@ impl Store {
                     episode: small(r, 9)?,
                     desc: text(r, 10)?,
                 };
-                builder.push_data(&b.epg_channel, &data);
+                builder.push(&data);
             }
         }
         let mut guide = GuideStore::new();

@@ -215,6 +215,16 @@ fn thousand_channel_guide() {
     // descriptions stays far below the in-memory import.
     assert!(window.live < 5 << 20, "{}", window.live);
     assert!(all.live < r.live / 2, "{} vs {}", all.live, r.live);
+    // Settled rows go straight into their slots: reading back holds no
+    // raw copy of the guide on the way (it used to peak ~2.5x).
+    for w in [&window, &all] {
+        assert!(
+            w.peak < w.live + w.live / 4 + (64 << 10),
+            "{} vs {}",
+            w.peak,
+            w.live
+        );
+    }
 }
 
 #[test]

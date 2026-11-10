@@ -12,7 +12,8 @@
 //! - [`SourceBuilder`] / [`GuideStore`]: compact per-channel schedules from
 //!   several sources with priorities, retention and O(log n) guide queries.
 //!   [`ScheduleRules`] are their ordering, overlap and retention rules, for
-//!   stores that settle a schedule outside memory.
+//!   stores that settle a schedule outside memory; [`SettledBuilder`]
+//!   reads such a settled schedule back without sorting it again.
 //!
 //! No NSH, no platform APIs, no clock, no blocking I/O; builds for
 //! `wasm32-unknown-unknown`. Times are unix seconds ([`UnixTime`]) and every
@@ -25,6 +26,7 @@ mod matching;
 mod normalize;
 mod parser;
 mod settle;
+mod settled_source;
 mod store;
 mod time;
 mod xmltv;
@@ -37,6 +39,7 @@ pub use matching::{
 pub use normalize::{normalize_name, strip_tag_prefix};
 pub use parser::{ParseOptions, ParseStats, ParseWarnings, ParsedXmltv, XmltvParser, parse_xmltv};
 pub use settle::{ScheduleRules, Settled};
+pub use settled_source::SettledBuilder;
 pub use store::{
     EpgSource, GuideStore, IngestReport, NowNext, ProgrammeData, ProgrammeRef, ScheduleRef,
     SourceBuilder, StoreOptions,
