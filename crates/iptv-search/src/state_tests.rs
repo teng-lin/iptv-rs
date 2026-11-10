@@ -178,3 +178,62 @@ fn back_hides_keyboard_then_returns_to_input_then_closes() {
     assert_eq!(s.apply(Back), SearchEffect::Close);
     assert_eq!(s.resume(), SearchEffect::None);
 }
+
+#[test]
+fn taps_pick_history_results_and_tabs() {
+    let mut s = SearchState::new(SearchHistory::from_list(["kestrel", "orchard"], 20));
+    assert_eq!(
+        s.apply(Pick(Focus::History("gone".into()))),
+        SearchEffect::None
+    );
+    assert_eq!(s.apply(Pick(Focus::Tabs)), SearchEffect::None);
+    assert_eq!(
+        s.apply(Pick(Focus::History("orchard".into()))),
+        SearchEffect::Search("orchard".into())
+    );
+    assert!(!s.keyboard_visible());
+    assert!(s.set_results("orchard", vec![ch(1), ch(2)], vec![pr(3, 100), pr(4, 200)]));
+    // A programme tap switches tab, remembers the result and plays it.
+    assert_eq!(
+        s.apply(Pick(Focus::Result(P(4, 200)))),
+        SearchEffect::Play(P(4, 200))
+    );
+    assert_eq!(
+        (s.tab(), s.focus()),
+        (Tab::Programs, &Focus::Result(P(4, 200)))
+    );
+    assert_eq!(
+        s.apply(Pick(Focus::Result(P(9, 9)))),
+        SearchEffect::None,
+        "not a result"
+    );
+    // Tab labels: back to channels lands on the first, then the remembered one.
+    s.apply(ShowTab(Tab::Channels));
+    assert_eq!(s.focus(), &Focus::Result(ResultId::Channel(1)));
+    s.apply(ShowTab(Tab::Programs));
+    assert_eq!(s.focus(), &Focus::Result(P(4, 200)));
+    // A tab without results does not open; from the field, focus goes to the tabs.
+    assert!(s.set_results("orchard", vec![ch(1)], vec![]));
+    s.apply(Pick(Focus::Input));
+    assert!(s.keyboard_visible());
+    s.apply(ShowTab(Tab::Programs));
+    assert_eq!(s.tab(), Tab::Channels);
+    s.apply(ShowTab(Tab::Channels));
+    assert_eq!(s.focus(), &Focus::Tabs);
+}
+
+#[test]
+fn keyboard_hidden_by_the_platform_keeps_the_screen() {
+    let mut s = typed("kes");
+    s.apply(KeyboardHidden);
+    assert!(!s.keyboard_visible());
+    assert_eq!((s.query(), s.focus()), ("kes", &Focus::Input));
+    // The next Back leaves (nothing else to close).
+    assert_eq!(s.apply(Back), SearchEffect::Close);
+    // Idle: tapping history entries works, results do not exist.
+    let mut s = SearchState::new(SearchHistory::default());
+    assert_eq!(
+        s.apply(Pick(Focus::Result(ResultId::Channel(0)))),
+        SearchEffect::None
+    );
+}

@@ -82,6 +82,14 @@ pub enum SearchAction {
     /// Empty the query.
     Clear,
     ShowKeyboard,
+    /// The on-screen keyboard went away on its own (the platform closed
+    /// it, or the field lost focus): nothing else changes.
+    KeyboardHidden,
+    /// A tap: focus `target` and do what OK does there. Ignored when the
+    /// target is not on screen (an old history entry, a result gone).
+    Pick(Focus),
+    /// A tap on a tab label: show that tab (when it has results).
+    ShowTab(Tab),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -272,6 +280,54 @@ impl SearchState {
                 self.switch_tab();
                 SearchEffect::None
             }
+            SearchAction::KeyboardHidden => {
+                self.keyboard = false;
+                SearchEffect::None
+            }
+            SearchAction::Pick(target) => self.pick(target),
+            SearchAction::ShowTab(tab) => {
+                self.show_tab(tab);
+                SearchEffect::None
+            }
+        }
+    }
+
+    fn pick(&mut self, target: Focus) -> SearchEffect {
+        match target {
+            Focus::Input => self.apply(SearchAction::ShowKeyboard),
+            Focus::History(entry) if self.phase == Phase::Idle => {
+                if !self.history.entries().contains(&entry) {
+                    return SearchEffect::None;
+                }
+                self.focus = Focus::History(entry);
+                self.ok()
+            }
+            Focus::Result(id) => {
+                let tab = match id {
+                    ResultId::Channel(_) => Tab::Channels,
+                    ResultId::Programme { .. } => Tab::Programs,
+                };
+                if self.phase == Phase::Idle || self.position(tab, id).is_none() {
+                    return SearchEffect::None;
+                }
+                self.tab = tab;
+                self.keyboard = false;
+                self.focus_result(id);
+                self.ok()
+            }
+            Focus::History(_) | Focus::Tabs => SearchEffect::None,
+        }
+    }
+
+    fn show_tab(&mut self, tab: Tab) {
+        if self.phase == Phase::Idle || self.count(tab) == 0 {
+            return;
+        }
+        self.tab = tab;
+        if matches!(self.focus, Focus::Result(_)) {
+            self.enter_results();
+        } else {
+            self.focus = Focus::Tabs;
         }
     }
 
