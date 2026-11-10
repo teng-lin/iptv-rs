@@ -250,3 +250,74 @@ fn channel_cap_bounds_the_crawl() {
     opts.stalker_channel_cap = 20;
     assert_eq!(run_with(&fetch, opts).unwrap().channels.len(), 20);
 }
+
+#[test]
+fn stream_links_come_from_create_link_with_the_import_session() {
+    let (fetch, sim) = fake(StalkerSim::default());
+    let catalog = run(&fetch).unwrap();
+    let mut s = session(&catalog).clone();
+    let before = fetch.requests().len();
+    let cmd = "ffmpeg http://127.0.0.1/ch/3.m3u8";
+    let url = block_on(iptv_import::stalker_link(
+        &fetch,
+        &mut s,
+        cmd,
+        false,
+        &CancelToken::new(),
+    ))
+    .unwrap();
+    assert_eq!(url, "http://127.0.0.1:8091/live/tmp-3.m3u8?play_token=t1");
+    let reqs = fetch.requests();
+    assert_eq!(reqs.len(), before + 1, "one create_link, no new handshake");
+    assert!(reqs.last().unwrap().url.contains("action=create_link"));
+    assert_eq!(sim.handshakes(), 1);
+}
+
+#[test]
+fn a_rejected_token_reauthenticates_once_for_a_link() {
+    let (fetch, sim) = fake(StalkerSim {
+        expire_on_link: true,
+        ..Default::default()
+    });
+    let catalog = run(&fetch).unwrap();
+    let mut s = session(&catalog).clone();
+    let url = block_on(iptv_import::stalker_link(
+        &fetch,
+        &mut s,
+        "ffmpeg http://127.0.0.1/ch/9.m3u8",
+        false,
+        &CancelToken::new(),
+    ))
+    .unwrap();
+    assert_eq!(url, "http://127.0.0.1:8091/live/tmp-9.m3u8?play_token=t2");
+    assert_eq!(sim.handshakes(), 2, "re-authenticated once");
+    assert!(s.is_authorized(), "the caller keeps the refreshed session");
+    // The refreshed session works without another handshake.
+    block_on(iptv_import::stalker_link(
+        &fetch,
+        &mut s,
+        "ffmpeg http://127.0.0.1/ch/1.m3u8",
+        false,
+        &CancelToken::new(),
+    ))
+    .unwrap();
+    assert_eq!(sim.handshakes(), 2);
+}
+
+#[test]
+fn a_link_on_an_unreachable_portal_is_a_typed_failure() {
+    let (fetch, _) = fake(StalkerSim::default());
+    let catalog = run(&fetch).unwrap();
+    let mut s = session(&catalog).clone();
+    let down = FakeFetch::new(|_, _| connect_error());
+    let err = block_on(iptv_import::stalker_link(
+        &down,
+        &mut s,
+        "ffmpeg http://127.0.0.1/ch/1.m3u8",
+        false,
+        &CancelToken::new(),
+    ))
+    .unwrap_err();
+    assert_eq!(err.kind(), FailureKind::Network);
+    assert_eq!(err.step(), Some(Step::StreamLink));
+}
