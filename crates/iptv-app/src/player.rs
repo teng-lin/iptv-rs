@@ -38,6 +38,9 @@ pub struct Player {
     /// Bumped on every open, so a retry reopens even the same URL.
     pub token: Signal<u64>,
     pub history: Signal<ChannelHistory>,
+    /// The playing channel's key (live or catch-up): finds it again in a
+    /// new schedule.
+    key: Signal<Option<String>>,
     /// The last channel still starts on its own until something plays.
     resume: Signal<bool>,
     /// The app's owner: retry and stall timers outlive the effect or
@@ -52,6 +55,7 @@ impl Player {
             source: signal(None),
             token: signal(0),
             history: signal(ChannelHistory::default()),
+            key: signal(None),
             resume: signal(true),
             owner: Owner::current(),
         }
@@ -119,7 +123,9 @@ pub fn start(ui: &Ui) {
     let mut session = 0;
     ui.player.health.update(|h| session = h.start(live, now));
     ui.player.resume.set(false);
-    if live && let Some(key) = crate::schedule().channel_key(channel) {
+    let key = crate::schedule().channel_key(channel);
+    ui.player.key.set(key.clone());
+    if live && let Some(key) = key {
         let changed = ui
             .player
             .history
@@ -408,16 +414,26 @@ fn follow_playing(ui: Ui) {
     let Some(playing) = ui.playing.get_untracked() else {
         return;
     };
-    let key = ui
-        .player
-        .history
-        .with_untracked(|h| h.current().map(str::to_owned));
-    if let Some(row) = key.and_then(|k| crate::schedule().find_channel(&k)) {
-        if row != playing {
-            ui.playing.set(Some(row));
+    let key = ui.player.key.get_untracked();
+    match key.and_then(|k| crate::schedule().find_channel(&k)) {
+        Some(row) => {
+            if row != playing {
+                ui.playing.set(Some(row));
+            }
+            // The new schedule reset the focus: put it back on what plays.
+            show_channel(ui, row);
         }
-        // The new schedule reset the focus: put it back on what plays.
-        show_channel(ui, row);
+        // Another source (or the channel left it): its row now means
+        // another channel, so nothing plays.
+        None => {
+            log::info!("iptv player: the playing channel is not in the new guide; stopping");
+            ui.playing.set(None);
+            ui.player.key.set(None);
+            stop(ui);
+            if ui.mode.get_untracked() != ViewMode::Guide {
+                ui.mode.set(ViewMode::Guide);
+            }
+        }
     }
 }
 
