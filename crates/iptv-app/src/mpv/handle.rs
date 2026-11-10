@@ -54,11 +54,16 @@ impl Mpv {
             log::error!("iptv mpv: could not initialize");
             return None;
         }
+        // Ids are [`super::worker::convert`]'s.
         let observe = [
             (1, c"paused-for-cache", ffi::MPV_FORMAT_FLAG),
             (2, c"width", ffi::MPV_FORMAT_INT64),
             (3, c"height", ffi::MPV_FORMAT_INT64),
             (4, c"video-params/aspect", ffi::MPV_FORMAT_DOUBLE),
+            // A change notice only: read as JSON when it comes.
+            (5, c"track-list", ffi::MPV_FORMAT_NONE),
+            (6, c"container-fps", ffi::MPV_FORMAT_DOUBLE),
+            (7, c"audio-params/channel-count", ffi::MPV_FORMAT_INT64),
         ];
         // SAFETY: an initialized handle and NUL-terminated names.
         unsafe {

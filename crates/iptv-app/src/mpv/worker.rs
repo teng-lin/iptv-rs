@@ -19,7 +19,8 @@ const LOG_WARN: c_int = 30;
 
 /// What the main thread asks of mpv.
 pub enum Cmd {
-    /// `loadfile <url> replace`; answered by [`Note::Loading`].
+    /// `loadfile <url> replace`, from the default tracks (video and audio
+    /// automatic, no subtitles); answered by [`Note::Loading`].
     Load(String),
     Stop,
     Set(&'static str, String),
@@ -30,6 +31,9 @@ pub enum Cmd {
     },
     /// Answered by [`Note::Position`] when mpv knows it.
     Position,
+    /// Answered by [`Note::Fps`] and [`Note::Channels`], as far as known
+    /// (an unchanged value is not observed again for the next file).
+    Format,
 }
 
 /// What mpv said, as owned values (in mpv's order).
@@ -58,6 +62,12 @@ pub enum Note {
     },
     /// `time-pos` in seconds.
     Position(f64),
+    /// `track-list` changed: mpv's JSON of it.
+    Tracks(String),
+    /// `container-fps`.
+    Fps(f64),
+    /// `audio-params/channel-count`.
+    Channels(i64),
 }
 
 pub struct Worker {
@@ -123,7 +133,7 @@ fn run(
         let cmds = queue.lock().map(|mut q| std::mem::take(&mut *q));
         let mut sent = false;
         for cmd in cmds.unwrap_or_default() {
-            if let Some(note) = execute(mpv, cmd) {
+            for note in execute(mpv, cmd) {
                 sent |= tx.send(note).is_ok();
             }
         }
@@ -151,9 +161,24 @@ fn run(
     }
 }
 
-fn execute(mpv: &Mpv, cmd: Cmd) -> Option<Note> {
+fn execute(mpv: &Mpv, cmd: Cmd) -> Vec<Note> {
+    if let Cmd::Format = cmd {
+        let fps = mpv.get_f64(c"container-fps").map(Note::Fps);
+        let channels = mpv
+            .get_i64(c"audio-params/channel-count")
+            .map(Note::Channels);
+        return fps.into_iter().chain(channels).collect();
+    }
+    execute_one(mpv, cmd).into_iter().collect()
+}
+
+fn execute_one(mpv: &Mpv, cmd: Cmd) -> Option<Note> {
     match cmd {
         Cmd::Load(url) => {
+            // Track choices are options: they would carry over to this file.
+            mpv.set("vid", "auto");
+            mpv.set("aid", "auto");
+            mpv.set("sid", "no");
             let ok = mpv.command(&["loadfile", &url, "replace"]);
             // The new entry is the playlist's last (`replace` may keep the
             // stopping one until it ends).
@@ -183,6 +208,7 @@ fn execute(mpv: &Mpv, cmd: Cmd) -> Option<Note> {
             None
         }
         Cmd::Position => mpv.get_f64(c"time-pos").map(Note::Position),
+        Cmd::Format => None,
     }
 }
 
@@ -217,6 +243,9 @@ fn convert(mpv: &Mpv, ev: &ffi::mpv_event) -> Option<Note> {
         ffi::MPV_EVENT_PLAYBACK_RESTART => Some(Note::Restarted {
             audio_out: mpv.get(c"current-ao"),
         }),
+        ffi::MPV_EVENT_PROPERTY_CHANGE if ev.reply_userdata == 5 => {
+            mpv.get(c"track-list").map(Note::Tracks)
+        }
         ffi::MPV_EVENT_PROPERTY_CHANGE => {
             let p = unsafe { &*(ev.data as *const ffi::mpv_event_property) };
             if p.data.is_null() {
@@ -232,6 +261,10 @@ fn convert(mpv: &Mpv, ev: &ffi::mpv_event) -> Option<Note> {
                 }
                 (4, ffi::MPV_FORMAT_DOUBLE) => {
                     Some(Note::Aspect(unsafe { *(p.data as *const f64) }))
+                }
+                (6, ffi::MPV_FORMAT_DOUBLE) => Some(Note::Fps(unsafe { *(p.data as *const f64) })),
+                (7, ffi::MPV_FORMAT_INT64) => {
+                    Some(Note::Channels(unsafe { *(p.data as *const i64) }))
                 }
                 _ => None,
             }

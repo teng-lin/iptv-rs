@@ -1,27 +1,43 @@
 //! Translucent choosers over full-screen video: picture size (with "apply
-//! to all channels") and the sleep timer. Option sets follow the reference
-//! UX's observed choosers (tivimate docs/09); wording is ours.
+//! to all channels"), the sleep timer, the video, audio and subtitle
+//! tracks, the audio delay, and the recently played channels (the History
+//! quick action). Option sets follow the reference UX's observed choosers
+//! (tivimate docs/09); wording is ours. Entries are taken when a chooser
+//! opens; Up/Down move, OK (or a tap) picks and closes, Back closes.
 
 use std::time::Duration;
 
 use iptv_core::player_options::{Chooser, PictureSize, SLEEP_MINUTES};
+use iptv_core::sound::{audio_delays, delay_label};
+use iptv_core::tracks::Kind as Track;
 use nsh_core::prelude::*;
 
 use crate::theme::{FOCUS_ALPHA, RADIUS, RADIUS_LARGE, TEXT_SECONDARY_ALPHA};
-use crate::{Ui, tint};
+use crate::{Playback, Ui, ViewMode, tint};
 
 const WHITE: u32 = 0xFFFFFF;
+const ROW_H: f32 = 42.0;
+/// Rows shown at once; longer lists scroll.
+const MAX_ROWS: usize = 9;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Picture,
     Sleep,
+    Track(Track),
+    AudioDelay,
+    /// The recently played channels.
+    History,
 }
 
 /// The open chooser.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Open {
     pub kind: Kind,
+    pub labels: Vec<String>,
+    /// What each entry sets, for tracks (a track id, `auto`, `off`) and
+    /// history (a channel key).
+    values: Vec<String>,
     pub list: Chooser,
 }
 
@@ -38,39 +54,106 @@ fn picture_label(size: PictureSize) -> &'static str {
     }
 }
 
-fn labels(kind: Kind) -> Vec<String> {
+/// The current picture size's name (the control row shows it).
+pub fn picture_name(ui: Ui) -> &'static str {
+    let ch = ui.playing.get().unwrap_or(0);
+    picture_label(ui.picture.with(|p| p.for_channel(ch)))
+}
+
+fn title(kind: Kind) -> &'static str {
     match kind {
-        Kind::Picture => PictureSize::ALL
-            .iter()
-            .map(|p| picture_label(*p).to_owned())
-            .chain(["Use for all channels".to_owned()])
-            .collect(),
-        Kind::Sleep => ["Off".to_owned()]
-            .into_iter()
-            .chain(SLEEP_MINUTES.iter().map(|m| format!("{m} minutes")))
-            .collect(),
+        Kind::Picture => "Picture size",
+        Kind::Sleep => "Sleep timer",
+        Kind::Track(Track::Video) => "Video",
+        Kind::Track(Track::Audio) => "Audio",
+        Kind::Track(Track::Text) => "Subtitles",
+        Kind::AudioDelay => "Audio delay",
+        Kind::History => "Recent channels",
     }
 }
 
-pub fn open(ui: Ui, kind: Kind) {
-    let selected = match kind {
+/// The entries, what each sets, and the one in effect.
+fn entries(ui: Ui, kind: Kind) -> (Vec<String>, Vec<String>, usize) {
+    match kind {
         Kind::Picture => {
-            let ch = ui.playing.get().unwrap_or(0);
-            let size = ui.picture.with(|p| p.for_channel(ch));
-            PictureSize::ALL
+            let ch = ui.playing.get_untracked().unwrap_or(0);
+            let size = ui.picture.with_untracked(|p| p.for_channel(ch));
+            let labels = PictureSize::ALL
                 .iter()
-                .position(|p| *p == size)
-                .unwrap_or(0)
+                .map(|p| picture_label(*p).to_owned())
+                .chain(["Use for all channels".to_owned()])
+                .collect();
+            let at = PictureSize::ALL.iter().position(|p| *p == size);
+            (labels, Vec::new(), at.unwrap_or(0))
         }
-        Kind::Sleep => ui
-            .sleep
-            .with(|t| t.minutes())
-            .and_then(|m| SLEEP_MINUTES.iter().position(|x| *x == m))
-            .map_or(0, |i| i + 1),
-    };
+        Kind::Sleep => {
+            let labels = ["Off".to_owned()]
+                .into_iter()
+                .chain(SLEEP_MINUTES.iter().map(|m| format!("{m} minutes")))
+                .collect();
+            let at = ui
+                .sleep
+                .with_untracked(|t| t.minutes())
+                .and_then(|m| SLEEP_MINUTES.iter().position(|x| *x == m))
+                .map_or(0, |i| i + 1);
+            (labels, Vec::new(), at)
+        }
+        Kind::Track(k) => ui.media.tracks.with_untracked(|t| {
+            let labels = t.entries(k);
+            let values = (0..labels.len())
+                .map(|i| t.pick(k, i).unwrap_or_default())
+                .collect();
+            (labels, values, t.selected_entry(k))
+        }),
+        Kind::AudioDelay => {
+            let now = ui.media.delay_ms.get_untracked();
+            let delays = audio_delays();
+            let labels = delays.iter().map(|d| delay_label(*d)).collect();
+            let at = delays.iter().position(|d| *d >= now);
+            (labels, Vec::new(), at.unwrap_or(delays.len() / 2))
+        }
+        Kind::History => history(ui),
+    }
+}
+
+/// The recent channels still in the guide, newest first: "12  Name · now".
+fn history(ui: Ui) -> (Vec<String>, Vec<String>, usize) {
+    let s = crate::schedule();
+    let now = ui.focus.with_untracked(|f| f.now);
+    let playing = ui.player.history.with_untracked(|h| {
+        h.recent()
+            .iter()
+            .filter_map(|k| Some((s.find_channel(k)?, k.clone())))
+            .collect::<Vec<_>>()
+    });
+    let labels = playing
+        .iter()
+        .map(|(ch, _)| {
+            let p = s.program_at(*ch, now);
+            format!(
+                "{}  {} · {}",
+                s.channel_number(*ch),
+                s.channel_name(*ch),
+                s.title(*ch, p)
+            )
+        })
+        .collect();
+    let current = ui.playing.get_untracked();
+    let at = playing.iter().position(|(ch, _)| Some(*ch) == current);
+    let keys = playing.into_iter().map(|(_, k)| k).collect();
+    (labels, keys, at.unwrap_or(0))
+}
+
+pub fn open(ui: Ui, kind: Kind) {
+    let (labels, values, selected) = entries(ui, kind);
+    if labels.is_empty() {
+        return;
+    }
     ui.chooser.set(Some(Open {
         kind,
-        list: Chooser::new(labels(kind).len(), selected),
+        list: Chooser::new(labels.len(), selected),
+        labels,
+        values,
     }));
 }
 
@@ -85,12 +168,14 @@ pub fn move_focus(ui: Ui, step: isize) {
 
 /// OK (or a tap) on entry `index`.
 pub fn pick(ui: Ui, index: usize) {
-    let Some(kind) = ui.chooser.with(|c| c.as_ref().map(|c| c.kind)) else {
+    let Some(open) = ui.chooser.get_untracked() else {
         return;
     };
-    match kind {
+    let value = open.values.get(index).cloned().unwrap_or_default();
+    close(ui);
+    match open.kind {
         Kind::Picture => {
-            let ch = ui.playing.get().unwrap_or(0);
+            let ch = ui.playing.get_untracked().unwrap_or(0);
             match PictureSize::ALL.get(index) {
                 Some(size) => ui.picture.update(|p| p.set_channel(ch, *size)),
                 None => ui.picture.update(|p| p.apply_to_all(ch)),
@@ -100,8 +185,33 @@ pub fn pick(ui: Ui, index: usize) {
             None => ui.sleep.update(|t| t.cancel()),
             Some(minutes) => start_sleep(ui, *minutes),
         },
+        Kind::Track(k) if !value.is_empty() => crate::media::choose(ui, k, value),
+        Kind::Track(_) => {}
+        Kind::AudioDelay => {
+            if let Some(ms) = audio_delays().get(index) {
+                ui.media.delay_ms.set(*ms);
+            }
+        }
+        Kind::History => play_recent(ui, &value),
     }
-    close(ui);
+}
+
+/// History: plays a recent channel live, full screen, with its card.
+fn play_recent(ui: Ui, key: &str) {
+    let Some(channel) = crate::schedule().find_channel(key) else {
+        return;
+    };
+    ui.focus
+        .update(|f| f.show_channel(channel, &*crate::schedule()));
+    let live = ui.playback.get_untracked() == Playback::Live;
+    if ui.playing.get_untracked() != Some(channel) || !live {
+        ui.play(channel, Playback::Live);
+    }
+    ui.mode.set(ViewMode::Fullscreen);
+    ui.update_panels(|p, now| {
+        p.hide();
+        p.show_info(now);
+    });
 }
 
 /// Starts the sleep timer; when it fires, playback stops.
@@ -122,38 +232,41 @@ fn start_sleep(ui: Ui, minutes: u32) {
 
 pub fn layer(ui: Ui) -> impl IntoElement {
     let open = move || ui.chooser.with(Option::is_some);
-    let row = move |index: usize| {
+    let count = move || {
+        ui.chooser
+            .with(|c| c.as_ref().map_or(0, |c| c.labels.len()))
+    };
+    let list = element_ref();
+    let focus = computed(move || ui.chooser.with(|c| c.as_ref().map(|c| c.list.focus)));
+    effect(move || {
+        if let Some(i) = focus.get() {
+            list.scroll_to_index(i as u32, percentage(0.5), px(0.0), false);
+        }
+    });
+    let row = move |at: Position| {
+        let index = at.index();
         let entry = move || {
             ui.chooser.with(|c| {
                 c.as_ref().and_then(|c| {
-                    labels(c.kind)
-                        .get(index)
-                        .cloned()
-                        .map(|l| (l, c.list.clone()))
+                    let label = c.labels.get(index)?.clone();
+                    Some((label, c.list.selected == index, c.list.focus == index))
                 })
             })
         };
         text(move || {
-            entry().map_or(String::new(), |(label, list)| {
-                format!(
-                    "{}{label}",
-                    if list.selected == index {
-                        "✓  "
-                    } else {
-                        "    "
-                    }
-                )
+            entry().map_or(String::new(), |(label, selected, _)| {
+                format!("{}{label}", if selected { "✓  " } else { "    " })
             })
         })
+        .h(px(ROW_H))
         .px(px(16.0))
-        .py(px(10.0))
+        .pt(px(11.0))
         .rounded(px(RADIUS))
+        .number_of_lines(1)
         .text_size(px(15.0))
         .text_color(rgb(WHITE))
-        .opacity(move || if entry().is_some() { 1.0_f32 } else { 0.0 })
-        .h(move || px(if entry().is_some() { 42.0 } else { 0.0 }))
         .bg(move || {
-            let focused = ui.keys_shown() && entry().is_some_and(|(_, l)| l.focus == index);
+            let focused = ui.keys_shown() && entry().is_some_and(|(_, _, f)| f);
             if focused {
                 tint(ui.theme.with(|t| t.accent.main), FOCUS_ALPHA)
             } else {
@@ -165,16 +278,13 @@ pub fn layer(ui: Ui) -> impl IntoElement {
             pick(ui, index);
         })
     };
-    let title = move || match ui.chooser.with(|c| c.as_ref().map(|c| c.kind)) {
-        Some(Kind::Picture) => "Picture size",
-        Some(Kind::Sleep) => "Sleep timer",
-        None => "",
-    };
+    let kind = move || ui.chooser.with(|c| c.as_ref().map(|c| c.kind));
     view()
         .absolute()
         .inset_0()
+        // At the right, clear of the panels at the bottom.
         .items_end()
-        .justify_end()
+        .justify_center()
         .pt_safe_area()
         .p(px(40.0))
         .opacity(move || if open() { 1.0_f32 } else { 0.0 })
@@ -187,7 +297,13 @@ pub fn layer(ui: Ui) -> impl IntoElement {
         })
         .child(
             view()
-                .w(px(300.0))
+                .w(move || {
+                    px(if kind() == Some(Kind::History) {
+                        440.0
+                    } else {
+                        320.0
+                    })
+                })
                 .p(px(12.0))
                 .gap(px(2.0))
                 .rounded(px(RADIUS_LARGE))
@@ -195,12 +311,17 @@ pub fn layer(ui: Ui) -> impl IntoElement {
                 .bg(move || tint(ui.theme.with(|t| t.background.panel), 0xD0))
                 .pointer_events(PointerEvents::Auto)
                 .child(
-                    text(title)
+                    text(move || kind().map_or("", title))
                         .px(px(16.0))
                         .py(px(8.0))
                         .text_size(px(13.0))
                         .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA)),
                 )
-                .children((0..9).map(row)),
+                .child(
+                    virtual_list(count, row)
+                        .estimated_item_size(px(ROW_H))
+                        .element_ref(&list)
+                        .h(move || px(count().clamp(1, MAX_ROWS) as f32 * ROW_H)),
+                ),
         )
 }

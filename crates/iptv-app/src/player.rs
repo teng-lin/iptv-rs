@@ -142,6 +142,7 @@ pub fn start(ui: &Ui) {
 pub fn stop(ui: Ui) {
     ui.player.health.update(Health::stop);
     ui.player.source.set(None);
+    crate::media::reset(ui);
 }
 
 /// Resolves the playing channel and hands the stream to the player.
@@ -191,6 +192,8 @@ fn load(ui: Ui, session: u64, source: PlaySource) {
     );
     ui.player.token.update(|t| *t += 1);
     ui.position_ms.set(0);
+    // A new stream: its own tracks, from the default choices.
+    crate::media::reset(ui);
     ui.player.source.set(Some(source));
     let now = ui.now_ms();
     ui.player.health.update(|h| h.resolved(now));

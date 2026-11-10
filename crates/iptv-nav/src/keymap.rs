@@ -15,9 +15,13 @@ pub enum Context {
     Groups,
     /// Full-screen playback.
     Player,
-    /// The control row over full-screen video (Left/Right/OK move and
-    /// press its buttons; Up/Down still zap).
+    /// The buttons over full-screen video: the quick actions under the
+    /// info card and the control row (Left/Right/OK move and press them;
+    /// Up/Down move between the two rows).
     Controls,
+    /// The channel list over the video (Up/Down move, OK plays, Left shows
+    /// the groups, Back closes).
+    ChannelList,
     /// An editing mode (favourites): Up/Down move, OK toggles, Left and
     /// Right act on the whole group, Back leaves.
     Editor,
@@ -48,6 +52,10 @@ pub enum Action {
     PreviousChannel,
     /// From catch-up back to the live stream of the playing channel.
     GoLive,
+    /// The playing group's channels as a list over full-screen video.
+    ShowChannels,
+    /// The same list beside the video, shrunk to a preview.
+    ShowChannelsPreview,
     PageUp,
     PageDown,
     PastPrograms,
@@ -129,20 +137,24 @@ impl Keymap {
             b(Some(Guide), K::Ok, Long, A::ShowMenu),
             b(Some(Guide), K::Left, Long, A::PastPrograms),
             b(Some(Guide), K::Back, Long, A::ReturnToPlayer),
-            // Full screen: OK shows panels, Up/Down zap, Left/Right bring the guide.
+            // Full screen, the reference's player defaults: OK shows the
+            // panels, Long OK the menu, Up/Down zap, Left the channel list
+            // over the video (Long Left beside the video), Right the most
+            // recent channel, Long Back stops playback.
             b(Some(Player), K::Ok, Short, A::ShowPanels),
+            b(Some(Player), K::Ok, Long, A::ShowMenu),
             b(Some(Player), K::Up, Short, A::ChannelUp),
             b(Some(Player), K::Down, Short, A::ChannelDown),
-            b(Some(Player), K::Left, Short, A::ShowGuide),
-            b(Some(Player), K::Right, Short, A::ShowGuide),
-            // Long OK and Menu open the control strip (observed).
-            b(Some(Player), K::Ok, Long, A::ShowPanels),
+            b(Some(Player), K::Left, Short, A::ShowChannels),
+            b(Some(Player), K::Left, Long, A::ShowChannelsPreview),
+            b(Some(Player), K::Right, Short, A::PreviousChannel),
+            b(Some(Player), K::Back, Long, A::Stop),
+            // Menu opens the control row (observed).
             b(Some(Player), K::Menu, Short, A::ShowPanels),
             // Remotes without media keys: hold 0 for the last channel.
             b(Some(Player), K::Digit(0), Long, A::PreviousChannel),
-            // Control row: directions/OK use the global moves; Up/Down zap.
-            b(Some(Controls), K::Up, Short, A::ChannelUp),
-            b(Some(Controls), K::Down, Short, A::ChannelDown),
+            // Buttons: directions/OK use the global moves (Up/Down between
+            // the quick actions and the control row).
             // Over video there is no list to page: Page Up/Down (CH+/CH- on
             // many remotes, and a PC keyboard's) zap, as in the guide's rows.
             b(Some(Player), K::PageUp, Short, A::ChannelUp),
@@ -201,7 +213,44 @@ impl Keymap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use Context::{Controls, Groups, Guide, Menu, Player};
+    use Context::{ChannelList, Controls, Groups, Guide, Menu, Player};
+
+    #[test]
+    fn the_players_remote_defaults() {
+        let k = Keymap::defaults();
+        let r = |key, press| k.resolve(Player, key, press);
+        assert_eq!(r(RemoteKey::Ok, Press::Short), Some(Action::ShowPanels));
+        assert_eq!(r(RemoteKey::Ok, Press::Long), Some(Action::ShowMenu));
+        assert_eq!(r(RemoteKey::Back, Press::Short), Some(Action::Back));
+        assert_eq!(r(RemoteKey::Back, Press::Long), Some(Action::Stop));
+        assert_eq!(r(RemoteKey::Left, Press::Short), Some(Action::ShowChannels));
+        assert_eq!(
+            r(RemoteKey::Left, Press::Long),
+            Some(Action::ShowChannelsPreview)
+        );
+        assert_eq!(
+            r(RemoteKey::Right, Press::Short),
+            Some(Action::PreviousChannel)
+        );
+        assert_eq!(r(RemoteKey::Up, Press::Short), Some(Action::ChannelUp));
+        assert_eq!(r(RemoteKey::Down, Press::Short), Some(Action::ChannelDown));
+        assert!(
+            !k.has_long(Player, RemoteKey::Right),
+            "the most recent channel comes at once"
+        );
+    }
+
+    #[test]
+    fn the_channel_list_moves_and_selects_with_the_global_moves() {
+        let k = Keymap::defaults();
+        let r = |key| k.resolve(ChannelList, key, Press::Short);
+        assert_eq!(r(RemoteKey::Up), Some(Action::MoveUp));
+        assert_eq!(r(RemoteKey::Left), Some(Action::MoveLeft));
+        assert_eq!(r(RemoteKey::Ok), Some(Action::Select));
+        assert_eq!(r(RemoteKey::Back), Some(Action::Back));
+        assert_eq!(r(RemoteKey::PageDown), Some(Action::PageDown));
+        assert!(!k.has_long(ChannelList, RemoteKey::Left));
+    }
 
     #[test]
     fn context_defaults_win_over_global_ones() {
@@ -225,7 +274,7 @@ mod tests {
     }
 
     #[test]
-    fn the_control_row_moves_with_left_right_and_zaps_with_up_down() {
+    fn the_buttons_move_with_the_directions() {
         let k = Keymap::defaults();
         assert_eq!(
             k.resolve(Controls, RemoteKey::Left, Press::Short),
@@ -237,7 +286,8 @@ mod tests {
         );
         assert_eq!(
             k.resolve(Controls, RemoteKey::Down, Press::Short),
-            Some(Action::ChannelDown)
+            Some(Action::MoveDown),
+            "Down goes from the quick actions to the control row"
         );
         assert!(
             !k.has_long(Controls, RemoteKey::Ok),

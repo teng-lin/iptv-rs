@@ -6,12 +6,16 @@
 //! Planned (see `.plans/`): domain, providers, epg, nav, player-ctl,
 //! settings and view models as separate crates.
 
+pub mod channel_list;
 pub mod clock;
 pub mod editor;
 pub mod guide;
 pub mod menu;
 pub mod panels;
 pub mod playback;
+pub mod player_info;
 pub mod player_options;
 pub mod reorder;
+pub mod sound;
+pub mod tracks;
 pub mod wizard;

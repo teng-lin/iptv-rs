@@ -110,6 +110,87 @@ pub fn playable(url: &str) -> bool {
         .is_some_and(|(scheme, _)| SCHEMES.iter().any(|s| s.eq_ignore_ascii_case(scheme)))
 }
 
+/// mpv's `vid`/`aid` for a `videoTrack`/`audioTrack` prop: `auto`, or a
+/// track id (mpv's are numbers).
+pub fn track_choice(value: Option<&str>) -> String {
+    match value.map(str::trim) {
+        Some(id) if !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()) => id.to_owned(),
+        _ => "auto".to_owned(),
+    }
+}
+
+/// mpv's `sid` for a `textTrack` prop: `no` (off), or a track id.
+pub fn text_choice(value: Option<&str>) -> String {
+    match track_choice(value) {
+        id if id == "auto" => "no".to_owned(),
+        id => id,
+    }
+}
+
+/// The `tracks` event for mpv's `track-list` (JSON): its video, audio and
+/// subtitle tracks (no cover art), and what plays; `video_auto`: the
+/// viewer left the video to mpv. `None` when the JSON is not a list.
+pub fn tracks(track_list: &str, video_auto: bool) -> Option<serde_json::Value> {
+    use serde_json::{Value, json};
+    let list: Vec<Value> = serde_json::from_str(track_list).ok()?;
+    let (mut video, mut audio, mut text) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut sv, mut sa, mut st) = (None, None, None);
+    let num = |v: &Value| v.as_f64().filter(|n| n.is_finite() && *n > 0.0);
+    for t in &list {
+        let Some(id) = t["id"].as_i64() else { continue };
+        let id = id.to_string();
+        let selected = t["selected"].as_bool() == Some(true);
+        let label = t["title"].as_str().unwrap_or("");
+        let language = t["lang"].as_str().unwrap_or("");
+        let at = match t["type"].as_str() {
+            Some("video") if t["image"].as_bool() != Some(true) => {
+                video.push(json!({
+                    "id": id,
+                    "label": label,
+                    "width": num(&t["demux-w"]),
+                    "height": num(&t["demux-h"]),
+                    "fps": num(&t["demux-fps"]),
+                    "bitrate": num(&t["hls-bitrate"]).or_else(|| num(&t["demux-bitrate"])),
+                }));
+                &mut sv
+            }
+            Some("audio") => {
+                audio.push(json!({
+                    "id": id,
+                    "label": label,
+                    "language": language,
+                    "channels": num(&t["demux-channel-count"])
+                        .or_else(|| num(&t["audio-channels"])),
+                    "codec": t["codec"].as_str().unwrap_or(""),
+                }));
+                &mut sa
+            }
+            Some("sub") => {
+                text.push(json!({ "id": id, "label": label, "language": language }));
+                &mut st
+            }
+            _ => continue,
+        };
+        if selected {
+            *at = Some(id);
+        }
+    }
+    let video_selected = match (video_auto, sv) {
+        (false, Some(id)) => id,
+        _ => "auto".to_owned(),
+    };
+    Some(json!({
+        "video": video,
+        "audio": audio,
+        "text": text,
+        "selected": {
+            "video": video_selected,
+            "audio": sa,
+            "text": st.unwrap_or_else(|| "off".to_owned()),
+        },
+    }))
+}
+
 /// What mpv's log said about the current file's failure (its messages carry
 /// no codes the API reports: FFmpeg's HTTP status and socket errors come
 /// only as text). Holds no text, so no address can leak from it.
@@ -310,4 +391,45 @@ mod tests {
     }
 
     const MPV_LOADING: i32 = super::super::ffi::MPV_ERROR_LOADING_FAILED;
+
+    #[test]
+    fn track_props_become_mpv_values() {
+        assert_eq!(track_choice(Some("3")), "3");
+        assert_eq!(track_choice(Some("auto")), "auto");
+        assert_eq!(track_choice(Some("2; quit")), "auto");
+        assert_eq!(track_choice(None), "auto");
+        assert_eq!(text_choice(Some("off")), "no");
+        assert_eq!(text_choice(Some("4")), "4");
+    }
+
+    #[test]
+    fn mpvs_track_list_becomes_the_tracks_event() {
+        let list = r#"[
+            {"id":1,"type":"video","selected":false,"demux-w":640,"demux-h":360,"demux-fps":25,"hls-bitrate":800000},
+            {"id":2,"type":"video","selected":true,"demux-w":1280,"demux-h":720,"demux-fps":25,"demux-bitrate":2400000},
+            {"id":3,"type":"video","image":true,"albumart":true},
+            {"id":1,"type":"audio","selected":false,"lang":"eng","demux-channel-count":2,"codec":"aac"},
+            {"id":2,"type":"audio","selected":true,"lang":"fre","title":"Version française","audio-channels":6,"codec":"ac3"},
+            {"id":1,"type":"sub","selected":false,"lang":"ger","codec":"webvtt"}
+        ]"#;
+        let auto = tracks(list, true).unwrap();
+        let t = crate::media::parse_tracks(&auto);
+        assert_eq!(t.video.len(), 2, "cover art is no rendition");
+        assert_eq!(
+            (t.video[0].bitrate, t.video[1].bitrate),
+            (800_000, 2_400_000)
+        );
+        assert_eq!(
+            (t.audio[1].channels, t.audio[1].label.as_str()),
+            (6, "Version française")
+        );
+        assert_eq!(t.selected_video, None, "left to mpv");
+        assert_eq!(t.selected_audio.as_deref(), Some("2"));
+        assert_eq!(t.selected_text, None);
+        let chosen = crate::media::parse_tracks(&tracks(list, false).unwrap());
+        assert_eq!(chosen.selected_video.as_deref(), Some("2"));
+        assert!(tracks("{}", true).is_none());
+        let empty = crate::media::parse_tracks(&tracks("[]", true).unwrap());
+        assert_eq!(empty, iptv_core::tracks::Tracks::default());
+    }
 }

@@ -236,6 +236,20 @@ fn previous_channel_toggles() {
 }
 
 #[test]
+fn recent_channels_are_newest_first_without_repeats_and_bounded() {
+    let mut h = ChannelHistory::default();
+    for key in ["a", "b", "c", "a"] {
+        h.played(key);
+    }
+    assert_eq!(h.recent(), ["a", "c", "b"]);
+    for i in 0..RECENT_MAX + 5 {
+        h.played(&format!("k{i}"));
+    }
+    assert_eq!(h.recent().len(), RECENT_MAX);
+    assert_eq!(h.current(), Some(format!("k{}", RECENT_MAX + 4).as_str()));
+}
+
+#[test]
 fn zapping_wraps_within_the_group() {
     let s = SyntheticSchedule;
     let (g0, g1) = (group_start(0), group_start(1));
