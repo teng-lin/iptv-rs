@@ -98,6 +98,15 @@ pub trait Schedule {
     fn channel_number(&self, channel: usize) -> u32 {
         channel as u32 + 1
     }
+    /// The channel's logo address, when the playlist names one.
+    fn channel_logo(&self, _channel: usize) -> Option<String> {
+        None
+    }
+    /// Every channel in the playlist's own order (for "All channels"):
+    /// schedules store channels grouped. Default: as stored.
+    fn playlist_order(&self) -> Vec<usize> {
+        (0..self.channel_count()).collect()
+    }
     fn group_name(&self, group: usize) -> String;
     fn title(&self, channel: usize, program: Program) -> String;
     /// The channel's live stream URL, when the schedule knows it.

@@ -202,7 +202,7 @@ fn a_catalog_becomes_grouped_channels() {
         "#EXTM3U\n\
          #EXTINF:-1 tvg-id=\"a.test\" group-title=\"News\" catchup=\"default\" catchup-days=\"2\" catchup-source=\"http://archive.example.com/a?utc={utc}\",Alpha\n\
          http://live.example.com/a.m3u8\n\
-         #EXTINF:-1 group-title=\"Kids\",Kappa\n\
+         #EXTINF:-1 group-title=\"Kids\" tvg-logo=\"http://logos.example.com/k.png\",Kappa\n\
          http://live.example.com/k.m3u8\n\
          #EXTINF:-1 group-title=\"News\",Beta\n\
          http://live.example.com/b.m3u8\n\
@@ -217,6 +217,13 @@ fn a_catalog_becomes_grouped_channels() {
     assert_eq!(channels, ["Alpha", "Beta", "Kappa", "Loose"]);
     assert_eq!(s.catchup_days(0), 2);
     assert_eq!(s.catchup_days(1), 0);
+    // "All channels" lists them as the playlist does.
+    assert_eq!(s.playlist_order(), [0, 2, 1, 3]);
+    assert_eq!(
+        s.channel_logo(2).as_deref(),
+        Some("http://logos.example.com/k.png")
+    );
+    assert_eq!(s.channel_logo(0), None);
 }
 
 #[test]
