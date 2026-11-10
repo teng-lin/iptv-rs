@@ -41,6 +41,8 @@ const CARD_W: f32 = 580.0;
 // --- Actions -------------------------------------------------------------------
 
 /// Opens the screen (the navigation rail; `l` on the Linux desktop for now).
+// Until the rail calls it, only the desktop key does.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn open(ui: Ui) {
     if is_open(ui) || crate::wizard_view::is_open(ui) {
         return;
