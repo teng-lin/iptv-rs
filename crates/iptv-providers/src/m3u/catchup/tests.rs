@@ -1,7 +1,8 @@
 use super::*;
 use crate::m3u::parse_m3u;
 
-const REQ: CatchupRequest = CatchupRequest::new(1_700_000_000, 1_700_003_600, 1_700_010_000);
+const REQ: CatchupRequest<'static> =
+    CatchupRequest::new(1_700_000_000, 1_700_003_600, 1_700_010_000);
 
 fn channel(extinf_attrs: &str, url: &str) -> Channel {
     let text = format!("#EXTM3U\n#EXTINF:-1 {extinf_attrs},Test\n{url}\n");
@@ -117,11 +118,6 @@ fn append_flussonic_xc_and_unsupported() {
         Ok("http://xc.example.com:8080/timeshift/demo/secret/60/2023-11-14:23-13/1001.m3u8")
     );
 
-    let ch = channel(
-        r#"catchup="vod" catchup-days="1""#,
-        "http://l.example.com/x",
-    );
-    assert_eq!(build_catchup_url(&ch, REQ), Err(CatchupError::Unsupported));
     let ch = channel(
         r#"catchup="rtsp-magic" catchup-days="1""#,
         "http://l.example.com/x",
@@ -457,5 +453,61 @@ fn catchup_correction_shifts_programme_times() {
     assert_eq!(
         build_catchup_url(&items[1], late),
         Err(CatchupError::FutureProgramme)
+    );
+}
+
+#[test]
+fn vod_plays_the_source_or_the_catchup_id() {
+    let with_source = channel(
+        r#"catchup="vod" catchup-days="3" catchup-source="http://vod.example.com/rec/j.ts?cutv={Y}-{m}-{d}T{H}:{M}:{S}""#,
+        "http://l.example.com/x",
+    );
+    assert_eq!(
+        build_catchup_url(&with_source, REQ).as_deref(),
+        Ok("http://vod.example.com/rec/j.ts?cutv=2023-11-14T22:13:20")
+    );
+    // Kodi's default vod source is `{catchup-id}` from the guide.
+    let bare = channel(
+        r#"catchup="vod" catchup-days="3""#,
+        "http://l.example.com/x",
+    );
+    let req = CatchupRequest {
+        catchup_id: Some("http://vod.example.com/rec/42.mp4"),
+        ..REQ
+    };
+    assert_eq!(
+        build_catchup_url(&bare, req).as_deref(),
+        Ok("http://vod.example.com/rec/42.mp4")
+    );
+    assert_eq!(
+        build_catchup_url(&bare, REQ),
+        Err(CatchupError::MissingTemplate)
+    );
+    // The window still applies.
+    let old = CatchupRequest::new(1_000, 2_000, 1_000 + 4 * 86_400);
+    assert_eq!(
+        build_catchup_url(&with_source, old),
+        Err(CatchupError::OutsideArchive)
+    );
+}
+
+#[test]
+fn catchup_id_placeholder() {
+    let ch = channel(
+        r#"catchup="default" catchup-days="1" catchup-source="http://arc.example.com/play/{catchup-id}.m3u8?s={utc}""#,
+        "http://l.example.com/x",
+    );
+    let req = CatchupRequest {
+        catchup_id: Some("ev-77"),
+        ..REQ
+    };
+    assert_eq!(
+        build_catchup_url(&ch, req).as_deref(),
+        Ok("http://arc.example.com/play/ev-77.m3u8?s=1700000000")
+    );
+    assert_eq!(
+        build_catchup_url(&ch, REQ),
+        Err(CatchupError::MissingTemplate),
+        "a programme without a catchup-id cannot fill the template"
     );
 }

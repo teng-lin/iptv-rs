@@ -1,10 +1,11 @@
 //! `catchup-source` placeholder expansion.
 
+use crate::error::CatchupError;
 use crate::time::wall_clock;
 
 /// Values a template can refer to, already corrected and buffered.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct Vars {
+pub(super) struct Vars<'a> {
     /// Where the replay starts (Unix seconds).
     pub from: i64,
     /// Where it ends (Unix seconds).
@@ -14,9 +15,11 @@ pub(super) struct Vars {
     pub on_air: bool,
     /// Viewer's UTC offset for date-part placeholders.
     pub local_offset_secs: i32,
+    /// The programme's XMLTV `catchup-id`.
+    pub catchup_id: Option<&'a str>,
 }
 
-impl Vars {
+impl Vars<'_> {
     /// Replay length in seconds, at least 1.
     pub(super) fn duration(&self) -> i64 {
         (self.to - self.from).max(1)
@@ -37,7 +40,8 @@ pub(super) enum Scope {
 }
 
 /// Expands `{x}` and `${x}` placeholders; unknown ones are left untouched.
-pub(super) fn expand(template: &str, vars: &Vars, scope: Scope) -> String {
+/// `{catchup-id}` without an id is [`CatchupError::MissingTemplate`].
+pub(super) fn expand(template: &str, vars: &Vars, scope: Scope) -> Result<String, CatchupError> {
     let mut out = String::with_capacity(template.len() + 16);
     let mut rest = template;
     while let Some(open) = rest.find('{') {
@@ -47,6 +51,11 @@ pub(super) fn expand(template: &str, vars: &Vars, scope: Scope) -> String {
         };
         let token = &rest[open + 1..close];
         let value = match scope {
+            Scope::Archive if token == "catchup-id" => Some(
+                vars.catchup_id
+                    .ok_or(CatchupError::MissingTemplate)?
+                    .to_owned(),
+            ),
             Scope::Archive => placeholder(token, vars),
             Scope::Live => live_placeholder(token, vars),
         };
@@ -60,7 +69,7 @@ pub(super) fn expand(template: &str, vars: &Vars, scope: Scope) -> String {
         rest = &rest[close + 1..];
     }
     out.push_str(rest);
-    out
+    Ok(out)
 }
 
 fn live_placeholder(token: &str, vars: &Vars) -> Option<String> {
