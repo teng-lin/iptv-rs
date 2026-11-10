@@ -1,0 +1,243 @@
+//! Channel search: a folded copy of every channel's name (and extra keys
+//! such as the channel number), scanned per query.
+//!
+//! A scan is cheap at playlist sizes (thousands of channels, a few words
+//! each) and needs no rebuild when the query grows.
+
+use std::collections::BTreeSet;
+
+use iptv_core::guide::Schedule;
+use iptv_epg::strip_tag_prefix;
+
+use crate::text::{MatchQuality, Query, tokens};
+
+/// One channel result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChannelHit {
+    /// Channel index in the schedule.
+    pub channel: usize,
+    pub score: MatchQuality,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChannelSearchOptions {
+    /// Favourite channels before all others (then by match quality).
+    pub favourites_first: bool,
+    pub limit: usize,
+}
+
+impl Default for ChannelSearchOptions {
+    fn default() -> Self {
+        ChannelSearchOptions {
+            favourites_first: false,
+            limit: 100,
+        }
+    }
+}
+
+/// Searchable keys of every channel, by channel index.
+#[derive(Clone, Debug, Default)]
+pub struct ChannelIndex {
+    /// Per channel, its keys as folded words.
+    keys: Vec<Vec<Vec<Box<str>>>>,
+}
+
+fn key_words(text: &str) -> Vec<Box<str>> {
+    tokens(text)
+        .into_iter()
+        .map(String::into_boxed_str)
+        .collect()
+}
+
+impl ChannelIndex {
+    /// Indexes the channel names of `schedule`.
+    pub fn from_schedule(schedule: &dyn Schedule) -> Self {
+        Self::from_names((0..schedule.channel_count()).map(|c| schedule.channel_name(c)))
+    }
+
+    /// Indexes names in channel order. A leading country/group tag
+    /// (`UK: `, `[DE] `) is also indexed without the tag, so the bare name
+    /// can rank as exact or prefix.
+    pub fn from_names<S: AsRef<str>>(names: impl IntoIterator<Item = S>) -> Self {
+        let keys = names
+            .into_iter()
+            .map(|name| {
+                let name = name.as_ref();
+                let mut keys = vec![key_words(name)];
+                if let Some(bare) = strip_tag_prefix(name) {
+                    keys.push(key_words(bare));
+                }
+                keys
+            })
+            .collect();
+        ChannelIndex { keys }
+    }
+
+    /// Adds a searchable key (for example the channel number) to `channel`.
+    /// Ignored for channels outside the index.
+    pub fn add_key(&mut self, channel: usize, key: &str) {
+        if let Some(keys) = self.keys.get_mut(channel) {
+            let words = key_words(key);
+            if !words.is_empty() {
+                keys.push(words);
+            }
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.keys.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.keys.is_empty()
+    }
+
+    /// How well `channel` matches: the best of its keys.
+    pub fn match_channel(&self, query: &Query, channel: usize) -> Option<MatchQuality> {
+        self.keys
+            .get(channel)?
+            .iter()
+            .filter_map(|k| query.match_tokens(k))
+            .max()
+    }
+
+    /// Channels matching `query`: favourites first when asked, then
+    /// exact > prefix > word > word-prefix > substring, ties by channel
+    /// index; at most `opts.limit`.
+    pub fn search_channels(
+        &self,
+        query: &str,
+        favourites: &BTreeSet<usize>,
+        opts: ChannelSearchOptions,
+    ) -> Vec<ChannelHit> {
+        let query = Query::parse(query);
+        if query.is_empty() {
+            return Vec::new();
+        }
+        let mut hits: Vec<ChannelHit> = (0..self.keys.len())
+            .filter_map(|channel| {
+                let score = self.match_channel(&query, channel)?;
+                Some(ChannelHit { channel, score })
+            })
+            .collect();
+        let fav = |h: &ChannelHit| opts.favourites_first && favourites.contains(&h.channel);
+        // Stable: equal keys stay in channel order.
+        hits.sort_by(|a, b| fav(b).cmp(&fav(a)).then(b.score.cmp(&a.score)));
+        hits.truncate(opts.limit);
+        hits
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MatchQuality::*;
+    use super::*;
+    use iptv_core::guide::SyntheticSchedule;
+
+    const NAMES: [&str; 8] = [
+        "Kestrel Sports",    // 0
+        "Kestrel",           // 1
+        "Night Kestrel HD",  // 2
+        "Kestrelwave Radio", // 3
+        "Bluekestrel",       // 4
+        "Orchard News",      // 5
+        "UK: Kestrel Two",   // 6
+        "Kestrel",           // 7 (duplicate name)
+    ];
+
+    fn search(q: &str, fav: &[usize], opts: ChannelSearchOptions) -> Vec<(usize, MatchQuality)> {
+        ChannelIndex::from_names(NAMES)
+            .search_channels(q, &fav.iter().copied().collect(), opts)
+            .into_iter()
+            .map(|h| (h.channel, h.score))
+            .collect()
+    }
+
+    #[test]
+    fn ranking_exact_prefix_word_substring_then_index() {
+        let hits = search("kestrel", &[], ChannelSearchOptions::default());
+        assert_eq!(
+            hits,
+            [
+                (1, Exact),
+                (7, Exact),
+                (0, Prefix),
+                (3, Prefix),
+                (6, Prefix), // via the name without "UK:"
+                (2, Word),
+                (4, Substring),
+            ]
+        );
+    }
+
+    #[test]
+    fn as_you_type_and_all_tokens() {
+        let names = |q| -> Vec<usize> {
+            search(q, &[], ChannelSearchOptions::default())
+                .into_iter()
+                .map(|h| h.0)
+                .collect()
+        };
+        assert_eq!(names("kes sp"), [0]);
+        assert_eq!(names("sports kes"), [0]);
+        assert_eq!(names("n"), [2, 5], "word starts only, name start first");
+        assert_eq!(names("news orchard"), [5]);
+        assert!(names("kestrel radio sports").is_empty());
+        assert!(names("  ").is_empty());
+    }
+
+    #[test]
+    fn favourites_first_and_limit() {
+        let opts = ChannelSearchOptions {
+            favourites_first: true,
+            limit: 3,
+        };
+        assert_eq!(
+            search("kestrel", &[4, 2], opts),
+            [(2, Word), (4, Substring), (1, Exact)]
+        );
+        // Not asked: favourites rank like any channel.
+        let opts = ChannelSearchOptions { limit: 2, ..opts };
+        let plain = ChannelSearchOptions {
+            favourites_first: false,
+            ..opts
+        };
+        assert_eq!(search("kestrel", &[4], plain), [(1, Exact), (7, Exact)]);
+    }
+
+    #[test]
+    fn extra_keys_such_as_channel_numbers() {
+        let mut idx = ChannelIndex::from_names(NAMES);
+        idx.add_key(5, "105");
+        idx.add_key(1, "10");
+        idx.add_key(99, "1");
+        let hits = idx.search_channels("10", &BTreeSet::new(), ChannelSearchOptions::default());
+        assert_eq!(
+            hits.iter()
+                .map(|h| (h.channel, h.score))
+                .collect::<Vec<_>>(),
+            [(1, Exact), (5, Prefix)]
+        );
+    }
+
+    #[test]
+    fn from_a_schedule() {
+        let idx = ChannelIndex::from_schedule(&SyntheticSchedule);
+        assert_eq!(idx.len(), iptv_core::guide::CHANNELS);
+        let hits = idx.search_channels(
+            "channel 42",
+            &BTreeSet::new(),
+            ChannelSearchOptions::default(),
+        );
+        assert_eq!(
+            hits[0],
+            ChannelHit {
+                channel: 41,
+                score: Exact
+            }
+        );
+        // "Channel 420".. "Channel 4299" follow as prefixes, in index order.
+        assert_eq!(hits[1].channel, 419);
+        assert!(hits.iter().skip(1).all(|h| h.score == Prefix));
+    }
+}

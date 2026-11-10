@@ -10,6 +10,7 @@ members = [
     "crates/iptv-import",
     "crates/iptv-net",
     "crates/iptv-store-sqlite",
+    "crates/iptv-search",
     "crates/iptv-app",
 ]
 # nsh generates its own Cargo workspaces under the app crate.
@@ -26,6 +27,7 @@ iptv-nav = { path = "crates/iptv-nav" }
 iptv-settings = { path = "crates/iptv-settings" }
 iptv-epg = { path = "crates/iptv-epg" }
 iptv-guide = { path = "crates/iptv-guide" }
+iptv-search = { path = "crates/iptv-search" }
 # The NSH fork checkout (branch tv-keys); upstream PR planned.
 nsh-core = { path = "/home/blackmyth/src/nsh/crates/nsh-core" }
 nsh-base = { path = "/home/blackmyth/src/nsh/crates/nsh-base" }

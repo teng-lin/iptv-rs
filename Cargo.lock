@@ -1827,6 +1827,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "iptv-search"
+version = "0.1.0"
+dependencies = [
+ "iptv-core",
+ "iptv-epg",
+ "unicode-normalization",
+]
+
+[[package]]
 name = "iptv-settings"
 version = "0.1.0"
 dependencies = [
