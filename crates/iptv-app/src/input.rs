@@ -10,7 +10,7 @@ use iptv_nav::{Action, Context, Keymap, Phase, PressDetector, RemoteKey};
 use nsh_core::keymap::KeyPhase;
 use nsh_core::prelude::*;
 
-use crate::guide::{CHANNELS, Focus, Move, Pane};
+use crate::guide::{Move, Pane};
 use crate::{Input, Ui, ViewMode};
 
 /// Long press needs key releases, which NSH (branch `tv-keys`) reports on
@@ -171,7 +171,7 @@ fn apply(ui: Ui, action: Action) {
     // Any key while panels show keeps them up.
     ui.update_panels(|p, now| p.touch(now));
     let controls = ui.panels.with(|p| p.captures_input()) && ui.mode.get() == ViewMode::Fullscreen;
-    let mv = |m: Move| ui.focus.update(|f| f.apply(m));
+    let mv = |m: Move| ui.focus.update(|f| f.apply(m, &*crate::schedule()));
     if ui.description.with(Option::is_some) {
         // The popover has no actions; Back (or Menu) closes it.
         if matches!(action, Action::Back | Action::ShowMenu) {
@@ -207,7 +207,7 @@ fn apply(ui: Ui, action: Action) {
         Action::MoveLeft => mv(Move::Left),
         Action::MoveRight => mv(Move::Right),
         Action::Select => match ui.focus.with(|f| f.pane) {
-            Pane::Groups => ui.focus.update(Focus::enter_group),
+            Pane::Groups => ui.focus.update(|f| f.enter_group(&*crate::schedule())),
             Pane::Guide => ui.watch(),
         },
         Action::ShowPanels => ui.update_panels(|p, now| p.show_controls(now)),
@@ -219,9 +219,9 @@ fn apply(ui: Ui, action: Action) {
             _ => ViewMode::Guide,
         }),
         Action::ShowGroups => ui.focus.update(|f| f.pane = Pane::Groups),
-        Action::PastPrograms => ui.focus.update(|f| f.enter_past()),
+        Action::PastPrograms => ui.focus.update(|f| f.enter_past(&*crate::schedule())),
         Action::ReturnToNow => ui.focus.update(|f| {
-            f.return_to_now();
+            f.return_to_now(&*crate::schedule());
         }),
         Action::ReturnToPlayer if ui.playing.get().is_some() => ui.mode.set(ViewMode::Fullscreen),
         Action::PlayPause => ui.paused.update(|p| *p = !*p),
@@ -239,7 +239,8 @@ fn zap(ui: Ui, step: isize) {
         .playing
         .get()
         .unwrap_or_else(|| ui.focus.with(|f| f.channel));
-    let to = (from as isize + step).rem_euclid(CHANNELS as isize) as usize;
+    let to = (from as isize + step).rem_euclid(crate::schedule().channel_count().max(1) as isize)
+        as usize;
     ui.focus.update(|f| {
         f.pane = Pane::Guide;
         f.channel = to;
@@ -274,7 +275,8 @@ pub fn press_control(ui: Ui, control: Control) {
 fn page(ui: Ui, dir: isize) {
     let rows = ui.visible_rows.get().map_or(8, |(a, b)| (b - a).max(1));
     ui.focus.update(|f| {
-        let to = (f.channel as isize + dir * rows as isize).clamp(0, CHANNELS as isize - 1);
+        let to = (f.channel as isize + dir * rows as isize)
+            .clamp(0, crate::schedule().channel_count() as isize - 1);
         f.channel = to as usize;
     });
 }

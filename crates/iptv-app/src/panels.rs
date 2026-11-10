@@ -3,7 +3,7 @@
 
 use nsh_core::prelude::*;
 
-use crate::guide::{Airing, GROUPS, Pane};
+use crate::guide::{Airing, Pane};
 use crate::theme::{FOCUS_ALPHA, RADIUS, RESTING_ALPHA, TEXT_SECONDARY_ALPHA, TEXT_SIZE};
 use crate::{Ui, channel_name, clock, tint};
 
@@ -57,7 +57,7 @@ pub fn top_bar(ui: Ui) -> impl IntoElement {
                 .items_center()
                 .gap(px(20.0))
                 .child(
-                    text(move || ui.focus.with(|f| format!("Group {:02}", f.group + 1)))
+                    text(move || ui.focus.with(|f| crate::schedule().group_name(f.group)))
                         .text_size(px(16.0))
                         .text_color(rgb(WHITE)),
                 )
@@ -79,40 +79,47 @@ pub fn top_bar(ui: Ui) -> impl IntoElement {
 }
 
 pub fn group_column(ui: Ui, groups: ElementRef) -> impl IntoElement {
-    virtual_list(GROUPS, move |at| {
-        let current = move || ui.focus.with(|f| f.group) == at.index();
-        let focused =
-            move || current() && ui.focus.with(|f| f.pane) == Pane::Groups && ui.keys_shown();
-        view()
-            .h(px(48.0))
-            .mx(px(8.0))
-            .my(px(2.0))
-            .px(px(12.0))
-            .rounded(px(RADIUS))
-            .justify_center()
-            .bg(move || {
-                if focused() {
-                    tint(ui.theme.with(|t| t.accent.main), FOCUS_ALPHA)
-                } else {
-                    tint(WHITE, 0)
-                }
-            })
-            .on_press(move || {
-                ui.touched();
-                ui.focus.update(|f| f.tap_group(at.index()));
-            })
-            .child(
-                text(move || format!("Group {:02}", at.index() + 1))
-                    .text_size(px(TEXT_SIZE))
-                    .text_color(move || {
-                        if current() {
-                            rgb(ui.theme.with(|t| t.accent.light))
-                        } else {
-                            secondary()
-                        }
-                    }),
-            )
-    })
+    virtual_list(
+        move || {
+            ui.data_version.get();
+            crate::schedule().group_count()
+        },
+        move |at| {
+            let current = move || ui.focus.with(|f| f.group) == at.index();
+            let focused =
+                move || current() && ui.focus.with(|f| f.pane) == Pane::Groups && ui.keys_shown();
+            view()
+                .h(px(48.0))
+                .mx(px(8.0))
+                .my(px(2.0))
+                .px(px(12.0))
+                .rounded(px(RADIUS))
+                .justify_center()
+                .bg(move || {
+                    if focused() {
+                        tint(ui.theme.with(|t| t.accent.main), FOCUS_ALPHA)
+                    } else {
+                        tint(WHITE, 0)
+                    }
+                })
+                .on_press(move || {
+                    ui.touched();
+                    ui.focus
+                        .update(|f| f.tap_group(at.index(), &*crate::schedule()));
+                })
+                .child(
+                    text(move || crate::schedule().group_name(at.index()))
+                        .text_size(px(TEXT_SIZE))
+                        .text_color(move || {
+                            if current() {
+                                rgb(ui.theme.with(|t| t.accent.light))
+                            } else {
+                                secondary()
+                            }
+                        }),
+                )
+        },
+    )
     .estimated_item_size(px(52.0))
     .element_ref(&groups)
     .w(px(GROUPS_W))
@@ -120,7 +127,10 @@ pub fn group_column(ui: Ui, groups: ElementRef) -> impl IntoElement {
 }
 
 pub fn info_panel(ui: Ui) -> impl IntoElement {
-    let program = computed(move || ui.focus.with(|f| (f.channel, f.program())));
+    let program = computed(move || {
+        ui.focus
+            .with(|f| (f.channel, f.program(&*crate::schedule())))
+    });
     // Transparent: the video layer sits under this rectangle in guide mode.
     // A tap opens full screen.
     let preview = view()
@@ -152,7 +162,7 @@ pub fn info_panel(ui: Ui) -> impl IntoElement {
         .flex_1()
         .gap(px(6.0))
         .child(
-            text(move || program.with(|(_, p)| format!("Show {}", p.start.rem_euclid(97))))
+            text(move || program.with(|(ch, p)| crate::schedule().title(*ch, *p)))
                 .text_size(px(20.0))
                 .text_color(rgb(WHITE)),
         )

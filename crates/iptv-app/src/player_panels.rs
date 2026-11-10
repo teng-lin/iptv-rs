@@ -6,7 +6,7 @@
 use iptv_core::panels::{CONTROLS, Control, Shown};
 use nsh_core::prelude::*;
 
-use crate::guide::{Airing, program_at};
+use crate::guide::Airing;
 use crate::theme::{FOCUS_ALPHA, RADIUS, RADIUS_LARGE, RESTING_ALPHA, TEXT_SECONDARY_ALPHA};
 use crate::{Ui, ViewMode, channel_name, clock, input, tint};
 
@@ -140,13 +140,13 @@ fn info_card(
         crate::Playback::Live => 0,
         crate::Playback::CatchUp { start } => start,
     };
-    let now = move || program_at(channel(), minute());
-    let next = move || program_at(channel(), now().end);
+    let now = move || crate::schedule().program_at(channel(), minute());
+    let next = move || crate::schedule().program_at(channel(), now().end);
     let secondary = move || tint(WHITE, TEXT_SECONDARY_ALPHA);
     let line = move |prefix: &'static str, p: crate::guide::Program| {
         format!(
-            "{prefix}Show {} · {}–{}",
-            p.start.rem_euclid(97),
+            "{prefix}{} · {}–{}",
+            crate::schedule().title(channel(), p),
             clock(p.start),
             clock(p.end)
         )

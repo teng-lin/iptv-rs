@@ -15,8 +15,10 @@ mod video;
 
 use std::time::{Duration, Instant};
 
-use guide::{Airing, Focus, Pane, Program, catchup_days};
+use guide::{Airing, Focus, Pane, Program, Schedule, SyntheticSchedule};
+use std::cell::RefCell;
 use std::collections::BTreeSet;
+use std::rc::Rc;
 
 use iptv_core::menu::{Menu, Origin};
 use iptv_core::panels::Panels;
@@ -95,6 +97,8 @@ pub struct Ui {
     pub favorites: Signal<BTreeSet<usize>>,
     /// Live or catch-up for the playing channel.
     pub playback: Signal<Playback>,
+    /// Bumped when the guide data changes (views re-read `schedule()`).
+    pub data_version: Signal<u64>,
 }
 
 impl Ui {
@@ -102,7 +106,9 @@ impl Ui {
     /// channel already playing goes full screen); ended and upcoming ones
     /// only show their details (no catch-up or reminders yet).
     pub fn watch(&self) {
-        let (channel, program) = self.focus.with(|f| (f.channel, f.program()));
+        let (channel, program) = self
+            .focus
+            .with(|f| (f.channel, f.program(&*crate::schedule())));
         match program.airing() {
             Airing::Live => {
                 let live = self.playback.get() == Playback::Live;
@@ -188,9 +194,25 @@ impl Ui {
     }
 }
 
+thread_local! {
+    static SCHEDULE: RefCell<Rc<dyn Schedule>> = RefCell::new(Rc::new(SyntheticSchedule));
+}
+
+/// The guide data in use (synthetic until a playlist is imported).
+pub fn schedule() -> Rc<dyn Schedule> {
+    SCHEDULE.with(|s| s.borrow().clone())
+}
+
+/// Swaps the guide data (after an import) and tells the views to re-read.
+pub fn set_schedule(ui: &Ui, schedule: Rc<dyn Schedule>) {
+    SCHEDULE.with(|s| *s.borrow_mut() = schedule);
+    ui.data_version.update(|v| *v += 1);
+    ui.focus.update(|f| *f = Focus::default());
+}
+
 /// Whether `program` on `channel` is inside the channel's catch-up window.
 pub fn in_archive(channel: usize, program: Program) -> bool {
-    let days = i32::from(catchup_days(channel));
+    let days = i32::from(schedule().catchup_days(channel));
     days > 0 && program.end <= 0 && program.start >= -days * 24 * 60
 }
 
@@ -214,7 +236,7 @@ pub fn clock(minute: i32) -> String {
 }
 
 pub fn channel_name(ch: usize) -> String {
-    format!("Channel {}", ch + 1)
+    schedule().channel_name(ch)
 }
 
 #[component]
@@ -236,6 +258,7 @@ pub fn App() -> impl IntoElement {
         description: signal(None),
         favorites: signal(BTreeSet::new()),
         playback: signal(Playback::Live),
+        data_version: signal(0),
     };
     // Leaving full screen closes the panels.
     effect(move || {
@@ -269,7 +292,7 @@ pub fn App() -> impl IntoElement {
                 false,
             );
         } else if ch + EDGE > last {
-            let target = (ch + EDGE).min(guide::CHANNELS - 1);
+            let target = (ch + EDGE).min(schedule().channel_count().saturating_sub(1));
             rows.scroll_to_index(target as u32, percentage(1.0), px(0.0), false);
         }
     });
@@ -351,7 +374,8 @@ fn bind_back(ui: Ui) {
         (ViewMode::Guide, Pane::Guide, _) => on_back_press(move || {
             // Back on a past/future programme returns to now; on now, to the groups.
             let mut moved = false;
-            ui.focus.update(|f| moved = f.return_to_now());
+            ui.focus
+                .update(|f| moved = f.return_to_now(&*crate::schedule()));
             if !moved {
                 ui.focus.update(|f| f.pane = Pane::Groups);
             }

@@ -3,7 +3,7 @@
 
 use nsh_core::prelude::*;
 
-use crate::guide::{Airing, CHANNELS, Pane, Program, STEP, VISIBLE, visible_programs};
+use crate::guide::{Airing, Pane, Program, STEP, VISIBLE};
 use crate::theme::{FOCUS_ALPHA, RADIUS, RESTING_ALPHA, TEXT_SECONDARY_ALPHA, TEXT_SIZE};
 use crate::{Ui, channel_name, clock, tint};
 
@@ -19,8 +19,9 @@ pub fn guide(ui: Ui, rows: ElementRef) -> impl IntoElement {
     let scale = computed(move || width.get() / VISIBLE as f32);
     let window = computed(move || ui.focus.with(|f| f.window));
     let focused = computed(move || {
-        ui.focus
-            .with(|f| (f.pane == Pane::Guide).then(|| (f.channel, f.program().start)))
+        ui.focus.with(|f| {
+            (f.pane == Pane::Guide).then(|| (f.channel, f.program(&*crate::schedule()).start))
+        })
     });
     view()
         .flex_1()
@@ -31,13 +32,19 @@ pub fn guide(ui: Ui, rows: ElementRef) -> impl IntoElement {
                 .flex_1()
                 .overflow_hidden()
                 .child(
-                    virtual_list(CHANNELS, move |at| row(ui, at, window, scale, focused))
-                        .estimated_item_size(px(ROW_H))
-                        .element_ref(&rows)
-                        .on_viewable_items_change(move |v: &ViewableItems| {
-                            ui.visible_rows.set(v.viewable)
-                        })
-                        .flex_1(),
+                    virtual_list(
+                        move || {
+                            ui.data_version.get();
+                            crate::schedule().channel_count()
+                        },
+                        move |at| row(ui, at, window, scale, focused),
+                    )
+                    .estimated_item_size(px(ROW_H))
+                    .element_ref(&rows)
+                    .on_viewable_items_change(move |v: &ViewableItems| {
+                        ui.visible_rows.set(v.viewable)
+                    })
+                    .flex_1(),
                 )
                 .child(
                     // Now: minute 0.
@@ -104,7 +111,10 @@ fn row(
     scale: Memo<f32>,
     focused: Memo<Option<(usize, i32)>>,
 ) -> impl IntoElement {
-    let programs = computed(move || visible_programs(at.index(), window.get()));
+    let programs = computed(move || {
+        ui.data_version.get();
+        crate::schedule().programs_between(at.index(), window.get(), VISIBLE)
+    });
     let cell = move |i: usize| {
         let program = move || programs.with(|ps| ps.get(i).copied());
         let geometry = move || {
@@ -145,14 +155,13 @@ fn row(
             .on_press(move || {
                 let Some(p) = program() else { return };
                 ui.touched();
-                ui.focus.update(|f| f.tap(at.index(), p.start));
+                ui.focus
+                    .update(|f| f.tap(at.index(), p.start, &*crate::schedule()));
                 ui.watch();
             })
             .child(
                 text(move || {
-                    program().map_or(String::new(), |p| {
-                        format!("Show {}", p.start.rem_euclid(97))
-                    })
+                    program().map_or(String::new(), |p| crate::schedule().title(at.index(), p))
                 })
                 .number_of_lines(1)
                 .text_size(px(TEXT_SIZE))
@@ -177,7 +186,8 @@ fn row(
                 .justify_center()
                 .on_press(move || {
                     ui.touched();
-                    ui.focus.update(|f| f.tap(at.index(), 0));
+                    ui.focus
+                        .update(|f| f.tap(at.index(), 0, &*crate::schedule()));
                     ui.watch();
                 })
                 .child(

@@ -18,7 +18,7 @@ pub fn stream_url(channel: usize) -> String {
 /// The synthetic archive URL (`tools/mock-server.py` serves `/archive/*`).
 /// Placeholder until `iptv-catchup` builds real provider URLs.
 pub fn catchup_url(channel: usize, start: i32) -> String {
-    let p = crate::guide::program_at(channel, start);
+    let p = crate::schedule().program_at(channel, start);
     let utc = crate::GUIDE_EPOCH_UNIX + i64::from(p.start) * 60;
     let duration = (p.end - p.start) * 60;
     format!(

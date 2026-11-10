@@ -2,7 +2,6 @@
 //! the programme description popover. State lives in `iptv_core::menu`;
 //! this opens, draws and performs it. Labels are iptv-rs's own wording.
 
-use iptv_core::guide::{catchup_days, program_at};
 use iptv_core::menu::{Heading, Menu, MenuItem, Origin, Row, program_menu};
 use nsh_core::prelude::*;
 
@@ -50,8 +49,8 @@ fn label(item: MenuItem, favorite: bool) -> &'static str {
     }
 }
 
-fn synthetic_title(p: crate::guide::Program) -> String {
-    format!("Show {}", p.start.rem_euclid(97))
+fn title(channel: usize, p: crate::guide::Program) -> String {
+    crate::schedule().title(channel, p)
 }
 
 /// Long OK / Menu: the menu for the focused programme (in full screen, the
@@ -61,8 +60,13 @@ pub fn open(ui: Ui) {
         (ViewMode::Fullscreen, Some(ch)) => (ch, 0),
         _ => ui.focus.with(|f| (f.channel, f.cursor)),
     };
-    let program = program_at(channel, minute);
-    let rows = program_menu(program, catchup_days(channel), 0, implemented);
+    let program = crate::schedule().program_at(channel, minute);
+    let rows = program_menu(
+        program,
+        crate::schedule().catchup_days(channel),
+        0,
+        implemented,
+    );
     let origin = Origin {
         channel,
         program_start: program.start,
@@ -83,7 +87,7 @@ pub fn close(ui: Ui) {
         && ui.mode.get() != ViewMode::Fullscreen
     {
         ui.focus.update(|f| {
-            f.tap(origin.channel, origin.program_start);
+            f.tap(origin.channel, origin.program_start, &*crate::schedule());
             f.pane = Pane::Guide;
         });
     }
@@ -129,16 +133,16 @@ fn heading_text(ui: Ui, heading: Heading) -> String {
     };
     match heading {
         Heading::Program => {
-            let p = program_at(origin.channel, origin.program_start);
+            let p = crate::schedule().program_at(origin.channel, origin.program_start);
             format!(
                 "{} · {}–{}",
-                synthetic_title(p),
+                title(origin.channel, p),
                 clock(p.start),
                 clock(p.end)
             )
         }
         Heading::Channel => channel_name(origin.channel),
-        Heading::Group => ui.focus.with(|f| format!("Group {:02}", f.group + 1)),
+        Heading::Group => ui.focus.with(|f| crate::schedule().group_name(f.group)),
     }
 }
 
@@ -246,9 +250,12 @@ pub fn layer(ui: Ui) -> impl IntoElement {
 fn description(ui: Ui) -> impl IntoElement {
     let shown = move || ui.description.get().is_some();
     let program = move || {
-        ui.description
-            .get()
-            .map(|o| (o.channel, program_at(o.channel, o.program_start)))
+        ui.description.get().map(|o| {
+            (
+                o.channel,
+                crate::schedule().program_at(o.channel, o.program_start),
+            )
+        })
     };
     view()
         .absolute()
@@ -272,7 +279,7 @@ fn description(ui: Ui) -> impl IntoElement {
                 .rounded(px(RADIUS_LARGE))
                 .bg(move || rgb(ui.theme.with(|t| t.background.panel)))
                 .child(
-                    text(move || program().map_or(String::new(), |(_, p)| synthetic_title(p)))
+                    text(move || program().map_or(String::new(), |(ch, p)| title(ch, p)))
                         .text_size(px(22.0))
                         .text_color(rgb(WHITE)),
                 )
