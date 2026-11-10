@@ -18,11 +18,13 @@
 mod channels;
 mod history;
 mod programmes;
+mod programmes_builder;
 mod state;
 mod text;
 
 pub use channels::{ChannelHit, ChannelIndex, ChannelSearchOptions};
 pub use history::SearchHistory;
 pub use programmes::{GroupBy, ProgrammeHit, ProgrammeIndex, ProgrammeSearchOptions};
+pub use programmes_builder::ProgrammeIndexBuilder;
 pub use state::{Focus, Phase, ResultId, SearchAction, SearchEffect, SearchState, Tab};
 pub use text::{MIN_INFIX, MatchQuality, Query, fold, tokens};

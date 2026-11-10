@@ -10,6 +10,8 @@
 //! Ranking follows `search.favorites_first` and
 //! `search.include_past_without_catchup`; with `search.show_history` off
 //! the screen opens without the recent searches (they are still kept).
+//! Programmes are searched over every day the store keeps
+//! (`programme_index.rs`), not only the guide days held in memory.
 //! Wording is iptv-rs's own.
 
 use std::cell::{Cell, RefCell};
@@ -28,6 +30,8 @@ use iptv_search::{
 use iptv_settings::{Settings, Target, keys};
 use nsh_base::input;
 use nsh_core::prelude::*;
+
+mod programme_index;
 
 use crate::theme::{FOCUS_ALPHA, RADIUS, RESTING_ALPHA, TEXT_SECONDARY_ALPHA};
 use crate::{Playback, Ui, ViewMode, channel_name, clock, tint};
@@ -62,7 +66,11 @@ struct Indexes {
     /// The `data_version` they were built for.
     version: Option<u64>,
     channels: ChannelIndex,
+    /// Every day the store keeps; dropped when the screen closes (it is
+    /// about the size of a week's guide).
     programmes: Option<ProgrammeIndex>,
+    /// The `data_version` whose programme index is being built.
+    building: Option<u64>,
 }
 
 thread_local! {
@@ -263,6 +271,7 @@ fn prepare(ui: Ui) {
                 version: Some(version),
                 channels,
                 programmes: None,
+                building: None,
             }
         });
     }
@@ -279,24 +288,36 @@ fn prepare(ui: Ui) {
     // owner); a timer that finds the index built does nothing.
     let _ = set_timeout(Duration::from_millis(30), move || {
         let wanted = INDEXES.with(|i| {
-            let i = i.borrow();
-            i.version == Some(version) && i.programmes.is_none()
+            let mut i = i.borrow_mut();
+            let wanted = i.version == Some(version) && i.programmes.is_none();
+            // One build per guide (its thread may still be reading).
+            wanted && i.building.replace(version) != Some(version)
         });
         let schedule = crate::schedule();
         let Some(epg) = epg(&*schedule).filter(|_| wanted) else {
             return;
         };
         let t = Instant::now();
-        let keys = (0..schedule.channel_count()).map_while(|c| epg.channel(c).map(|g| &g.key));
-        let index = ProgrammeIndex::build(epg.store(), keys);
-        log::info!(
-            "iptv search: indexed {} programmes in {} ms",
-            index.programme_count(),
-            t.elapsed().as_millis()
-        );
-        INDEXES.with(|i| i.borrow_mut().programmes = Some(index));
-        set_programmes(ui, Programmes::Ready);
-        search_again(ui);
+        programme_index::build(epg, schedule.channel_count(), move |index| {
+            let current = INDEXES.with(|i| {
+                let mut i = i.borrow_mut();
+                if i.building == Some(version) {
+                    i.building = None;
+                }
+                i.version == Some(version)
+            });
+            if !current || ui.search.with_untracked(Option::is_none) {
+                return;
+            }
+            log::info!(
+                "iptv search: indexed {} programmes in {} ms",
+                index.programme_count(),
+                t.elapsed().as_millis()
+            );
+            INDEXES.with(|i| i.borrow_mut().programmes = Some(index));
+            set_programmes(ui, Programmes::Ready);
+            search_again(ui);
+        });
     });
 }
 
@@ -391,6 +412,7 @@ pub fn open(ui: Ui) {
 
 pub fn close(ui: Ui) {
     save_history(ui);
+    INDEXES.with(|i| i.borrow_mut().programmes = None);
     ui.search.set(None);
     dismiss_keyboard();
 }

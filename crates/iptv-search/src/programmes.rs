@@ -163,6 +163,16 @@ impl ProgrammeIndex {
                 raw.push((id, ch as u32, p.start(), p.stop()));
             }
         }
+        Self::assemble(&titles, &raw, n_channels)
+    }
+
+    /// The index of `raw` (title id, channel, start, stop) with the titles
+    /// by id (`ProgrammeIndexBuilder` collects them from elsewhere).
+    pub(crate) fn assemble(
+        titles: &[&str],
+        raw: &[(u32, u32, i64, i64)],
+        n_channels: usize,
+    ) -> Self {
         let base = raw.iter().map(|r| r.2).min().unwrap_or(0);
 
         // Words in first-seen order, then sorted and renumbered.
@@ -172,7 +182,7 @@ impl ProgrammeIndex {
         let mut text_off = vec![0];
         let mut word_off = vec![0];
         let mut words = Vec::new();
-        for title in &titles {
+        for title in titles {
             text.push_str(title);
             text_off.push(text.len() as u32);
             for w in tokens(title) {
@@ -229,7 +239,7 @@ impl ProgrammeIndex {
 
         // Occurrences grouped by title (counting sort keeps input order).
         let mut counts = vec![0u32; titles.len()];
-        for r in &raw {
+        for r in raw {
             counts[r.0 as usize] += 1;
         }
         let occ_off = offsets_from_counts(&counts);
@@ -242,7 +252,7 @@ impl ProgrammeIndex {
             };
             raw.len()
         ];
-        for &(t, channel, start, stop) in &raw {
+        for &(t, channel, start, stop) in raw {
             let i = &mut fill[t as usize];
             occ[*i as usize] = Occ {
                 channel,

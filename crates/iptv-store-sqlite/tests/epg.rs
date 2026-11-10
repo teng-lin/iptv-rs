@@ -196,6 +196,37 @@ fn windows_keys_and_descriptions() {
 }
 
 #[test]
+fn titles_stream_for_search_by_channel_position() {
+    let (mut store, a, _) = store_with_sources();
+    let feeds = [meta(config(1, 9)), meta(config(2, 1))];
+    staged::replace_epg(&mut store, a, &two_feed_guide("v1"), &feeds, 0).unwrap();
+    // k4 has no stored guide; "other" is not bound at all.
+    let keys = ["k2", "k3", "k1", "k4", "other"].map(ChannelKey::from);
+    let mut seen = Vec::new();
+    let read = store
+        .for_each_epg_title(a, &keys, NOW - H / 2, NOW + H, |at, start, stop, title| {
+            seen.push((at, start, stop, title.to_owned()));
+        })
+        .unwrap();
+    // x (shared by k1 and k3) and y (settled to an hour each) overlapping
+    // [now - 30 min, now + 1 h): four rows, x heard at both positions.
+    assert_eq!(read, 4);
+    seen.sort();
+    let row = |at, i: i64, t: &str| (at, NOW + i * H, NOW + (i + 1) * H, format!("v1 {t}{i}"));
+    assert_eq!(
+        seen,
+        [
+            row(0, -1, "Y"),
+            row(0, 0, "Y"),
+            row(1, -1, "X"),
+            row(1, 0, "X"),
+            row(2, -1, "X"),
+            row(2, 0, "X"),
+        ]
+    );
+}
+
+#[test]
 fn replace_is_per_source_and_total() {
     let (mut store, a, b) = store_with_sources();
     let feeds = [meta(config(1, 9)), meta(config(2, 1))];
