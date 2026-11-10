@@ -13,7 +13,10 @@ Android video/input research: [`docs/research/android-video-and-input.md`](docs/
 
 | Path | What |
 | --- | --- |
-| `crates/iptv-core` | UI-independent core (guide model, focus). No NSH, wasm-safe |
+| `crates/iptv-core` | UI-independent core: guide model and focus, player panels, context menus. No NSH, wasm-safe |
+| `crates/iptv-nav` | Remote keys, short/long press, layered key → action map. Wasm-safe |
+| `crates/iptv-settings` | One settings schema: catalogue, scoped store, versioned backup JSON. Wasm-safe |
+| `crates/iptv-epg` | Sans-IO XMLTV parser (gzip), EPG channel matching, compact guide store. Wasm-safe |
 | `crates/iptv-app` | NSH shell: screens, placeholder theme, video layer |
 | `hosts/android` | Kotlin host: `NshView`, Media3 `tv.player` component, TV launcher manifest |
 | `tools/` | `sync-host.sh`, `make-hls-fixtures.sh`, `burst.sh` |

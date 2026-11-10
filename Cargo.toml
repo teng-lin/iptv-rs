@@ -1,6 +1,12 @@
 [workspace]
 resolver = "3"
-members = ["crates/iptv-core", "crates/iptv-nav", "crates/iptv-settings", "crates/iptv-app"]
+members = [
+    "crates/iptv-core",
+    "crates/iptv-nav",
+    "crates/iptv-settings",
+    "crates/iptv-epg",
+    "crates/iptv-app",
+]
 # nsh generates its own Cargo workspaces under the app crate.
 exclude = ["crates/iptv-app/.nsh"]
 
@@ -13,6 +19,7 @@ publish = false
 iptv-core = { path = "crates/iptv-core" }
 iptv-nav = { path = "crates/iptv-nav" }
 iptv-settings = { path = "crates/iptv-settings" }
+iptv-epg = { path = "crates/iptv-epg" }
 # The NSH fork checkout (branch tv-keys); upstream PR planned.
 nsh-core = { path = "/home/blackmyth/src/nsh/crates/nsh-core" }
 nsh-base = { path = "/home/blackmyth/src/nsh/crates/nsh-base" }
