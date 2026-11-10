@@ -40,9 +40,11 @@ import com.longbridge.nsh.NshComponentContext
  *
  * Events: `state` {state: idle|buffering|ready|ended}, `error` {code, http?}
  * (code is Media3's error code name; no URLs or messages), `size` {width,
- * height}. Recovers by itself from BEHIND_LIVE_WINDOW, and retries a
- * container it could not parse once as HLS; everything else goes to the app,
- * which owns the retry policy.
+ * height}. Recovers by itself from BEHIND_LIVE_WINDOW, and retries once with
+ * the other kind of stream (a container it could not parse as HLS, a
+ * playlist it could not parse as progressive); everything else goes to the
+ * app, which owns the retry policy. The picture is black from a new source
+ * or an error until the next first frame.
  */
 @OptIn(UnstableApi::class)
 class PlayerComponent(
@@ -59,9 +61,18 @@ class PlayerComponent(
     private class Headers(val host: String?, val all: Map<String, String>)
 
     private val surface = SurfaceView(context)
+    /**
+     * Black over the picture from a new source (or an error) until the
+     * stream's first frame: the surface would keep the last channel's frame.
+     */
+    private val shutter = View(context).apply {
+        setBackgroundColor(Color.BLACK)
+        visibility = View.GONE
+    }
     private val root = PictureFrame(context).apply {
         setBackgroundColor(Color.BLACK)
         addView(surface, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
+        addView(shutter, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
     }
 
     private var userAgent = DEFAULT_UA
@@ -115,6 +126,10 @@ class PlayerComponent(
             nsh.emit("state", mapOf("state" to name))
         }
 
+        override fun onRenderedFirstFrame() {
+            shutter.visibility = View.GONE
+        }
+
         override fun onVideoSizeChanged(size: VideoSize) {
             if (size.width > 0 && size.height > 0) {
                 root.videoAspect = size.width * size.pixelWidthHeightRatio / size.height
@@ -144,6 +159,7 @@ class PlayerComponent(
                     return
                 }
             }
+            shutter.visibility = View.VISIBLE
             val event = mutableMapOf<String, Any>("code" to error.errorCodeName)
             httpStatus(error)?.let { event["http"] = it }
             nsh.emit("error", event)
@@ -183,6 +199,7 @@ class PlayerComponent(
         applyHeaders()
         if (!changed) return
         triedOtherFormat = false
+        shutter.visibility = View.VISIBLE
         if (next == null) {
             player.stop()
             player.clearMediaItems()
