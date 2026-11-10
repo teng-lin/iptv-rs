@@ -66,7 +66,7 @@ playlist the wizard opens; its playlist link defaults to the mock server at
 | D-pad, OK | arrows, Enter |
 | Back | Escape, Backspace (Backspace edits text in a field) |
 | Menu | `m`, the context-menu key |
-| Channel up / down | Page Up / Page Down over video (they page the guide), `=` / `-` |
+| Channel up / down | Page Up / Page Down or `=` / `-` (over video they zap, in the guide they page) |
 | Digits | `0`–`9` |
 | Play/pause | Space |
 | Info, Guide | `i`, `g` |
