@@ -197,7 +197,7 @@ fn checks_the_archive_window() {
     assert!(build_catchup_url(&unknown, wide).is_ok());
     // Seeking past the programme end.
     let past_end = CatchupRequest {
-        offset_secs: 3600,
+        offset_secs: 3601,
         ..old(1)
     };
     assert_eq!(
@@ -336,5 +336,41 @@ fn default_with_a_relative_source_appends_it() {
     assert_eq!(
         build_catchup_url(&ch, REQ).as_deref(),
         Ok("http://l.example.com/x.m3u8?archive=1700000000")
+    );
+}
+
+#[test]
+fn flussonic_on_air_and_short_programmes() {
+    let hls = channel(
+        r#"catchup="flussonic" catchup-days="1""#,
+        "http://f.example.com/chan/index.m3u8?token=a~b",
+    );
+    let ts = channel(
+        r#"catchup="fs" catchup-days="1""#,
+        "http://f.example.com/chan/mpegts?token=a~b",
+    );
+    // Still on air: open-ended forms (Flussonic DVR docs).
+    let on_air = CatchupRequest::new(1_000, 5_000, 2_000);
+    assert_eq!(
+        build_catchup_url(&hls, on_air).as_deref(),
+        Ok("http://f.example.com/chan/index-1000-now.m3u8?token=a~b")
+    );
+    assert_eq!(
+        build_catchup_url(&ts, on_air).as_deref(),
+        Ok("http://f.example.com/chan/timeshift_abs-1000.ts?token=a~b")
+    );
+    // A zero-length guide entry still asks for at least one second.
+    let empty = CatchupRequest::new(1_000, 1_000, 2_000);
+    assert_eq!(
+        build_catchup_url(&hls, empty).as_deref(),
+        Ok("http://f.example.com/chan/index-1000-1.m3u8?token=a~b")
+    );
+    let mono = channel(
+        r#"catchup="fs" catchup-days="1""#,
+        "http://f.example.com/chan/mono.m3u8",
+    );
+    assert_eq!(
+        build_catchup_url(&mono, CatchupRequest::new(1_000, 1_600, 2_000)).as_deref(),
+        Ok("http://f.example.com/chan/mono-1000-600.m3u8")
     );
 }

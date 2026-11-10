@@ -13,8 +13,10 @@
 //!   derived from the live URL:
 //!   - `shift`: `utc`/`lutc` query parameters on the live URL; other query
 //!     bytes are kept exactly as written.
-//!   - `flussonic`: `…/NAME.m3u8` → `…/NAME-{start}-{duration}.m3u8`,
-//!     `…/mpegts` → `…/timeshift_abs-{start}.ts`.
+//!   - `flussonic` ([Flussonic DVR playback]): `…/NAME.m3u8` →
+//!     `…/NAME-{start}-{duration}.m3u8` (duration ≥ 1 s), or
+//!     `…/NAME-{start}-now.m3u8` while the programme is on air;
+//!     `…/mpegts` → `…/timeshift_abs-{start}.ts` (open-ended in both cases).
 //!   - `xc`: Xtream-shaped live URL → `/timeshift/U/P/{minutes}/{Y-m-d:H-M}/{id}.EXT`,
 //!     EXT `m3u8` for an `.m3u8` live URL, else `ts`.
 //! - Unknown types and Stalker channels: [`CatchupError::Unsupported`].
@@ -33,9 +35,20 @@
 //! `end + buffer_after_secs` (the end buffer stops at `now`). "Start" in the
 //! rules above is that replay start. A programme that starts after `now`,
 //! or a replay start after `now`, is [`CatchupError::FutureProgramme`]; a
-//! replay start at or past the replay end, or before the archive window
+//! replay start past the replay end, or before the archive window
 //! (`catchup-days`, else [`CatchupRequest::default_window_days`]), is
 //! [`CatchupError::OutsideArchive`].
+//!
+//! ## References
+//!
+//! Behaviour is written from these public descriptions (no code copied):
+//! [Kodi pvr.iptvsimple README (Omega)], sections "Catchup", "Catchup format
+//! specifiers" and "Supported M3U and XMLTV elements";
+//! [Flussonic DVR playback]; IPTVnator's `catchup.utils.ts` (MIT) for the
+//! `shift` fallback.
+//!
+//! [Kodi pvr.iptvsimple README (Omega)]: https://github.com/kodi-pvr/pvr.iptvsimple/blob/Omega/README.md
+//! [Flussonic DVR playback]: https://flussonic.com/doc/dvr/playback/
 
 mod template;
 
@@ -159,13 +172,14 @@ fn window(req: &CatchupRequest, days: u32) -> Result<Vars, CatchupError> {
     if from > now {
         return Err(CatchupError::FutureProgramme);
     }
-    if from >= to || from.max(start) < now - i64::from(days) * 86_400 {
+    if from > to || from.max(start) < now - i64::from(days) * 86_400 {
         return Err(CatchupError::OutsideArchive);
     }
     Ok(Vars {
         from,
         to,
         now,
+        on_air: end > now,
         local_offset_secs: req.local_offset_secs,
     })
 }
@@ -206,19 +220,44 @@ fn set_utc_params(raw: &str, vars: &Vars) -> Result<String, CatchupError> {
     Ok(out)
 }
 
+/// Flussonic DVR forms: HLS `NAME-FROM-DURATION.m3u8`, or `NAME-FROM-now.m3u8`
+/// while the programme is on air; MPEG-TS `timeshift_abs-FROM.ts` (open-ended
+/// either way). Query and fragment are kept byte for byte.
 fn flussonic(live: &str, vars: &Vars) -> Result<String, CatchupError> {
-    let mut url = url::Url::parse(live).map_err(|_| CatchupError::MalformedUrl)?;
-    let path = url.path().to_owned();
+    let (origin, path, rest) = split_path(live).ok_or(CatchupError::MalformedUrl)?;
     let new_path = if let Some(base) = path.strip_suffix("/mpegts") {
         format!("{base}/timeshift_abs-{}.ts", vars.from)
     } else {
         let stem = path
             .strip_suffix(".m3u8")
             .ok_or(CatchupError::MalformedUrl)?;
-        format!("{stem}-{}-{}.m3u8", vars.from, vars.duration())
+        if vars.on_air {
+            format!("{stem}-{}-now.m3u8", vars.from)
+        } else {
+            format!("{stem}-{}-{}.m3u8", vars.from, vars.duration())
+        }
     };
-    url.set_path(&new_path);
-    Ok(url.to_string())
+    checked(format!("{origin}{new_path}{rest}"))
+}
+
+/// An HTTP(S) URL split into `scheme://authority`, path and `?query#fragment`.
+fn split_path(raw: &str) -> Option<(&str, &str, &str)> {
+    let raw = raw.trim();
+    if !is_http(raw) {
+        return None;
+    }
+    let authority = raw.find("://")? + 3;
+    let path_start = raw[authority..]
+        .find(['/', '?', '#'])
+        .map_or(raw.len(), |i| authority + i);
+    let path_end = raw[path_start..]
+        .find(['?', '#'])
+        .map_or(raw.len(), |i| path_start + i);
+    Some((
+        &raw[..path_start],
+        &raw[path_start..path_end],
+        &raw[path_end..],
+    ))
 }
 
 fn xtream(live: &str, vars: &Vars, server_offset_minutes: i32) -> Result<String, CatchupError> {

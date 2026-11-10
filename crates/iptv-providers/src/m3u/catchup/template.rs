@@ -10,13 +10,16 @@ pub(super) struct Vars {
     /// Where it ends (Unix seconds).
     pub to: i64,
     pub now: i64,
+    /// The programme has not ended yet.
+    pub on_air: bool,
     /// Viewer's UTC offset for date-part placeholders.
     pub local_offset_secs: i32,
 }
 
 impl Vars {
+    /// Replay length in seconds, at least 1.
     pub(super) fn duration(&self) -> i64 {
-        (self.to - self.from).max(0)
+        (self.to - self.from).max(1)
     }
 
     fn offset(&self) -> i64 {
