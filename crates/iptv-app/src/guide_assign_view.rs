@@ -22,12 +22,12 @@ pub use state::Picker as Open;
 use state::{Effect, Key, Picker, Row, Subject};
 
 use crate::data::assign::{self, Applied};
-use crate::theme::{FOCUS_ALPHA, RADIUS, RESTING_ALPHA, TEXT_SECONDARY_ALPHA};
+use crate::list_rows::{self, Mark, ROW_TWO};
+use crate::scale::Scale;
+use crate::ui_kit;
 use crate::{Ui, tint};
 
-const WHITE: u32 = 0xFFFFFF;
-const PANEL_W: f32 = 600.0;
-const ROW_H: f32 = 58.0;
+const PANEL_W: f32 = 680.0;
 
 /// Opens the chooser for catalog channel `channel` of the playlist on
 /// screen; a notice when there is none or it has no guide at all.
@@ -153,23 +153,12 @@ fn applied_words(applied: Applied) -> &'static str {
 
 // --- View ----------------------------------------------------------------------
 
-fn secondary() -> Rgba {
-    tint(WHITE, TEXT_SECONDARY_ALPHA)
-}
-
-fn focus_bg(ui: Ui, focused: bool) -> Rgba {
-    if focused && ui.keys_shown() {
-        tint(ui.theme.with(|t| t.accent.main), FOCUS_ALPHA)
-    } else {
-        tint(WHITE, 0)
-    }
-}
-
 pub fn layer(ui: Ui) -> impl IntoElement {
     when(move || is_open(ui), move || panel(ui))
 }
 
 fn panel(ui: Ui) -> impl IntoElement {
+    let size = Scale::new();
     view()
         .absolute()
         .inset_0()
@@ -181,14 +170,15 @@ fn panel(ui: Ui) -> impl IntoElement {
         }))
         .child(
             view()
-                .w(px(PANEL_W))
+                .w(move || size.px(PANEL_W))
+                .max_w(percentage(0.92))
                 .pt_safe_area()
-                .px(px(20.0))
-                .py(px(16.0))
-                .gap(px(8.0))
+                .px(move || size.px(20.0))
+                .py(move || size.px(16.0))
+                .gap(move || size.px(8.0))
                 .bg(move || rgb(ui.theme.with(|t| t.background.panel)))
-                .child(header(ui))
-                .child(list(ui)),
+                .child(header(ui, size))
+                .child(list(ui, size)),
         )
 }
 
@@ -218,38 +208,27 @@ fn now_line(p: &Picker) -> String {
     }
 }
 
-fn header(ui: Ui) -> impl IntoElement {
+fn header(ui: Ui, size: Scale) -> impl IntoElement {
     view()
-        .gap(px(4.0))
+        .gap(move || size.px(4.0))
+        .child(ui_kit::title(size, move || {
+            state(ui, |p| format!("Guide data for {}", p.subject().name)).unwrap_or_default()
+        }))
         .child(
-            text(move || {
-                state(ui, |p| format!("Guide data for {}", p.subject().name)).unwrap_or_default()
-            })
-            .number_of_lines(1)
-            .text_size(px(20.0))
-            .text_color(rgb(WHITE)),
+            ui_kit::caption(size, move || state(ui, now_line).unwrap_or_default())
+                .number_of_lines(1),
         )
-        .child(
-            text(move || state(ui, now_line).unwrap_or_default())
-                .number_of_lines(1)
-                .text_size(px(13.0))
-                .text_color(secondary()),
-        )
-        .child(
-            text(move || {
-                let busy = state(ui, Picker::busy).unwrap_or(false);
-                match (busy, ui.keys_shown()) {
-                    (true, _) => "Applying…",
-                    (false, true) => "▲▼ move   OK choose   Back close",
-                    (false, false) => "Tap the field to search, a row to choose it",
-                }
-            })
-            .text_size(px(13.0))
-            .text_color(secondary()),
-        )
+        .child(ui_kit::caption(size, move || {
+            let busy = state(ui, Picker::busy).unwrap_or(false);
+            match (busy, ui.keys_shown()) {
+                (true, _) => "Applying…",
+                (false, true) => "▲▼ move   OK choose   Back close",
+                (false, false) => "Tap the field to search, a row to choose it",
+            }
+        }))
 }
 
-fn list(ui: Ui) -> impl IntoElement {
+fn list(ui: Ui, size: Scale) -> impl IntoElement {
     let rows = element_ref();
     let count = move || state(ui, Picker::len).unwrap_or(0);
     let focused = computed(move || state(ui, Picker::focus_index));
@@ -260,15 +239,15 @@ fn list(ui: Ui) -> impl IntoElement {
             rows.scroll_to_index(i as u32, percentage(0.5), px(0.0), false);
         }
     });
-    virtual_list(count, move |at| row(ui, at.index(), focused))
-        .estimated_item_size(px(ROW_H))
+    virtual_list(count, move |at| row(ui, size, at.index(), focused))
+        .estimated_item_size(list_rows::pitch(size, ROW_TWO))
         .element_ref(&rows)
         .flex_1()
 }
 
-fn row(ui: Ui, index: usize, focused: Memo<Option<usize>>) -> AnyElement {
+fn row(ui: Ui, size: Scale, index: usize, focused: Memo<Option<usize>>) -> AnyElement {
     if index == 0 {
-        return search_field(ui, focused).into_element();
+        return search_field(ui, size, focused).into_element();
     }
     let item = move || state(ui, |p| p.row(index)).flatten();
     let channel = move || state(ui, |p| p.channel(index).cloned()).flatten();
@@ -299,14 +278,12 @@ fn row(ui: Ui, index: usize, focused: Memo<Option<usize>>) -> AnyElement {
             .unwrap_or_default(),
         _ => String::new(),
     };
-    view()
-        .h(px(ROW_H))
-        .px(px(14.0))
+    let mark = move || Mark::of(focused.get() == Some(index) && ui.keys_shown(), false);
+    list_rows::row(size, ROW_TWO, mark)
         .flex_row()
         .items_center()
-        .gap(px(12.0))
-        .rounded(px(RADIUS))
-        .bg(move || focus_bg(ui, focused.get() == Some(index)))
+        .justify_start()
+        .gap(move || size.px(12.0))
         .on_press(move || {
             ui.touched();
             update(ui, |p| p.tap(index));
@@ -314,24 +291,16 @@ fn row(ui: Ui, index: usize, focused: Memo<Option<usize>>) -> AnyElement {
         .child(
             view()
                 .flex_1()
-                .gap(px(2.0))
-                .child(
-                    text(title)
-                        .number_of_lines(1)
-                        .text_size(px(16.0))
-                        .text_color(rgb(WHITE)),
-                )
-                .child(
-                    text(detail)
-                        .number_of_lines(1)
-                        .text_size(px(12.0))
-                        .text_color(secondary()),
-                ),
+                .child(ui_kit::label(size, title).text_color(move || mark().text()))
+                .child(ui_kit::detail(size, detail).text_color(move || mark().secondary())),
         )
         .child(
-            text(move || if current() { "Current" } else { "" }.to_owned())
-                .text_size(px(13.0))
-                .text_color(move || rgb(ui.theme.with(|t| t.accent.light))),
+            ui_kit::caption(size, move || if current() { "Current" } else { "" }).text_color(
+                move || match mark() {
+                    Mark::Focused => Mark::Focused.text(),
+                    _ => rgb(ui.theme.with(|t| t.accent.light)),
+                },
+            ),
         )
         .into_element()
 }
@@ -344,7 +313,7 @@ fn channel_detail(ui: Ui, c: &GuideChannel) -> String {
 
 /// The first row: the search field. OK on it (or a tap) types; Return
 /// goes to the first match.
-fn search_field(ui: Ui, focused: Memo<Option<usize>>) -> impl IntoElement {
+fn search_field(ui: Ui, size: Scale, focused: Memo<Option<usize>>) -> impl IntoElement {
     let field = element_ref();
     let typing = computed(move || state(ui, Picker::typing).unwrap_or(false));
     effect(move || {
@@ -354,27 +323,15 @@ fn search_field(ui: Ui, focused: Memo<Option<usize>>) -> impl IntoElement {
             field.blur();
         }
     });
-    view().h(px(ROW_H)).justify_center().child(
-        input()
+    view().h(move || size.px(ROW_TWO)).justify_center().child(
+        ui_kit::field(size, input())
             .element_ref(&field)
             .value(move || state(ui, |p| p.query().to_owned()).unwrap_or_default())
             .placeholder("Search guide channels by name or id")
             .auto_capitalize(AutoCapitalize::None)
             .auto_correct(false)
             .return_key_type(ReturnKeyType::Search)
-            .text_size(px(16.0))
-            .text_color(rgb(WHITE))
-            .placeholder_color(secondary())
-            .px(px(14.0))
-            .py(px(10.0))
-            .rounded(px(RADIUS))
-            .bg(move || {
-                if focused.get() == Some(0) && ui.keys_shown() {
-                    tint(ui.theme.with(|t| t.accent.main), FOCUS_ALPHA)
-                } else {
-                    tint(WHITE, RESTING_ALPHA)
-                }
-            })
+            .bg(move || ui_kit::field_fill(ui, focused.get() == Some(0)))
             .on_change(move |text: &str| {
                 if state(ui, |p| p.query() != text).unwrap_or(false) {
                     update(ui, |p| {

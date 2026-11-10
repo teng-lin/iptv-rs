@@ -4,18 +4,28 @@
 //! command, and the read-only key list. Each says what it is about; the
 //! remote drives them through `iptv_settings::screen`, taps directly.
 
+mod key_list;
+
 use std::rc::Rc;
 
 use iptv_settings::screen::{Editor, Effect, grid};
 use iptv_settings::{Setting, Value, ValueType};
 use nsh_core::prelude::*;
 
-use super::{WHITE, accent_fill, remote_keys, secondary, state, swatch_colour, update, words};
-use crate::theme::{RADIUS, RADIUS_LARGE, RESTING_ALPHA};
+use super::view::swatch_colour;
+use super::{WHITE, state, update, words};
+use crate::fonts::TITLE;
+use crate::list_rows::{self, Mark, ROW};
+use crate::scale::Scale;
+use crate::theme::{LIST_TEXT, RADIUS, RESTING_ALPHA};
+use crate::ui_kit;
 use crate::wizard_view::entry::{self, Sheet};
 use crate::{Ui, tint};
 
-const ENTRY_H: f32 = 42.0;
+/// The side panels' widths and the dialogs' (dp at full size).
+const CHOICE_W: f32 = 400.0;
+const KEYS_W: f32 = 520.0;
+const DIALOG_W: f32 = 480.0;
 
 /// Which editor is open (rebuilt only when this changes).
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -57,7 +67,7 @@ pub fn layer(ui: Ui) -> impl IntoElement {
             Some(Kind::Number) => stepper(ui).into_element(),
             Some(Kind::Text) => text_sheet(ui).into_element(),
             Some(Kind::Confirm) => confirm(ui).into_element(),
-            Some(Kind::List) => key_list(ui).into_element(),
+            Some(Kind::List) => key_list::key_list(ui).into_element(),
             None => view().into_element(),
         })
     }))
@@ -86,26 +96,36 @@ fn backdrop(ui: Ui) -> View {
         })
 }
 
-fn title(ui: Ui) -> impl IntoElement {
-    text(move || subject(ui))
-        .px(px(12.0))
-        .py(px(6.0))
-        .text_size(px(14.0))
-        .text_color(secondary())
+fn title(ui: Ui, size: Scale) -> impl IntoElement {
+    ui_kit::title(size, move || subject(ui))
+        .px(move || size.px(14.0))
+        .py(move || size.px(8.0))
 }
 
-fn button(ui: Ui, label: &'static str, act: fn(Ui)) -> impl IntoElement {
-    text(label)
-        .px(px(18.0))
-        .py(px(9.0))
-        .rounded(px(RADIUS))
-        .text_size(px(15.0))
-        .text_color(rgb(WHITE))
-        .bg(tint(WHITE, RESTING_ALPHA * 2))
-        .on_press(move || {
-            ui.touched();
-            act(ui);
-        })
+fn button(ui: Ui, size: Scale, label: &'static str, act: fn(Ui)) -> impl IntoElement {
+    ui_kit::button(ui, size, label, || false, move || act(ui))
+}
+
+/// A focused entry's mark (the keys shown).
+fn entry_mark(ui: Ui, focused: bool) -> Mark {
+    Mark::of(focused && ui.keys_shown(), false)
+}
+
+/// A side panel at the right (a choice, the key list) over a backdrop.
+fn side(ui: Ui, size: Scale, width: f32) -> View {
+    view()
+        .w(move || size.px(width))
+        .pt_safe_area()
+        .p(move || size.px(14.0))
+        .gap(move || size.px(4.0))
+        .bg(move || rgb(ui.theme.with(|t| t.background.alt)))
+}
+
+/// A dialog in the middle over a backdrop.
+fn dialog(ui: Ui, size: Scale) -> View {
+    ui_kit::card(ui, size, DIALOG_W)
+        .gap(move || size.px(14.0))
+        .bg(move || rgb(ui.theme.with(|t| t.background.alt)))
 }
 
 /// A choice: the variants, the current one marked; on the right like the
@@ -116,6 +136,7 @@ fn choice(ui: Ui) -> impl IntoElement {
             .and_then(|s| s.ty.choices())
             .map_or(&[][..], |c| c.variants)
     };
+    let size = Scale::new();
     let list = element_ref();
     let focus = computed(move || {
         editor(ui, |e| match e {
@@ -152,36 +173,26 @@ fn choice(ui: Ui) -> impl IntoElement {
                 words::choice(family, v)
             )
         };
-        view()
-            .h(px(ENTRY_H))
-            .px(px(12.0))
+        let mark = move || entry_mark(ui, focus.get() == Some(at.index()));
+        list_rows::row(size, ROW, mark)
             .flex_row()
             .items_center()
-            .gap(px(10.0))
-            .rounded(px(RADIUS))
-            .bg(move || {
-                if ui.keys_shown() && focus.get() == Some(at.index()) {
-                    accent_fill(ui)
-                } else {
-                    tint(WHITE, 0)
-                }
-            })
+            .justify_start()
+            .gap(move || size.px(10.0))
             .on_press(move || {
                 ui.touched();
                 let i = at.index();
                 update(ui, move |screen, _| screen.pick(i));
             })
             .child(
-                text(label)
+                list_rows::name(size, label)
                     .flex_1()
-                    .number_of_lines(1)
-                    .text_size(px(15.0))
-                    .text_color(rgb(WHITE)),
+                    .text_color(move || mark().text()),
             )
             .child(
                 view()
-                    .w(px(18.0))
-                    .h(px(18.0))
+                    .w(move || size.px(18.0))
+                    .h(move || size.px(18.0))
                     .rounded(px(4.0))
                     .bg(move || swatch().map_or(tint(WHITE, 0), rgb))
                     .opacity(move || if swatch().is_some() { 1.0_f32 } else { 0.0 }),
@@ -194,19 +205,12 @@ fn choice(ui: Ui) -> impl IntoElement {
         .justify_end()
         .child(backdrop(ui))
         .child(
-            view()
-                .w(px(340.0))
-                .pt_safe_area()
-                .p(px(14.0))
-                .gap(px(4.0))
-                .bg(move || rgb(ui.theme.with(|t| t.background.alt)))
-                .child(title(ui))
-                .child(
-                    virtual_list(move || variants().len(), entry)
-                        .estimated_item_size(px(ENTRY_H))
-                        .element_ref(&list)
-                        .flex_1(),
-                ),
+            side(ui, size, CHOICE_W).child(title(ui, size)).child(
+                virtual_list(move || variants().len(), entry)
+                    .estimated_item_size(list_rows::pitch(size, ROW))
+                    .element_ref(&list)
+                    .flex_1(),
+            ),
         )
 }
 
@@ -235,8 +239,29 @@ fn number_text(ui: Ui) -> (String, String) {
     (shown, range)
 }
 
+/// − or + beside the stepper's value (touch and mouse).
+fn step_button(ui: Ui, size: Scale, label: &'static str, act: impl Fn(Ui) + 'static) -> View {
+    view()
+        .w(move || size.px(56.0))
+        .h(move || size.px(ui_kit::TOUCH))
+        .items_center()
+        .justify_center()
+        .rounded(px(RADIUS))
+        .bg(tint(WHITE, RESTING_ALPHA * 2))
+        .on_press(move || {
+            ui.touched();
+            act(ui);
+        })
+        .child(
+            text(label)
+                .text_size(move || size.px(TITLE))
+                .text_color(rgb(LIST_TEXT)),
+        )
+}
+
 /// A number or duration: − value +, the range, Cancel and Keep.
 fn stepper(ui: Ui) -> impl IntoElement {
+    let size = Scale::new();
     let step = |by: i64| {
         move |ui: Ui| {
             update(ui, move |screen, _| {
@@ -245,8 +270,6 @@ fn stepper(ui: Ui) -> impl IntoElement {
             })
         }
     };
-    let less = step(-1);
-    let more = step(1);
     view()
         .absolute()
         .inset_0()
@@ -254,66 +277,29 @@ fn stepper(ui: Ui) -> impl IntoElement {
         .justify_center()
         .child(backdrop(ui))
         .child(
-            view()
-                .w(px(440.0))
-                .p(px(22.0))
-                .gap(px(14.0))
-                .rounded(px(RADIUS_LARGE))
-                .bg(move || rgb(ui.theme.with(|t| t.background.alt)))
-                .child(title(ui))
+            dialog(ui, size)
+                .child(title(ui, size))
                 .child(
                     view()
                         .flex_row()
                         .items_center()
                         .justify_center()
-                        .gap(px(20.0))
+                        .gap(move || size.px(20.0))
+                        .child(step_button(ui, size, "−", step(-1)))
                         .child(
-                            text("−")
-                                .w(px(56.0))
-                                .text_center()
-                                .py(px(6.0))
-                                .rounded(px(RADIUS))
-                                .text_size(px(24.0))
-                                .text_color(rgb(WHITE))
-                                .bg(tint(WHITE, RESTING_ALPHA * 2))
-                                .on_press(move || {
-                                    ui.touched();
-                                    less(ui);
-                                }),
-                        )
-                        .child(
-                            text(move || format!("◀  {}  ▶", number_text(ui).0))
-                                .text_size(px(26.0))
+                            ui_kit::title(size, move || format!("◀  {}  ▶", number_text(ui).0))
                                 .text_color(move || rgb(ui.theme.with(|t| t.accent.light))),
                         )
-                        .child(
-                            text("+")
-                                .w(px(56.0))
-                                .text_center()
-                                .py(px(6.0))
-                                .rounded(px(RADIUS))
-                                .text_size(px(24.0))
-                                .text_color(rgb(WHITE))
-                                .bg(tint(WHITE, RESTING_ALPHA * 2))
-                                .on_press(move || {
-                                    ui.touched();
-                                    more(ui);
-                                }),
-                        ),
+                        .child(step_button(ui, size, "+", step(1))),
                 )
-                .child(
-                    text(move || number_text(ui).1)
-                        .px(px(12.0))
-                        .text_size(px(13.0))
-                        .text_color(secondary()),
-                )
+                .child(ui_kit::caption(size, move || number_text(ui).1).px(move || size.px(14.0)))
                 .child(
                     view()
                         .flex_row()
-                        .gap(px(12.0))
+                        .gap(move || size.px(12.0))
                         .justify_end()
-                        .child(button(ui, "Cancel", cancel))
-                        .child(button(ui, "Keep", keep)),
+                        .child(button(ui, size, "Cancel", cancel))
+                        .child(button(ui, size, "Keep", keep)),
                 ),
         )
 }
@@ -369,6 +355,7 @@ fn question(key: &str) -> &'static str {
 
 /// "Really?" before a command: what it does, Cancel and the command.
 fn confirm(ui: Ui) -> impl IntoElement {
+    let size = Scale::new();
     let key = move || editor(ui, Editor::key).unwrap_or("");
     view()
         .absolute()
@@ -377,125 +364,23 @@ fn confirm(ui: Ui) -> impl IntoElement {
         .justify_center()
         .child(backdrop(ui))
         .child(
-            view()
-                .w(px(440.0))
-                .p(px(22.0))
-                .gap(px(14.0))
-                .rounded(px(RADIUS_LARGE))
-                .bg(move || rgb(ui.theme.with(|t| t.background.alt)))
-                .child(
-                    text(move || format!("{}?", subject(ui)))
-                        .text_size(px(18.0))
-                        .text_color(rgb(WHITE)),
-                )
-                .child(
-                    text(move || question(key()))
-                        .text_size(px(14.0))
-                        .text_color(secondary()),
-                )
+            dialog(ui, size)
+                .child(ui_kit::title(size, move || format!("{}?", subject(ui))))
+                .child(ui_kit::body(size, move || question(key())))
                 .child(
                     view()
                         .flex_row()
-                        .gap(px(12.0))
+                        .gap(move || size.px(12.0))
                         .justify_end()
-                        .child(button(ui, "Cancel", cancel))
-                        .child(
-                            text(move || subject(ui))
-                                .px(px(18.0))
-                                .py(px(9.0))
-                                .rounded(px(RADIUS))
-                                .text_size(px(15.0))
-                                .text_color(rgb(WHITE))
-                                // OK goes ahead: the focused button.
-                                .bg(move || accent_fill(ui))
-                                .on_press(move || {
-                                    ui.touched();
-                                    keep(ui);
-                                }),
-                        ),
-                ),
-        )
-}
-
-/// The remote's keys and what they do (read-only).
-fn key_list(ui: Ui) -> impl IntoElement {
-    let lines = remote_keys::key_lines();
-    let count = lines.len();
-    let lines = Rc::new(lines);
-    let list = element_ref();
-    let focus = computed(move || {
-        editor(ui, |e| match e {
-            Editor::List { focus, .. } => Some(*focus),
-            _ => None,
-        })
-        .flatten()
-    });
-    effect(move || {
-        if let Some(i) = focus.get() {
-            list.scroll_to_index(i as u32, percentage(0.5), px(0.0), false);
-        }
-    });
-    let entry = move |at: Position| {
-        let lines = lines.clone();
-        let line = move || lines.get(at.index()).cloned();
-        let heading = {
-            let line = line.clone();
-            move || line().is_some_and(|l| l.is_heading())
-        };
-        let (key, action) = (line.clone(), line);
-        view()
-            .h(px(ENTRY_H - 6.0))
-            .px(px(12.0))
-            .flex_row()
-            .items_center()
-            .gap(px(12.0))
-            .rounded(px(RADIUS))
-            .bg(move || {
-                if ui.keys_shown() && focus.get() == Some(at.index()) {
-                    accent_fill(ui)
-                } else {
-                    tint(WHITE, 0)
-                }
-            })
-            .child(
-                text(move || key().map(|l| l.key).unwrap_or_default())
-                    .flex_1()
-                    .number_of_lines(1)
-                    .text_size(px(14.0))
-                    .text_color(move || if heading() { secondary() } else { rgb(WHITE) }),
-            )
-            .child(
-                text(move || action().map(|l| l.action).unwrap_or_default())
-                    .number_of_lines(1)
-                    .text_size(px(14.0))
-                    .text_color(move || rgb(ui.theme.with(|t| t.accent.light))),
-            )
-    };
-    view()
-        .absolute()
-        .inset_0()
-        .flex_row()
-        .justify_end()
-        .child(backdrop(ui))
-        .child(
-            view()
-                .w(px(440.0))
-                .pt_safe_area()
-                .p(px(14.0))
-                .gap(px(4.0))
-                .bg(move || rgb(ui.theme.with(|t| t.background.alt)))
-                .child(title(ui))
-                .child(
-                    text("Changing keys comes in a later version.")
-                        .px(px(12.0))
-                        .text_size(px(12.0))
-                        .text_color(secondary()),
-                )
-                .child(
-                    virtual_list(move || count, entry)
-                        .estimated_item_size(px(ENTRY_H - 6.0))
-                        .element_ref(&list)
-                        .flex_1(),
+                        .child(button(ui, size, "Cancel", cancel))
+                        // OK goes ahead: the focused button.
+                        .child(ui_kit::button(
+                            ui,
+                            size,
+                            move || subject(ui),
+                            || true,
+                            move || keep(ui),
+                        )),
                 ),
         )
 }

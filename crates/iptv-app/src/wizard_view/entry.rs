@@ -11,9 +11,13 @@ use iptv_core::wizard::{Field, WizardEvent};
 use nsh_core::element::input;
 use nsh_core::prelude::*;
 
-use super::{RESTING, WHITE, words};
-use crate::theme::{RADIUS, RADIUS_LARGE, TEXT_SECONDARY_ALPHA};
+use super::words;
+use crate::scale::Scale;
+use crate::ui_kit::{self, ERROR};
 use crate::{Ui, tint};
+
+/// The sheet's width (dp at full size).
+const SHEET_W: f32 = 720.0;
 
 /// The field being typed into and its text so far.
 #[derive(Clone, PartialEq, Eq)]
@@ -61,18 +65,43 @@ fn set_text(ui: Ui, text: &str) {
     });
 }
 
-fn button(label: &'static str, act: fn(Ui), ui: Ui) -> impl IntoElement {
-    text(label)
-        .px(px(20.0))
-        .py(px(10.0))
-        .rounded(px(RADIUS))
-        .text_size(px(15.0))
-        .text_color(rgb(WHITE))
-        .bg(tint(WHITE, RESTING))
-        .on_press(move || {
-            ui.touched();
-            act(ui);
-        })
+fn button(ui: Ui, size: Scale, label: &'static str, act: fn(Ui)) -> impl IntoElement {
+    ui_kit::button(ui, size, label, || false, move || act(ui))
+}
+
+/// A sheet's field: the kit's, outlined in the accent on the window's
+/// colour.
+pub(crate) fn sheet_field(ui: Ui, size: Scale) -> Input {
+    ui_kit::field(size, input())
+        .border_1()
+        .border_color(move || rgb(ui.theme.with(|t| t.accent.main)))
+        .bg(move || rgb(ui.theme.with(|t| t.background.window)))
+}
+
+/// A text sheet's frame: near the top (the keyboard takes the lower
+/// half), its card holding `content`.
+pub(crate) fn frame(ui: Ui, size: Scale) -> (View, View) {
+    let outer = view()
+        .absolute()
+        .inset_0()
+        .pt_safe_area()
+        .items_center()
+        .pt(move || size.px(40.0))
+        .bg(tint(0x000000, 0xA0));
+    (
+        outer,
+        ui_kit::card(ui, size, SHEET_W).gap(move || size.px(14.0)),
+    )
+}
+
+/// Cancel and Done under a sheet's field.
+pub(crate) fn sheet_buttons(ui: Ui, size: Scale, cancel: fn(Ui), done: fn(Ui)) -> View {
+    view()
+        .flex_row()
+        .gap(move || size.px(12.0))
+        .justify_end()
+        .child(button(ui, size, "Cancel", cancel))
+        .child(button(ui, size, "Done", done))
 }
 
 /// The sheet; made when entry starts, so its input exists only then.
@@ -195,59 +224,26 @@ pub(crate) fn panel(ui: Ui, sheet: Sheet) -> View {
         let note = note.clone();
         move || !note().is_empty()
     };
-    view()
-        .absolute()
-        .inset_0()
-        .pt_safe_area()
-        .items_center()
-        // Near the top: the keyboard takes the lower half.
-        .pt(px(40.0))
-        .bg(tint(0x000000, 0xA0))
-        .child(
-            view()
-                .w(px(640.0))
-                .p(px(24.0))
-                .gap(px(14.0))
-                .rounded(px(RADIUS_LARGE))
-                .bg(move || rgb(ui.theme.with(|t| t.background.panel)))
-                .child(
-                    text(label)
-                        .text_size(px(14.0))
-                        .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA)),
-                )
-                .child(
-                    input()
-                        .value(move || current())
-                        .on_change(move |t: &str| set(t))
-                        .on_submit(move |_: &str| done(ui))
-                        .auto_focus(true)
-                        .masked(masked)
-                        .keyboard_type(keyboard)
-                        .auto_capitalize(AutoCapitalize::None)
-                        .auto_correct(false)
-                        .placeholder(placeholder)
-                        .text_size(px(18.0))
-                        .text_color(rgb(WHITE))
-                        .px(px(14.0))
-                        .py(px(10.0))
-                        .rounded(px(RADIUS))
-                        .border_1()
-                        .border_color(move || rgb(ui.theme.with(|t| t.accent.main)))
-                        .bg(move || rgb(ui.theme.with(|t| t.background.window))),
-                )
-                .child(when(has_note, move || {
-                    let note = note.clone();
-                    text(move || note())
-                        .text_size(px(13.0))
-                        .text_color(rgb(super::ERROR))
-                }))
-                .child(
-                    view()
-                        .flex_row()
-                        .gap(px(12.0))
-                        .justify_end()
-                        .child(button("Cancel", cancel, ui))
-                        .child(button("Done", done, ui)),
-                ),
-        )
+    let size = Scale::new();
+    let (outer, card) = frame(ui, size);
+    outer.child(
+        card.child(ui_kit::title(size, label))
+            .child(
+                sheet_field(ui, size)
+                    .value(move || current())
+                    .on_change(move |t: &str| set(t))
+                    .on_submit(move |_: &str| done(ui))
+                    .auto_focus(true)
+                    .masked(masked)
+                    .keyboard_type(keyboard)
+                    .auto_capitalize(AutoCapitalize::None)
+                    .auto_correct(false)
+                    .placeholder(placeholder),
+            )
+            .child(when(has_note, move || {
+                let note = note.clone();
+                ui_kit::caption(size, move || note()).text_color(rgb(ERROR))
+            }))
+            .child(sheet_buttons(ui, size, cancel, done)),
+    )
 }

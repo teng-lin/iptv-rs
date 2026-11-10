@@ -8,16 +8,26 @@
 //! cells with white titles, every other row dimmed (grey titles). Sizes are
 //! dp at full size, the same on TV, tablet and a full-screen desktop; a
 //! smaller desktop window scales them (`scale.rs`; `fonts.rs` has the type).
+//!
+//! The timeline pans by touch and mouse drags (`pan.rs`): the rows hold
+//! the programmes of a band a little wider than the window and slide them,
+//! with the ruler's times and the now line, by one animated offset.
 
 mod channel;
 pub(crate) use channel::no_logo;
+pub(crate) mod keys;
+mod pan;
 mod ruler;
+mod wheel;
+
+use iptv_core::timeline::BAND;
+use pan::Pan;
 
 use iptv_core::lists::{FAVORITES, RECENT};
 use nsh_core::prelude::*;
 
 use crate::fonts::{CELL_TITLE, CHANNEL, CONDENSED};
-use crate::guide::{Pane, Program, VISIBLE};
+use crate::guide::{Pane, Program};
 use crate::scale::Scale;
 use crate::theme::{BRIGHT_TEXT, FOCUSED_CELL, FOCUSED_TEXT, RADIUS, TEXT_SECONDARY_ALPHA};
 use crate::{Ui, ViewMode, tint};
@@ -38,8 +48,9 @@ const CHANNEL_MAX: f32 = 576.0;
 /// The now line's width.
 const NOW_W: f32 = 2.0;
 
-/// Cells a row can hold: VISIBLE / shortest programme, plus one.
-const MAX_CELLS: usize = 12;
+/// Cells a row can hold: about 12 per window of programmes, across the
+/// band.
+const MAX_CELLS: usize = 17;
 const WHITE: u32 = 0xFFFFFF;
 
 /// The channel column's width now (reactive: the window's size).
@@ -62,8 +73,7 @@ pub fn guide(ui: Ui, rows: ElementRef) -> impl IntoElement {
     // The programme area's width: the window always spans all of it.
     let width = signal(0.0_f32);
     let size = Scale::new();
-    let scale = computed(move || width.get() / VISIBLE as f32);
-    let window = computed(move || ui.focus.with(|f| f.window));
+    let pan = Pan::new(ui, width);
     let now = computed(move || ui.focus.with(|f| f.now));
     let focused = computed(move || {
         ui.guide_data();
@@ -76,49 +86,63 @@ pub fn guide(ui: Ui, rows: ElementRef) -> impl IntoElement {
     // Rows are numbered by place: the list's length is its widest number.
     let number_w =
         computed(move || crate::numbers::column_width(ui.list.with(|l| l.len()), size.of(CHANNEL)));
+    // Now in the band (the slide brings it on screen or past the edge).
     let now_x = computed(move || {
-        let at = now.get() - window.get();
+        let at = now.get() - pan.band().base;
         let rows = ui.list.with(|l| !l.is_empty());
-        (rows && (0..=VISIBLE).contains(&at)).then(|| at as f32 * scale.get())
+        (rows && (0..=BAND).contains(&at)).then(|| at as f32 * pan.scale())
     });
     scroll_to_focus_on_new_list(ui, rows);
     view()
         .flex_1()
         .bg(move || ui.surface(ui.theme.with(|t| t.background.window)))
-        .child(ruler::ruler(ui, size, column, window, now, now_x, width))
+        .child(ruler::ruler(ui, size, column, pan, now_x, width))
         .child(
-            view()
-                .flex_1()
-                .overflow_hidden()
-                .child(
-                    virtual_list(
-                        move || ui.list.with(|l| l.len()),
-                        move |at| {
-                            let geometry = (column, window, scale, size);
-                            row(ui, at, geometry, focused, number_w)
-                        },
+            wheel::trackball(
+                pan,
+                pan::panning(view(), pan)
+                    .flex_1()
+                    .overflow_hidden()
+                    .child(
+                        virtual_list(
+                            move || ui.list.with(|l| l.len()),
+                            move |at| row(ui, at, (column, pan, size), focused, number_w),
+                        )
+                        .estimated_item_size(move || px(size.whole(ROW_H)))
+                        .element_ref(&rows)
+                        .on_viewable_items_change(move |v: &ViewableItems| {
+                            ui.visible_rows.set(v.viewable)
+                        })
+                        .flex_1(),
                     )
-                    .estimated_item_size(move || px(size.whole(ROW_H)))
-                    .element_ref(&rows)
-                    .on_viewable_items_change(move |v: &ViewableItems| {
-                        ui.visible_rows.set(v.viewable)
-                    })
-                    .flex_1(),
-                )
-                .child(
-                    // Now, hidden while the window does not show it (or no rows).
-                    view()
-                        .absolute()
-                        .top(px(0.0))
-                        .h_full()
-                        .w(px(NOW_W))
-                        .opacity(move || if now_x.get().is_some() { 1.0_f32 } else { 0.0 })
-                        .left(move || px(column() + now_x.get().unwrap_or(0.0) - NOW_W / 2.0))
-                        .bg(move || fill(ui, ui.theme.with(|t| t.guide().now_line)))
-                        .pointer_events(PointerEvents::None),
-                )
-                .child(empty_state(ui))
-                .child(hint_card(ui)),
+                    .child(
+                        // Now, over the programmes only, sliding with them.
+                        view()
+                            .absolute()
+                            .top(px(0.0))
+                            .bottom(px(0.0))
+                            .left(move || px(column()))
+                            .right(px(0.0))
+                            .overflow_hidden()
+                            .pointer_events(PointerEvents::None)
+                            .child(
+                                view()
+                                    .absolute()
+                                    .top(px(0.0))
+                                    .h_full()
+                                    .w(px(NOW_W))
+                                    .opacity(
+                                        move || if now_x.get().is_some() { 1.0_f32 } else { 0.0 },
+                                    )
+                                    .left(move || px(now_x.get().unwrap_or(0.0) - NOW_W / 2.0))
+                                    .bind_translate_x(&pan.offset())
+                                    .bg(move || fill(ui, ui.theme.with(|t| t.guide().now_line))),
+                            ),
+                    )
+                    .child(empty_state(ui))
+                    .child(hint_card(ui)),
+            )
+            .flex_1(),
         )
 }
 
@@ -163,14 +187,24 @@ fn hint_card(ui: Ui) -> impl IntoElement {
         .bg(move || tint(ui.theme.with(|t| t.background.alt), 0xF0))
         .opacity(move || if shown() { 1.0_f32 } else { 0.0 })
         .pointer_events(PointerEvents::None)
-        .children(
-            [
-                "Hold OK  ·  menu",
-                "◀  ·  groups",
-                "Hold ◀  ·  earlier programmes",
-            ]
-            .map(|line| text(line).text_size(px(13.0)).text_color(rgb(WHITE))),
-        )
+        .children(hint_lines().map(|line| text(line).text_size(px(13.0)).text_color(rgb(WHITE))))
+}
+
+/// What the keys do in the guide: a remote's, or a desktop keyboard's
+/// (`iptv_nav::Profile`).
+fn hint_lines() -> [&'static str; 3] {
+    match crate::input::PROFILE {
+        iptv_nav::Profile::Remote => [
+            "Hold OK  ·  menu",
+            "◀  ·  groups",
+            "Hold ◀  ·  earlier programmes",
+        ],
+        iptv_nav::Profile::Keyboard => [
+            "Tab  ·  groups      Home  ·  now",
+            "◀ ▶  ·  programmes      Shift  ·  hours",
+            "Ctrl ◀ ▶  ·  days      m  ·  menu",
+        ],
+    }
 }
 
 /// New guide data or a new list shows the focused row (the focus is kept
@@ -190,13 +224,13 @@ fn scroll_to_focus_on_new_list(ui: Ui, list: ElementRef) {
     });
 }
 
-/// The column's width, the time window, px per minute and the size scale.
-type Geometry = (fn() -> f32, Memo<i32>, Memo<f32>, Scale);
+/// The column's width, the panned timeline and the size scale.
+type Geometry = (fn() -> f32, Pan, Scale);
 
 fn row(
     ui: Ui,
     at: Position,
-    (column, window, scale, size): Geometry,
+    (column, pan, size): Geometry,
     focused: Memo<Option<(usize, i32)>>,
     number_w: Memo<f32>,
 ) -> impl IntoElement {
@@ -204,8 +238,9 @@ fn row(
     let channel = computed(move || ui.list.with(|l| l.channel(at.index())));
     let programs = computed(move || {
         ui.guide_data();
+        let base = pan.band().base;
         channel.get().map_or_else(Vec::new, |ch| {
-            crate::schedule().programs_between(ch, window.get(), VISIBLE)
+            crate::schedule().programs_between(ch, base, BAND)
         })
     });
     // The row with the focus: lighter cells, white titles.
@@ -214,11 +249,14 @@ fn row(
         let program = move || programs.with(|ps| ps.get(i).copied());
         let geometry = move || {
             program().map_or((0.0, 0.0), |p: Program| {
-                let from = window.get();
-                let (start, end) = (p.start.max(from), p.end.min(from + VISIBLE));
+                // At rest a cell starts at the window's edge, so its title
+                // shows; its place is in the band, which slides.
+                let base = pan.band().base;
+                let (start, end) = (p.start.max(pan.clip()), p.end.min(base + BAND));
+                let scale = pan.scale();
                 (
-                    (start - from) as f32 * scale.get(),
-                    (end - start) as f32 * scale.get(),
+                    (start - base) as f32 * scale,
+                    (end - start).max(0) as f32 * scale,
                 )
             })
         };
@@ -282,5 +320,13 @@ fn row(
         .h(move || px(size.whole(ROW_H)))
         .flex_row()
         .child(channel::cell(ui, at, channel, (column, size), number_w))
-        .child(view().flex_1().children((0..MAX_CELLS).map(cell)))
+        .child(
+            view().flex_1().overflow_hidden().child(
+                view()
+                    .absolute()
+                    .inset_0()
+                    .bind_translate_x(&pan.offset())
+                    .children((0..MAX_CELLS).map(cell)),
+            ),
+        )
 }

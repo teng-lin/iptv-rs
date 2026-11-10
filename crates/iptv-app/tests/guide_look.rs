@@ -145,8 +145,9 @@ fn the_guide_uses_the_bundled_fonts_and_proportions() {
     step(app.wait_for("text:News"));
     for (w, h, scale) in [(1920.0, 1080.0, 1.0), (1280.0, 720.0, 0.875)] {
         step(app.set_viewport(Size::new(px(w), px(h))));
-        let guide = styles(&mut app, "Test Channel One");
         let name = (roboto.clone(), 20.0 * scale, 400);
+        // A resize reaches the views on a later frame: wait for it.
+        let guide = styles_when(&mut app, "Test Channel One", |g| close_to(g, &name));
         assert!(close_to(&guide, &name), "guide names: {guide:?}");
         // (The header's group line reads "News" too, in its own type.)
         let group = styles(&mut app, "News");
@@ -188,6 +189,22 @@ fn styles(app: &mut Headless, text: &str) -> Vec<(Option<String>, f32, u16)> {
         out.push((family, style.font_size.0, style.font_weight));
     }
     out
+}
+
+/// [`styles`] once `ok` holds for them, or after 3 s.
+fn styles_when(
+    app: &mut Headless,
+    text: &str,
+    ok: impl Fn(&[(Option<String>, f32, u16)]) -> bool,
+) -> Vec<(Option<String>, f32, u16)> {
+    let start = std::time::Instant::now();
+    loop {
+        let found = styles(app, text);
+        if ok(&found) || start.elapsed() > std::time::Duration::from_secs(3) {
+            return found;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
 }
 
 /// Whether `text` has a span in `family` at `size` (to a hundredth) and

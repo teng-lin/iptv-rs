@@ -10,6 +10,8 @@
 //! advances ([`Focus::now`], set by [`Focus::tick`] from [`now_minute`]).
 //! Every "live", "past" and window rule is relative to that now.
 
+pub mod moves;
+
 /// Synthetic channels in the guide.
 pub const CHANNELS: usize = 5000;
 /// Synthetic groups in the side column.
@@ -127,6 +129,13 @@ pub trait Schedule {
     /// The channel with `key`, if this schedule has it.
     fn find_channel(&self, key: &str) -> Option<usize> {
         (0..self.channel_count()).find(|&c| self.channel_key(c).as_deref() == Some(key))
+    }
+    /// The guide minutes that can be browsed at `now`, `[first, end)`: by
+    /// default [`HISTORY`] back and [`HORIZON`] ahead; a stored guide from
+    /// the oldest day its store keeps to a little past its last programme.
+    /// At least [`VISIBLE`] minutes around now.
+    fn browsable(&self, now: i32) -> (i32, i32) {
+        (now - HISTORY, now + HORIZON)
     }
     /// The concrete schedule, for features that need more than this trait
     /// (programme search reads the EPG store; playback resolves streams).
@@ -339,9 +348,10 @@ impl Focus {
         }
     }
 
-    /// The earliest and latest minute the cursor can reach.
-    fn bounds(&self) -> (i32, i32) {
-        (self.now - HISTORY, self.now + HORIZON - 1)
+    /// The earliest and latest minute the cursor can reach on `s`.
+    pub(crate) fn bounds(&self, s: &dyn Schedule) -> (i32, i32) {
+        let (first, end) = s.browsable(self.now);
+        (first, (end - 1).max(first + VISIBLE - 1))
     }
 
     /// Now moved to `now`. A focus on the live programme follows the
@@ -363,7 +373,7 @@ impl Focus {
         if home {
             self.window = home_window(now);
         }
-        let (lo, hi) = self.bounds();
+        let (lo, hi) = self.bounds(s);
         self.cursor = self.cursor.clamp(lo, hi);
         if following {
             self.keep_cursor_visible(s);
@@ -399,7 +409,7 @@ impl Focus {
             }
             (Pane::Guide, Move::Right) => {
                 let current = s.program_at(self.channel, self.cursor);
-                if current.end <= self.bounds().1 {
+                if current.end <= self.bounds(s).1 {
                     self.cursor = current.end;
                 }
             }
@@ -427,9 +437,9 @@ impl Focus {
         true
     }
 
-    fn step_back(&mut self, s: &dyn Schedule) {
+    pub(crate) fn step_back(&mut self, s: &dyn Schedule) {
         let current = self.program(s);
-        let lo = self.bounds().0;
+        let lo = self.bounds(s).0;
         if current.start > lo {
             self.cursor = s.program_at(self.channel, current.start - 1).start.max(lo);
         }
@@ -456,13 +466,13 @@ impl Focus {
     pub fn tap(&mut self, channel: usize, minute: i32, s: &dyn Schedule) {
         self.pane = Pane::Guide;
         self.channel = channel.min(s.channel_count().saturating_sub(1));
-        let (lo, hi) = self.bounds();
+        let (lo, hi) = self.bounds(s);
         self.cursor = minute.clamp(lo, hi);
     }
 
     /// The time window moved by touch: the cursor follows into it.
-    pub fn shift_window(&mut self, minutes: i32) {
-        let (lo, hi) = self.bounds();
+    pub fn shift_window(&mut self, minutes: i32, s: &dyn Schedule) {
+        let (lo, hi) = self.bounds(s);
         self.window = (self.window + minutes).clamp(lo, hi + 1 - VISIBLE);
         let lo = self.window;
         self.cursor = self.cursor.clamp(lo, (self.window + VISIBLE - 1).max(lo));
@@ -481,7 +491,7 @@ impl Focus {
         s.program_at(self.channel, self.cursor)
     }
 
-    fn keep_cursor_visible(&mut self, s: &dyn Schedule) {
+    pub(crate) fn keep_cursor_visible(&mut self, s: &dyn Schedule) {
         // The focused programme's start (now, for a live one) stays on
         // screen; the window moves in steps.
         let p = self.program(s);
@@ -498,7 +508,7 @@ impl Focus {
         while anchor >= self.window + VISIBLE - STEP {
             self.window += STEP;
         }
-        let (lo, hi) = self.bounds();
+        let (lo, hi) = self.bounds(s);
         self.window = self.window.clamp(lo, hi + 1 - VISIBLE);
     }
 }
@@ -619,16 +629,16 @@ mod tests {
     #[test]
     fn shifting_the_window_by_touch_pulls_the_cursor_along() {
         let mut f = Focus::default();
-        f.shift_window(3 * STEP);
+        f.shift_window(3 * STEP, &S);
         assert_eq!(f.window, 60);
         assert!(f.cursor >= 60 && f.cursor < 60 + VISIBLE);
         // Touch can browse back into history too (Long Left's range).
-        f.shift_window(-10 * STEP);
+        f.shift_window(-10 * STEP, &S);
         assert_eq!(f.window, 60 - 10 * STEP);
         assert!(f.cursor >= f.window && f.cursor < f.window + VISIBLE);
-        f.shift_window(-HISTORY * 2);
+        f.shift_window(-HISTORY * 2, &S);
         assert_eq!(f.window, -HISTORY);
-        f.shift_window(HISTORY + HORIZON);
+        f.shift_window(HISTORY + HORIZON, &S);
         assert_eq!(f.window, HORIZON - VISIBLE);
     }
 
@@ -867,9 +877,9 @@ mod tests {
     #[test]
     fn bounds_move_with_now() {
         let mut f = Focus::at(10 * 60);
-        f.shift_window(-HISTORY * 2);
+        f.shift_window(-HISTORY * 2, &S);
         assert_eq!(f.window, 10 * 60 - HISTORY);
-        f.shift_window(HISTORY * 3);
+        f.shift_window(HISTORY * 3, &S);
         assert_eq!(f.window, 10 * 60 + HORIZON - VISIBLE);
         f.tap(0, i32::MAX, &S);
         assert_eq!(f.cursor, 10 * 60 + HORIZON - 1);

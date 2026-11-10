@@ -12,5 +12,5 @@ mod press;
 
 pub use back::BackGuard;
 pub use key::RemoteKey;
-pub use keymap::{Action, Binding, Context, Keymap};
+pub use keymap::{Action, Binding, Context, Keymap, Profile};
 pub use press::{DEFAULT_LONG_PRESS_MS, Phase, Press, PressDetector};

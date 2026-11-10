@@ -202,6 +202,18 @@ impl Focus {
         self.pane = Pane::Groups;
     }
 
+    /// A keyboard's Tab: the groups column from the grid, the grid again
+    /// from the columns (when the list has rows). Whether it changed.
+    pub fn toggle_groups(&mut self, list: &dyn Schedule) -> bool {
+        self.hint = false;
+        match self.pane {
+            Pane::Guide => self.pane = Pane::Groups,
+            _ if list.channel_count() == 0 => return false,
+            _ => self.pane = Pane::Guide,
+        }
+        true
+    }
+
     /// A tap on a groups column entry: selects it as moving onto it does.
     pub fn tap_entry(&mut self, entry: usize, cols: &Columns) -> Outcome {
         if entry >= cols.entries {

@@ -96,6 +96,11 @@ impl Pages {
         self.loaded_from
     }
 
+    /// The oldest time the store keeps (`UnixTime::MIN` without pages).
+    pub(crate) fn oldest(&self) -> UnixTime {
+        self.oldest
+    }
+
     fn index_of(&self, t: UnixTime) -> u32 {
         u32::try_from((self.loaded_from - 1 - t).div_euclid(DAY)).unwrap_or(u32::MAX)
     }

@@ -40,6 +40,7 @@ mod seek;
 mod settings;
 mod settings_view;
 pub mod time;
+mod ui_kit;
 mod video;
 mod wizard_view;
 
