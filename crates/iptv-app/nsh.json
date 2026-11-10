@@ -3,5 +3,6 @@
   "id": "com.hantekllc.iptvrs",
   "appearance": "dark",
   "rust": ".",
-  "root": "App"
+  "root": "App",
+  "features": []
 }
