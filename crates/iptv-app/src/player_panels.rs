@@ -159,7 +159,11 @@ fn info_card(
     panel: impl Fn() -> Rgba + Copy + 'static,
     with_controls: impl Fn() -> bool + Copy + 'static,
 ) -> impl IntoElement {
-    let channel = move || ui.playing.get().unwrap_or(0);
+    // Every label below reads the channel, so new data re-renders them all.
+    let channel = move || {
+        ui.data_version.get();
+        ui.playing.get().unwrap_or(0)
+    };
     let live_now = move || ui.focus.with(|f| f.now);
     let minute = move || match ui.playback.get() {
         crate::Playback::Live => live_now(),
@@ -189,7 +193,7 @@ fn info_card(
                 .items_center()
                 .gap(px(20.0))
                 .child(
-                    text(move || format!("{}", channel() + 1))
+                    text(move || crate::schedule().channel_number(channel()).to_string())
                         .text_size(px(34.0))
                         .font_weight(FontWeight::BOLD)
                         .text_color(rgb(WHITE)),

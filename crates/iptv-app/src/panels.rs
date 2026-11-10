@@ -57,9 +57,12 @@ pub fn top_bar(ui: Ui) -> impl IntoElement {
                 .items_center()
                 .gap(px(20.0))
                 .child(
-                    text(move || ui.focus.with(|f| crate::schedule().group_name(f.group)))
-                        .text_size(px(16.0))
-                        .text_color(rgb(WHITE)),
+                    text(move || {
+                        ui.data_version.get();
+                        ui.focus.with(|f| crate::schedule().group_name(f.group))
+                    })
+                    .text_size(px(16.0))
+                    .text_color(rgb(WHITE)),
                 )
                 .child(
                     text(move || {
@@ -86,6 +89,7 @@ pub fn top_bar(ui: Ui) -> impl IntoElement {
 }
 
 pub fn group_column(ui: Ui, groups: ElementRef) -> impl IntoElement {
+    crate::grid::scroll_to_top_on_new_data(ui, groups);
     virtual_list(
         move || {
             ui.data_version.get();
@@ -115,15 +119,19 @@ pub fn group_column(ui: Ui, groups: ElementRef) -> impl IntoElement {
                         .update(|f| f.tap_group(at.index(), &*crate::schedule()));
                 })
                 .child(
-                    text(move || crate::schedule().group_name(at.index()))
-                        .text_size(px(TEXT_SIZE))
-                        .text_color(move || {
-                            if current() {
-                                rgb(ui.theme.with(|t| t.accent.light))
-                            } else {
-                                secondary()
-                            }
-                        }),
+                    // Re-read on new data: the recycled cell keeps its index.
+                    text(move || {
+                        ui.data_version.get();
+                        crate::schedule().group_name(at.index())
+                    })
+                    .text_size(px(TEXT_SIZE))
+                    .text_color(move || {
+                        if current() {
+                            rgb(ui.theme.with(|t| t.accent.light))
+                        } else {
+                            secondary()
+                        }
+                    }),
                 )
         },
     )

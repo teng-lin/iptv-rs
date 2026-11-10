@@ -9,6 +9,8 @@ use crate::{Ui, channel_name, clock, tint};
 
 pub const ROW_H: f32 = 56.0;
 pub const NAME_W: f32 = 170.0;
+/// The channel number before the name.
+const NUMBER_W: f32 = 36.0;
 /// Cells a row can hold: VISIBLE / shortest programme, plus one.
 const MAX_CELLS: usize = 12;
 const WHITE: u32 = 0xFFFFFF;
@@ -20,10 +22,12 @@ pub fn guide(ui: Ui, rows: ElementRef) -> impl IntoElement {
     let window = computed(move || ui.focus.with(|f| f.window));
     let now = computed(move || ui.focus.with(|f| f.now));
     let focused = computed(move || {
+        ui.data_version.get();
         ui.focus.with(|f| {
             (f.pane == Pane::Guide).then(|| (f.channel, f.program(&*crate::schedule()).start))
         })
     });
+    scroll_to_top_on_new_data(ui, rows);
     view()
         .flex_1()
         .bg(move || ui.surface(ui.theme.with(|t| t.background.window)))
@@ -67,6 +71,18 @@ pub fn guide(ui: Ui, rows: ElementRef) -> impl IntoElement {
                         .pointer_events(PointerEvents::None),
                 ),
         )
+}
+
+/// New guide data starts at its first row (the focus is reset to it, but
+/// the list keeps its scroll offset across a count change).
+pub(crate) fn scroll_to_top_on_new_data(ui: Ui, list: ElementRef) {
+    let seen = std::cell::Cell::new(ui.data_version.get_untracked());
+    effect(move || {
+        let version = ui.data_version.get();
+        if seen.replace(version) != version {
+            list.scroll_to_index(0, percentage(0.0), px(0.0), false);
+        }
+    });
 }
 
 fn time_bar(
@@ -182,6 +198,8 @@ fn row(
             })
             .child(
                 text(move || {
+                    // Equal programme minutes on new data still re-read the title.
+                    ui.data_version.get();
                     program().map_or(String::new(), |p| crate::schedule().title(at.index(), p))
                 })
                 .number_of_lines(1)
@@ -203,16 +221,33 @@ fn row(
         .child(
             view()
                 .w(px(NAME_W))
-                .px(px(14.0))
-                .justify_center()
+                .px(px(10.0))
+                .flex_row()
+                .items_center()
+                .gap(px(8.0))
                 .on_press(move || {
                     ui.touched();
-                    ui.focus
-                        .update(|f| f.tap(at.index(), 0, &*crate::schedule()));
+                    ui.focus.update(|f| {
+                        let now = f.now;
+                        f.tap(at.index(), now, &*crate::schedule())
+                    });
                     ui.watch();
                 })
                 .child(
                     text(move || {
+                        ui.data_version.get();
+                        crate::schedule().channel_number(at.index()).to_string()
+                    })
+                    .w(px(NUMBER_W))
+                    .number_of_lines(1)
+                    .text_size(px(TEXT_SIZE))
+                    .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA)),
+                )
+                .child(
+                    text(move || {
+                        // Cells are made once per recycled slot: the index
+                        // alone does not change when the data does.
+                        ui.data_version.get();
                         let star = ui.favorites.with(|f| f.contains(&at.index()));
                         format!(
                             "{}{}",
@@ -220,6 +255,7 @@ fn row(
                             channel_name(at.index())
                         )
                     })
+                    .flex_1()
                     .number_of_lines(1)
                     .text_size(px(TEXT_SIZE))
                     .text_color(move || {
