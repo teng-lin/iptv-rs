@@ -212,7 +212,8 @@ fn prepare(ui: Ui) {
     if INDEXES.with(|i| i.borrow().version != Some(version)) {
         let mut channels = ChannelIndex::from_schedule(&*schedule);
         for c in 0..schedule.channel_count() {
-            channels.add_key(c, &(c + 1).to_string());
+            // The number the guide shows (the provider's, else the position).
+            channels.add_key(c, &schedule.channel_number(c).to_string());
         }
         INDEXES.with(|i| {
             *i.borrow_mut() = Indexes {
@@ -757,7 +758,7 @@ fn result_row(ui: Ui, at: Position, focused_index: Memo<Option<usize>>) -> impl 
             let star = ui.favorites.with(|f| f.contains(&c));
             format!(
                 "{}   {}{}",
-                c + 1,
+                crate::schedule().channel_number(c),
                 if star { "★ " } else { "" },
                 channel_name(c)
             )
