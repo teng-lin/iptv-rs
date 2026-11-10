@@ -32,6 +32,7 @@ use iptv_net::NetClient;
 use iptv_providers::model::SourceConfig;
 use iptv_providers::xtream::StreamFormat;
 use iptv_store_sqlite::SourceId;
+use nsh_core::platform::Lifecycle;
 use nsh_core::prelude::*;
 
 use crate::guide::Schedule;
@@ -640,17 +641,29 @@ pub fn bind(ui: Ui) {
     });
     effect(move || {
         let paused = ui.paused.get();
+        let away = stopped_in_background(lifecycle());
         let now = ui.now_ms();
         untracked(|| {
-            ui.player
-                .main()
-                .health
-                .update(|h| h.set_paused(paused, now));
-            if !paused {
-                watch_stall(ui, 0);
+            for surface in 0..SURFACES {
+                let held = away || (surface == 0 && paused);
+                ui.player
+                    .stream(surface)
+                    .health
+                    .update(|h| h.set_paused(held, now));
+                if !held {
+                    watch_stall(ui, surface);
+                }
             }
         });
     });
+}
+
+/// Whether the host stops its players in `lifecycle`: Android's does while
+/// the activity is stopped (`TvActivity`, `PlayerComponent.background`) and
+/// reopens them after, so waiting then is no stall. Desktop players play on
+/// in a minimised window.
+fn stopped_in_background(lifecycle: Lifecycle) -> bool {
+    cfg!(target_os = "android") && lifecycle == Lifecycle::Background
 }
 
 fn follow_playing(ui: Ui) {

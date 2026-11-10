@@ -28,6 +28,12 @@
 //!   bitrate}], audio: [{id, label, language, channels, codec}], text:
 //!   [{id, label, language}], selected: {video, audio, text}} whenever they
 //!   change; `format` {fps?, channels?} for what plays.
+//!
+//! In the background (`lifecycle()` Background) Android's host stops every
+//! player, closing its connections, and reopens it when the app comes back
+//! (live at the live edge, catch-up where it was) with no events between:
+//! the app only pauses its stall checks (`player::bind`). Desktop players
+//! play on in a minimised window.
 
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, Ordering};

@@ -147,8 +147,15 @@ tests), `IPTV_RS_HWDEC` sets mpv's `hwdec` (default `auto-copy-safe`),
 `IPTV_RS_LIVE_BRIDGE=0` turns off playing on across live connections the
 server closes (each one is then reconnected by the app),
 `RUST_LOG=info` shows the player's state (never stream addresses).
+The guide header's key-timing line ("keys N · X µs") shows in debug builds,
+or with `IPTV_RS_DEBUG_OVERLAY=1`; the matching log line is always written.
 `GDK_DEBUG=no-portals` makes the playlist-file picker GTK's own dialog
 instead of the desktop portal's.
+
+On Android nothing plays in the background: when the activity stops
+(Home, another app, the screen off) every player stops and closes its
+connections, and when it starts again each one reopens its stream (live at
+the live edge, catch-up where it was). A minimised desktop window plays on.
 
 Known limit: mpv sends a stream's headers (Cookie, Authorization, ...) with
 every request of that stream, including redirects and HLS segments on other

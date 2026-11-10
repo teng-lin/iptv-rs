@@ -10,8 +10,6 @@ import android.view.Gravity
 import android.view.SurfaceView
 import android.view.View
 import android.widget.FrameLayout
-import kotlin.math.max
-import kotlin.math.roundToInt
 import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.Format
@@ -76,6 +74,14 @@ import com.longbridge.nsh.NshComponentContext
  * or an error until the next first frame; a reconnect of the same stream
  * keeps the last frame.
  *
+ * In the background nothing plays or loads: the activity's stop calls
+ * [background] (the player stops, closing its connections; a provider
+ * counts each one against the account), its start [foreground], which
+ * reopens the stream that was playing: live at the live edge, catch-up
+ * where it was. The app is not told (no `state` while away; its stall
+ * checks pause on `lifecycle()` instead); a source it sets meanwhile opens
+ * on the start. No audio plays in the background.
+ *
  * Live HLS needs nothing here: Media3 reloads a media playlist from the
  * address it was given (a provider's redirect to a tokenized address is
  * followed again on every reload, so an expired token never shows), not
@@ -85,6 +91,8 @@ import com.longbridge.nsh.NshComponentContext
 class PlayerComponent(
     context: Context,
     private val nsh: NshComponentContext,
+    /** Called once the component is destroyed (the activity's list of players). */
+    private val onDestroyed: (PlayerComponent) -> Unit = {},
 ) : NshComponent {
     companion object {
         const val NAME = "tv.player"
@@ -96,6 +104,9 @@ class PlayerComponent(
          */
         private const val MIN_BRIDGED_MS = 5_000L
     }
+
+    /** What [foreground] reopens. */
+    private enum class Reopen { NONE, SAME, NEW }
 
     /** Headers for the current stream; read on loader threads. */
     private class Headers(val host: String?, val all: Map<String, String>)
@@ -132,6 +143,12 @@ class PlayerComponent(
     @Volatile private var headers = Headers(null, emptyMap())
     /** Set after the one format fallback (HLS or progressive) for the current stream. */
     private var triedOtherFormat = false
+    /** The type [start] gave the current stream (null: from its address). */
+    private var mime: String? = null
+    /** The activity is stopped: the player is too ([background]). */
+    private var away = false
+    /** What [foreground] reopens: the stream that played, or a new one set while away. */
+    private var reopen = Reopen.NONE
     /** The viewer's track choices for the open stream. */
     private var choice = PlayerTracks.Choice()
     /** This player's audio sink (made when the player is built). */
@@ -217,6 +234,8 @@ class PlayerComponent(
 
     private val listener = object : Player.Listener {
         override fun onPlaybackStateChanged(state: Int) {
+            // The stop of [background]: the app sees the stream as it was.
+            if (away) return
             val name = when (state) {
                 Player.STATE_IDLE -> "idle"
                 Player.STATE_BUFFERING -> "buffering"
@@ -250,6 +269,8 @@ class PlayerComponent(
         }
 
         override fun onTracksChanged(tracks: Tracks) {
+            // Stopped in the background: the tracks come back with the stream.
+            if (away) return
             applyChoice()
             nsh.emit("tracks", PlayerTracks.event(tracks, choice))
         }
@@ -362,11 +383,50 @@ class PlayerComponent(
         applyChoice()
         subtitles.setCues(emptyList())
         if (!keepFrame) shutter.visibility = View.VISIBLE
+        reopen = Reopen.NONE
         if (next == null) {
             player.stop()
             player.clearMediaItems()
+        } else if (away) {
+            // Opens on the activity's start ([foreground]).
+            reopen = Reopen.NEW
         } else {
             start(next, null)
+        }
+    }
+
+    /**
+     * The activity stopped: stops the player, which closes the stream's
+     * connections (a pause would keep a live stream loading), and keeps what
+     * to reopen. The playlist and position stay ([foreground]).
+     */
+    fun background() {
+        if (away) return
+        away = true
+        ticker.removeCallbacks(tick)
+        val active = player.playbackState == Player.STATE_BUFFERING ||
+            player.playbackState == Player.STATE_READY
+        // A failed or finished stream stays as it is: the app owns its retry.
+        if (reopen == Reopen.NONE && active) reopen = Reopen.SAME
+        player.stop()
+    }
+
+    /**
+     * The activity started again: reopens what [background] stopped (live
+     * at the live edge, catch-up at its position) or the source the app set
+     * meanwhile.
+     */
+    fun foreground() {
+        if (!away) return
+        away = false
+        ticker.postDelayed(tick, 1_000)
+        val what = reopen
+        reopen = Reopen.NONE
+        val target = url ?: return
+        when {
+            what == Reopen.NEW -> start(target, null)
+            what == Reopen.SAME && live -> start(target, mime)
+            what == Reopen.SAME -> player.prepare()
         }
     }
 
@@ -390,6 +450,7 @@ class PlayerComponent(
         val builder = MediaItem.Builder().setUri(target)
         if (mime != null) builder.setMimeType(mime)
         val item = builder.build()
+        this.mime = mime
         val progressive =
             Util.inferContentTypeForUriAndMimeType(Uri.parse(target), mime) == C.CONTENT_TYPE_OTHER
         if (live && progressive) {
@@ -406,6 +467,7 @@ class PlayerComponent(
         player.removeListener(listener)
         player.removeAnalyticsListener(formats)
         player.release()
+        onDestroyed(this)
     }
 }
 
@@ -421,71 +483,4 @@ private fun httpStatus(error: PlaybackException): Int? {
         cause = cause.cause
     }
     return null
-}
-
-/**
- * Sizes and centres the video surface for a picture-size mode; whatever
- * exceeds the frame is clipped by it. Layout only (the SurfaceView is never
- * scaled or translated), so the video surface composites normally.
- */
-private class PictureFrame(context: Context) : FrameLayout(context) {
-    var videoAspect = 16f / 9f
-        set(value) {
-            if (value > 0f && value != field) {
-                field = value
-                requestLayout()
-            }
-        }
-    var mode = "normal"
-        set(value) {
-            if (value != field) {
-                field = value
-                requestLayout()
-            }
-        }
-
-    override fun onMeasure(widthSpec: Int, heightSpec: Int) {
-        val pw = MeasureSpec.getSize(widthSpec)
-        val ph = MeasureSpec.getSize(heightSpec)
-        setMeasuredDimension(pw, ph)
-        if (pw <= 0 || ph <= 0) return
-        val (w, h) = pictureSize(mode, pw.toFloat(), ph.toFloat(), videoAspect)
-        for (i in 0 until childCount) {
-            getChildAt(i).measure(
-                MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY),
-                MeasureSpec.makeMeasureSpec(h, MeasureSpec.EXACTLY),
-            )
-        }
-    }
-
-    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
-        val pw = right - left
-        val ph = bottom - top
-        for (i in 0 until childCount) {
-            val c = getChildAt(i)
-            val x = (pw - c.measuredWidth) / 2
-            val y = (ph - c.measuredHeight) / 2
-            c.layout(x, y, x + c.measuredWidth, y + c.measuredHeight)
-        }
-    }
-}
-
-/** The surface size for `mode` in a `pw`×`ph` frame showing video of aspect `va`. */
-internal fun pictureSize(mode: String, pw: Float, ph: Float, va: Float): Pair<Int, Int> {
-    val pa = pw / ph
-    fun fit(a: Float) = if (a > pa) pw to pw / a else ph * a to ph
-    fun cover(a: Float) = if (a > pa) ph * a to ph else pw to pw / a
-    fun scaled(p: Pair<Float, Float>, k: Float) = p.first * k to p.second * k
-    val (w, h) = when (mode) {
-        "full" -> pw to ph
-        "zoom" -> cover(va)
-        // A wide film letterboxed in the video: zoom until it fills the frame.
-        "cinema" -> scaled(fit(va), max(1f, 2.35f / va))
-        "reduced" -> scaled(fit(va), 0.85f)
-        "4:3" -> fit(4f / 3f)
-        "16:9" -> fit(16f / 9f)
-        "2.35:1" -> fit(2.35f)
-        else -> fit(va)
-    }
-    return w.roundToInt() to h.roundToInt()
 }
