@@ -1751,6 +1751,7 @@ dependencies = [
  "iptv-nav",
  "iptv-net",
  "iptv-providers",
+ "iptv-search",
  "iptv-store-sqlite",
  "log",
  "nsh-base",

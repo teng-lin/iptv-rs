@@ -72,6 +72,9 @@ pub fn context(ui: &Ui) -> Context {
     if overlay {
         return Context::Menu;
     }
+    if crate::search_view::is_open(*ui) {
+        return Context::Editor; // Up/Down/Left/Right, OK and digits
+    }
     match (ui.mode.get(), ui.focus.with(|f| f.pane)) {
         (ViewMode::Fullscreen, _) if ui.panels.with(|p| p.captures_input()) => Context::Controls,
         (ViewMode::Fullscreen, _) => Context::Player,
@@ -229,6 +232,10 @@ fn apply(ui: Ui, action: Action) {
         }
         return;
     }
+    if crate::search_view::is_open(ui) {
+        crate::search_view::key(ui, action);
+        return;
+    }
     match action {
         Action::ShowMenu => crate::menu_view::open(ui),
         Action::MoveLeft if controls => ui.update_panels(|p, now| p.move_focus(-1, now)),
@@ -289,6 +296,7 @@ fn zap(ui: Ui, step: isize) {
 pub fn press_control(ui: Ui, control: Control) {
     ui.update_panels(|p, now| p.touch(now));
     match control {
+        Control::Search => crate::search_view::open(ui),
         Control::ChannelList => ui.mode.set(ViewMode::Overlay),
         Control::Scaling => crate::chooser::open(ui, crate::chooser::Kind::Picture),
         Control::SleepTimer => crate::chooser::open(ui, crate::chooser::Kind::Sleep),

@@ -17,7 +17,8 @@ const ROW_H: f32 = 48.0;
 fn implemented(item: MenuItem) -> bool {
     matches!(
         item,
-        MenuItem::Description
+        MenuItem::Search
+            | MenuItem::Description
             | MenuItem::ToggleFavorite
             | MenuItem::StartFromBeginning
             | MenuItem::ManageFavorites
@@ -118,6 +119,10 @@ pub fn perform(ui: Ui, item: MenuItem) {
         MenuItem::ManageFavorites => {
             close(ui);
             crate::fav_editor::open(ui);
+        }
+        MenuItem::Search => {
+            close(ui);
+            crate::search_view::open(ui);
         }
         MenuItem::ToggleFavorite => {
             ui.favorites.update(|f| {

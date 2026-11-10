@@ -14,6 +14,7 @@ mod input;
 mod menu_view;
 mod panels;
 mod player_panels;
+mod search_view;
 mod video;
 
 use std::time::{Duration, Instant};
@@ -110,6 +111,8 @@ pub struct Ui {
     pub chooser: Signal<Option<chooser::Open>>,
     /// The favourites editor, when open.
     pub editor: Signal<Option<FavoritesEditor>>,
+    /// The search screen, while open (also while a result it chose plays).
+    pub search: Signal<Option<search_view::Screen>>,
 }
 
 impl Ui {
@@ -276,6 +279,7 @@ pub fn App() -> impl IntoElement {
         sleep: signal(SleepTimer::default()),
         chooser: signal(None),
         editor: signal(None),
+        search: signal(None),
     };
     // Leaving full screen closes the panels.
     effect(move || {
@@ -368,6 +372,7 @@ pub fn App() -> impl IntoElement {
                 }),
         )
         .child(player_panels::layer(ui))
+        .child(search_view::layer(ui))
         .child(menu_view::layer(ui))
         .child(chooser::layer(ui))
         .child(fav_editor::layer(ui))
@@ -399,6 +404,10 @@ fn bind_back(ui: Ui) {
                 true
             })
         }
+        _ if search_view::is_open(ui) => on_back_press(move || {
+            search_view::apply(ui, iptv_search::SearchAction::Back);
+            true
+        }),
         (ViewMode::Fullscreen, _, true) => on_back_press(move || {
             ui.panels.update(|p| p.hide());
             true

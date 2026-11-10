@@ -39,7 +39,11 @@ fn label(control: Control, favorite: bool) -> &'static str {
 pub fn implemented(control: Control) -> bool {
     matches!(
         control,
-        Control::ChannelList | Control::Favorite | Control::Scaling | Control::SleepTimer
+        Control::Search
+            | Control::ChannelList
+            | Control::Favorite
+            | Control::Scaling
+            | Control::SleepTimer
     )
 }
 
