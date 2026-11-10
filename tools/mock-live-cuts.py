@@ -21,10 +21,25 @@ testsrc2's own time code and frame counter stay. Every <name> plays the
 same live stream. /playlist.m3u lists an HLS and a TS channel (and a
 second of each, to zap between) at the address the request came to.
 
+* A full account (--refuse-at S --refuse-secs X [--refuse-status 509]):
+  from S seconds after the server started, for X seconds, every new
+  /live/ open is refused with that status (403, 509, ...), as a provider
+  does while another device holds the account's streams. Connections
+  already open keep playing; the HLS token's 403 or the TS close makes
+  the player reopen into the refusals.
+* A network outage (--drop-at S --drop-secs X): from S seconds, for X
+  seconds, every request (playlists, segments, opens) is reset without an
+  answer and open TS connections are cut, as an unreachable provider.
+Both can also be started while the server runs, from this machine:
+  curl 'http://127.0.0.1:8090/control/refuse?secs=45&status=509'
+  curl 'http://127.0.0.1:8090/control/drop?secs=20'
+
 Usage:
   tools/mock-live-cuts.py [--port 8090] [--hls-token-secs 40]
                           [--ts-close-secs 70] [--burst-segs 1]
                           [--open-delay-ms 0]
+                          [--refuse-at S --refuse-secs X --refuse-status 509]
+                          [--drop-at S --drop-secs X]
   # desktop app: add the playlist http://127.0.0.1:8090/playlist.m3u
   # mpv:         mpv http://127.0.0.1:8090/live/a.m3u8
 Each request is logged (path only; tokens are synthetic).
@@ -45,6 +60,22 @@ import time
 ARGS = None
 LIVE_DIR = None
 STARTED = time.time()
+# Server-clock windows (time.time()) of a full account and of an outage.
+REFUSE = {"until": 0.0, "status": 509}
+DROP = {"until": 0.0}
+
+
+def schedule(window, at, secs):
+    """Opens `window` `at` seconds after the start, for `secs` seconds."""
+    def run():
+        time.sleep(max(at - (time.time() - STARTED), 0))
+        window["until"] = time.time() + secs
+        log("%s for %.0f s" % ("refusing opens" if window is REFUSE else "network down", secs))
+    threading.Thread(target=run, daemon=True).start()
+
+
+def dropped():
+    return time.time() < DROP["until"]
 SEG_RE = re.compile(r"seg(\d+)\.ts$")
 
 
@@ -135,11 +166,40 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_HEAD(self):
         self.do_GET()
 
+    def reset(self):
+        """Drops the connection without an answer (an unreachable provider)."""
+        self.close_connection = True
+        try:
+            self.connection.shutdown(2)
+        except OSError:
+            pass
+
+    def control(self, path, query):
+        params = dict(p.split("=", 1) for p in query.split("&") if "=" in p)
+        secs = float(params.get("secs", "30"))
+        if path == "/control/refuse":
+            REFUSE["status"] = int(params.get("status", REFUSE["status"]))
+            REFUSE["until"] = time.time() + secs
+            log("refusing opens with %d for %.0f s" % (REFUSE["status"], secs))
+        elif path == "/control/drop":
+            DROP["until"] = time.time() + secs
+            log("network down for %.0f s" % secs)
+        else:
+            return self.reply(404, b"not found")
+        self.reply(200, b"ok")
+
     def do_GET(self):
-        path = self.path.split("?", 1)[0]
+        path, _, query = self.path.partition("?")
         parts = [p for p in path.split("/") if p]
+        if parts[:1] == ["control"]:
+            return self.control(path, query)
+        if dropped():
+            return self.reset()
         if path == "/playlist.m3u":
             return self.playlist()
+        if len(parts) == 2 and parts[0] == "live" and time.time() < REFUSE["until"]:
+            log("%d open %s (account full)" % (REFUSE["status"], path))
+            return self.reply(REFUSE["status"], b"max connections reached")
         if len(parts) == 2 and parts[0] == "live" and ARGS.open_delay_ms > 0:
             # A distant provider: every new connection takes this long.
             time.sleep(ARGS.open_delay_ms / 1000.0)
@@ -207,6 +267,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         nxt = segs[-ARGS.burst_segs] if len(segs) >= ARGS.burst_segs else segs[0]
         try:
             while time.time() - opened < ARGS.ts_close_secs:
+                if dropped():
+                    log("TS cut %s (network down)" % path)
+                    return self.reset()
                 listed = segment_numbers()
                 if listed and nxt < listed[0]:
                     nxt = listed[0]
@@ -250,7 +313,19 @@ def main():
     p.add_argument("--open-delay-ms", type=int, default=0,
                    help="delay before answering /live/ (a slow provider)")
     p.add_argument("--font", default=None, help="font file for the wall clock")
+    p.add_argument("--refuse-at", type=float, default=None,
+                   help="seconds after start when new opens start being refused")
+    p.add_argument("--refuse-secs", type=float, default=45.0)
+    p.add_argument("--refuse-status", type=int, default=509)
+    p.add_argument("--drop-at", type=float, default=None,
+                   help="seconds after start when the network goes down")
+    p.add_argument("--drop-secs", type=float, default=20.0)
     ARGS = p.parse_args()
+    REFUSE["status"] = ARGS.refuse_status
+    if ARGS.refuse_at is not None:
+        schedule(REFUSE, ARGS.refuse_at, ARGS.refuse_secs)
+    if ARGS.drop_at is not None:
+        schedule(DROP, ARGS.drop_at, ARGS.drop_secs)
     LIVE_DIR = tempfile.mkdtemp(prefix="mock-live-cuts-")
     encoder = start_encoder(LIVE_DIR)
 
