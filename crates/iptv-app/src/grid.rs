@@ -10,7 +10,7 @@ use crate::guide::{Airing, Pane, Program, STEP, VISIBLE};
 use crate::theme::{FOCUS_ALPHA, RADIUS, RESTING_ALPHA, TEXT_SECONDARY_ALPHA, TEXT_SIZE};
 use crate::{Ui, channel_name, clock, tint};
 
-pub const ROW_H: f32 = 56.0;
+pub const ROW_H: f32 = 48.0;
 pub const NAME_W: f32 = 250.0;
 /// The channel number before the logo.
 const NUMBER_W: f32 = 30.0;
@@ -19,7 +19,7 @@ const LOGO_W: f32 = 40.0;
 const LOGO_H: f32 = 28.0;
 
 /// Shown where a channel has no logo (an image needs a source).
-fn no_logo() -> String {
+pub(crate) fn no_logo() -> String {
     "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1' height='1'/%3E"
         .to_owned()
 }
@@ -61,7 +61,7 @@ pub fn guide(ui: Ui, rows: ElementRef) -> impl IntoElement {
                     .flex_1(),
                 )
                 .child(
-                    // Now, hidden while the window does not show it.
+                    // Now, hidden while the window does not show it (or no rows).
                     view()
                         .absolute()
                         .top(px(0.0))
@@ -69,7 +69,8 @@ pub fn guide(ui: Ui, rows: ElementRef) -> impl IntoElement {
                         .w(px(2.0))
                         .opacity(move || {
                             let at = now.get() - window.get();
-                            if (0..=VISIBLE).contains(&at) {
+                            let rows = ui.list.with(|l| !l.is_empty());
+                            if rows && (0..=VISIBLE).contains(&at) {
                                 1.0_f32
                             } else {
                                 0.0
@@ -161,8 +162,8 @@ fn time_bar(
 ) -> impl IntoElement {
     let shift = move |label: &'static str, minutes: i32| {
         text(label)
-            .px(px(10.0))
-            .py(px(6.0))
+            .px(px(9.0))
+            .py(px(4.0))
             .rounded(px(RADIUS))
             .bg(tint(WHITE, RESTING_ALPHA))
             .text_color(rgb(WHITE))
@@ -189,13 +190,16 @@ fn time_bar(
         .flex_row()
         .items_center()
         .child(
+            // The date and time, then the touch steps of the time window.
             view()
                 .w(px(NAME_W))
                 .flex_row()
-                .gap(px(8.0))
-                .px(px(12.0))
-                .child(shift("‹ 30m", -STEP))
-                .child(shift("30m ›", STEP)),
+                .items_center()
+                .gap(px(6.0))
+                .px(px(10.0))
+                .child(crate::header::date_time(ui).flex_1())
+                .child(shift("‹", -STEP))
+                .child(shift("›", STEP)),
         )
         .child(
             view()

@@ -1,8 +1,8 @@
 //! iptv-rs NSH shell (TV + tablet): remote (D-pad) and touch drive one
 //! app-owned focus model (`guide.rs`, `browse.rs`); the layout follows the
-//! reference UX's regions (context bar, navigation rail and groups beside
-//! the guide grid, preview + info panel) over one persistent video layer
-//! (`video.rs`). The guide shows one list at a time (`lists.rs`).
+//! reference UX's regions (header with the preview and the focused
+//! programme, navigation rail and groups beside the guide grid) over one
+//! persistent video layer (`video.rs`). The guide shows one list at a time (`lists.rs`).
 
 pub use iptv_core::guide;
 pub mod theme;
@@ -12,6 +12,7 @@ mod data;
 mod fav_editor;
 mod favorites;
 mod grid;
+mod header;
 mod input;
 mod lists;
 mod menu_view;
@@ -407,7 +408,7 @@ pub fn App() -> impl IntoElement {
                         PointerEvents::Auto
                     }
                 })
-                .child(panels::top_bar(ui))
+                .child(header::header(ui))
                 .child(
                     view()
                         .flex_1()
@@ -415,8 +416,7 @@ pub fn App() -> impl IntoElement {
                         .child(rail::column(ui))
                         .child(panels::group_column(ui, groups))
                         .child(grid::guide(ui, rows)),
-                )
-                .child(panels::info_panel(ui)),
+                ),
         )
         .child(
             // Full screen: a tap toggles the player panels.
