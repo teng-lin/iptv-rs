@@ -167,8 +167,15 @@ fn bar_buttons(app: &mut Headless, step: impl Fn(Result<(), String>)) {
     step(gone(app, "label:Mute"));
     step(app.press_key("backspace"));
     assert_eq!(tiles(app), 1, "Back closed the picker only");
+    // Leaving with the tile surface 0 plays opens nothing again.
+    let opens = iptv_app::player_opens(0);
     step(app.press_key("backspace"));
     step(gone(app, TILE));
+    assert_eq!(
+        iptv_app::player_opens(0),
+        opens,
+        "surface 0 kept its stream"
+    );
     step(app.press("label:Video"));
     step(app.wait_for("label:Mute"));
     step(app.press("label:Video"));
@@ -265,9 +272,18 @@ fn multiview(app: &mut Headless, step: impl Fn(Result<(), String>) + Copy) {
     step(app.wait_for(TILE));
     assert_eq!(tiles(app), 2);
     // The toolbar's Exit: the active tile full screen, the bar at hand.
+    // Channel Two's tile plays on another surface (Channel Three took
+    // surface 0 for its detour): leaving opens it there once.
+    step(app.press(TILE_TWO));
     chrome(app, step);
+    let opens = iptv_app::player_opens(0);
     step(app.press("label:Exit multiview"));
     step(gone(app, TILE));
+    assert_eq!(
+        iptv_app::player_opens(0),
+        opens + 1,
+        "one open on surface 0"
+    );
     step(app.wait_for("label:Mute"));
     step(app.press("label:Video"));
     step(gone(app, "label:Mute"));

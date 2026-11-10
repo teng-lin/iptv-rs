@@ -40,6 +40,8 @@ mod video;
 mod wizard_view;
 
 pub use time::clock;
+#[doc(hidden)]
+pub use video::opens as player_opens;
 
 use std::time::{Duration, Instant};
 

@@ -29,6 +29,9 @@
 //!   [{id, label, language}], selected: {video, audio, text}} whenever they
 //!   change; `format` {fps?, channels?} for what plays.
 
+use std::cell::RefCell;
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use nsh_core::prelude::*;
 use serde_json::{Value, json};
 
@@ -85,6 +88,29 @@ pub fn surface_rect(ui: Ui, surface: usize) -> (f32, f32, f32, f32) {
     }
 }
 
+/// Each surface's opens: `source` values handed to its player with a new
+/// url or token (what makes a host open a stream).
+static OPENS: [AtomicU64; crate::player::SURFACES] =
+    [const { AtomicU64::new(0) }; crate::player::SURFACES];
+
+/// How many streams surface `surface`'s player was told to open so far
+/// (for tests: one change of channel must open it once).
+pub fn opens(surface: usize) -> u64 {
+    OPENS.get(surface).map_or(0, |n| n.load(Ordering::Relaxed))
+}
+
+/// Counts `value` as an open when its url or token differs from `last`'s.
+fn count_open(surface: usize, last: &RefCell<Option<(String, u64)>>, value: &Value) {
+    let now = value["url"]
+        .as_str()
+        .map(|url| (url.to_owned(), value["token"].as_u64().unwrap_or(0)));
+    let mut last = last.borrow_mut();
+    if now.is_some() && *last != now {
+        OPENS[surface].fetch_add(1, Ordering::Relaxed);
+    }
+    *last = now;
+}
+
 /// The stream as the host's `source` prop: `{url, headers, token, live,
 /// reconnect}`, or null when nothing plays.
 fn source_prop(ui: Ui, surface: usize) -> Value {
@@ -122,13 +148,18 @@ fn source_prop(ui: Ui, surface: usize) -> Value {
 /// Player surface `surface` (0: the full-screen one).
 pub fn layer(ui: Ui, surface: usize) -> impl IntoElement {
     let stream = ui.player.stream(surface);
+    let sent = RefCell::new(None);
     native("tv.player")
         .absolute()
         .left(move || px(surface_rect(ui, surface).0))
         .top(move || px(surface_rect(ui, surface).1))
         .w(move || px(surface_rect(ui, surface).2))
         .h(move || px(surface_rect(ui, surface).3))
-        .prop("source", move || source_prop(ui, surface))
+        .prop("source", move || {
+            let value = source_prop(ui, surface);
+            count_open(surface, &sent, &value);
+            value
+        })
         // Multiview's other surfaces play on.
         .prop("paused", move || json!(surface == 0 && ui.paused.get()))
         .prop("pictureSize", move || {

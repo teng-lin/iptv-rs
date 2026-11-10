@@ -312,13 +312,18 @@ fn load(ui: Ui, surface: usize, session: u64, mut source: PlaySource) {
         source.headers.len(),
         if reconnect { ", reconnecting" } else { "" }
     );
-    stream.live.set(live);
-    stream.reconnect.set(reconnect);
-    stream.token.update(|t| *t += 1);
-    stream.position_ms.set(0);
-    // A new stream: its own tracks, from the default choices.
-    crate::media::reset(ui, surface);
-    stream.source.set(Some(source));
+    // One write for the player: the `source` prop must never see the new
+    // token with the old url (a host would open the old stream again
+    // first, as leaving multiview did).
+    batch(|| {
+        stream.live.set(live);
+        stream.reconnect.set(reconnect);
+        stream.token.update(|t| *t += 1);
+        stream.position_ms.set(0);
+        // A new stream: its own tracks, from the default choices.
+        crate::media::reset(ui, surface);
+        stream.source.set(Some(source));
+    });
     let now = ui.now_ms();
     stream.health.update(|h| h.resolved(now));
     watch_stall(ui, surface);
