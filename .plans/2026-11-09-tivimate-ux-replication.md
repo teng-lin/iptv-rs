@@ -301,6 +301,17 @@ with synthetic playlists on a separate emulator.
 - Still unknown: timing/count defaults, context keymaps, long-press
   threshold, overlay alpha, catch-up URLs. Pick our own values, make them
   settings, and revisit if a later runtime pass measures them.
+- **R9 (docs/08)** and **library pass (docs/09)**: implemented — guide
+  menu structure and programme-action matrix, Long Left past navigation,
+  details popover, full-screen control strip. Next UI backlog from 09 (all
+  free in iptv-rs; the reference's Premium gating is not copied):
+  - Picture size chooser: Normal, Full, Zoom, cinema zoom, Reduced, 4:3,
+    16:9, 2.35:1, plus apply-to-all; translucent over moving video.
+  - Sleep timer chooser: Off, 15/30/45/60/90/120/180/240 minutes.
+  - Favourites editor: per-channel stars, OK toggles one, Left clears the
+    group, Right sets the group, persistent hints; Back leaves.
+  - Reorder mode: select, then move; My list (programmes/VOD) separate
+    from favourite channels.
 - Raw captures and provider data live outside all repos
   (`~/analysis/tivimate-runtime/`); never copy them into this project.
 
