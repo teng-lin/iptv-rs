@@ -51,13 +51,15 @@ navigation rail          groups list            guide (or channel list)     play
 
 | Behaviour | Reference | Us | Status | P |
 | --- | --- | --- | --- | --- |
-| OK / tap shows the info card | Logo, title, times, progress, minutes left, number + name, stream badges (resolution, frame rate, audio), next programme, full-width time bar; top bar with group name and date/time | Card with number, name, now/next, progress; no logo, badges, top bar | partial | P1 |
-| Quick actions under the card | TV guide, History | Full strip at once | partial | P1 |
-| Down: full control row | Search, Channels list, Recordings, Multiview, Picture-in-picture, Video track, Audio track, Audio delay, Subtitles, Picture size, Sleep timer, Favourite, … | Strip present; Video/Audio/Subtitles/Audio delay/Recordings/Multiview disabled | partial | P1 |
-| Track selection (video, audio, subtitles) | Choosers | none (hosts expose no tracks) | missing | P1 |
+| OK / tap shows the info card | Logo, title, times, progress, minutes left, number + name, stream badges (resolution, frame rate, audio), next programme, full-width time bar; top bar with group name and date/time | same (logo from the playlist; the group is the playlist's) | done | – |
+| Quick actions under the card | TV guide, History | same; History lists the channels played this session | done | – |
+| Down: full control row | Search, Channels list, Recordings, Multiview, Picture-in-picture, Video track, Audio track, Audio delay, Subtitles, Picture size, Sleep timer, Favourite, … | same order, current values shown; Recordings, Multiview, Picture-in-picture, Channel options, Settings disabled | partial | P1 |
+| Track selection (video, audio, subtitles) | Choosers | Choosers on both hosts (`tv.player` `tracks` event, `videoTrack`/`audioTrack`/`textTrack`); verified on Linux, Android compiled only | done | – |
+| Audio delay | Chooser (ms) | ±1 s in 50 ms steps; mpv `audio-delay`, Media3 through a delayed audio sink (Android unverified) | done | – |
+| Player remote defaults | OK panels, Long OK menu, Left channels list, Long Left list beside a preview, Right most recent channel, Long Back stop, Up/Down zap | same (keymap); Long Back needs Back key events from NSH (desktop: Stop key) | partial | P0 |
 | Back in full screen | Panels → guide with preview still playing | same | done | – |
 | Tap preview → full screen; tap video → panels | yes | yes | done | – |
-| Desktop: play/pause, volume/mute, window full screen, mouse-visible controls | (TV app: n/a) | none | missing | P0 on desktop |
+| Desktop: play/pause, volume/mute, window full screen, mouse-visible controls | (TV app: n/a) | mouse shows the panels (hidden 3 s after it rests); play/pause, mute, volume bar and steps, full screen buttons; F11, double click, Escape; Ctrl+M, Ctrl+Up/Down. Keys and mouse movement verified; clicks not yet (synthetic clicks did not reach NSH's presses) | done | – |
 | Catch-up seeking | settings-driven | done (time bar, FF/RW) | done | – |
 | Picture-in-picture on Home | yes | none | missing | P2 |
 | Multiview | gated | none | missing | P3 |
