@@ -76,9 +76,10 @@ pub struct CatchupRequest {
     /// locale-based formatting; Unix-number placeholders stay UTC. The host
     /// resolves its zone (and DST) to this number; no tz database here.
     pub local_offset_secs: i32,
-    /// Only for `catchup="xc"`: the panel's UTC offset (see
-    /// [`crate::xtream::ServerClock`]); `0` when unknown.
-    pub server_offset_minutes: i32,
+    /// Only for `catchup="xc"`: the panel's UTC offset
+    /// ([`crate::xtream::ServerClock::offset_minutes`]). `None` (unknown)
+    /// uses `local_offset_secs`, as IPTVnator falls back to the viewer's clock.
+    pub server_offset_minutes: Option<i32>,
     /// Archive window used when the channel declares none.
     pub default_window_days: u32,
     /// Extra time before the programme start and after its end (Kodi's
@@ -97,7 +98,7 @@ impl CatchupRequest {
             now,
             offset_secs: 0,
             local_offset_secs: 0,
-            server_offset_minutes: 0,
+            server_offset_minutes: None,
             default_window_days: DEFAULT_CATCHUP_WINDOW_DAYS,
             buffer_before_secs: 0,
             buffer_after_secs: 0,
@@ -135,7 +136,12 @@ pub fn build_catchup_url(channel: &Channel, req: CatchupRequest) -> Result<Strin
             Some(src) => checked(expand(src, &vars)),
             None => match &catch_up.kind {
                 CatchUpKind::Flussonic => flussonic(live, &vars),
-                CatchUpKind::Xtream => xtream(live, &vars, req.server_offset_minutes),
+                CatchUpKind::Xtream => xtream(
+                    live,
+                    &vars,
+                    req.server_offset_minutes
+                        .map_or(req.local_offset_secs, |m| m * 60),
+                ),
                 _ => set_utc_params(live, &vars),
             },
         },
@@ -260,7 +266,7 @@ fn split_path(raw: &str) -> Option<(&str, &str, &str)> {
     ))
 }
 
-fn xtream(live: &str, vars: &Vars, server_offset_minutes: i32) -> Result<String, CatchupError> {
+fn xtream(live: &str, vars: &Vars, offset_secs: i32) -> Result<String, CatchupError> {
     let mut url = url::Url::parse(live).map_err(|_| CatchupError::MalformedUrl)?;
     let segments: Vec<String> = url
         .path_segments()
@@ -284,7 +290,7 @@ fn xtream(live: &str, vars: &Vars, server_offset_minutes: i32) -> Result<String,
         "ts"
     };
     let minutes = crate::time::catchup_duration_minutes(vars.from, vars.to);
-    let start = crate::time::format_catchup_start(vars.from, server_offset_minutes);
+    let start = crate::time::format_catchup_start(vars.from + i64::from(offset_secs), 0);
     url.set_path(&format!(
         "/timeshift/{user}/{pass}/{minutes}/{start}/{id}.{ext}"
     ));

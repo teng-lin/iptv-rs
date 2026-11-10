@@ -218,23 +218,35 @@ fn live_format_resolution() {
 fn catchup_urls_use_the_panel_clock() {
     let c = client();
     // 2023-11-14 22:13:20 UTC; panel at UTC+3 → 2023-11-15 01:13.
-    let rest = c.catchup_url(101, NOW, NOW + 3600, CatchupVariant::RestTs, 180);
+    let rest = c.catchup_url(101, NOW, NOW + 3600, CatchupVariant::RestTs, Some(180), 0);
     assert_eq!(
         rest,
         "http://tv.example.com:8080/timeshift/demo/s3cret/60/2023-11-15:01-13/101.ts"
     );
-    let hls = c.catchup_url(101, NOW, NOW + 30, CatchupVariant::RestM3u8, 0);
+    // Unknown panel clock: the viewer's (UTC−4 here), not UTC.
+    assert_eq!(
+        c.catchup_url(
+            101,
+            NOW,
+            NOW + 3600,
+            CatchupVariant::RestTs,
+            None,
+            -4 * 3600
+        ),
+        "http://tv.example.com:8080/timeshift/demo/s3cret/60/2023-11-14:18-13/101.ts"
+    );
+    let hls = c.catchup_url(101, NOW, NOW + 30, CatchupVariant::RestM3u8, Some(0), 0);
     assert_eq!(
         hls, "http://tv.example.com:8080/timeshift/demo/s3cret/1/2023-11-14:22-13/101.m3u8",
         "duration is at least 1 minute"
     );
-    let legacy = c.catchup_url(101, NOW, NOW + 5400, CatchupVariant::LegacyTs, 0);
+    let legacy = c.catchup_url(101, NOW, NOW + 5400, CatchupVariant::LegacyTs, Some(0), 0);
     assert_eq!(
         legacy,
         "http://tv.example.com:8080/streaming/timeshift.php?username=demo&password=s3cret&stream=101&start=2023-11-14%3A22-13&duration=90&extension=ts"
     );
     assert!(
-        !c.catchup_url(101, NOW, NOW + 60, CatchupVariant::Legacy, 0)
+        !c.catchup_url(101, NOW, NOW + 60, CatchupVariant::Legacy, Some(0), 0)
             .contains("extension")
     );
     assert_eq!(

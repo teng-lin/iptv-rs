@@ -109,7 +109,7 @@ fn append_flussonic_xc_and_unsupported() {
         build_catchup_url(
             &ch,
             CatchupRequest {
-                server_offset_minutes: 60,
+                server_offset_minutes: Some(60),
                 ..REQ
             }
         )
@@ -372,5 +372,30 @@ fn flussonic_on_air_and_short_programmes() {
     assert_eq!(
         build_catchup_url(&mono, CatchupRequest::new(1_000, 1_600, 2_000)).as_deref(),
         Ok("http://f.example.com/chan/mono-1000-600.m3u8")
+    );
+}
+
+#[test]
+fn xc_without_a_server_clock_uses_the_viewer_clock() {
+    let ch = channel(
+        r#"catchup="xc" catchup-days="1""#,
+        "http://xc.example.com/live/demo/secret/7.ts",
+    );
+    let req = CatchupRequest {
+        local_offset_secs: -4 * 3600,
+        ..REQ
+    };
+    assert_eq!(
+        build_catchup_url(&ch, req).as_deref(),
+        Ok("http://xc.example.com/timeshift/demo/secret/60/2023-11-14:18-13/7.ts")
+    );
+    // A known panel clock wins over the viewer's.
+    let req = CatchupRequest {
+        server_offset_minutes: Some(0),
+        ..req
+    };
+    assert_eq!(
+        build_catchup_url(&ch, req).as_deref(),
+        Ok("http://xc.example.com/timeshift/demo/secret/60/2023-11-14:22-13/7.ts")
     );
 }

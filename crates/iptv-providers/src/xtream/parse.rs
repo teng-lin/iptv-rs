@@ -573,7 +573,8 @@ pub fn parse_vod_info(response: &HttpResponse, vod_id: u64) -> Result<VodDetails
 /// `get_short_epg` and `get_simple_data_table`. Titles and descriptions are
 /// base64 (kept as-is when they are not). `start_timestamp`/`stop_timestamp`
 /// win; otherwise `start`/`end` (or `stop`) are read in the panel's clock
-/// (`server_offset_minutes`, `0` when unknown). Sorted by start.
+/// (`server_offset_minutes`; pass the viewer's offset when the panel's is
+/// unknown). Sorted by start.
 pub fn parse_epg(
     response: &HttpResponse,
     server_offset_minutes: i32,
