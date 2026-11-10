@@ -123,7 +123,7 @@ fn append_flussonic_xc_and_unsupported() {
             }
         )
         .as_deref(),
-        Ok("http://xc.example.com:8080/timeshift/demo/secret/60/2023-11-14:23-13/1001.ts")
+        Ok("http://xc.example.com:8080/timeshift/demo/secret/60/2023-11-14:23-13/1001.m3u8")
     );
 
     let ch = channel(
@@ -257,5 +257,26 @@ fn errors_do_not_quote_urls() {
     assert_eq!(err, CatchupError::MalformedUrl);
     for text in [format!("{err:?}"), err.to_string()] {
         assert!(!text.contains("hunter2") && !text.contains("tok3n") && !text.contains("demo"));
+    }
+}
+
+#[test]
+fn xc_keeps_the_live_container() {
+    for (live, want) in [
+        (
+            "http://xc.example.com/live/demo/secret/7.m3u8",
+            "http://xc.example.com/timeshift/demo/secret/60/2023-11-14:22-13/7.m3u8",
+        ),
+        (
+            "http://xc.example.com/live/demo/secret/7.ts",
+            "http://xc.example.com/timeshift/demo/secret/60/2023-11-14:22-13/7.ts",
+        ),
+        (
+            "http://xc.example.com/demo/secret/7",
+            "http://xc.example.com/timeshift/demo/secret/60/2023-11-14:22-13/7.ts",
+        ),
+    ] {
+        let ch = channel(r#"catchup="xc" catchup-days="1""#, live);
+        assert_eq!(build_catchup_url(&ch, REQ).as_deref(), Ok(want), "{live}");
     }
 }

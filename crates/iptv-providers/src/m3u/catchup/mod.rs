@@ -8,7 +8,8 @@
 //!    has no placeholders, `utc`/`lutc` query parameters are set on it.
 //! 4. `flussonic`: `…/index.m3u8` → `…/index-{start}-{duration}.m3u8`,
 //!    `…/mpegts` → `…/timeshift_abs-{start}.ts`.
-//! 5. `xc`: Xtream-shaped live URL → `/timeshift/U/P/{minutes}/{Y-m-d:H-M}/{id}.ts`.
+//! 5. `xc`: Xtream-shaped live URL → `/timeshift/U/P/{minutes}/{Y-m-d:H-M}/{id}.EXT`,
+//!    EXT `m3u8` for an `.m3u8` live URL, else `ts`.
 //! 6. `shift` (also archive days without a type): `utc`/`lutc` on the live URL.
 //! 7. `default` without a usable source → none.
 //!
@@ -184,14 +185,20 @@ fn xtream(live: &str, vars: &Vars, server_offset_minutes: i32) -> Result<String,
         [u, p, last] => (u, p, last),
         _ => return Err(CatchupError::MalformedUrl),
     };
-    let id = last.split_once('.').map_or(last.as_str(), |(s, _)| s);
+    let (id, ext) = last.split_once('.').unwrap_or((last.as_str(), ""));
     if id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit()) {
         return Err(CatchupError::MalformedUrl);
     }
+    // Kodi builds xc archives for both containers; keep the live one.
+    let ext = if ext.eq_ignore_ascii_case("m3u8") {
+        "m3u8"
+    } else {
+        "ts"
+    };
     let minutes = crate::time::catchup_duration_minutes(vars.from, vars.to);
     let start = crate::time::format_catchup_start(vars.from, server_offset_minutes);
     url.set_path(&format!(
-        "/timeshift/{user}/{pass}/{minutes}/{start}/{id}.ts"
+        "/timeshift/{user}/{pass}/{minutes}/{start}/{id}.{ext}"
     ));
     Ok(url.to_string())
 }
