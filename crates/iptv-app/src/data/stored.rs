@@ -2,9 +2,12 @@
 //! shown before any network, and keeping the guide in the store under the
 //! refresh policy (`iptv_import::decide`).
 //!
-//! The guide is read back from the store without descriptions (a few MiB
-//! for thousands of channels instead of the parsed feed's hundreds); the
-//! guide's details read a description on demand ([`description_lookup`]).
+//! A guide download streams into a stage file next to the store
+//! (`super::download_guide`, `iptv_store_sqlite::EpgStage`) and replaces
+//! the stored guide only once it loaded ([`replace`]); it is read back from
+//! the store without descriptions (a few MiB for thousands of channels
+//! instead of the parsed feed's hundreds); the guide's details read a
+//! description on demand ([`description_lookup`]).
 //!
 //! The `epg.*` settings drive it (global values, `crate::settings`): the
 //! refresh policy, how many days of finished programmes are kept and
@@ -26,8 +29,8 @@ use std::sync::mpsc::{self, Sender, TryRecvError};
 
 use iptv_epg::{ChannelKey, DAY, GuideStore, Overrides, UnixTime};
 use iptv_import::{
-    CancelToken, Decision, EpgImport, EpgSourceConfig, ImportError, NoProgress, RefreshPolicy,
-    Trigger, decide, matching_fingerprint, store_options,
+    CancelToken, Decision, EpgSourceConfig, ImportError, NoProgress, RefreshPolicy, Trigger,
+    decide, matching_fingerprint, store_options,
 };
 use iptv_net::NetClient;
 use iptv_providers::SecretUrl;
@@ -40,7 +43,7 @@ use iptv_store_sqlite::{
 
 use nsh_core::prelude::timer;
 
-use super::{GENERATION, Imported, Msg, POLL, Streams, guides, open_store};
+use super::{Downloaded, GENERATION, Imported, Msg, POLL, Streams, guides, open_store};
 use crate::Ui;
 
 thread_local! {
@@ -243,20 +246,27 @@ fn check_at(decision: Decision, now: UnixTime) -> Option<UnixTime> {
 /// How long a check that is still due waits.
 const RETRY_DUE: i64 = 3600;
 
-/// Replaces `source`'s stored guide with `import` (the feeds that loaded)
+/// Replaces `source`'s stored guide with `guide` (the feeds that loaded)
 /// and drops programmes older than [`keep_past_days`]. A feed that failed
 /// is recorded, so automatic refreshes back off; each feed's result is
 /// kept for the guide sources screen.
 pub fn replace(
     source: SourceId,
-    import: &EpgImport,
+    guide: &mut Downloaded,
     configs: &[EpgSourceConfig],
     matching: Matching<'_>,
     now: UnixTime,
 ) -> Result<EpgCounts, StoreError> {
     let mut store = open_store()?;
+    let import = &guide.import;
     let feeds = EpgFeedMeta::from_import(import, configs, now);
-    let counts = store.replace_epg(source, &import.guide, &feeds, matching.fingerprint())?;
+    let counts = store.replace_epg(
+        source,
+        &mut guide.stage,
+        import,
+        &feeds,
+        matching.fingerprint(),
+    )?;
     let results: Vec<_> = import
         .sources
         .iter()
@@ -591,7 +601,9 @@ pub fn error_kind(error: &ImportError) -> ImportErrorKind {
         ImportError::HttpStatus { .. } => ImportErrorKind::HttpStatus,
         ImportError::Auth { .. } => ImportErrorKind::AccountRejected,
         ImportError::Parse { .. } => ImportErrorKind::InvalidBody,
-        ImportError::Portal { .. } | ImportError::Empty { .. } => ImportErrorKind::Other,
+        ImportError::Portal { .. } | ImportError::Empty { .. } | ImportError::Storage(_) => {
+            ImportErrorKind::Other
+        }
     }
 }
 

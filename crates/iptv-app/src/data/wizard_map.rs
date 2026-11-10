@@ -129,7 +129,9 @@ pub fn failure_of(error: &ImportError) -> ImportFailure {
         _ => match error.kind() {
             Kind::Cancelled => FailureKind::Cancelled,
             // A portal error (`js.error`) is the server's trouble too.
-            Kind::Network | Kind::Server => FailureKind::Network,
+            // The device could not keep it (disk full): as when the
+            // playlist cannot be saved.
+            Kind::Network | Kind::Server | Kind::Storage => FailureKind::Network,
             Kind::Auth => FailureKind::Auth,
             Kind::Empty => FailureKind::EmptyPlaylist,
             // Settings the provider client refuses (an address the

@@ -6,8 +6,13 @@
 //!   [`ParseWarnings`].
 //! - [`MatchIndex`]: maps playlist channels ([`ChannelKey`]) to EPG channel
 //!   ids by tvg-id, then by normalised name, with manual [`Override`]s.
+//! - [`MatchFilter`]: before a feed is matched, which of its EPG channels
+//!   some playlist channel could match (a streaming import keeps only
+//!   their programmes).
 //! - [`SourceBuilder`] / [`GuideStore`]: compact per-channel schedules from
 //!   several sources with priorities, retention and O(log n) guide queries.
+//!   [`ScheduleRules`] are their ordering, overlap and retention rules, for
+//!   stores that settle a schedule outside memory.
 //!
 //! No NSH, no platform APIs, no clock, no blocking I/O; builds for
 //! `wasm32-unknown-unknown`. Times are unix seconds ([`UnixTime`]) and every
@@ -19,17 +24,19 @@ mod intern;
 mod matching;
 mod normalize;
 mod parser;
+mod settle;
 mod store;
 mod time;
 mod xmltv;
 
 pub use decode::{Compression, DecodeError};
 pub use matching::{
-    ChannelKey, EpgRef, MatchIndex, MatchKind, MatchReport, MatchResult, Override, Overrides,
-    PlaylistChannel, SourceId,
+    ChannelKey, EpgRef, MatchFilter, MatchIndex, MatchKind, MatchReport, MatchResult, Override,
+    Overrides, PlaylistChannel, SourceId,
 };
 pub use normalize::{normalize_name, strip_tag_prefix};
 pub use parser::{ParseOptions, ParseStats, ParseWarnings, ParsedXmltv, XmltvParser, parse_xmltv};
+pub use settle::{ScheduleRules, Settled};
 pub use store::{
     EpgSource, GuideStore, IngestReport, NowNext, ProgrammeData, ProgrammeRef, ScheduleRef,
     SourceBuilder, StoreOptions,

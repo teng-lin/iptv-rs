@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use crate::extra::{self, Extra, Field, NO_EXTRA};
 use crate::intern::{Interner, NONE, Sym};
 use crate::matching::{ChannelKey, EpgRef, SourceId};
+use crate::settle::{ScheduleRules, Settled};
 use crate::time::{DAY, UnixTime};
 use crate::xmltv::{XmltvChannel, XmltvItem, XmltvProgramme};
 
@@ -84,6 +85,51 @@ pub struct ProgrammeData<'a> {
     /// One-based.
     pub season: Option<u16>,
     pub episode: Option<u16>,
+}
+
+impl<'a> ProgrammeData<'a> {
+    /// The fields of a parsed programme (first category, rating value,
+    /// season and episode from the first readable `<episode-num>`).
+    pub fn from_xmltv(p: &'a XmltvProgramme) -> Self {
+        let (season, episode) = p
+            .episode_num
+            .iter()
+            .find_map(|e| e.season_episode())
+            .unwrap_or_default();
+        let narrow = |n: Option<u32>| n.map(|n| n.min(u32::from(u16::MAX)) as u16);
+        ProgrammeData {
+            start: p.start,
+            stop: p.stop,
+            title: &p.title,
+            sub_title: p.sub_title.as_deref(),
+            desc: p.desc.as_deref(),
+            category: p.categories.first().map(String::as_str),
+            icon: p.icon.as_deref(),
+            rating: p.rating.as_ref().map(|r| r.value.as_str()),
+            catchup_id: p.catchup_id.as_deref(),
+            season: narrow(season),
+            episode: narrow(episode),
+        }
+    }
+
+    /// The fields as a guide built from them gives them back
+    /// ([`ProgrammeRef::data`]): empty texts and zero season or episode
+    /// are absent, and the description only when `descriptions`.
+    pub fn as_stored(self, descriptions: bool) -> Self {
+        let text = |t: Option<&'a str>| t.filter(|t| !t.is_empty());
+        let num = |n: Option<u16>| n.filter(|&n| n != 0);
+        ProgrammeData {
+            sub_title: text(self.sub_title),
+            desc: text(self.desc).filter(|_| descriptions),
+            category: text(self.category),
+            icon: text(self.icon),
+            rating: text(self.rating),
+            catchup_id: text(self.catchup_id),
+            season: num(self.season),
+            episode: num(self.episode),
+            ..self
+        }
+    }
 }
 
 #[derive(Default)]
@@ -201,7 +247,7 @@ pub struct SourceBuilder {
     id: SourceId,
     priority: i32,
     opts: StoreOptions,
-    cutoff: Option<i64>,
+    rules: ScheduleRules,
     strings: Interner,
     extras: Vec<u32>,
     by_epg_id: HashMap<Box<str>, u32>,
@@ -216,7 +262,7 @@ impl SourceBuilder {
         SourceBuilder {
             id,
             priority,
-            cutoff: opts.past_days_to_keep.map(|d| now - i64::from(d) * DAY),
+            rules: ScheduleRules::new(opts, now),
             opts,
             strings: Interner::new(),
             extras: Vec::new(),
@@ -239,41 +285,16 @@ impl SourceBuilder {
     }
 
     pub fn push_programme(&mut self, p: XmltvProgramme) {
-        let (season, episode) = p
-            .episode_num
-            .iter()
-            .find_map(|e| e.season_episode())
-            .unwrap_or_default();
-        let narrow = |n: Option<u32>| n.map(|n| n.min(u32::from(u16::MAX)) as u16);
-        let data = ProgrammeData {
-            start: p.start,
-            stop: p.stop,
-            title: &p.title,
-            sub_title: p.sub_title.as_deref(),
-            desc: p.desc.as_deref(),
-            category: p.categories.first().map(String::as_str),
-            icon: p.icon.as_deref(),
-            rating: p.rating.as_ref().map(|r| r.value.as_str()),
-            catchup_id: p.catchup_id.as_deref(),
-            season: narrow(season),
-            episode: narrow(episode),
-        };
-        self.push_data(&p.channel, &data);
+        self.push_data(&p.channel, &ProgrammeData::from_xmltv(&p));
     }
 
     /// Adds one programme of EPG channel `channel` from plain values (a
     /// stored guide). Same rules as [`Self::push_programme`].
     pub fn push_data(&mut self, channel: &str, p: &ProgrammeData<'_>) {
-        self.report.programmes_in += 1;
+        if !self.rules.admit(p.start, p.stop, &mut self.report) {
+            return;
+        }
         let stop = p.stop.unwrap_or(NO_STOP);
-        if p.stop.is_some() && stop <= p.start {
-            self.report.dropped_bad_duration += 1;
-            return;
-        }
-        if p.stop.is_some() && self.cutoff.is_some_and(|c| stop <= c) {
-            self.report.dropped_retention += 1;
-            return;
-        }
         let s = &mut self.strings;
         let mut e = Extra {
             season: p.season.unwrap_or(0),
@@ -312,53 +333,40 @@ impl SourceBuilder {
 
     /// Sorts, resolves overlaps and freezes the source.
     ///
-    /// Per channel, deterministically: programmes are ordered by start; of
-    /// several with the same start the longest (then the first in input)
-    /// is kept; a missing stop becomes the next programme's start; a
-    /// programme running into the next one is cut at the next start.
+    /// Per channel, deterministically ([`crate::ScheduleRules`]):
+    /// programmes are ordered by start; of several with the same start the
+    /// longest (then the first in input) is kept; a missing stop becomes
+    /// the next programme's start; a programme running into the next one
+    /// is cut at the next start.
     pub fn finish(mut self) -> EpgSource {
         let mut schedules = Vec::with_capacity(self.raw.len());
         let r = &mut self.report;
+        let mut rows = Vec::new();
         for mut raw in std::mem::take(&mut self.raw) {
             // Stable: equal (start, stop) keep input order. NO_STOP sorts last.
             raw.sort_by(|a, b| a.start.cmp(&b.start).then(b.stop.cmp(&a.stop)));
             let before = raw.len();
             raw.dedup_by(|cur, prev| cur.start == prev.start);
             r.dropped_duplicate += (before - raw.len()) as u64;
-            let n = raw.len();
-            for i in 0..n {
-                let next_start = raw.get(i + 1).map(|x| x.start);
-                let p = &mut raw[i];
-                if p.stop == NO_STOP {
-                    p.stop = next_start.unwrap_or(NO_STOP);
-                } else if let Some(ns) = next_start.filter(|&ns| p.stop > ns) {
-                    p.stop = ns;
-                    r.overlaps_trimmed += 1;
-                }
-            }
-            let mut slots = Vec::with_capacity(n);
+            rows.clear();
+            rows.extend(
+                raw.iter()
+                    .map(|p| (p.start, (p.stop != NO_STOP).then_some(p.stop))),
+            );
             let base = raw.first().map_or(0, |p| p.start);
-            for p in raw {
-                if p.stop == NO_STOP {
-                    r.dropped_no_stop += 1;
-                } else if self.cutoff.is_some_and(|c| p.stop <= c) {
-                    r.dropped_retention += 1;
-                } else if let (Ok(start), Ok(dur)) = (
-                    u32::try_from(p.start - base),
-                    u32::try_from(p.stop - p.start),
-                ) {
+            let mut slots = Vec::with_capacity(raw.len());
+            self.rules.settle(&rows, r, |i, fate| {
+                if let Settled::Keep { stop } = fate {
+                    let p = &raw[i];
+                    // `settle` checked that both fit.
                     slots.push(Slot {
-                        start,
-                        dur,
+                        start: (p.start - base) as u32,
+                        dur: (stop - p.start) as u32,
                         title: p.title,
                         extra: p.extra,
                     });
-                } else {
-                    r.dropped_bad_duration += 1;
                 }
-            }
-            r.kept += slots.len() as u64;
-            r.channels_with_programmes += u64::from(!slots.is_empty());
+            });
             // Re-base so the first kept slot starts at 0.
             let shift = slots.first().map_or(0, |s| s.start);
             for s in &mut slots {

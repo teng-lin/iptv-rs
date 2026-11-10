@@ -8,8 +8,10 @@
 //!   (discovery → auth loop → genres → paginated channels) into a
 //!   provider-neutral [`Catalog`]. [`import_m3u_text`] parses a playlist
 //!   already in memory.
-//! - [`import_epg`]: chunked XMLTV download per source with priorities into
-//!   a [`iptv_epg::GuideStore`], matched against the catalog's channels.
+//! - [`import_epg`]: chunked XMLTV download per source with priorities,
+//!   programmes streamed into a [`GuideSink`] as they are parsed (only the
+//!   feeds' channel lists stay in memory), matched against the catalog's
+//!   channels. [`MemoryGuide`] is an in-memory sink.
 //!   [`Catalog::epg_sources`] turns the M3U header's `url-tvg`/`x-tvg-url`
 //!   (or the Xtream export) into [`EpgSourceConfig`]s.
 //! - [`decide`] / [`plan_startup`]: when to download a stored guide again
@@ -34,12 +36,15 @@ mod link;
 mod m3u;
 mod progress;
 mod refresh;
+mod sink;
 mod stalker;
 mod xtream;
 
 pub use cancel::{CancelToken, Cancelled};
 pub use catalog::{Catalog, CatalogWarning, ImportOptions, ImportStats, SourceMeta};
-pub use epg::{EpgImport, EpgSourceConfig, EpgSourceOutcome, EpgSourceStats, import_epg};
+pub use epg::{
+    EpgImport, EpgSourceConfig, EpgSourceOutcome, EpgSourceStats, ListedChannel, import_epg,
+};
 pub use error::{AuthProblem, FailureKind, ImportError, ParseProblem, Step};
 pub use fetch::{BodyStream, Fetch, FetchError, FetchErrorKind, MemoryBody, StreamingResponse};
 pub use link::stalker_link;
@@ -49,6 +54,7 @@ pub use refresh::{
     Decision, GuideState, RefreshPolicy, RefreshReason, StartupPlan, Trigger, decide,
     matching_fingerprint, plan_startup, store_options,
 };
+pub use sink::{GuideSink, MemoryGuide, SinkError};
 
 use iptv_providers::model::SourceConfig;
 

@@ -14,7 +14,7 @@
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use iptv_epg::Overrides;
-use iptv_import::{CancelToken, ImportOptions, Progress, import_epg, import_source};
+use iptv_import::{CancelToken, ImportOptions, MemoryGuide, Progress, import_epg, import_source};
 use iptv_net::NetClient;
 use iptv_providers::model::{
     M3uSourceConfig, MacAddress, SourceConfig, StalkerCredentials, XtreamCredentials,
@@ -106,18 +106,22 @@ async fn main() {
     }
     let t = Instant::now();
     let mut progress = |_: &Progress| {};
+    // In memory: a development aid (the app stages the guide on disk).
+    let mut sink = MemoryGuide::new();
     match import_epg(
         &net,
         &sources,
         &catalog.channels,
         &Overrides::new(),
         now,
+        &mut sink,
         &mut progress,
         &cancel,
     )
     .await
     {
         Ok(epg) => {
+            let guide = sink.into_guide(&epg);
             for s in &epg.sources {
                 match &s.result {
                     Ok(st) => println!(
@@ -136,7 +140,7 @@ async fn main() {
                 epg.matches.channels,
                 epg.matches.by_tvg_id,
                 epg.matches.by_name,
-                epg.guide.heap_bytes() / (1024 * 1024),
+                guide.heap_bytes() / (1024 * 1024),
                 t.elapsed()
             );
         }

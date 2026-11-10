@@ -42,7 +42,9 @@ use iptv_import::{
 use iptv_net::NetClient;
 use iptv_providers::SecretUrl;
 use iptv_providers::model::{Channel, Group, Source};
-use iptv_store_sqlite::{CatalogCounts, GuideSource, ImportErrorKind, SourceId, Store, StoreError};
+use iptv_store_sqlite::{
+    CatalogCounts, EpgStage, GuideSource, ImportErrorKind, SourceId, Store, StoreError,
+};
 use nsh_core::prelude::*;
 
 pub use library::{
@@ -225,6 +227,8 @@ pub fn spawn_in_app(future: impl Future<Output = ()> + 'static) {
 /// opens the wizard.
 pub fn start(ui: Ui) {
     APP_OWNER.with(|o| o.set(Some(Owner::current())));
+    // Guide downloads a crash interrupted (none runs yet).
+    EpgStage::remove_stale(data_dir());
     match library::startup_source() {
         Ok(Some(stored)) => library::run(ui, stored, Purpose::Startup, false),
         Ok(None) => crate::wizard_view::open_first_run(ui),
@@ -743,27 +747,34 @@ fn stored_view(job: &Job, id: SourceId, now: i64) -> Option<Box<Imported>> {
     }))
 }
 
-/// Stores a downloaded guide and reads it back without descriptions; the
-/// downloaded one when the store fails.
+/// A downloaded guide not stored yet: how it matched, and its programmes
+/// staged in a file next to the store (deleted when this is dropped, so a
+/// guide that is never kept leaves the stored one as it was).
+pub(crate) struct Downloaded {
+    pub import: EpgImport,
+    pub stage: EpgStage,
+}
+
+/// Stores a downloaded guide and reads it back without descriptions (the
+/// stored one, if any, when the store fails).
 fn keep_guide(
     id: SourceId,
-    import: EpgImport,
+    mut guide: Downloaded,
     guides: &[EpgSourceConfig],
     matching: stored::Matching<'_>,
     now: i64,
 ) -> GuideStore {
-    match stored::replace(id, &import, guides, matching, now) {
-        Ok(_) => stored::load_guide(id, now).unwrap_or(import.guide),
-        Err(e) => {
-            log::warn!("iptv data: could not store the guide: {e}");
-            import.guide
-        }
+    if let Err(e) = stored::replace(id, &mut guide, guides, matching, now) {
+        log::warn!("iptv data: could not store the guide: {e}");
     }
+    drop(guide);
+    stored::load_guide(id, now).unwrap_or_default()
 }
 
 /// Downloads `guides` for the catalog's channels with the user's guide
-/// choices. The guide `must_load` (the one the user just typed), when
-/// given, must load.
+/// choices, streaming the programmes to a stage file (memory stays small
+/// whatever the guide's size). The guide `must_load` (the one the user
+/// just typed), when given, must load.
 async fn download_guide<P: ProgressSink>(
     net: &NetClient,
     guides: &[EpgSourceConfig],
@@ -772,13 +783,16 @@ async fn download_guide<P: ProgressSink>(
     progress: &mut P,
     cancel: &CancelToken,
     must_load: Option<iptv_epg::SourceId>,
-) -> Result<EpgImport, ImportError> {
+) -> Result<Downloaded, ImportError> {
+    let mut stage =
+        EpgStage::create_in(data_dir()).map_err(|e| ImportError::Storage(e.to_string()))?;
     let epg = import_epg(
         net,
         guides,
         matching.channels,
         matching.overrides,
         now,
+        &mut stage,
         progress,
         cancel,
     )
@@ -789,7 +803,7 @@ async fn download_guide<P: ProgressSink>(
     {
         return Err(e.clone());
     }
-    Ok(epg)
+    Ok(Downloaded { import: epg, stage })
 }
 
 /// Stores the catalog: under a new source (removed again if the catalog

@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 
 use iptv_epg::{ChannelKey, Overrides};
 use iptv_import::{
-    CancelToken, FailureKind, ImportError, ImportOptions, NoProgress, Phase, Progress, SourceMeta,
-    import_epg, import_source,
+    CancelToken, FailureKind, ImportError, ImportOptions, MemoryGuide, NoProgress, Phase, Progress,
+    SourceMeta, import_epg, import_source,
 };
 use iptv_net::NetClient;
 use iptv_providers::model::{
@@ -101,23 +101,26 @@ async fn m3u_playlist_then_its_url_tvg_guide() {
     assert_eq!(sources.len(), 1, "url-tvg from the header");
     let mut phases = Vec::new();
     let mut on = |p: &Progress| phases.push(p.phase);
+    let mut sink = MemoryGuide::new();
     let epg = import_epg(
         &net,
         &sources,
         &catalog.channels,
         &Overrides::new(),
         NOW,
+        &mut sink,
         &mut on,
         &cancel,
     )
     .await
     .unwrap();
     assert_eq!(epg.matches.by_tvg_id, CHANNELS);
-    assert_eq!(epg.guide.bound_count(), CHANNELS);
+    let guide = sink.into_guide(&epg);
+    assert_eq!(guide.bound_count(), CHANNELS);
     let stats = epg.sources[0].result.as_ref().unwrap();
     assert_eq!(stats.parse.programmes, (CHANNELS * 9 * 12) as u64);
     let key = ChannelKey::new(catalog.channels[3].id.as_str());
-    let now = epg.guide.programme_at(&key, NOW + 1).unwrap();
+    let now = guide.programme_at(&key, NOW + 1).unwrap();
     assert_eq!((now.start(), now.stop()), (NOW, NOW + 2 * HOUR));
     assert!(phases.contains(&Phase::Matching));
 
@@ -181,6 +184,7 @@ async fn xtream_with_vod_and_its_xmltv_export() {
         &catalog.channels,
         &Overrides::new(),
         NOW,
+        &mut MemoryGuide::new(),
         &mut NoProgress,
         &cancel,
     )

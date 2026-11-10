@@ -6,7 +6,7 @@
 //! own; candidates are returned highest priority first so the store can
 //! pick the best source that has data.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use crate::normalize::{normalize_name, strip_tag_prefix};
@@ -328,6 +328,78 @@ impl MatchIndex {
                 (cands, resolved)
             }
         }
+    }
+}
+
+/// Which EPG channels some playlist channel could match, decided per
+/// channel as a feed is read (before its channel list is complete): a
+/// superset of the candidates [`MatchIndex::match_channels`] returns for
+/// the same playlist and overrides. A streaming import keeps only the
+/// programmes of these channels.
+///
+/// A channel is wanted when its id equals a playlist tvg-id (ignoring
+/// case), one of its names (or the name without a `UK:`-style tag) equals
+/// a playlist channel's name key, or an override names its id. Playlist
+/// channels with an override take part only through it.
+#[derive(Clone, Debug, Default)]
+pub struct MatchFilter {
+    /// Trimmed, lower-cased tvg-ids.
+    ids: HashSet<String>,
+    names: HashSet<String>,
+    /// Override targets: EPG id -> the sources named (`None`: any).
+    overrides: HashMap<String, Vec<Option<SourceId>>>,
+}
+
+impl MatchFilter {
+    pub fn new<'a>(
+        playlist: impl IntoIterator<Item = PlaylistChannel<'a>>,
+        overrides: &Overrides,
+    ) -> Self {
+        let mut f = MatchFilter::default();
+        for ch in playlist {
+            if let Some(o) = overrides.get(ch.key) {
+                if let Override::Epg { source, epg_id } = o {
+                    f.overrides.entry(epg_id.clone()).or_default().push(*source);
+                }
+                continue;
+            }
+            if let Some(id) = ch.tvg_id.map(str::trim).filter(|t| !t.is_empty()) {
+                f.ids.insert(id.to_lowercase());
+            }
+            f.names.extend(Keys::new(ch).names);
+        }
+        f
+    }
+
+    /// Whether some playlist channel could match `channel` of `source`
+    /// (as first declared: [`MatchIndex`] ignores later declarations of an
+    /// id).
+    pub fn wants_channel(&self, source: SourceId, channel: &XmltvChannel) -> bool {
+        let id = channel.id.trim();
+        if id.is_empty() {
+            return false;
+        }
+        let name = |n: &str| {
+            let k = normalize_name(n);
+            !k.is_empty() && self.names.contains(&k)
+        };
+        self.wants_id(source, id)
+            || self.ids.contains(&id.to_lowercase())
+            || channel
+                .display_names
+                .iter()
+                .any(|n| name(n) || strip_tag_prefix(n).is_some_and(name))
+    }
+
+    /// Whether an override names EPG channel `epg_id` of `source` (an
+    /// override with a source binds to its programmes even when the feed
+    /// does not declare the channel).
+    pub fn wants_id(&self, source: SourceId, epg_id: &str) -> bool {
+        !self.overrides.is_empty()
+            && self
+                .overrides
+                .get(epg_id)
+                .is_some_and(|s| s.iter().any(|s| s.is_none_or(|s| s == source)))
     }
 }
 

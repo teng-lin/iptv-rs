@@ -59,6 +59,8 @@ pub enum FailureKind {
     Parse,
     /// The source answered correctly and has no content.
     Empty,
+    /// What was downloaded could not be kept (disk full, I/O).
+    Storage,
 }
 
 /// Why the provider refused access.
@@ -126,6 +128,9 @@ pub enum ImportError {
     Empty {
         step: Step,
     },
+    /// The guide being downloaded could not be stored
+    /// ([`crate::GuideSink`]); ends the import.
+    Storage(String),
 }
 
 impl ImportError {
@@ -138,13 +143,14 @@ impl ImportError {
             Self::Auth { .. } => FailureKind::Auth,
             Self::Parse { .. } => FailureKind::Parse,
             Self::Empty { .. } => FailureKind::Empty,
+            Self::Storage(_) => FailureKind::Storage,
         }
     }
 
     /// The step that failed, when there is one.
     pub fn step(&self) -> Option<Step> {
         match self {
-            Self::InvalidConfig(_) | Self::Cancelled => None,
+            Self::InvalidConfig(_) | Self::Cancelled | Self::Storage(_) => None,
             Self::Network { step, .. }
             | Self::HttpStatus { step, .. }
             | Self::Portal { step, .. }
@@ -207,6 +213,7 @@ impl ImportError {
         matches!(
             self,
             Self::Cancelled
+                | Self::Storage(_)
                 | Self::Auth {
                     problem: AuthProblem::Stalker(_),
                     ..
@@ -259,6 +266,7 @@ impl fmt::Display for ImportError {
                 ParseProblem::Decode(why) => write!(f, "{step}: {why}"),
             },
             Self::Empty { step } => write!(f, "{step}: the source has no content"),
+            Self::Storage(why) => write!(f, "could not store the guide: {why}"),
         }
     }
 }

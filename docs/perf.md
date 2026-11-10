@@ -29,13 +29,56 @@ gfxstream, and other builds were running on the host); they show trends.
 | Guide import (playlist + 2.45 M programmes) | – | channels on screen 0.5 s after submit; guide stored 17.5 s later; **peak RSS ≈ 570 MB** |
 | APK download (arm64 release) | < 15 MB | ≈ 11 MB (APK 20.7 MB) |
 
+## 2026-11-10, desktop, guide import streamed to disk (branch `epg-streaming`)
+
+The import no longer holds the parsed guide: programmes go to a stage
+file next to the store as they are parsed (`iptv_store_sqlite::EpgStage`,
+a writer thread, batches of at most 4096 programmes or 1 MiB of text),
+each channel is settled there with the same rules as the in-memory
+builder, and `replace_epg` copies the bound channels into the store in
+one transaction. Only the feeds' channel lists stay in memory for
+matching. Headless benchmark of what the app does (playlist import and
+store, guide download, replace, prune, window read back), same fixture
+served by `python3 -m http.server`:
+
+```sh
+cargo run --release -p iptv-store-sqlite --example epg_import_bench -- \
+  http://127.0.0.1:8123/big/playlist.m3u fixtures/bench
+```
+
+Intel Core 7 240H, 16 threads, NVMe; other builds were running (load
+11–16). Old and new runs alternated, three each, store on disk:
+
+| Guide import (2.45 M programmes, descriptions on, 7 days kept) | Before (`61a4bd2`) | After |
+| --- | --- | --- |
+| Download + parse (+ stage + settle) | 4.6–4.8 s | 4.4–4.6 s |
+| Stored (replace, feed results, prune) | at 16.4–16.6 s | at 11.0–11.6 s |
+| Window read back (total) | 17.3–17.5 s | 12.0–12.5 s |
+| Peak RSS above the app before the import | +303 MiB | +84 MiB |
+| … until the guide is stored | +303 MiB | +43 MiB |
+| Guide window kept in memory afterwards | 38 MiB | 38 MiB |
+| Stage file (deleted after) | – | 239 MiB (104 MiB without descriptions) |
+
+With the store on tmpfs: 14.2–14.4 s before, 10.6–10.7 s after; without
+descriptions (tmpfs, one run each): 10.5 s before, 8.5 s after, peak +79
+MiB before, +84 MiB after (+67 → +41 MiB until stored). `cargo test -p iptv-store-sqlite --test
+epg_stream_memory` checks that the import's Rust heap (~2 MiB, every
+thread) and SQLite heap (stage page cache 4 MiB; 32 MiB store cache
+while copying) do not grow with the guide's length.
+
+The peak is now reading the window back (`Store::load_epg`, the same
+code as at app start): `SourceBuilder` holds 32-byte raw rows for every
+programme of the window before compacting them into 16-byte slots.
+
 ## Findings
 
-1. **Guide import peak memory** (≈ 570 MB for 2.45 M programmes): the XMLTV
-   import builds the whole parsed guide in memory before writing it to
-   SQLite. On 2 GB TV boxes this risks the low-memory killer. Next: stream
-   programmes into the store as they are parsed (per channel batches) and
-   match from the channel list, never holding the full guide.
+1. **Guide import peak memory** (≈ 570 MB for 2.45 M programmes on the
+   emulator before): the import builds no guide in memory any more
+   (desktop: +303 MiB → +84 MiB, and 30 % faster; see above). Next: the
+   window read back (`load_epg`) is now the peak (+41 MiB transient over
+   the 38 MiB it keeps): build the slots directly from the store's
+   sorted, settled rows. Re-measure on the emulator / a TV box with
+   `tools/perf-android.sh`.
 2. **Guide frame times** exceed the budget on the emulator under load; key
    handling itself is sub-millisecond, so the cost is layout/draw of the grid.
    Needs a real-device run (gfxinfo) before optimising.

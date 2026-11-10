@@ -2,6 +2,7 @@
 
 mod common;
 mod epg_synth;
+mod staged;
 
 use epg_synth::{NOW, Shape};
 use iptv_epg::{
@@ -106,9 +107,7 @@ fn titles(g: &GuideStore, key: &str, from: i64, to: i64) -> Vec<String> {
 fn replace_then_load_round_trips_bindings_and_priorities() {
     let (mut store, a, _) = store_with_sources();
     let feeds = [meta(config(1, 9)), meta(config(2, 1))];
-    let counts = store
-        .replace_epg(a, &two_feed_guide("v1"), &feeds, 99)
-        .unwrap();
+    let counts = staged::replace_epg(&mut store, a, &two_feed_guide("v1"), &feeds, 99).unwrap();
     // x from hi (shared by k1 and k3), y from lo: two EPG channels stored.
     assert_eq!((counts.channels, counts.bindings), (2, 3));
     assert_eq!(counts.programmes, 18);
@@ -143,9 +142,7 @@ fn replace_then_load_round_trips_bindings_and_priorities() {
 fn windows_keys_and_descriptions() {
     let (mut store, a, _) = store_with_sources();
     let feeds = [meta(config(1, 9)), meta(config(2, 1))];
-    store
-        .replace_epg(a, &two_feed_guide("v1"), &feeds, 0)
-        .unwrap();
+    staged::replace_epg(&mut store, a, &two_feed_guide("v1"), &feeds, 0).unwrap();
     // Overlapping [now - 30 min, now + 90 min): X-1 (ends at now) is out.
     let w = EpgWindow {
         from: NOW - H / 2,
@@ -202,16 +199,11 @@ fn windows_keys_and_descriptions() {
 fn replace_is_per_source_and_total() {
     let (mut store, a, b) = store_with_sources();
     let feeds = [meta(config(1, 9)), meta(config(2, 1))];
-    store
-        .replace_epg(a, &two_feed_guide("old"), &feeds, 0)
-        .unwrap();
-    store
-        .replace_epg(b, &two_feed_guide("other"), &feeds, 0)
-        .unwrap();
+    staged::replace_epg(&mut store, a, &two_feed_guide("old"), &feeds, 0).unwrap();
+    staged::replace_epg(&mut store, b, &two_feed_guide("other"), &feeds, 0).unwrap();
     // A refresh with only the low feed: hi's rows and k3 (hi only) go.
-    let counts = store
-        .replace_epg(a, &two_feed_guide("new"), &feeds[1..], 1)
-        .unwrap();
+    let counts =
+        staged::replace_epg(&mut store, a, &two_feed_guide("new"), &feeds[1..], 1).unwrap();
     assert_eq!(
         counts.skipped_bindings, 2,
         "k1/k3 were bound to the hi feed"
@@ -225,9 +217,7 @@ fn replace_is_per_source_and_total() {
 
     // An unknown source is an error and writes nothing.
     assert!(
-        store
-            .replace_epg(SourceId(77), &two_feed_guide("x"), &feeds, 0)
-            .is_err()
+        staged::replace_epg(&mut store, SourceId(77), &two_feed_guide("x"), &feeds, 0).is_err()
     );
 }
 
@@ -244,9 +234,7 @@ fn failures_are_recorded_and_cleared() {
     );
     assert!(s.refresh_state().last_attempt_failed);
     let feeds = [meta(config(1, 9))];
-    store
-        .replace_epg(a, &two_feed_guide("v1"), &feeds, 0)
-        .unwrap();
+    staged::replace_epg(&mut store, a, &two_feed_guide("v1"), &feeds, 0).unwrap();
     store
         .record_epg_failure(a, FailureKind::Parse.into())
         .unwrap();
@@ -260,9 +248,7 @@ fn failures_are_recorded_and_cleared() {
             .bound_count(),
         2
     );
-    store
-        .replace_epg(a, &two_feed_guide("v2"), &feeds, 0)
-        .unwrap();
+    staged::replace_epg(&mut store, a, &two_feed_guide("v2"), &feeds, 0).unwrap();
     assert_eq!(store.epg_guide(a).unwrap().unwrap().last_error, None);
 }
 
@@ -270,12 +256,8 @@ fn failures_are_recorded_and_cleared() {
 fn prune_delete_and_cascade() {
     let (mut store, a, b) = store_with_sources();
     let feeds = [meta(config(1, 9)), meta(config(2, 1))];
-    store
-        .replace_epg(a, &two_feed_guide("a"), &feeds, 0)
-        .unwrap();
-    store
-        .replace_epg(b, &two_feed_guide("b"), &feeds, 0)
-        .unwrap();
+    staged::replace_epg(&mut store, a, &two_feed_guide("a"), &feeds, 0).unwrap();
+    staged::replace_epg(&mut store, b, &two_feed_guide("b"), &feeds, 0).unwrap();
     // Ending at or before now: X-3..X-1 and Y-3..Y-1 (y's two-hour
     // programmes were cut at the next start), for both sources.
     assert_eq!(store.prune_epg(NOW).unwrap(), 12);
@@ -325,7 +307,7 @@ fn every_field_survives_the_store() {
         iptv_epg::SourceId(1),
         SecretUrl::new("http://epg.example.com/synthetic.xml.gz"),
     ))];
-    let counts = store.replace_epg(a, &guide, &feeds, 0).unwrap();
+    let counts = staged::replace_epg(&mut store, a, &guide, &feeds, 0).unwrap();
     assert_eq!(counts.channels, 40);
     let back = store
         .load_epg(
@@ -367,9 +349,14 @@ fn every_field_survives_the_store() {
 #[test]
 fn feed_rows_never_show_their_url_in_debug() {
     let (mut store, a, _) = store_with_sources();
-    store
-        .replace_epg(a, &two_feed_guide("v1"), &[meta(config(1, 9))], 0)
-        .unwrap();
+    staged::replace_epg(
+        &mut store,
+        a,
+        &two_feed_guide("v1"),
+        &[meta(config(1, 9))],
+        0,
+    )
+    .unwrap();
     let shown = format!("{:?}", store.epg_guide(a).unwrap());
     assert!(!shown.contains(common::XT_PASSWORD), "{shown}");
 }
