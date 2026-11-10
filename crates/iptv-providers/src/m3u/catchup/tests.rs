@@ -280,3 +280,20 @@ fn xc_keeps_the_live_container() {
         assert_eq!(build_catchup_url(&ch, REQ).as_deref(), Ok(want), "{live}");
     }
 }
+
+#[test]
+fn date_parts_use_the_viewer_clock() {
+    let ch = channel(
+        r#"catchup="default" catchup-days="1" catchup-source="http://arc.example.com/{Y}{m}{d}-{H}{M}{S}/{utc:Y-m-d_H:M}/{lutc:H}/{utc}/{lutc}""#,
+        "http://l.example.com/x",
+    );
+    // 1_700_000_000 = 2023-11-14 22:13:20 UTC; viewer at UTC+05:30.
+    let req = CatchupRequest {
+        local_offset_secs: 5 * 3600 + 1800,
+        ..REQ
+    };
+    assert_eq!(
+        build_catchup_url(&ch, req).as_deref(),
+        Ok("http://arc.example.com/20231115-034320/2023-11-15_03:43/06/1700000000/1700010000")
+    );
+}

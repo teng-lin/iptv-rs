@@ -10,6 +10,8 @@ pub(super) struct Vars {
     /// Where it ends (Unix seconds).
     pub to: i64,
     pub now: i64,
+    /// Viewer's UTC offset for date-part placeholders.
+    pub local_offset_secs: i32,
 }
 
 impl Vars {
@@ -58,9 +60,10 @@ fn placeholder(token: &str, vars: &Vars) -> Option<String> {
             .filter(|d| *d > 0)
             .map(|d| (v / d).to_string()),
     };
+    let local = |t: i64| t + i64::from(vars.local_offset_secs);
     let formatted = |t: i64| match arg {
         None => Some(t.to_string()),
-        Some(fmt) => Some(format_time(fmt, t)),
+        Some(fmt) => Some(format_time(fmt, local(t))),
     };
     match name {
         "utc" | "start" => formatted(vars.from),
@@ -68,12 +71,15 @@ fn placeholder(token: &str, vars: &Vars) -> Option<String> {
         "lutc" | "now" | "timestamp" => formatted(vars.now),
         "duration" => divided(vars.duration()),
         "offset" => divided(vars.offset()),
-        "Y" | "m" | "d" | "H" | "M" | "S" if arg.is_none() => Some(format_time(name, vars.from)),
+        "Y" | "m" | "d" | "H" | "M" | "S" if arg.is_none() => {
+            Some(format_time(name, local(vars.from)))
+        }
         _ => None,
     }
 }
 
-/// Formats `t` (UTC) with `Y m d H M S` letters; other characters are copied.
+/// Formats the wall clock `t` (Unix seconds already shifted to the wanted
+/// zone) with `Y m d H M S` letters; other characters are copied.
 fn format_time(fmt: &str, t: i64) -> String {
     let w = wall_clock(t, 0);
     let mut out = String::with_capacity(fmt.len() * 2);

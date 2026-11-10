@@ -16,9 +16,10 @@
 //! Template placeholders, in `{x}` or `${x}` form: `utc`/`start` (programme
 //! start), `utcend`/`end`, `lutc`/`now`/`timestamp`, `duration` (seconds),
 //! `offset` (now − start, seconds), `duration:N`/`offset:N` (divided by N),
-//! `Y m d H M S` (start, UTC) and `utc:FMT`/`start:FMT`/`end:FMT`/`utcend:FMT`
-//! where FMT uses the same letters (`{utc:Y-m-d}`). Unknown placeholders are
-//! left untouched.
+//! `Y m d H M S` (start, viewer's clock) and `utc:FMT`/`start:FMT`/`end:FMT`/`utcend:FMT`
+//! where FMT uses the same letters (`{utc:Y-m-d}`, viewer's clock: see
+//! [`CatchupRequest::local_offset_secs`]). Unknown placeholders are left
+//! untouched.
 //!
 //! ## Timing
 //!
@@ -51,6 +52,11 @@ pub struct CatchupRequest {
     /// Where to begin inside the replay, from its start (the programme start
     /// minus `buffer_before_secs`), for seeking. `0` plays from the start.
     pub offset_secs: u32,
+    /// The viewer's UTC offset in seconds at `start`. Date-part placeholders
+    /// (`{Y}`…`{S}`, `{utc:FMT}`) render in this clock, like Kodi's
+    /// locale-based formatting; Unix-number placeholders stay UTC. The host
+    /// resolves its zone (and DST) to this number; no tz database here.
+    pub local_offset_secs: i32,
     /// Only for `catchup="xc"`: the panel's UTC offset (see
     /// [`crate::xtream::ServerClock`]); `0` when unknown.
     pub server_offset_minutes: i32,
@@ -71,6 +77,7 @@ impl CatchupRequest {
             end,
             now,
             offset_secs: 0,
+            local_offset_secs: 0,
             server_offset_minutes: 0,
             default_window_days: DEFAULT_CATCHUP_WINDOW_DAYS,
             buffer_before_secs: 0,
@@ -134,7 +141,12 @@ fn window(req: &CatchupRequest, days: u32) -> Result<Vars, CatchupError> {
     if from >= to || from.max(start) < now - i64::from(days) * 86_400 {
         return Err(CatchupError::OutsideArchive);
     }
-    Ok(Vars { from, to, now })
+    Ok(Vars {
+        from,
+        to,
+        now,
+        local_offset_secs: req.local_offset_secs,
+    })
 }
 
 fn is_http(s: &str) -> bool {
