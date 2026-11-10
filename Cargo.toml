@@ -6,6 +6,7 @@ members = [
     "crates/iptv-settings",
     "crates/iptv-epg",
     "crates/iptv-providers",
+    "crates/iptv-store-sqlite",
     "crates/iptv-app",
 ]
 # nsh generates its own Cargo workspaces under the app crate.
@@ -34,3 +35,7 @@ url = "2.5"
 percent-encoding = "2.3"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 sha1_smol = "1"
+# iptv-store-sqlite (native adapter; bundled SQLite builds for Android via the NDK)
+iptv-store-sqlite = { path = "crates/iptv-store-sqlite" }
+rusqlite = { version = "0.41", default-features = false, features = ["bundled", "cache"] }
+tempfile = "3"
