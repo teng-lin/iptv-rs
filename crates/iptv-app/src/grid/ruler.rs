@@ -1,13 +1,15 @@
-//! The time ruler over the grid: the date and time (light accent) and the
-//! touch steps of the time window over the channel column, the half-hour
-//! slot times (grey) over the programmes, the now line's dot, and a thin
-//! line under it all.
+//! The time ruler over the grid: the date of the day shown and the time
+//! (light accent), the touch steps of the time window and, once it left
+//! now, a Now button over the channel column; the half-hour slot times
+//! (grey) over the programmes and the now line's dot, sliding with them
+//! (`pan.rs`); and a thin line under it all.
 
+use iptv_core::timeline::{BAND, MARGIN};
 use nsh_core::prelude::*;
 
-use super::{NOW_W, fill};
+use super::{NOW_W, Pan, fill};
 use crate::fonts::{RULER, SANS};
-use crate::guide::{STEP, VISIBLE};
+use crate::guide::{PAST, STEP};
 use crate::scale::Scale;
 use crate::theme::{RESTING_ALPHA, TEXT_SECONDARY_ALPHA};
 use crate::{Ui, clock, tint};
@@ -25,13 +27,11 @@ pub(super) fn ruler(
     ui: Ui,
     size: Scale,
     column: fn() -> f32,
-    window: Memo<i32>,
-    now: Memo<i32>,
+    pan: Pan,
     now_x: Memo<Option<f32>>,
     width: Signal<f32>,
 ) -> impl IntoElement {
-    let scale = move || width.get() / VISIBLE as f32;
-    let shift = move |label: &'static str, minutes: i32| {
+    let button = move |label: &'static str| {
         text(label)
             .px(move || size.px(10.0))
             .rounded(move || size.px(4.0))
@@ -39,20 +39,33 @@ pub(super) fn ruler(
             .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA))
             .font_family(SANS)
             .text_size(move || size.px(RULER))
-            .on_press(move || {
-                ui.touched();
-                ui.focus.update(|f| f.shift_window(minutes));
-            })
     };
+    let shift = move |label: &'static str, minutes: i32| {
+        button(label).on_press(move || {
+            ui.touched();
+            let view = crate::lists::view(ui);
+            ui.focus.update(|f| f.shift_window(minutes, &view));
+        })
+    };
+    // Back to now, once the view left it.
+    let now_button = when(
+        move || pan.away(),
+        move || button("Now").on_press(move || pan.to_now()),
+    );
+    // The half hours across the band.
+    let first = move || pan.band().base.div_euclid(STEP) * STEP + STEP;
     let tick = move |i: i32| {
         // The epoch comes with the data; now decides which day is "today".
         text(move || {
             ui.guide_data();
-            now.get();
-            clock(window.get() + i * STEP)
+            ui.focus.with(|f| f.now);
+            clock(first() + i * STEP)
         })
         .absolute()
-        .left(move || px(i as f32 * STEP as f32 * scale() + size.of(TICK_INSET)))
+        .left(move || {
+            let at = (first() + i * STEP - pan.band().base) as f32;
+            px(at * pan.scale() + size.of(TICK_INSET))
+        })
         .number_of_lines(1)
         .font_family(SANS)
         .text_size(move || size.px(RULER))
@@ -73,7 +86,8 @@ pub(super) fn ruler(
                         .items_center()
                         .gap(move || size.px(6.0))
                         .px(move || size.px(16.0))
-                        .child(date_time(ui, size).flex_1())
+                        .child(date_time(ui, size, pan).flex_1())
+                        .child(now_button)
                         .child(shift("‹", -STEP))
                         .child(shift("›", STEP)),
                 )
@@ -81,45 +95,67 @@ pub(super) fn ruler(
                     view()
                         .flex_1()
                         .h_full()
-                        .justify_center()
+                        .overflow_hidden()
                         .on_layout(move |b: &Bounds<Points>| width.set(b.size.width.0))
-                        .children((0..VISIBLE / STEP).map(tick))
                         .child(
-                            // Where the now line meets the ruler.
                             view()
                                 .absolute()
-                                .bottom(move || size.px(-DOT / 2.0))
-                                .w(move || size.px(DOT))
-                                .h(move || size.px(DOT))
-                                .rounded(move || size.px(DOT / 2.0))
-                                .left(move || px(now_x.get().unwrap_or(0.0) - size.of(DOT) / 2.0))
-                                .opacity(move || if now_x.get().is_some() { 1.0_f32 } else { 0.0 })
-                                .bg(move || fill(ui, ui.theme.with(|t| t.guide().now_line)))
-                                .pointer_events(PointerEvents::None),
+                                .inset_0()
+                                .justify_center()
+                                .bind_translate_x(&pan.offset())
+                                .children((0..=BAND / STEP).map(tick)),
                         ),
                 ),
         )
         .child(view().h(px(SEPARATOR_H)).bg(separator))
         .child(
-            // The now line through the separator, so it meets the dot.
+            // The now dot and the line through the separator under it, over
+            // the programmes only, sliding with them.
             view()
                 .absolute()
                 .bottom(px(0.0))
-                .h(move || px(SEPARATOR_H + size.of(DOT) / 2.0))
-                .w(px(NOW_W))
-                .left(move || px(column() + now_x.get().unwrap_or(0.0) - NOW_W / 2.0))
-                .opacity(move || if now_x.get().is_some() { 1.0_f32 } else { 0.0 })
-                .bg(move || fill(ui, ui.theme.with(|t| t.guide().now_line)))
-                .pointer_events(PointerEvents::None),
+                .h(move || px(SEPARATOR_H + size.of(DOT)))
+                .left(move || px(column()))
+                .right(px(0.0))
+                .overflow_hidden()
+                .pointer_events(PointerEvents::None)
+                .child(
+                    view()
+                        .absolute()
+                        .inset_0()
+                        .bind_translate_x(&pan.offset())
+                        .opacity(move || if now_x.get().is_some() { 1.0_f32 } else { 0.0 })
+                        .child(
+                            view()
+                                .absolute()
+                                .top(px(0.0))
+                                .w(move || size.px(DOT))
+                                .h(move || size.px(DOT))
+                                .rounded(move || size.px(DOT / 2.0))
+                                .left(move || px(now_x.get().unwrap_or(0.0) - size.of(DOT) / 2.0))
+                                .bg(move || fill(ui, ui.theme.with(|t| t.guide().now_line))),
+                        )
+                        .child(
+                            view()
+                                .absolute()
+                                .bottom(px(0.0))
+                                .h(move || px(SEPARATOR_H + size.of(DOT) / 2.0))
+                                .w(px(NOW_W))
+                                .left(move || px(now_x.get().unwrap_or(0.0) - NOW_W / 2.0))
+                                .bg(move || fill(ui, ui.theme.with(|t| t.guide().now_line))),
+                        ),
+                ),
         )
 }
 
-/// The date and time at the left of the ruler, in the light accent.
-pub fn date_time(ui: Ui, size: Scale) -> Text {
+/// The date of the day shown (where now sits in its default window) and
+/// the time now, at the left of the ruler in the light accent.
+fn date_time(ui: Ui, size: Scale, pan: Pan) -> Text {
     text(move || {
         ui.guide_data();
         let now = ui.focus.with(|f| f.now);
-        let unix = crate::guide::unix_of(&*crate::schedule(), now);
+        let shown = pan.band().base + MARGIN + PAST;
+        let unix = crate::guide::unix_of(&*crate::schedule(), shown);
         format!(
             "{}  {}",
             iptv_core::clock::date(unix, crate::time::offset_minutes(unix)),
