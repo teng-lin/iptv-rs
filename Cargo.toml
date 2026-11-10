@@ -5,6 +5,7 @@ members = [
     "crates/iptv-nav",
     "crates/iptv-settings",
     "crates/iptv-epg",
+    "crates/iptv-providers",
     "crates/iptv-app",
 ]
 # nsh generates its own Cargo workspaces under the app crate.
@@ -27,3 +28,9 @@ nsh-platform-linux = { path = "/home/blackmyth/src/nsh/crates/nsh-platform-linux
 env_logger = "0.11"
 log = "0.4"
 serde_json = "1"
+# iptv-providers (sans-IO, wasm-safe)
+iptv-providers = { path = "crates/iptv-providers" }
+url = "2.5"
+percent-encoding = "2.3"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+sha1_smol = "1"
