@@ -222,3 +222,82 @@ fn candidates_follow_source_priority() {
     let r = run(&idx, &[pl("p", None, "Alpha One")], &Overrides::new());
     assert_eq!(r.matches[&ChannelKey::from("p")][0].source, SourceId(2));
 }
+
+/// Every candidate `match_channels` returns is a channel the filter wants,
+/// and the filter leaves out channels nothing can match.
+#[test]
+fn match_filter_is_a_superset_of_the_candidates() {
+    let feed = [
+        ch("alpha.example", &["Alpha One"]),
+        ch("Beta.Example", &["Béta Deux"]),
+        ch("gamma.example", &["Gamma"]),
+        ch("gamma-plus.example", &["Gamma +1"]),
+        ch("delta.example", &["Delta News"]),
+        ch("delta2.example", &["Delta News HD"]),
+        ch("epsilon.example", &["UK: Epsilon Kids"]),
+        ch("zeta.example", &["Zeta"]),
+        ch("eta.example", &["Eta"]),
+        ch("unrelated.example", &["Nothing Here"]),
+    ];
+    let mut idx = MatchIndex::new();
+    idx.add_source(SourceId(1), 0, feed.iter());
+    let mut tagged = pl("e", None, "Epsilon Kids");
+    tagged.tvg_name = Some("FR: Epsilon Kids");
+    let playlist = [
+        pl("a", Some(" ALPHA.example "), "Something"),
+        pl("b", None, "BETA DEUX"),
+        pl("g", Some("missing.example"), "Gamma"),
+        pl("d", None, "Delta News HD"),
+        tagged,
+        pl("z", Some("zeta.example"), "Zeta"),
+        pl("h", None, "Eta"),
+    ];
+    let mut overrides = Overrides::new();
+    // An override wins: the playlist channel's own id and name no longer
+    // count, the named EPG channel does (declared or not).
+    overrides.insert(
+        "z".into(),
+        Override::Epg {
+            source: Some(SourceId(1)),
+            epg_id: "undeclared.example".into(),
+        },
+    );
+    overrides.insert("h".into(), Override::NoEpg);
+    let result = run(&idx, &playlist, &overrides);
+    let filter = MatchFilter::new(
+        playlist.iter().map(|p| PlaylistChannel {
+            key: &p.key,
+            tvg_id: p.tvg_id,
+            name: p.name,
+            tvg_name: p.tvg_name,
+        }),
+        &overrides,
+    );
+    for cand in result.matches.values().flatten() {
+        let declared = feed.iter().find(|c| c.id == cand.epg_id);
+        let wanted = match declared {
+            Some(c) => filter.wants_channel(cand.source, c),
+            None => filter.wants_id(cand.source, &cand.epg_id),
+        };
+        assert!(wanted, "{cand:?}");
+    }
+    let wanted: Vec<&str> = feed
+        .iter()
+        .filter(|c| filter.wants_channel(SourceId(1), c))
+        .map(|c| c.id.as_str())
+        .collect();
+    assert_eq!(
+        wanted,
+        [
+            "alpha.example",
+            "Beta.Example",
+            "gamma.example",
+            // Quality tags fold away: both Delta channels share the key.
+            "delta.example",
+            "delta2.example",
+            "epsilon.example"
+        ]
+    );
+    assert!(filter.wants_id(SourceId(1), "undeclared.example"));
+    assert!(!filter.wants_id(SourceId(2), "undeclared.example"));
+}
