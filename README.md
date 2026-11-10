@@ -13,7 +13,7 @@ Android video/input research: [`docs/research/android-video-and-input.md`](docs/
 
 | Path | What |
 | --- | --- |
-| `crates/iptv-core` | UI-independent core: guide model and focus, player panels, context menus. No NSH, wasm-safe |
+| `crates/iptv-core` | UI-independent core: guide model and focus, channel lists and the rail/groups/guide navigation, favourites, player panels, context menus. No NSH, wasm-safe |
 | `crates/iptv-nav` | Remote keys, short/long press, layered key → action map. Wasm-safe |
 | `crates/iptv-settings` | One settings schema: catalogue, scoped store, versioned backup JSON. Wasm-safe |
 | `crates/iptv-epg` | Sans-IO XMLTV parser (gzip), EPG channel matching, compact guide store. Wasm-safe |
