@@ -1,5 +1,5 @@
 //! The persistent video layer: one `tv.player` native component (registered by
-//! the Android host, `hosts/android`), laid out per view mode — the preview
+//! the Android host, `hosts/android`, and on Linux by `mpv`), laid out per view mode — the preview
 //! rectangle in the info panel, or the whole screen under an overlay or under
 //! nothing. Changing modes changes layout only; the player is never recreated.
 //! What it plays comes from `player.rs` (resolution, retries).
@@ -10,10 +10,17 @@ use serde_json::{Value, json};
 use crate::panels::{INFO_H, INFO_PAD_X, INFO_PAD_Y, PREVIEW_H, PREVIEW_W};
 use crate::{Ui, ViewMode};
 
-/// Synthetic local HLS from `tools/make-hls-fixtures.sh --serve`, reached
-/// through the emulator's host alias. Three test patterns cycle by channel.
+/// The local mock server (`tools/mock-server.py`) as the player reaches it:
+/// through the Android emulator's host alias, or on this machine.
+#[cfg(target_os = "android")]
+const MOCK_SERVER: &str = "http://10.0.2.2:8089";
+#[cfg(not(target_os = "android"))]
+const MOCK_SERVER: &str = "http://127.0.0.1:8089";
+
+/// Synthetic local HLS from `tools/make-hls-fixtures.sh --serve`. Three
+/// test patterns cycle by channel.
 pub fn stream_url(channel: usize) -> String {
-    format!("http://10.0.2.2:8089/ch{}/index.m3u8", channel % 3)
+    format!("{MOCK_SERVER}/ch{}/index.m3u8", channel % 3)
 }
 
 /// The synthetic archive URL (`tools/mock-server.py` serves `/archive/*`)
@@ -25,7 +32,7 @@ pub fn catchup_url(channel: usize, start: i32, offset: i32) -> String {
     let utc = crate::guide::unix_of(&*s, p.start) + i64::from(offset);
     let duration = (p.end - p.start) * 60 - offset;
     format!(
-        "http://10.0.2.2:8089/archive/ch{}/index.m3u8?utc={utc}&duration={duration}",
+        "{MOCK_SERVER}/archive/ch{}/index.m3u8?utc={utc}&duration={duration}",
         channel % 3
     )
 }
