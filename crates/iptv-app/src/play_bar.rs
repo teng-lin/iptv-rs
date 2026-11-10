@@ -36,6 +36,8 @@ use icons::Icon;
 
 const WHITE: u32 = 0xFFFFFF;
 const PANEL_ALPHA: u8 = 0xE0;
+/// The frame rate's room at the right end ("120 fps").
+const FPS_W: f32 = 48.0;
 /// Volume and window full screen are the app's on the desktop only
 /// (Android keeps the system volume).
 const DESKTOP: bool = cfg!(target_os = "linux");
@@ -65,7 +67,8 @@ pub fn shows(ui: Ui) -> bool {
         && available()
 }
 
-/// Leaving full screen or a key hides the bar.
+/// Leaving full screen or a key hides the bar; it stays while a popup
+/// over the video (a chooser, the programme details) is open.
 pub fn bind(ui: Ui) {
     effect(move || {
         let away = ui.mode.get() != ViewMode::Fullscreen || ui.keys_shown();
@@ -73,6 +76,22 @@ pub fn bind(ui: Ui) {
             ui.play_bar.update(PlayBar::hide);
         }
     });
+    let popup =
+        computed(move || ui.chooser.with(Option::is_some) || ui.description.with(Option::is_some));
+    effect(move || {
+        let open = popup.get();
+        if untracked(|| ui.play_bar.with(|b| b.held != open)) {
+            untracked(|| update(ui, |b, now| b.hold(open, now)));
+        }
+    });
+}
+
+/// The bar's height above the window's bottom (with its margin): popups
+/// over the video keep clear of it.
+pub fn height() -> f32 {
+    let row = target() + 8.0;
+    // Panel padding, the row, the gap, the progress line, the margin.
+    6.0 + row + 4.0 + 20.0 + 10.0 + 16.0
 }
 
 /// Changes the bar's state and (re)schedules its hiding.
@@ -237,8 +256,12 @@ fn left(ui: Ui) -> impl IntoElement {
             .filter(|(w, h)| *w > 0 && *h > 0)
             .map(|(w, h)| resolution_class(w, h).to_owned())
     };
+    // It gives way first on a narrow window: the channel's name shortens,
+    // then the rest is cut, never the buttons beside it.
     view()
         .flex_1()
+        .min_w(px(0.0))
+        .overflow_hidden()
         .flex_row()
         .items_center()
         .gap(px(8.0))
@@ -312,6 +335,7 @@ fn centre(ui: Ui) -> impl IntoElement {
         crate::seek::step(ui, delta);
     };
     view()
+        .flex_shrink_0()
         .flex_row()
         .items_center()
         .gap(px(6.0))
@@ -363,8 +387,12 @@ fn right(ui: Ui) -> impl IntoElement {
             .find(|k| ui.player.main().tracks.with(|t| t.has_choice(*k)))
     };
     let playing = move || ui.playing.get().is_some();
+    // Never narrower than its buttons (seven on the desktop, six
+    // elsewhere) and the frame rate: they must not slide under the centre.
+    let buttons = if DESKTOP { 7.0 } else { 6.0 };
     view()
         .flex_1()
+        .min_w(px(buttons * size + (buttons - 1.0) * 2.0 + FPS_W + 6.0))
         .flex_row()
         .items_center()
         .justify_end()
@@ -394,7 +422,12 @@ fn right(ui: Ui) -> impl IntoElement {
             move || tracks().is_some(),
             size,
             move || {
-                if let Some(kind) = untracked(tracks) {
+                let open = ui.chooser.with_untracked(|c| {
+                    c.as_ref().is_some_and(|c| matches!(c.kind, Kind::Track(_)))
+                });
+                if open {
+                    chooser::close(ui);
+                } else if let Some(kind) = untracked(tracks) {
                     chooser::open(ui, Kind::Track(kind));
                 }
             },
@@ -413,7 +446,7 @@ fn right(ui: Ui) -> impl IntoElement {
             || Icon::PictureSize,
             always,
             size,
-            move || chooser::open(ui, Kind::Picture),
+            move || chooser::toggle(ui, Kind::Picture),
         ))
         .child(button(
             ui,
@@ -455,14 +488,21 @@ fn right(ui: Ui) -> impl IntoElement {
         ))
         .child(
             text(move || fps_label(ui.player.main().format.with(|f| f.fps)).unwrap_or_default())
+                .w(px(FPS_W))
+                .text_right()
                 .ml(px(6.0))
                 .text_size(px(12.0))
                 .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA)),
         )
 }
 
-/// The playing programme's details (the description popover).
+/// The playing programme's details (the description popover), or closes
+/// them when they show.
 fn details(ui: Ui) {
+    if ui.description.with_untracked(Option::is_some) {
+        crate::menu_view::close(ui);
+        return;
+    }
     let (channel, p) = untracked(|| progress::programme(ui));
     ui.description.set(Some(Origin {
         channel,

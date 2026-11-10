@@ -164,6 +164,16 @@ pub fn close(ui: Ui) {
     ui.chooser.set(None);
 }
 
+/// Opens `kind`, or closes it when it is the one open (a pointer's second
+/// press on the button that opened it).
+pub fn toggle(ui: Ui, kind: Kind) {
+    if ui.chooser.with_untracked(|c| c.as_ref().map(|c| c.kind)) == Some(kind) {
+        close(ui);
+    } else {
+        open(ui, kind);
+    }
+}
+
 pub fn move_focus(ui: Ui, step: isize) {
     ui.chooser
         .update(|c| c.iter_mut().for_each(|c| c.list.move_focus(step)));
@@ -294,6 +304,14 @@ pub fn layer(ui: Ui) -> impl IntoElement {
         .justify_center()
         .pt_safe_area()
         .p(px(40.0))
+        // Clear of the play bar while it shows.
+        .pb(move || {
+            px(if crate::play_bar::shows(ui) {
+                crate::play_bar::height() + 16.0
+            } else {
+                40.0
+            })
+        })
         .opacity(move || if open() { 1.0_f32 } else { 0.0 })
         .pointer_events(move || {
             if open() {
@@ -302,6 +320,18 @@ pub fn layer(ui: Ui) -> impl IntoElement {
                 PointerEvents::None
             }
         })
+        // A tap beside the chooser closes it (the play bar, over this
+        // layer, keeps its own presses).
+        .child(
+            view()
+                .absolute()
+                .inset_0()
+                .label("Close the chooser")
+                .on_press(move || {
+                    ui.touched();
+                    close(ui);
+                }),
+        )
         .child(
             view()
                 .w(move || {

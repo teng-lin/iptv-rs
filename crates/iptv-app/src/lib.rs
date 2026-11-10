@@ -499,12 +499,14 @@ pub fn App() -> impl IntoElement {
         )
         .child(player_panels::status(ui))
         .child(player_panels::layer(ui))
-        .child(play_bar::layer(ui))
         .child(multiview_view::layer(ui))
         .child(channels_view::layer(ui))
         .child(search_view::layer(ui))
         .child(menu_view::layer(ui))
         .child(chooser::layer(ui))
+        // Over the popups it opens (choosers, programme details), so its
+        // buttons stay usable and toggle them.
+        .child(play_bar::layer(ui))
         .child(fav_editor::layer(ui))
         .child(settings_view::layer(ui))
         .child(guide_assign_view::layer(ui))

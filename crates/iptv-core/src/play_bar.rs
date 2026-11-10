@@ -4,7 +4,8 @@
 //!
 //! The mouse moving over the video shows it; a tap (or a click) on the
 //! video shows it, and another hides it. It hides once nothing happened
-//! for [`HIDE_AFTER_MS`], but not while the mouse rests on it. Using one
+//! for [`HIDE_AFTER_MS`], but not while the mouse rests on it nor while a
+//! popup it opened (a chooser, the programme details) is open. Using one
 //! of its controls counts as something happening. Times are milliseconds
 //! on the caller's monotonic clock (no clock access here).
 
@@ -16,6 +17,8 @@ pub struct PlayBar {
     pub shown: bool,
     /// The mouse is over the bar: it stays.
     pub hovered: bool,
+    /// A popup it opened is open: it stays.
+    pub held: bool,
     hide_at_ms: Option<u64>,
 }
 
@@ -52,6 +55,15 @@ impl PlayBar {
         }
     }
 
+    /// A popup opened (`true`) or closed over the video: the bar stays
+    /// while one is open, and the delay starts again once it closes.
+    pub fn hold(&mut self, open: bool, now_ms: u64) {
+        self.held = open;
+        if self.shown {
+            self.restart(now_ms);
+        }
+    }
+
     pub fn hide(&mut self) {
         self.shown = false;
         self.hovered = false;
@@ -59,9 +71,13 @@ impl PlayBar {
     }
 
     /// When it hides unless something happens (for scheduling); `None`
-    /// while hidden or while the mouse rests on it.
+    /// while hidden, while the mouse rests on it or a popup is open.
     pub fn hide_at_ms(&self) -> Option<u64> {
-        if self.hovered { None } else { self.hide_at_ms }
+        if self.hovered || self.held {
+            None
+        } else {
+            self.hide_at_ms
+        }
     }
 
     /// Hides once the deadline passed. Returns whether it hid.
@@ -123,6 +139,26 @@ mod tests {
         bar.hover(false, 60_000);
         assert!(!bar.tick(61_000));
         assert!(bar.tick(60_000 + HIDE_AFTER_MS));
+    }
+
+    #[test]
+    fn it_stays_while_a_popup_it_opened_is_open() {
+        let mut bar = PlayBar::default();
+        bar.tapped(0);
+        bar.hold(true, 1_000);
+        assert_eq!(bar.hide_at_ms(), None);
+        assert!(!bar.tick(60_000));
+        assert!(bar.shown);
+        // The popup closed: hidden after the delay, not at once.
+        bar.hold(false, 60_000);
+        assert!(!bar.tick(61_000));
+        assert!(bar.tick(60_000 + HIDE_AFTER_MS));
+        // A popup open while it hides (the remote's) leaves it hidden.
+        bar.hold(true, 70_000);
+        assert!(!bar.shown);
+        // Hiding keeps the hold: it still knows the popup is open.
+        bar.tapped(71_000);
+        assert_eq!(bar.hide_at_ms(), None);
     }
 
     #[test]
