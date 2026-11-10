@@ -16,9 +16,13 @@
 //! caller. Builds for `wasm32-unknown-unknown`.
 
 mod channels;
+mod history;
 mod programmes;
+mod state;
 mod text;
 
 pub use channels::{ChannelHit, ChannelIndex, ChannelSearchOptions};
+pub use history::SearchHistory;
 pub use programmes::{GroupBy, ProgrammeHit, ProgrammeIndex, ProgrammeSearchOptions};
+pub use state::{Focus, Phase, ResultId, SearchAction, SearchEffect, SearchState, Tab};
 pub use text::{MIN_INFIX, MatchQuality, Query, fold, tokens};
