@@ -56,7 +56,7 @@ fn imports_a_streamed_playlist_with_headers_and_progress() {
     let first = &catalog.channels[0];
     assert_eq!(first.epg_id.as_deref(), Some("ch0.example"));
     assert_eq!(first.catch_up.as_ref().unwrap().kind, CatchUpKind::Default);
-    assert_eq!(first.catch_up.as_ref().unwrap().days, 3);
+    assert_eq!(first.catch_up.as_ref().unwrap().days, Some(3));
     let SourceMeta::M3u { header } = &catalog.source else {
         panic!("not m3u")
     };
