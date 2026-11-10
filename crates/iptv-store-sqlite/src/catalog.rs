@@ -48,7 +48,7 @@ fn insert_groups(conn: &Connection, source: SourceId, groups: &[Group]) -> Resul
     Ok(inserted)
 }
 
-/// Inserts membership rows for one item; `table` is a fixed table name.
+/// Inserts membership rows for one item; `sql` is a fixed statement.
 fn insert_members(
     conn: &Connection,
     sql: &str,

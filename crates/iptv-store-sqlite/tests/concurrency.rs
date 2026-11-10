@@ -1,0 +1,110 @@
+//! Readers on a second connection while a writer replaces a catalog (WAL).
+
+mod common;
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Barrier};
+use std::thread;
+use std::time::Duration;
+
+use common::*;
+use iptv_store_sqlite::{ChannelQuery, OpenOptions, Store, StoreError};
+
+#[test]
+fn reader_sees_the_last_commit_while_a_write_is_pending() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.db");
+    let mut writer = Store::open(&path).unwrap();
+    assert_eq!(writer.journal_mode().unwrap(), "wal");
+    let src = writer.add_source(&xtream_source("Xt")).unwrap();
+    replace(&mut writer, src, &catalog(10, 2, XT_PASSWORD));
+
+    let mut reader = Store::open_with(
+        &path,
+        &OpenOptions {
+            busy_timeout: Duration::from_millis(50),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    // A second writer holds the write lock with uncommitted deletes.
+    let raw = rusqlite::Connection::open(&path).unwrap();
+    raw.execute_batch(
+        "BEGIN IMMEDIATE;
+         DELETE FROM channel_groups;
+         DELETE FROM channels;",
+    )
+    .unwrap();
+
+    // Reads proceed on the last committed snapshot, without waiting.
+    let all = ChannelQuery::default();
+    assert_eq!(reader.channel_count(src, &all).unwrap(), 10);
+    assert_eq!(reader.load_channels(src, &all).unwrap().len(), 10);
+    // Writes wait for the lock, then fail as busy instead of hanging.
+    let id = catalog(1, 1, XT_PASSWORD).channels[0].id.clone();
+    match reader.set_favourite(src, &id, true) {
+        Err(StoreError::Sqlite(rusqlite::Error::SqliteFailure(e, _))) => {
+            assert_eq!(e.code, rusqlite::ErrorCode::DatabaseBusy);
+        }
+        other => panic!("expected busy, got {other:?}"),
+    }
+
+    raw.execute_batch("ROLLBACK").unwrap();
+    replace(&mut writer, src, &catalog(4, 1, XT_PASSWORD));
+    assert_eq!(reader.channel_count(src, &all).unwrap(), 4);
+}
+
+#[test]
+fn concurrent_reads_never_see_a_partial_catalog() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.db");
+    let mut writer = Store::open(&path).unwrap();
+    let src = writer.add_source(&xtream_source("Xt")).unwrap();
+    let small = catalog(2_000, 20, XT_PASSWORD);
+    let large = catalog(3_000, 30, "other-pass");
+    replace(&mut writer, src, &small);
+
+    let done = Arc::new(AtomicBool::new(false));
+    let start = Arc::new(Barrier::new(2));
+    let reader = {
+        let (done, start, path) = (done.clone(), start.clone(), path.clone());
+        thread::spawn(move || {
+            let reader = Store::open(&path).unwrap();
+            start.wait();
+            let mut reads = 0u32;
+            let mut seen = std::collections::BTreeSet::new();
+            while !done.load(Ordering::Acquire) || reads < 5 {
+                let count = reader.channel_count(src, &ChannelQuery::default()).unwrap();
+                assert!(count == 2_000 || count == 3_000, "partial catalog: {count}");
+                let page = reader
+                    .load_channels(
+                        src,
+                        &ChannelQuery {
+                            offset: 1_990,
+                            limit: Some(20),
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap();
+                assert!(
+                    page.len() == 10 || page.len() == 20,
+                    "torn page: {}",
+                    page.len()
+                );
+                seen.insert(count);
+                reads += 1;
+            }
+            (reads, seen)
+        })
+    };
+    start.wait();
+    for round in 0..10 {
+        let next = if round % 2 == 0 { &large } else { &small };
+        replace(&mut writer, src, next);
+    }
+    done.store(true, Ordering::Release);
+    let (reads, seen) = reader.join().unwrap();
+    assert!(reads >= 5);
+    assert!(!seen.is_empty());
+}

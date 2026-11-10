@@ -124,6 +124,9 @@ impl Store {
         // Durable across app crashes in WAL; a power cut may lose the last
         // commit, never corrupt the file.
         conn.pragma_update(None, "synchronous", "NORMAL")?;
+        // 16 MiB page cache (default 2 MiB): a 50k-channel refresh touches
+        // several index B-trees.
+        conn.pragma_update(None, "cache_size", -16384)?;
         migrate::migrate_to(&mut conn, SCHEMA_VERSION, system_now())?;
         let fts_index = search::prepare(&mut conn)?;
         Ok(Self {

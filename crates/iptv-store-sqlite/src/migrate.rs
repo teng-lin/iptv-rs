@@ -9,7 +9,7 @@
 //! schema in `tests/fixtures/`).
 //!
 //! Rules for new migrations: add `000N_name.sql`, append it to
-//! [`MIGRATIONS`], snapshot the resulting schema into
+//! `MIGRATIONS`, snapshot the resulting schema into
 //! `tests/fixtures/schema_vN.sql` (see `tests/migrations.rs`), and add a
 //! seed-data fixture for the previous version. A migration that rebuilds a
 //! table must not rely on `PRAGMA foreign_keys` (it cannot change inside a

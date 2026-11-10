@@ -147,13 +147,45 @@ fn collect(stmt: &mut rusqlite::Statement<'_>, args: Vec<Value>) -> Result<Vec<C
     Ok(out)
 }
 
+/// What a statement needs besides the query itself.
+#[derive(Clone, Copy)]
+enum Purpose {
+    /// Rows; `manual` says the list has a manual order to sort by.
+    Rows {
+        manual: bool,
+    },
+    Count,
+}
+
 /// `FROM … WHERE …` and the `ORDER BY` terms for a query; parameters are
-/// appended to `args`.
-fn build(source: SourceId, q: &ChannelQuery, args: &mut Vec<Value>) -> (String, String) {
+/// appended to `args`. Joins are added only when the purpose needs them, so
+/// common lists stay index-ordered scans (no sort over the whole source).
+fn build(
+    source: SourceId,
+    q: &ChannelQuery,
+    purpose: Purpose,
+    args: &mut Vec<Value>,
+) -> (String, String) {
     args.push(Value::Integer(source.0));
-    // The manual-order join is only needed to sort in effective order.
-    let manual = |scope: &str| {
-        if q.order == ChannelOrder::Effective {
+    let rows = matches!(purpose, Purpose::Rows { .. });
+    let manual =
+        matches!(purpose, Purpose::Rows { manual: true }) && q.order == ChannelOrder::Effective;
+    let overlay = rows || !q.include_hidden || q.exclude_blocked;
+    let favourites = if q.favourites_only {
+        " JOIN favourites f ON f.source_id = c.source_id AND f.channel_id = c.id"
+    } else if rows {
+        " LEFT JOIN favourites f ON f.source_id = c.source_id AND f.channel_id = c.id"
+    } else {
+        ""
+    };
+    let mut joins = String::new();
+    if overlay {
+        joins.push_str(
+            " LEFT JOIN channel_overlays o ON o.source_id = c.source_id AND o.channel_id = c.id",
+        );
+    }
+    let manual_join = |scope: &str| {
+        if manual {
             format!(
                 " LEFT JOIN manual_order mo ON mo.source_id = c.source_id
                      AND mo.scope = {scope} AND mo.channel_id = c.id"
@@ -162,16 +194,25 @@ fn build(source: SourceId, q: &ChannelQuery, args: &mut Vec<Value>) -> (String, 
             String::new()
         }
     };
-    let by_manual = "mo.position IS NULL, mo.position";
+    let by_manual = if manual {
+        "mo.position IS NULL, mo.position"
+    } else {
+        "c.position"
+    };
     let (mut from, effective) = match &q.scope {
+        // Favourites are few: drive the scan from them, in their order.
         ChannelScope::All if q.favourites_only => (
-            format!("FROM channels c {OVERLAY_JOINS} WHERE c.source_id = ?1"),
+            format!(
+                "FROM favourites f
+                 JOIN channels c ON c.source_id = f.source_id AND c.id = f.channel_id{joins}
+                 WHERE f.source_id = ?1"
+            ),
             "f.position",
         ),
         ChannelScope::All => (
             format!(
-                "FROM channels c {OVERLAY_JOINS}{} WHERE c.source_id = ?1",
-                manual("''")
+                "FROM channels c{joins}{favourites}{} WHERE c.source_id = ?1",
+                manual_join("''")
             ),
             by_manual,
         ),
@@ -181,9 +222,9 @@ fn build(source: SourceId, q: &ChannelQuery, args: &mut Vec<Value>) -> (String, 
                 format!(
                     "FROM channel_groups m
                      JOIN channels c ON c.source_id = m.source_id AND c.id = m.channel_id
-                     {OVERLAY_JOINS}{}
+                     {joins}{favourites}{}
                      WHERE m.source_id = ?1 AND m.group_id = ?2",
-                    manual("?2")
+                    manual_join("?2")
                 ),
                 by_manual,
             )
@@ -195,16 +236,13 @@ fn build(source: SourceId, q: &ChannelQuery, args: &mut Vec<Value>) -> (String, 
                     "FROM custom_group_members cm
                      JOIN custom_groups cg ON cg.id = cm.group_id
                      JOIN channels c ON c.source_id = cg.source_id AND c.id = cm.channel_id
-                     {OVERLAY_JOINS}
+                     {joins}{favourites}
                      WHERE cg.source_id = ?1 AND cm.group_id = ?2"
                 ),
                 "cm.position",
             )
         }
     };
-    if q.favourites_only {
-        from.push_str(" AND f.channel_id IS NOT NULL");
-    }
     if !q.include_hidden {
         from.push_str(" AND COALESCE(o.hidden, 0) = 0");
     }
@@ -223,12 +261,30 @@ fn build(source: SourceId, q: &ChannelQuery, args: &mut Vec<Value>) -> (String, 
 }
 
 impl Store {
+    /// Whether the list of `scope` has a stored manual order.
+    fn has_manual_order(&self, source: SourceId, scope: &ChannelScope) -> Result<bool> {
+        let key = match scope {
+            ChannelScope::All => "",
+            ChannelScope::Group(g) => g.as_str(),
+            ChannelScope::Custom(_) => return Ok(false),
+        };
+        Ok(self
+            .conn
+            .prepare_cached(
+                "SELECT EXISTS (SELECT 1 FROM manual_order WHERE source_id = ?1 AND scope = ?2)",
+            )?
+            .query_row(rusqlite::params![source.0, key], |r| r.get(0))?)
+    }
+
     /// Channels of one source with overlays applied, filtered, in the
     /// requested order, paged. Overlays of channels that are not in the
     /// catalog are never returned (see [`Store::orphaned_overlays`]).
     pub fn load_channels(&self, source: SourceId, query: &ChannelQuery) -> Result<Vec<ChannelRow>> {
+        let manual = query.order == ChannelOrder::Effective
+            && !(query.favourites_only && query.scope == ChannelScope::All)
+            && self.has_manual_order(source, &query.scope)?;
         let mut args = Vec::new();
-        let (from, order) = build(source, query, &mut args);
+        let (from, order) = build(source, query, Purpose::Rows { manual }, &mut args);
         let sql = format!(
             "SELECT {ROW_COLUMNS} {from} ORDER BY {order} LIMIT {} OFFSET {}",
             query.limit.map_or(-1, i64::from),
@@ -241,7 +297,7 @@ impl Store {
     /// Rows `load_channels` would return without paging.
     pub fn channel_count(&self, source: SourceId, query: &ChannelQuery) -> Result<u64> {
         let mut args = Vec::new();
-        let (from, _) = build(source, query, &mut args);
+        let (from, _) = build(source, query, Purpose::Count, &mut args);
         let mut stmt = self
             .conn
             .prepare_cached(&format!("SELECT COUNT(*) {from}"))?;
