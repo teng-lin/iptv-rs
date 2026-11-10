@@ -11,3 +11,4 @@ pub mod guide;
 pub mod menu;
 pub mod panels;
 pub mod player_options;
+pub mod wizard;
