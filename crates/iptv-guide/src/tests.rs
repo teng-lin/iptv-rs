@@ -192,3 +192,12 @@ fn a_catalog_becomes_grouped_channels() {
     assert_eq!(s.catchup_days(0), 2);
     assert_eq!(s.catchup_days(1), 0);
 }
+
+#[test]
+fn the_concrete_schedule_is_reachable_behind_the_trait() {
+    let s: std::rc::Rc<dyn Schedule> = std::rc::Rc::new(schedule());
+    let epg = s.as_any().and_then(|a| a.downcast_ref::<EpgSchedule>());
+    assert!(epg.is_some_and(|e| e.channel(0).is_some()));
+    let synthetic: &dyn Schedule = &iptv_core::guide::SyntheticSchedule;
+    assert!(synthetic.as_any().is_none());
+}

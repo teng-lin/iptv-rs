@@ -237,6 +237,10 @@ impl Schedule for EpgSchedule {
         iptv_providers::m3u::build_catchup_url(c, req).ok()
     }
 
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+
     fn title(&self, channel: usize, program: Program) -> String {
         let found = self
             .key(channel)

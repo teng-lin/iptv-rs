@@ -84,6 +84,11 @@ pub trait Schedule {
     fn catchup_url(&self, _channel: usize, _program: Program) -> Option<String> {
         None
     }
+    /// The concrete schedule, for features that need more than this trait
+    /// (programme search reads the EPG store behind the real schedule).
+    fn as_any(&self) -> Option<&dyn core::any::Any> {
+        None
+    }
 }
 
 /// Deterministic synthetic guide data: [`CHANNELS`] channels in [`GROUPS`]
