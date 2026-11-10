@@ -52,6 +52,28 @@ pub const EPG_UPDATE_ON_PLAYLIST_CHANGE: BoolKey = BoolKey("epg.update_on_playli
 pub const EPG_KEEP_PAST: DurationKey = DurationKey("epg.keep_past");
 pub const EPG_STORE_DESCRIPTIONS: BoolKey = BoolKey("epg.store_descriptions");
 
+// Startup.
+pub const RESUME_LAST_CHANNEL: BoolKey = BoolKey("general.resume_last_channel");
+
+// Appearance over video.
+pub const UI_TRANSPARENCY: IntKey = IntKey("appearance.ui_transparency");
+
+// Guide and player behaviour.
+pub const BACK_RETURNS_TO_NOW: BoolKey = BoolKey("guide.back_returns_to_now");
+pub const INFO_ON_SWITCH: BoolKey = BoolKey("player.info_on_switch");
+
+// Catch-up seeking.
+pub const SEEK_KEYS: EnumKey = EnumKey("catchup.seek_keys");
+pub const FORWARD_STEP: DurationKey = DurationKey("catchup.forward_step");
+pub const REWIND_STEP: DurationKey = DurationKey("catchup.rewind_step");
+pub const TIMEBAR_STEP: DurationKey = DurationKey("catchup.timebar_step");
+
+// Search.
+pub const SEARCH_FAVORITES_FIRST: BoolKey = BoolKey("search.favorites_first");
+pub const SEARCH_INCLUDE_PAST_WITHOUT_CATCHUP: BoolKey =
+    BoolKey("search.include_past_without_catchup");
+pub const SEARCH_STAY: BoolKey = BoolKey("search.stay_on_search");
+
 /// Every typed key with its expected type name, for the schema test.
 pub const ALL: &[(&str, &str)] = &[
     (LONG_PRESS.0, "duration"),
@@ -75,4 +97,15 @@ pub const ALL: &[(&str, &str)] = &[
     (EPG_UPDATE_ON_PLAYLIST_CHANGE.0, "bool"),
     (EPG_KEEP_PAST.0, "duration"),
     (EPG_STORE_DESCRIPTIONS.0, "bool"),
+    (RESUME_LAST_CHANNEL.0, "bool"),
+    (UI_TRANSPARENCY.0, "integer"),
+    (BACK_RETURNS_TO_NOW.0, "bool"),
+    (INFO_ON_SWITCH.0, "bool"),
+    (SEEK_KEYS.0, "enum"),
+    (FORWARD_STEP.0, "duration"),
+    (REWIND_STEP.0, "duration"),
+    (TIMEBAR_STEP.0, "duration"),
+    (SEARCH_FAVORITES_FIRST.0, "bool"),
+    (SEARCH_INCLUDE_PAST_WITHOUT_CATCHUP.0, "bool"),
+    (SEARCH_STAY.0, "bool"),
 ];
