@@ -7,6 +7,7 @@ pub use iptv_core::guide;
 pub mod theme;
 
 mod chooser;
+mod fav_editor;
 mod grid;
 mod input;
 mod menu_view;
@@ -21,6 +22,7 @@ use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
+use iptv_core::editor::FavoritesEditor;
 use iptv_core::menu::{Menu, Origin};
 use iptv_core::panels::Panels;
 use iptv_core::player_options::{PictureSettings, SleepTimer};
@@ -105,6 +107,8 @@ pub struct Ui {
     pub sleep: Signal<SleepTimer>,
     /// The open chooser over the video (picture size, sleep timer).
     pub chooser: Signal<Option<chooser::Open>>,
+    /// The favourites editor, when open.
+    pub editor: Signal<Option<FavoritesEditor>>,
 }
 
 impl Ui {
@@ -270,6 +274,7 @@ pub fn App() -> impl IntoElement {
         picture: signal(PictureSettings::default()),
         sleep: signal(SleepTimer::default()),
         chooser: signal(None),
+        editor: signal(None),
     };
     // Leaving full screen closes the panels.
     effect(move || {
@@ -363,6 +368,7 @@ pub fn App() -> impl IntoElement {
         .child(player_panels::layer(ui))
         .child(menu_view::layer(ui))
         .child(chooser::layer(ui))
+        .child(fav_editor::layer(ui))
 }
 
 /// Back: player panels → hidden; full screen/overlay → guide; guide →
@@ -372,10 +378,15 @@ fn bind_back(ui: Ui) {
         let panels = ui.panels.with(|p| p.shown) != iptv_core::panels::Shown::Hidden;
         let menu = ui.menu.with(Option::is_some)
             || ui.description.with(Option::is_some)
-            || ui.chooser.with(Option::is_some);
+            || ui.chooser.with(Option::is_some)
+            || ui.editor.with(Option::is_some);
         (ui.mode.get(), ui.focus.with(|f| f.pane), panels || menu)
     });
     effect(move || match back_target.get() {
+        _ if ui.editor.with(Option::is_some) => on_back_press(move || {
+            fav_editor::close(ui);
+            true
+        }),
         _ if ui.chooser.with(Option::is_some) => on_back_press(move || {
             chooser::close(ui);
             true

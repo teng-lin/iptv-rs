@@ -6,6 +6,7 @@
 //! Planned (see `.plans/`): domain, providers, epg, nav, player-ctl,
 //! settings and view models as separate crates.
 
+pub mod editor;
 pub mod guide;
 pub mod menu;
 pub mod panels;

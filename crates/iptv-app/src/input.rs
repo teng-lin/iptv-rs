@@ -63,6 +63,9 @@ struct Nav {
 
 /// The surface that owns input now.
 pub fn context(ui: &Ui) -> Context {
+    if ui.editor.with(Option::is_some) {
+        return Context::Editor;
+    }
     let overlay = ui.menu.with(Option::is_some)
         || ui.description.with(Option::is_some)
         || ui.chooser.with(Option::is_some);
@@ -175,6 +178,18 @@ fn apply(ui: Ui, action: Action) {
     ui.update_panels(|p, now| p.touch(now));
     let controls = ui.panels.with(|p| p.captures_input()) && ui.mode.get() == ViewMode::Fullscreen;
     let mv = |m: Move| ui.focus.update(|f| f.apply(m, &*crate::schedule()));
+    if ui.editor.with(Option::is_some) {
+        match action {
+            Action::MoveUp => crate::fav_editor::move_focus(ui, -1),
+            Action::MoveDown => crate::fav_editor::move_focus(ui, 1),
+            Action::Select => crate::fav_editor::toggle(ui),
+            Action::MoveLeft => crate::fav_editor::clear_group(ui),
+            Action::MoveRight => crate::fav_editor::set_group(ui),
+            Action::Back => crate::fav_editor::close(ui),
+            _ => {}
+        }
+        return;
+    }
     if ui.chooser.with(Option::is_some) {
         match action {
             Action::MoveUp => crate::chooser::move_focus(ui, -1),

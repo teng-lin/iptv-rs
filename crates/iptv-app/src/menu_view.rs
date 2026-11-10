@@ -17,7 +17,10 @@ const ROW_H: f32 = 48.0;
 fn implemented(item: MenuItem) -> bool {
     matches!(
         item,
-        MenuItem::Description | MenuItem::ToggleFavorite | MenuItem::StartFromBeginning
+        MenuItem::Description
+            | MenuItem::ToggleFavorite
+            | MenuItem::StartFromBeginning
+            | MenuItem::ManageFavorites
     )
 }
 
@@ -111,6 +114,10 @@ pub fn perform(ui: Ui, item: MenuItem) {
             );
             ui.mode.set(ViewMode::Fullscreen);
             ui.update_panels(|p, now| p.show_info(now));
+        }
+        MenuItem::ManageFavorites => {
+            close(ui);
+            crate::fav_editor::open(ui);
         }
         MenuItem::ToggleFavorite => {
             ui.favorites.update(|f| {

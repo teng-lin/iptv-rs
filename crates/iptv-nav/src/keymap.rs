@@ -18,6 +18,9 @@ pub enum Context {
     /// The control row over full-screen video (Left/Right/OK move and
     /// press its buttons; Up/Down still zap).
     Controls,
+    /// An editing mode (favourites): Up/Down move, OK toggles, Left and
+    /// Right act on the whole group, Back leaves.
+    Editor,
     /// A context menu or popover (Up/Down move, OK selects, Back closes;
     /// Left/Right do nothing, as observed in the reference UX).
     Menu,
@@ -233,6 +236,20 @@ mod tests {
         assert_eq!(k.resolve(Menu, RemoteKey::Left, Press::Short), None);
         assert_eq!(k.resolve(Menu, RemoteKey::Right, Press::Short), None);
         assert!(!k.has_long(Menu, RemoteKey::Ok));
+    }
+
+    #[test]
+    fn the_editor_gets_plain_moves_and_select() {
+        let k = Keymap::defaults();
+        assert_eq!(
+            k.resolve(Context::Editor, RemoteKey::Left, Press::Short),
+            Some(Action::MoveLeft)
+        );
+        assert_eq!(
+            k.resolve(Context::Editor, RemoteKey::Ok, Press::Short),
+            Some(Action::Select)
+        );
+        assert!(!k.has_long(Context::Editor, RemoteKey::Ok));
     }
 
     #[test]
