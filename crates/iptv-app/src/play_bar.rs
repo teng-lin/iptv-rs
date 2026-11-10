@@ -12,10 +12,13 @@
 //! channel list, multiview, guide, (desktop) window full screen, frame rate. Under
 //! it the programme's progress: where the archive plays (click or drag to
 //! seek) or how far the live programme is, with its times. It acts on
-//! the full-screen player (surface 0); while multiview is open it does not
-//! show (the tiles take the taps).
+//! the full-screen player (surface 0); while multiview's grid is open it
+//! does not show (the tiles take the taps), and its state then times the
+//! grid's pointer chrome instead (`multiview.rs`). On a multiview detour
+//! (a tile watched full screen) its Multiview button goes back to the
+//! grid.
 
-mod icons;
+pub(crate) mod icons;
 mod progress;
 
 use std::time::Duration;
@@ -133,9 +136,14 @@ pub fn tapped(ui: Ui) {
     show(ui, PlayBar::tapped);
 }
 
-/// A control of the bar acted.
-fn used(ui: Ui) {
+/// A control of the bar (or of multiview's pointer chrome) acted.
+pub(crate) fn used(ui: Ui) {
     update(ui, PlayBar::used);
+}
+
+/// The mouse came over the bar (or multiview's toolbar), or left it.
+pub(crate) fn hover(ui: Ui, over: bool) {
+    update(ui, |b, now| b.hover(over, now));
 }
 
 pub fn layer(ui: Ui) -> impl IntoElement {
@@ -162,8 +170,8 @@ fn bar(ui: Ui) -> impl IntoElement {
                 .gap(px(4.0))
                 .rounded(px(RADIUS_LARGE))
                 .bg(panel)
-                .on_mouse_enter(move |_: &MouseEvent| update(ui, |b, now| b.hover(true, now)))
-                .on_mouse_leave(move |_: &MouseEvent| update(ui, |b, now| b.hover(false, now)))
+                .on_mouse_enter(move |_: &MouseEvent| hover(ui, true))
+                .on_mouse_leave(move |_: &MouseEvent| hover(ui, false))
                 .child(
                     view()
                         .flex_row()
@@ -459,17 +467,27 @@ fn right(ui: Ui) -> impl IntoElement {
                 ui.play_bar.update(PlayBar::hide);
             },
         ))
-        .child(button(
-            ui,
-            "Multiview",
-            || Icon::Multiview,
-            playing,
-            size,
-            move || {
-                ui.play_bar.update(PlayBar::hide);
-                crate::multiview::open(ui);
-            },
-        ))
+        .child(
+            button(
+                ui,
+                "Multiview",
+                || Icon::Multiview,
+                playing,
+                size,
+                move || {
+                    ui.play_bar.update(PlayBar::hide);
+                    crate::multiview::open(ui);
+                },
+            )
+            // On a detour it returns to the grid.
+            .label(move || {
+                if crate::multiview::detour(ui) {
+                    "Back to multiview"
+                } else {
+                    "Multiview"
+                }
+            }),
+        )
         .child(button(
             ui,
             "TV guide",

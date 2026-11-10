@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use nsh_core::picker::PickedFile;
 use nsh_core::platform::Idiom;
-use nsh_core::{ImageData, Size, element::Root, prelude::*};
+use nsh_core::{ImageData, Point, Size, element::Root, prelude::*};
 use nsh_engine::EngineConfig;
 use nsh_testing::Headless;
 
@@ -86,6 +86,7 @@ fn clicks_reach_the_guide_under_the_hidden_layers() {
     step(app.set_viewport(Size::new(px(1280.0), px(720.0))));
     step(app.press("label:Video"));
     step(app.wait_for_gone("label:Mute", Duration::from_secs(2)));
+    multiview(&mut app, step);
 
     // A TV has no pointer: a press there (an assistive one) shows the
     // remote's card instead, whose TV guide goes back to the guide.
@@ -157,14 +158,17 @@ fn bar_buttons(app: &mut Headless, step: impl Fn(Result<(), String>)) {
     step(gone(app, "label:Mute"));
     step(app.press_key("backspace"));
     // Multiview opens with the playing channel and the picker for the
-    // next tile; the bar does not show over it. Back closes the picker,
-    // Back again returns to full screen, where the bar comes back.
+    // next tile; the bar does not show over it. Back closes the picker
+    // (one tile stays), Back again returns to full screen, where the bar
+    // comes back.
     step(app.press("label:Video"));
     step(app.press("label:Multiview"));
-    step(app.wait_for("text:Add a channel"));
+    step(app.wait_for(TILE));
     step(gone(app, "label:Mute"));
     step(app.press_key("backspace"));
+    assert_eq!(tiles(app), 1, "Back closed the picker only");
     step(app.press_key("backspace"));
+    step(gone(app, TILE));
     step(app.press("label:Video"));
     step(app.wait_for("label:Mute"));
     step(app.press("label:Video"));
@@ -175,4 +179,96 @@ fn bar_buttons(app: &mut Headless, step: impl Fn(Result<(), String>)) {
     step(app.press("text:★ Test Channel Two"));
     step(app.press("label:Video"));
     step(app.wait_for("label:Mute"));
+}
+
+const TILE: &str = "id:multiview-tile";
+/// Channel Three's row in the channel list (All channels). The list stays
+/// mounted while hidden: what it did shows in the tiles.
+const ROW_THREE: &str = "text:3  Test Channel Three";
+const TILE_THREE: &str = "id:multiview-tile >> text:/Test Channel Three$/";
+const TILE_TWO: &str = "id:multiview-tile >> text:/Test Channel Two$/";
+
+fn tiles(app: &Headless) -> usize {
+    app.screen().count(TILE).unwrap()
+}
+
+/// Multiview's pointer chrome on screen: a tap beside the tiles shows it.
+fn chrome(app: &mut Headless, step: impl Fn(Result<(), String>)) {
+    if !app.screen().matches("label:Exit multiview").unwrap() {
+        step(app.press_at("label:Video", Point::new(px(20.0), px(20.0))));
+    }
+    step(app.wait_for("label:Exit multiview"));
+}
+
+/// Opens the menu of the tile showing Channel Three (active) and watches
+/// it full screen: the grid goes, the session waits.
+fn detour(app: &mut Headless, step: impl Fn(Result<(), String>)) {
+    step(app.press(TILE_THREE));
+    step(app.press("text:Watch full screen"));
+    step(app.wait_for_gone(TILE, Duration::from_secs(2)));
+}
+
+/// Multiview by pointer, over full-screen video with the bar hidden: the
+/// tiles alone (no add cell), the toolbar's Add and Exit, a tile's
+/// enlarge and remove buttons, a long press, and Watch full screen as a
+/// detour that Back (or the bar's button) undoes.
+fn multiview(app: &mut Headless, step: impl Fn(Result<(), String>) + Copy) {
+    let gone = |app: &mut Headless, s: &str| app.wait_for_gone(s, Duration::from_secs(2));
+    step(app.press("label:Video"));
+    step(app.press("label:Multiview"));
+    step(app.wait_for(TILE));
+    assert_eq!(tiles(app), 1, "the playing channel is the first tile");
+    // Picking a channel adds its tile at once.
+    step(app.press(ROW_THREE));
+    step(app.wait_for(TILE_THREE));
+    assert_eq!(tiles(app), 2);
+    assert!(!app.screen().matches("text:Add a channel").unwrap());
+    assert!(
+        !app.screen().matches("label:Exit multiview").unwrap(),
+        "no chrome until the pointer acts"
+    );
+    // The chrome: a tile's enlarge button and a long press toggle it.
+    chrome(app, step);
+    step(app.press("label:Enlarge Test Channel Two"));
+    step(app.wait_for("label:Reduce Test Channel Two"));
+    step(app.long_press(&format!("{TILE} >> nth=0")));
+    step(app.wait_for("label:Enlarge Test Channel Two"));
+    // Its remove button: one tile left, without buttons.
+    step(app.press("label:Remove Test Channel Three"));
+    assert_eq!(tiles(app), 1);
+    assert!(!app.screen().matches("label:/^Remove /").unwrap());
+    // The toolbar's Add opens the picker (the chrome goes); Back cancels
+    // it, and only it.
+    chrome(app, step);
+    step(app.press("label:Add channel"));
+    step(gone(app, "label:Exit multiview"));
+    step(app.press_key("backspace"));
+    assert_eq!(tiles(app), 1);
+    // Again, picking Channel Three.
+    chrome(app, step);
+    step(app.press("label:Add channel"));
+    step(app.press(ROW_THREE));
+    step(app.wait_for(TILE_THREE));
+    assert_eq!(tiles(app), 2);
+    // Watch full screen is a detour: the play bar's button returns to the
+    // same grid…
+    detour(app, step);
+    step(app.wait_for("label:Back to multiview"));
+    step(app.press("label:Back to multiview"));
+    step(app.wait_for(TILE));
+    assert_eq!(tiles(app), 2);
+    step(app.wait_for(TILE_THREE));
+    step(app.wait_for(TILE_TWO));
+    // …and so does Back.
+    detour(app, step);
+    step(app.press_key("backspace"));
+    step(app.wait_for(TILE));
+    assert_eq!(tiles(app), 2);
+    // The toolbar's Exit: the active tile full screen, the bar at hand.
+    chrome(app, step);
+    step(app.press("label:Exit multiview"));
+    step(gone(app, TILE));
+    step(app.wait_for("label:Mute"));
+    step(app.press("label:Video"));
+    step(gone(app, "label:Mute"));
 }

@@ -51,6 +51,7 @@ fn label(ui: Ui, control: Control) -> String {
         Search => "Search".to_owned(),
         ChannelList => "Channels".to_owned(),
         Recordings => "Recordings".to_owned(),
+        Multiview if crate::multiview::detour(ui) => "Back to multiview".to_owned(),
         Multiview => "Multiview".to_owned(),
         PictureInPicture => "Picture in picture".to_owned(),
         VideoTracks => {

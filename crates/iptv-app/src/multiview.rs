@@ -1,10 +1,26 @@
-//! Multiview in the app: the control row's Multiview turns the playing
-//! channel into the first tile, more channels come from the channel list,
-//! and each tile plays on its own player surface (`player.rs`, `video.rs`;
-//! surface 0 is the full-screen player). The state machine is
-//! `iptv_core::multiview`; this runs it, starts and stops the surfaces its
-//! tiles name, mutes all but the active one, and leaves to full screen.
-//! `multiview_view.rs` draws it.
+//! Multiview in the app: the play bar's or the control row's Multiview
+//! turns the playing channel into the first tile and opens the channel
+//! list for the next one; each tile plays on its own player surface
+//! (`player.rs`, `video.rs`; surface 0 is the full-screen player). The
+//! state machine is `iptv_core::multiview`; this runs it, starts and stops
+//! the surfaces its tiles name, mutes all but the active one, places the
+//! tiles ([`tile_rect`]: the core's layout less a gap), and leaves to full
+//! screen. `multiview_view.rs` draws it.
+//!
+//! Keys: the arrows, OK (the tile's menu), Long OK where keys report their
+//! release (enlarge/reduce), Back. A pointer (desktop, tablet; never a TV)
+//! shows the pointer chrome while it moves or after a tap, on the play
+//! bar's timer (`ui.play_bar`, which does not show itself in multiview): a
+//! toolbar (add a channel, exit multiview) and each tile's remove and
+//! enlarge buttons. A long press on a tile enlarges or reduces it.
+//!
+//! Watch full screen is a detour: the session waits (its other tiles keep
+//! playing, hidden and muted) while that tile plays full screen with the
+//! normal player panels and play bar; Back, or the play bar's / control
+//! row's Multiview, brings the grid back as it was. The session ends when
+//! the full-screen channel changes (a zap, the channel list, the guide,
+//! the history), catch-up starts, or full screen is left; then only that
+//! channel plays on.
 //!
 //! Limits: the device's decoders ([`DECODERS`]) and the streams the
 //! account allows at once (an Xtream account's `max_connections`, from its
@@ -12,15 +28,20 @@
 //! the whole allowance is multiview's: adding the stream that goes past it
 //! asks first.
 
+mod lifecycle;
+
 use std::cell::Cell;
 
 use iptv_core::channel_list::ListMode;
 use iptv_core::multiview::{Key, Limits, MAX_SURFACES, Multiview, Outcome};
+use iptv_core::play_bar::PlayBar;
 use iptv_import::SourceMeta;
 use iptv_nav::Action;
 use nsh_core::prelude::*;
 
 use crate::{Playback, Ui, ViewMode};
+
+pub use lifecycle::{bind, follow};
 
 pub type State = Multiview<usize>;
 
@@ -28,8 +49,11 @@ pub type State = Multiview<usize>;
 /// manage two, desktops four.
 pub const DECODERS: usize = if cfg!(target_os = "android") { 2 } else { 4 };
 
-/// Space between tiles, px.
-const GAP: f32 = 4.0;
+/// Space around each tile, px (twice this between two).
+const GAP: f32 = 3.0;
+
+/// How long the key hint stays.
+const HINT_MS: u64 = 5_000;
 
 thread_local! {
     static ACCOUNT_STREAMS: Cell<Option<u32>> = const { Cell::new(None) };
@@ -51,8 +75,21 @@ pub fn set_account_streams(allowed: Option<u32>) {
     ACCOUNT_STREAMS.with(|a| a.set(allowed));
 }
 
-pub fn is_open(ui: Ui) -> bool {
+/// A multiview session exists (its grid shows, or it waits for a detour).
+pub fn session(ui: Ui) -> bool {
     ui.multiview.with(Option::is_some)
+}
+
+/// The grid shows (a session, not on a detour): it owns the keys and taps.
+pub fn is_open(ui: Ui) -> bool {
+    ui.multiview
+        .with(|m| m.as_ref().is_some_and(|m| m.detour().is_none()))
+}
+
+/// A tile plays full screen while the grid waits.
+pub fn detour(ui: Ui) -> bool {
+    ui.multiview
+        .with(|m| m.as_ref().is_some_and(|m| m.detour().is_some()))
 }
 
 /// The channel list picks for multiview.
@@ -71,8 +108,8 @@ pub fn pick_from(ui: Ui) -> Option<usize> {
     })
 }
 
-/// Whether `surface` is heard: the active tile's, or the full-screen one
-/// outside multiview.
+/// Whether `surface` is heard: the active tile's (on a detour that is
+/// surface 0), or the full-screen one outside multiview.
 pub fn audible(ui: Ui, surface: usize) -> bool {
     ui.multiview.with(|m| match m {
         None => surface == 0,
@@ -80,7 +117,7 @@ pub fn audible(ui: Ui, surface: usize) -> bool {
     })
 }
 
-/// Surfaces 1–3 exist while a tile plays on them.
+/// Surfaces 1–3 exist while a tile plays on them (on a detour too: hidden).
 pub fn mounted(ui: Ui, surface: usize) -> bool {
     surface > 0
         && ui
@@ -88,12 +125,16 @@ pub fn mounted(ui: Ui, surface: usize) -> bool {
             .with(|m| m.as_ref().is_some_and(|m| m.tile_on(surface).is_some()))
 }
 
-/// Cell `index`'s rectangle (px) in the window.
-pub fn cell_rect(ui: Ui, index: usize) -> Option<(f32, f32, f32, f32)> {
-    let layout = ui.multiview.with(|m| m.as_ref().map(State::layout))?;
+/// Tile `index`'s rectangle (px) in the window.
+pub fn tile_rect(ui: Ui, index: usize) -> Option<(f32, f32, f32, f32)> {
+    let layout = ui.multiview.with(|m| {
+        m.as_ref()
+            .filter(|m| index < m.tiles().len())
+            .map(State::layout)
+    })?;
     let w = window();
     let (width, height) = (w.width.0, w.height.0);
-    let r = layout.cell(index);
+    let r = layout.rect(index, width / height.max(1.0));
     Some((
         r.x * width + GAP,
         r.y * height + GAP,
@@ -102,21 +143,26 @@ pub fn cell_rect(ui: Ui, index: usize) -> Option<(f32, f32, f32, f32)> {
     ))
 }
 
-/// Where `surface` shows, while multiview is open; `None` without a tile.
+/// Where `surface` shows while the grid is open; `None` without a tile.
 pub fn surface_rect(ui: Ui, surface: usize) -> Option<(f32, f32, f32, f32)> {
     let tile = ui
         .multiview
         .with(|m| m.as_ref().and_then(|m| m.tile_on(surface)))?;
-    cell_rect(ui, tile)
+    tile_rect(ui, tile)
 }
 
-/// The control row's Multiview: the playing channel becomes the first tile
-/// (live), and adding the next one starts at once.
+/// The play bar's or the control row's Multiview: the playing channel
+/// becomes the first tile (live), and adding the next one starts at once.
+/// On a detour it goes back to the grid.
 pub fn open(ui: Ui) {
+    if untracked(|| detour(ui)) {
+        resume(ui);
+        return;
+    }
     let Some(channel) = ui.playing.get_untracked() else {
         return;
     };
-    if is_open(ui) {
+    if untracked(|| session(ui)) {
         return;
     }
     if ui.playback.get_untracked() != Playback::Live {
@@ -135,28 +181,27 @@ pub fn open(ui: Ui) {
         limits.connections
     );
     ui.multiview.set(Some(Multiview::open(channel, limits)));
-    if ui
-        .multiview
-        .with_untracked(|m| m.as_ref().is_some_and(State::can_add))
-    {
-        apply(ui, |m, failed| m.key(Key::Ok, failed));
-    }
+    apply(ui, |m, _| m.add());
 }
 
-/// Another playlist is shown: the tiles' channels belong to the old one.
-/// Surface 0 is the caller's.
+/// Ends the session at once (another playlist, stop, sleep): the other
+/// surfaces stop. Surface 0 is the caller's.
 pub fn close(ui: Ui) {
-    if !untracked(|| is_open(ui)) {
+    if !untracked(|| session(ui)) {
         return;
     }
     log::info!("iptv multiview: closed");
+    end(ui);
+}
+
+fn end(ui: Ui) {
     for surface in 1..MAX_SURFACES {
         crate::player::stop_surface(ui, surface);
     }
     ui.multiview.set(None);
 }
 
-/// The remote while multiview owns it (`input.rs`).
+/// The remote while the grid owns it (`input.rs`).
 pub fn key(ui: Ui, action: Action) {
     let key = match action {
         Action::MoveUp => Key::Up,
@@ -164,6 +209,7 @@ pub fn key(ui: Ui, action: Action) {
         Action::MoveLeft => Key::Left,
         Action::MoveRight => Key::Right,
         Action::Select => Key::Ok,
+        Action::ToggleEnlarge => Key::LongOk,
         Action::ShowMenu => Key::Menu,
         Action::Back => Key::Back,
         Action::Stop => return crate::input::stop_playback(ui),
@@ -178,16 +224,88 @@ pub fn back(ui: Ui) -> bool {
     true
 }
 
-/// A tap on cell `index`.
+/// Back on a detour: the grid again, as it was.
+pub fn resume(ui: Ui) -> bool {
+    log::info!("iptv multiview: back to the grid");
+    ui.panels.update(|p| p.hide());
+    ui.multiview
+        .update(|m| m.iter_mut().for_each(State::resume));
+    true
+}
+
+/// A tap (or click) on tile `index`; it also shows the pointer chrome.
 pub fn tap(ui: Ui, index: usize) {
     ui.touched();
+    show_chrome(ui);
     apply(ui, |m, failed| m.tap(index, failed));
+}
+
+/// A long press on tile `index`: enlarges or reduces it.
+pub fn long_press(ui: Ui, index: usize) {
+    ui.touched();
+    apply(ui, |m, _| {
+        m.toggle_enlarge(index);
+        Outcome::Stay
+    });
 }
 
 /// A tap on item `index` of the open dialog.
 pub fn choose(ui: Ui, index: usize) {
     ui.touched();
     apply(ui, |m, _| m.choose(index));
+}
+
+/// The toolbar's Add channel.
+pub fn add(ui: Ui) {
+    ui.touched();
+    apply(ui, |m, _| m.add());
+}
+
+/// The toolbar's Exit multiview: the active tile full screen.
+pub fn exit(ui: Ui) {
+    ui.touched();
+    apply(ui, |m, _| m.exit());
+}
+
+/// A tile's remove button.
+pub fn remove(ui: Ui, index: usize) {
+    ui.touched();
+    used_chrome(ui);
+    apply(ui, |m, _| {
+        m.remove_tile(index);
+        Outcome::Stay
+    });
+}
+
+/// A tile's enlarge (or reduce) button.
+pub fn toggle_enlarge(ui: Ui, index: usize) {
+    used_chrome(ui);
+    long_press(ui, index);
+}
+
+/// Whether the pointer chrome (toolbar, tile buttons) shows: the grid
+/// with nothing over it, a pointer that moved or tapped lately.
+pub fn chrome_shows(ui: Ui) -> bool {
+    ui.mode.get() == ViewMode::Fullscreen
+        && !ui.keys_shown()
+        && ui.play_bar.with(|b| b.shown)
+        && crate::play_bar::available()
+        && ui.multiview.with(|m| {
+            m.as_ref()
+                .is_some_and(|m| m.detour().is_none() && m.dialog().is_none() && m.pick().is_none())
+        })
+}
+
+/// A tap on a tile shows the chrome (a tablet has no moving pointer).
+fn show_chrome(ui: Ui) {
+    if crate::play_bar::available() {
+        crate::play_bar::pointer_moved(ui);
+    }
+}
+
+/// A button of the chrome acted: it stays a while longer.
+pub fn used_chrome(ui: Ui) {
+    crate::play_bar::used(ui);
 }
 
 /// The channel list chose `channel` for multiview; `false` when it was
@@ -241,8 +359,17 @@ fn apply(ui: Ui, f: impl FnOnce(&mut State, &dyn Fn(usize) -> bool) -> Outcome<u
     }
     match outcome {
         Outcome::Stay => {}
-        Outcome::PickChannel => crate::channels_view::open(ui, ListMode::Overlay),
+        Outcome::PickChannel => {
+            ui.play_bar.update(PlayBar::hide);
+            crate::channels_view::open(ui, ListMode::Overlay);
+        }
         Outcome::Retry(surface) => crate::player::retry_surface(ui, surface),
+        Outcome::FullScreen => {
+            log::info!("iptv multiview: a tile full screen, the grid waits");
+            if ui.keys_shown() {
+                ui.update_panels(|p, now| p.show_info(now));
+            }
+        }
         Outcome::Leave { channel, surface } => leave(ui, channel, surface),
     }
 }
@@ -251,82 +378,12 @@ fn apply(ui: Ui, f: impl FnOnce(&mut State, &dyn Fn(usize) -> bool) -> Outcome<u
 /// surface 0, the other surfaces stop.
 fn leave(ui: Ui, channel: usize, surface: usize) {
     log::info!("iptv multiview: leaving to surface {surface}");
-    for s in 1..MAX_SURFACES {
-        crate::player::stop_surface(ui, s);
-    }
-    ui.multiview.set(None);
+    end(ui);
     if surface != 0 || ui.playing.get_untracked() != Some(channel) {
         crate::lists::show_channel(ui, channel);
         ui.play(channel, Playback::Live);
     }
-    if ui.mode.get_untracked() == ViewMode::Fullscreen {
+    if ui.mode.get_untracked() == ViewMode::Fullscreen && ui.keys_shown() {
         ui.update_panels(|p, now| p.show_info(now));
     }
-}
-
-/// The data changed: each tile finds its channel again by key; a tile
-/// whose channel went is removed, and with none left nothing plays.
-/// `false` when multiview is not open.
-pub fn follow(ui: Ui) -> bool {
-    if !is_open(ui) {
-        return false;
-    }
-    let schedule = crate::schedule();
-    let mut moved = Vec::new();
-    let mut gone = Vec::new();
-    let mut any = true;
-    ui.multiview.update(|m| {
-        if let Some(m) = m.as_mut() {
-            any = m.retain(|surface, channel| {
-                let key = ui.player.stream(surface).key.get_untracked();
-                match key.and_then(|k| schedule.find_channel(&k)) {
-                    Some(row) => {
-                        if row != *channel {
-                            *channel = row;
-                            moved.push((surface, row));
-                        }
-                        true
-                    }
-                    None => {
-                        gone.push(surface);
-                        false
-                    }
-                }
-            });
-        }
-    });
-    for (surface, row) in moved {
-        if surface == 0 {
-            ui.playing.set(Some(row));
-        } else {
-            ui.player.stream(surface).channel.set(Some(row));
-        }
-    }
-    for surface in gone {
-        log::info!("iptv multiview: surface {surface}'s channel left the guide");
-        crate::player::stop_surface(ui, surface);
-    }
-    if !any {
-        ui.multiview.set(None);
-        ui.mode.set(ViewMode::Guide);
-    }
-    true
-}
-
-/// Multiview belongs to full-screen playback: leaving it (the guide's
-/// keys) keeps the active tile playing.
-pub fn bind(ui: Ui) {
-    effect(move || {
-        if ui.mode.get() != ViewMode::Fullscreen && untracked(|| is_open(ui)) {
-            untracked(|| {
-                let active = ui.multiview.with(|m| {
-                    m.as_ref()
-                        .and_then(|m| m.tiles().get(m.active_index()).cloned())
-                });
-                if let Some(t) = active {
-                    leave(ui, t.channel, t.surface);
-                }
-            });
-        }
-    });
 }

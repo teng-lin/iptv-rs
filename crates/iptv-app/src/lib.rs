@@ -527,10 +527,13 @@ pub fn App() -> impl IntoElement {
 }
 
 /// A tap on full-screen video: the play bar on a device with a pointer,
-/// else the card and its buttons; nothing in multiview (it takes its own
-/// taps; beside its tiles nothing happens).
+/// else the card and its buttons; beside multiview's tiles, its pointer
+/// chrome (the tiles take their own taps).
 fn toggle_panels(ui: Ui) {
     if untracked(|| multiview::is_open(ui)) {
+        if play_bar::available() {
+            play_bar::tapped(ui);
+        }
         return;
     }
     if play_bar::available() {
@@ -546,7 +549,8 @@ fn toggle_panels(ui: Ui) {
 }
 
 /// The mouse moved: over full-screen video with nothing open above the
-/// panels, it shows the play bar (and keeps it while it moves).
+/// panels, it shows the play bar (multiview's pointer chrome over its
+/// grid) and keeps it while it moves.
 fn pointer_moved(ui: Ui, e: &MouseEvent) {
     let open = ui.menu.with_untracked(Option::is_some)
         || ui.chooser.with_untracked(Option::is_some)
@@ -562,7 +566,6 @@ fn pointer_moved(ui: Ui, e: &MouseEvent) {
     let (x, y) = (e.page_position.x.0, e.page_position.y.0);
     if ui.mode.get_untracked() != ViewMode::Fullscreen
         || open
-        || untracked(|| multiview::is_open(ui))
         || !desktop::pointer_moved(x, y, ui.now_ms())
     {
         return;
@@ -658,6 +661,8 @@ pub(crate) fn go_back(ui: Ui) -> bool {
             }
             // A dialog closes, else the active tile goes full screen.
             _ if multiview::is_open(ui) => multiview::back(ui),
+            // A tile watched full screen: back to the grid as it was.
+            _ if multiview::detour(ui) => multiview::resume(ui),
             (ViewMode::Fullscreen, _, true) => {
                 ui.panels.update(|p| p.hide());
                 ui.play_bar.update(iptv_core::play_bar::PlayBar::hide);

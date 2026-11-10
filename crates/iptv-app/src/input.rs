@@ -102,7 +102,7 @@ pub fn context(ui: &Ui) -> Context {
         return Context::Editor; // Up/Down/Left/Right, OK and digits
     }
     if crate::multiview::is_open(*ui) {
-        return Context::Editor; // Up/Down/Left/Right, OK, Menu
+        return Context::Multiview; // Up/Down/Left/Right, OK, Long OK, Menu
     }
     match (ui.mode.get(), ui.focus.with(|f| f.pane)) {
         (ViewMode::Fullscreen, _) if ui.panels.with(|p| p.captures_input()) => Context::Controls,
@@ -506,7 +506,7 @@ fn apply(ui: Ui, key: RemoteKey, action: Action) {
 /// Long Back (or Stop): nothing plays (multiview's tiles neither); back to
 /// the guide.
 pub(crate) fn stop_playback(ui: Ui) {
-    let multiview = untracked(|| crate::multiview::is_open(ui));
+    let multiview = untracked(|| crate::multiview::session(ui));
     crate::multiview::close(ui);
     if ui.playing.get_untracked().is_none() && !multiview {
         return;

@@ -1,11 +1,15 @@
 //! Multiview on screen (`multiview.rs` runs it): over each tile's video a
 //! frame (the active tile's in the accent: its sound plays), its channel
-//! and its own waiting or error state with Retry; the add cell; a hint
-//! line; and the dialogs (a tile's options, the connection warning). Taps
-//! go to the cells and dialog items; the video surfaces are below
-//! (`video.rs`).
+//! and its own waiting or error state with Retry; the pointer chrome and
+//! the key hint (`multiview_view/chrome.rs`); and the dialogs (a tile's
+//! menu, the connection warning). There are only tiles: no empty or "add"
+//! cells. Taps go to the tiles and dialog items, a long press on a tile
+//! enlarges or reduces it; the video surfaces are below (`video.rs`). On
+//! a detour (a tile watched full screen) none of this shows.
 
-use iptv_core::multiview::{Cell, Dialog, TileAction, WARNING_CHOICES, WarningChoice};
+mod chrome;
+
+use iptv_core::multiview::{Dialog, MAX_SURFACES, TileAction, WARNING_CHOICES, WarningChoice};
 use iptv_core::playback::Phase;
 use nsh_core::prelude::*;
 
@@ -17,11 +21,16 @@ const WHITE: u32 = 0xFFFFFF;
 const PANEL_ALPHA: u8 = 0xE0;
 /// The active tile's frame, px.
 const FRAME: f32 = 3.0;
+/// A held press enlarges a tile after this long, ms.
+const LONG_PRESS_MS: f32 = 800.0;
 
 fn action_label(action: TileAction) -> &'static str {
     match action {
         TileAction::Retry => "Try again",
+        TileAction::Add => "Add channel",
         TileAction::Replace => "Change channel",
+        TileAction::Enlarge => "Enlarge",
+        TileAction::Reduce => "Reduce",
         TileAction::FullScreen => "Watch full screen",
         TileAction::Remove => "Remove from multiview",
     }
@@ -36,6 +45,11 @@ fn warning_label(choice: WarningChoice) -> &'static str {
 
 fn with_state<T>(ui: Ui, f: impl FnOnce(&State) -> T) -> Option<T> {
     ui.multiview.with(|m| m.as_ref().map(f))
+}
+
+/// Why no more tiles fit, while none does.
+fn device_limit(m: &State) -> Option<String> {
+    (!m.can_add()).then(|| format!("This device plays up to {} at once", m.limits().decoders))
 }
 
 /// What a tile shows over its video.
@@ -61,6 +75,7 @@ fn tile_status(ui: Ui, surface: usize) -> TileStatus {
 
 pub fn layer(ui: Ui) -> impl IntoElement {
     let open = move || multiview::is_open(ui);
+    let tiles = move || with_state(ui, |m| m.tiles().len()).unwrap_or(0);
     view()
         .absolute()
         .inset_0()
@@ -76,8 +91,11 @@ pub fn layer(ui: Ui) -> impl IntoElement {
                 .absolute()
                 .inset_0()
                 .pointer_events(PointerEvents::BoxNone)
-                .children((0..iptv_core::multiview::MAX_SURFACES).map(move |i| cell(ui, i)))
-                .child(hint(ui))
+                .children(
+                    (0..MAX_SURFACES).map(move |i| when(move || i < tiles(), move || tile(ui, i))),
+                )
+                .child(chrome::toolbar(ui))
+                .child(chrome::hint(ui))
                 .child(when(
                     move || with_state(ui, |m| m.dialog().is_some()).unwrap_or(false),
                     move || dialog(ui),
@@ -85,85 +103,38 @@ pub fn layer(ui: Ui) -> impl IntoElement {
         }))
 }
 
-/// Cell `index`: a tile's frame and status, or the add cell.
-fn cell(ui: Ui, index: usize) -> impl IntoElement {
-    let what = move || with_state(ui, |m| m.cells().get(index).copied()).flatten();
-    let rect = move || multiview::cell_rect(ui, index).unwrap_or((0.0, 0.0, 0.0, 0.0));
-    let surface = move || {
-        with_state(ui, |m| match m.cells().get(index) {
-            Some(Cell::Tile(t)) => m.tiles().get(*t).map(|t| t.surface),
-            _ => None,
-        })
-        .flatten()
-    };
-    let channel = move || {
-        with_state(ui, |m| match m.cells().get(index) {
-            Some(Cell::Tile(t)) => m.tiles().get(*t).map(|t| t.channel),
-            _ => None,
-        })
-        .flatten()
-    };
+/// Tile `index`: its frame, status and channel, and its pointer buttons.
+fn tile(ui: Ui, index: usize) -> impl IntoElement {
+    let rect = move || multiview::tile_rect(ui, index).unwrap_or((0.0, 0.0, 0.0, 0.0));
+    let surface = move || with_state(ui, |m| m.tiles().get(index).map(|t| t.surface)).flatten();
+    let channel = move || with_state(ui, |m| m.tiles().get(index).map(|t| t.channel)).flatten();
     let active = move || with_state(ui, |m| m.active_index() == index).unwrap_or(false);
-    let focused =
-        move || ui.keys_shown() && with_state(ui, |m| m.focus_index() == index).unwrap_or(false);
     let accent = move || ui.theme.with(|t| t.accent.main);
     let panel = move || tint(ui.theme.with(|t| t.background.panel), PANEL_ALPHA);
-    let is_tile = move || matches!(what(), Some(Cell::Tile(_)));
-    let is_add = move || what() == Some(Cell::Add);
     let status = move || surface().map_or(TileStatus::Playing, |s| tile_status(ui, s));
     view()
+        .test_id("multiview-tile")
         .absolute()
         .left(move || px(rect().0))
         .top(move || px(rect().1))
         .w(move || px(rect().2))
         .h(move || px(rect().3))
         .rounded(px(RADIUS))
-        .border(move || px(if is_tile() && active() { FRAME } else { 1.0 }))
+        .border(move || px(if active() { FRAME } else { 1.0 }))
         .border_color(move || {
-            if what().is_none() {
-                tint(WHITE, 0)
-            } else if is_tile() && active() {
+            if active() {
                 rgb(accent())
-            } else if focused() {
-                tint(accent(), FOCUS_ALPHA)
             } else {
                 tint(WHITE, RESTING_ALPHA * 2)
             }
         })
-        .bg(move || {
-            if is_add() {
-                if focused() {
-                    tint(accent(), FOCUS_ALPHA)
-                } else {
-                    tint(WHITE, RESTING_ALPHA)
-                }
-            } else {
-                tint(WHITE, 0)
-            }
-        })
         .items_center()
         .justify_center()
-        .pointer_events(move || {
-            if what().is_some() {
-                PointerEvents::Auto
-            } else {
-                PointerEvents::None
-            }
-        })
         .on_press(move || multiview::tap(ui, index))
-        .child(when(is_add, move || {
-            view()
-                .items_center()
-                .gap(px(8.0))
-                .child(text("+").text_size(px(48.0)).text_color(rgb(WHITE)))
-                .child(
-                    text("Add a channel")
-                        .text_size(px(18.0))
-                        .text_color(rgb(WHITE)),
-                )
-        }))
+        .on_long_press(move || multiview::long_press(ui, index))
+        .long_press_delay(LONG_PRESS_MS)
         .child(when(
-            move || is_tile() && matches!(status(), TileStatus::Waiting(_)),
+            move || matches!(status(), TileStatus::Waiting(_)),
             move || {
                 text(move || match status() {
                     TileStatus::Waiting(t) => t,
@@ -178,7 +149,7 @@ fn cell(ui: Ui, index: usize) -> impl IntoElement {
             },
         ))
         .child(when(
-            move || is_tile() && matches!(status(), TileStatus::Failed(_)),
+            move || matches!(status(), TileStatus::Failed(_)),
             move || {
                 view()
                     .items_center()
@@ -212,8 +183,8 @@ fn cell(ui: Ui, index: usize) -> impl IntoElement {
                     )
             },
         ))
-        .child(when(is_tile, move || {
-            // The channel at the bottom left; the sound mark on the active one.
+        // The channel at the bottom left; the sound mark on the active one.
+        .child(
             view()
                 .absolute()
                 .left(px(8.0))
@@ -241,44 +212,9 @@ fn cell(ui: Ui, index: usize) -> impl IntoElement {
                     text(move || if active() { "♪" } else { "" })
                         .text_size(px(14.0))
                         .text_color(move || rgb(accent())),
-                )
-        }))
-}
-
-/// What the keys (or taps) do, and the device's limit once reached.
-fn hint(ui: Ui) -> impl IntoElement {
-    let words = move || {
-        let keys = if ui.keys_shown() {
-            "Arrows: choose the sound · OK: options · Back: full screen"
-        } else {
-            "Tap a tile to hear it, tap it again for options"
-        };
-        let full = with_state(ui, |m| {
-            (!m.can_add())
-                .then(|| format!("This device plays up to {} at once", m.limits().decoders))
-        })
-        .flatten();
-        match full {
-            Some(f) => format!("{keys} · {f}"),
-            None => keys.to_owned(),
-        }
-    };
-    view()
-        .absolute()
-        .top(px(10.0))
-        .left(px(0.0))
-        .right(px(0.0))
-        .items_center()
-        .pointer_events(PointerEvents::None)
-        .child(
-            text(words)
-                .px(px(14.0))
-                .py(px(5.0))
-                .rounded(px(RADIUS_LARGE))
-                .bg(move || tint(ui.theme.with(|t| t.background.panel), PANEL_ALPHA))
-                .text_size(px(13.0))
-                .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA)),
+                ),
         )
+        .child(chrome::tile_buttons(ui, index))
 }
 
 /// A dialog's content: title, message, items and which is focused, and
@@ -289,7 +225,8 @@ fn dialog_content(ui: Ui) -> (String, String, Vec<&'static str>, usize, bool) {
             let ch = m.tiles().get(*tile).map(|t| t.channel);
             (
                 ch.map(channel_name).unwrap_or_default(),
-                String::new(),
+                // Why Add is missing, where it would be.
+                device_limit(m).unwrap_or_default(),
                 items.iter().map(|a| action_label(*a)).collect(),
                 *focus,
                 false,
@@ -337,6 +274,8 @@ fn dialog(ui: Ui) -> impl IntoElement {
             },
         )
     };
+    // The most items a dialog has (a tile's menu).
+    const ITEMS: usize = 6;
     let row = move || content.with(|c| c.4);
     view()
         .absolute()
@@ -376,11 +315,16 @@ fn dialog(ui: Ui) -> impl IntoElement {
                         .mt(px(6.0))
                         .gap(px(8.0))
                         .flex_row()
-                        .children((0..4).map(item))
+                        .children((0..ITEMS).map(item))
                 }))
                 .child(when(
                     move || !row(),
-                    move || view().mt(px(6.0)).gap(px(8.0)).children((0..4).map(item)),
+                    move || {
+                        view()
+                            .mt(px(6.0))
+                            .gap(px(8.0))
+                            .children((0..ITEMS).map(item))
+                    },
                 )),
         )
 }

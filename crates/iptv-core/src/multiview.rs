@@ -1,90 +1,48 @@
-//! Multiview: two to four channels at once over the whole screen, one of
-//! them *active* (its sound plays, the others are muted).
+//! Multiview: up to four channels at once, one of them *active* (its sound
+//! plays, the others are muted; the remote's focus is on it).
 //!
-//! Tiles sit in cells: side by side for two cells (1+1), two by two for
-//! three or four. While more tiles fit (the device's decoder cap), one more
-//! cell offers to add a channel. The remote moves between cells (moving
-//! onto a tile makes it active), OK on a tile opens its options (retry when
-//! it failed, replace the channel, full screen, remove), OK on the add cell
-//! starts picking a channel. Back closes a dialog, else leaves multiview to
-//! the active tile in full screen. A tap makes a tile active; a tap on the
-//! active one opens its options.
+//! The screen holds just the tiles ([`Layout`]): no empty cells, and the
+//! tiles flow again at once when one comes or goes. One tile sits centred
+//! at half the width, two side by side, three as two above one, four two
+//! by two. A tile can be *enlarged*: big at the top, the others in a strip
+//! under it; enlarging another moves the big place to it, reducing it
+//! brings the grid back, and moving the focus leaves it be.
+//!
+//! The arrows move between tiles; OK (or a tap on the active tile) opens
+//! its menu: try again (when it failed), add a channel (while another
+//! fits), change channel, enlarge or reduce and remove (with two or more),
+//! watch full screen. Long OK (a long press on a tile) enlarges or reduces
+//! directly. A tap on another tile makes it active. Remove acts at once
+//! and the sound moves to a remaining tile. Back closes a dialog, else
+//! leaves multiview to the active tile in full screen.
+//!
+//! Watch full screen is a *detour*: that tile plays full screen while the
+//! session stays as it was (tiles, channels, the enlarged one, the active
+//! one), and [`Multiview::resume`] brings the grid back. The tile moves
+//! to surface 0 (the full-screen player) for it, trading surfaces with the
+//! tile that had it; the other tiles keep playing, hidden and muted, so
+//! the way back opens nothing. What ends a detour is the caller's rule.
+//!
+//! Opening starts
+//! with the playing channel as the only tile and asks for the next one at
+//! once (cancelling leaves the one tile); a short key hint shows until a
+//! key or a few seconds pass (the caller times it).
 //!
 //! Each tile keeps the player surface it was given (0 to [`MAX_SURFACES`]
 //! − 1; the first tile starts on surface 0, the full-screen player), so
-//! adding, removing or replacing one never disturbs the others. Adding past
-//! the account's connection limit asks first; once the viewer insists it
-//! does not ask again in this multiview. Channels are the caller's (`C`);
-//! nothing here plays anything.
+//! adding, removing, replacing, enlarging or reflowing never disturbs the
+//! other tiles' streams. Adding past the account's connection limit asks
+//! first; once the viewer insists it does not ask again in this multiview.
+//! Channels are the caller's (`C`); nothing here plays anything.
+
+mod layout;
+#[cfg(test)]
+mod tests;
+
+pub use layout::{Layout, Rect, THUMB, VIDEO};
 
 /// The most tiles (and player surfaces) multiview uses.
 pub const MAX_SURFACES: usize = 4;
-
-/// How the cells sit on the screen.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Layout {
-    /// One cell over the whole area.
-    Single,
-    /// Two cells side by side (1+1).
-    SideBySide,
-    /// Up to four cells, two by two.
-    Grid,
-}
-
-/// A rectangle as fractions (0–1) of the multiview area.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Rect {
-    pub x: f32,
-    pub y: f32,
-    pub w: f32,
-    pub h: f32,
-}
-
-impl Layout {
-    /// The layout for `cells` cells.
-    pub fn for_cells(cells: usize) -> Layout {
-        match cells {
-            0 | 1 => Layout::Single,
-            2 => Layout::SideBySide,
-            _ => Layout::Grid,
-        }
-    }
-
-    /// Where cell `index` goes. Side by side, the halves keep a 16:9 area
-    /// 16:9 (centred vertically).
-    pub fn cell(self, index: usize) -> Rect {
-        let (col, row) = ((index % 2) as f32, ((index / 2) % 2) as f32);
-        match self {
-            Layout::Single => Rect {
-                x: 0.0,
-                y: 0.0,
-                w: 1.0,
-                h: 1.0,
-            },
-            Layout::SideBySide => Rect {
-                x: col * 0.5,
-                y: 0.25,
-                w: 0.5,
-                h: 0.5,
-            },
-            Layout::Grid => Rect {
-                x: col * 0.5,
-                y: row * 0.5,
-                w: 0.5,
-                h: 0.5,
-            },
-        }
-    }
-}
-
-/// What a cell holds.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Cell {
-    /// The tile at this index of [`Multiview::tiles`].
-    Tile(usize),
-    /// Add a channel.
-    Add,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Tile<C> {
@@ -93,14 +51,20 @@ pub struct Tile<C> {
     pub channel: C,
 }
 
-/// A tile's options, in the order they are offered.
+/// A tile's menu items, in the order they are offered.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TileAction {
     /// Only when its stream failed.
     Retry,
+    /// Only while another tile fits.
+    Add,
     Replace,
+    /// With two or more tiles, when this one is not the enlarged one.
+    Enlarge,
+    /// When this tile is the enlarged one.
+    Reduce,
     FullScreen,
-    /// Only while another tile stays.
+    /// With two or more tiles.
     Remove,
 }
 
@@ -116,7 +80,7 @@ pub const WARNING_CHOICES: [WarningChoice; 2] = [WarningChoice::AddAnyway, Warni
 /// A dialog over the tiles.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Dialog {
-    /// A tile's options; `focus` indexes `items`.
+    /// A tile's menu; `focus` indexes `items`.
     Options {
         tile: usize,
         items: Vec<TileAction>,
@@ -143,8 +107,10 @@ pub enum Key {
     Left,
     Right,
     Ok,
+    /// A long OK: enlarges or reduces the active tile.
+    LongOk,
     Back,
-    /// The options of the active tile.
+    /// The active tile's menu.
     Menu,
 }
 
@@ -157,6 +123,9 @@ pub enum Outcome<C> {
     PickChannel,
     /// Open the stream on this surface again.
     Retry(usize),
+    /// A detour began: the detour tile (now on surface 0) plays full
+    /// screen, the session waits ([`Multiview::detour`]).
+    FullScreen,
     /// Leave multiview; this channel (on `surface`) plays full screen.
     Leave {
         channel: C,
@@ -176,41 +145,44 @@ pub struct Limits {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Multiview<C> {
     tiles: Vec<Tile<C>>,
-    /// The focused cell (an index into [`Multiview::cells`]).
-    focus: usize,
-    /// The tile whose sound plays.
+    /// The tile whose sound plays, which the remote's focus is on.
     active: usize,
+    /// The enlarged tile (only with two or more).
+    enlarged: Option<usize>,
     limits: Limits,
     /// The viewer chose to go past the account's limit.
     insisted: bool,
     dialog: Option<Dialog>,
     pick: Option<Pick>,
+    /// The key hint shows (until a key, or the caller's timeout).
+    hint: bool,
+    /// The tile watched full screen, the grid waiting.
+    detour: Option<usize>,
 }
 
 impl<C: Clone + PartialEq> Multiview<C> {
     /// Multiview with `channel` (playing full screen, on surface 0) as its
-    /// first tile, active; the focus is on the add cell when there is one.
+    /// only tile, active. The caller then usually starts adding
+    /// ([`Multiview::add`]).
     pub fn open(channel: C, limits: Limits) -> Self {
         let limits = Limits {
             decoders: limits.decoders.clamp(1, MAX_SURFACES),
             ..limits
         };
-        let mut mv = Multiview {
+        Multiview {
             tiles: vec![Tile {
                 surface: 0,
                 channel,
             }],
-            focus: 0,
             active: 0,
+            enlarged: None,
             limits,
             insisted: false,
             dialog: None,
             pick: None,
-        };
-        if mv.can_add() {
-            mv.focus = 1;
+            hint: true,
+            detour: None,
         }
-        mv
     }
 
     pub fn tiles(&self) -> &[Tile<C>] {
@@ -226,34 +198,17 @@ impl<C: Clone + PartialEq> Multiview<C> {
         self.tiles.len() < self.limits.decoders
     }
 
-    /// The tiles in order, then the add cell while another fits.
-    pub fn cells(&self) -> Vec<Cell> {
-        let mut cells: Vec<Cell> = (0..self.tiles.len()).map(Cell::Tile).collect();
-        if self.can_add() {
-            cells.push(Cell::Add);
-        }
-        cells
-    }
-
-    pub fn cell_count(&self) -> usize {
-        self.tiles.len() + usize::from(self.can_add())
-    }
-
     pub fn layout(&self) -> Layout {
-        Layout::for_cells(self.cell_count())
-    }
-
-    pub fn focus(&self) -> Cell {
-        if self.focus < self.tiles.len() {
-            Cell::Tile(self.focus)
-        } else {
-            Cell::Add
+        let tiles = self.tiles.len();
+        match self.enlarged {
+            Some(big) if tiles >= 2 => Layout::Enlarged { tiles, big },
+            _ => Layout::Grid { tiles },
         }
     }
 
-    /// The index of the focused cell.
-    pub fn focus_index(&self) -> usize {
-        self.focus
+    /// The enlarged tile, by index.
+    pub fn enlarged(&self) -> Option<usize> {
+        self.enlarged
     }
 
     /// The tile whose sound plays.
@@ -271,6 +226,26 @@ impl<C: Clone + PartialEq> Multiview<C> {
 
     pub fn pick(&self) -> Option<Pick> {
         self.pick
+    }
+
+    /// Whether the key hint still shows.
+    pub fn hint(&self) -> bool {
+        self.hint
+    }
+
+    /// The hint's time is up.
+    pub fn dismiss_hint(&mut self) {
+        self.hint = false;
+    }
+
+    /// The tile watched full screen while the grid waits (a detour).
+    pub fn detour(&self) -> Option<usize> {
+        self.detour
+    }
+
+    /// Back from a detour: the grid as it was.
+    pub fn resume(&mut self) {
+        self.detour = None;
     }
 
     /// The tile on `surface`, by index.
@@ -295,8 +270,12 @@ impl<C: Clone + PartialEq> Multiview<C> {
     }
 
     /// A key; `failed(surface)` says whether a surface's stream failed
-    /// (its options then offer Retry).
+    /// (its menu then offers Retry).
     pub fn key(&mut self, key: Key, failed: impl Fn(usize) -> bool) -> Outcome<C> {
+        self.hint = false;
+        if self.detour.is_some() {
+            return Outcome::Stay;
+        }
         if let Some(dialog) = &mut self.dialog {
             let (focus, len, across) = match dialog {
                 Dialog::Options { items, focus, .. } => (focus, items.len(), false),
@@ -319,43 +298,42 @@ impl<C: Clone + PartialEq> Multiview<C> {
             }
             return Outcome::Stay;
         }
-        let n = self.cell_count();
-        let (row, col) = (self.focus / 2, self.focus % 2);
-        let to = match key {
-            Key::Left if col == 1 => Some(self.focus - 1),
-            Key::Right if col == 0 && self.focus + 1 < n => Some(self.focus + 1),
-            Key::Up if row == 1 => Some(self.focus - 2),
-            Key::Down if row == 0 && self.focus + 2 < n => Some(self.focus + 2),
-            // Three cells: the one below the right column is the third.
-            Key::Down if row == 0 && n == 3 => Some(2),
-            Key::Ok => return self.press(self.focus, &failed),
-            Key::Menu => {
+        let way = match key {
+            Key::Left => Some((-1, 0)),
+            Key::Right => Some((1, 0)),
+            Key::Up => Some((0, -1)),
+            Key::Down => Some((0, 1)),
+            Key::Ok | Key::Menu => {
                 self.open_options(self.active, &failed);
                 return Outcome::Stay;
             }
+            Key::LongOk => {
+                self.toggle_enlarge(self.active);
+                return Outcome::Stay;
+            }
             Key::Back => return self.leave(self.active),
-            _ => None,
         };
-        if let Some(to) = to {
-            self.set_focus(to);
+        if let Some((dx, dy)) = way
+            && let Some(to) = self.layout().neighbour(self.active, dx, dy)
+        {
+            self.active = to;
         }
         Outcome::Stay
     }
 
-    /// A tap on cell `index`: a tile becomes active, the active one opens
-    /// its options; the add cell adds. With a dialog open, any tap (also
-    /// beside the cells) only closes it.
+    /// A tap on tile `index`: another tile becomes active, the active one
+    /// opens its menu. With a dialog open, any tap (also beside the tiles)
+    /// only closes it.
     pub fn tap(&mut self, index: usize, failed: impl Fn(usize) -> bool) -> Outcome<C> {
-        if self.dialog.take().is_some() || index >= self.cell_count() {
+        if self.dialog.take().is_some() || index >= self.tiles.len() || self.detour.is_some() {
             return Outcome::Stay;
         }
-        let again = index == self.focus && index == self.active;
-        self.set_focus(index);
-        if again || index == self.tiles.len() {
-            self.press(index, &failed)
+        if index == self.active {
+            self.open_options(index, &failed);
         } else {
-            Outcome::Stay
+            self.active = index;
         }
+        Outcome::Stay
     }
 
     /// Item `index` of the open dialog (OK on it, or a tap).
@@ -376,11 +354,16 @@ impl<C: Clone + PartialEq> Multiview<C> {
                 };
                 match action {
                     TileAction::Retry => Outcome::Retry(self.tiles[tile].surface),
+                    TileAction::Add => self.add(),
                     TileAction::Replace => {
                         self.pick = Some(Pick::Replace(tile));
                         Outcome::PickChannel
                     }
-                    TileAction::FullScreen => self.leave(tile),
+                    TileAction::Enlarge | TileAction::Reduce => {
+                        self.toggle_enlarge(tile);
+                        Outcome::Stay
+                    }
+                    TileAction::FullScreen => self.full_screen(tile),
                     TileAction::Remove => {
                         self.remove(tile);
                         Outcome::Stay
@@ -390,14 +373,64 @@ impl<C: Clone + PartialEq> Multiview<C> {
         }
     }
 
+    /// Adds a channel (the menu's Add, the pointer's toolbar, opening):
+    /// asks first past the account's limit, else picks one. Nothing while
+    /// no other tile fits.
+    pub fn add(&mut self) -> Outcome<C> {
+        self.dialog = None;
+        if !self.can_add() {
+            return Outcome::Stay;
+        }
+        if let Some(allowed) = self.over_connections().filter(|_| !self.insisted) {
+            self.dialog = Some(Dialog::Warning { allowed, focus: 1 });
+            return Outcome::Stay;
+        }
+        self.pick = Some(Pick::Add);
+        Outcome::PickChannel
+    }
+
+    /// Removes tile `index` at once (a tile's remove button); never the
+    /// last one. Whether it went.
+    pub fn remove_tile(&mut self, index: usize) -> bool {
+        if self.tiles.len() < 2 || index >= self.tiles.len() {
+            return false;
+        }
+        self.dialog = None;
+        self.remove(index);
+        true
+    }
+
+    /// Enlarges tile `index` (taking the big place from another), or
+    /// reduces it when it is the enlarged one; it becomes active. Nothing
+    /// with a single tile.
+    pub fn toggle_enlarge(&mut self, index: usize) {
+        if self.tiles.len() < 2 || index >= self.tiles.len() {
+            return;
+        }
+        self.dialog = None;
+        self.enlarged = if self.enlarged == Some(index) {
+            None
+        } else {
+            Some(index)
+        };
+        self.active = index;
+    }
+
+    /// Leaves multiview to the active tile in full screen (the pointer's
+    /// toolbar).
+    pub fn exit(&mut self) -> Outcome<C> {
+        self.dialog = None;
+        self.leave(self.active)
+    }
+
     /// The channel list chose `channel` for the pending pick. A channel
-    /// already on a tile only focuses that tile.
+    /// already on a tile only makes that tile active.
     pub fn picked(&mut self, channel: C) -> Outcome<C> {
         let Some(pick) = self.pick.take() else {
             return Outcome::Stay;
         };
         if let Some(at) = self.tiles.iter().position(|t| t.channel == channel) {
-            self.set_focus(at);
+            self.active = at;
             return Outcome::Stay;
         }
         match pick {
@@ -406,13 +439,13 @@ impl<C: Clone + PartialEq> Multiview<C> {
                     .find(|s| self.tile_on(*s).is_none())
                     .unwrap_or(0);
                 self.tiles.push(Tile { surface, channel });
-                self.set_focus(self.tiles.len() - 1);
+                self.active = self.tiles.len() - 1;
             }
             Pick::Add => {}
             Pick::Replace(tile) => {
                 if let Some(t) = self.tiles.get_mut(tile) {
                     t.channel = channel;
-                    self.set_focus(tile);
+                    self.active = tile;
                 }
             }
         }
@@ -439,45 +472,28 @@ impl<C: Clone + PartialEq> Multiview<C> {
         !self.tiles.is_empty()
     }
 
-    fn set_focus(&mut self, index: usize) {
-        self.focus = index.min(self.cell_count().saturating_sub(1));
-        if self.focus < self.tiles.len() {
-            self.active = self.focus;
-        }
-    }
-
-    /// OK on cell `index`.
-    fn press(&mut self, index: usize, failed: &impl Fn(usize) -> bool) -> Outcome<C> {
-        if index < self.tiles.len() {
-            self.open_options(index, failed);
-            Outcome::Stay
-        } else {
-            self.begin_add()
-        }
-    }
-
-    fn begin_add(&mut self) -> Outcome<C> {
-        if !self.can_add() {
-            return Outcome::Stay;
-        }
-        if let Some(allowed) = self.over_connections().filter(|_| !self.insisted) {
-            self.dialog = Some(Dialog::Warning { allowed, focus: 1 });
-            return Outcome::Stay;
-        }
-        self.pick = Some(Pick::Add);
-        Outcome::PickChannel
-    }
-
     fn open_options(&mut self, tile: usize, failed: &impl Fn(usize) -> bool) {
         let Some(t) = self.tiles.get(tile) else {
             return;
         };
-        let mut items = Vec::with_capacity(4);
+        let several = self.tiles.len() > 1;
+        let mut items = Vec::with_capacity(6);
         if failed(t.surface) {
             items.push(TileAction::Retry);
         }
-        items.extend([TileAction::Replace, TileAction::FullScreen]);
-        if self.tiles.len() > 1 {
+        if self.can_add() {
+            items.push(TileAction::Add);
+        }
+        items.push(TileAction::Replace);
+        if several {
+            items.push(if self.enlarged == Some(tile) {
+                TileAction::Reduce
+            } else {
+                TileAction::Enlarge
+            });
+        }
+        items.push(TileAction::FullScreen);
+        if several {
             items.push(TileAction::Remove);
         }
         self.dialog = Some(Dialog::Options {
@@ -485,6 +501,24 @@ impl<C: Clone + PartialEq> Multiview<C> {
             items,
             focus: 0,
         });
+    }
+
+    /// Tile `tile` full screen as a detour: it becomes active and moves
+    /// to surface 0, the tile there (if any) taking its surface.
+    fn full_screen(&mut self, tile: usize) -> Outcome<C> {
+        let Some(surface) = self.tiles.get(tile).map(|t| t.surface) else {
+            return Outcome::Stay;
+        };
+        if surface != 0 {
+            if let Some(main) = self.tile_on(0) {
+                self.tiles[main].surface = surface;
+            }
+            self.tiles[tile].surface = 0;
+        }
+        self.active = tile;
+        self.detour = Some(tile);
+        self.hint = false;
+        Outcome::FullScreen
     }
 
     fn leave(&mut self, tile: usize) -> Outcome<C> {
@@ -500,302 +534,23 @@ impl<C: Clone + PartialEq> Multiview<C> {
             return;
         }
         self.tiles.remove(tile);
+        let shift = |i: usize| if i > tile { i - 1 } else { i };
         self.pick = match self.pick {
             Some(Pick::Replace(t)) if t == tile => None,
-            Some(Pick::Replace(t)) if t > tile => Some(Pick::Replace(t - 1)),
+            Some(Pick::Replace(t)) => Some(Pick::Replace(shift(t))),
             p => p,
         };
-        if self.tiles.is_empty() {
-            self.active = 0;
-            self.focus = 0;
-            return;
+        // The enlarged tile gone (or one tile left): the grid again.
+        self.enlarged = self
+            .enlarged
+            .filter(|&e| e != tile && self.tiles.len() >= 2)
+            .map(shift);
+        if matches!(self.dialog, Some(Dialog::Options { .. })) {
+            self.dialog = None;
         }
         if self.active > tile || self.active >= self.tiles.len() {
             self.active = self.active.saturating_sub(1);
         }
-        self.set_focus(self.active);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const DESKTOP: Limits = Limits {
-        decoders: 4,
-        connections: None,
-    };
-    const BOX: Limits = Limits {
-        decoders: 2,
-        connections: None,
-    };
-
-    fn ok(_: usize) -> bool {
-        false
-    }
-
-    /// Adds `channel` through the add cell.
-    fn add(mv: &mut Multiview<u32>, channel: u32) {
-        let add = mv.cell_count() - 1;
-        assert_eq!(mv.tap(add, ok), Outcome::PickChannel);
-        assert_eq!(mv.pick(), Some(Pick::Add));
-        assert_eq!(mv.picked(channel), Outcome::Stay);
-    }
-
-    fn surfaces(mv: &Multiview<u32>) -> Vec<(usize, u32)> {
-        mv.tiles().iter().map(|t| (t.surface, t.channel)).collect()
-    }
-
-    #[test]
-    fn layouts_follow_the_cells() {
-        let mut mv = Multiview::open(10, DESKTOP);
-        // One tile and the add cell: side by side.
-        assert_eq!(mv.cells(), vec![Cell::Tile(0), Cell::Add]);
-        assert_eq!(mv.layout(), Layout::SideBySide);
-        assert_eq!(mv.focus(), Cell::Add, "opening offers to add");
-        add(&mut mv, 11);
-        assert_eq!(mv.layout(), Layout::Grid, "two tiles and the add cell");
-        add(&mut mv, 12);
-        add(&mut mv, 13);
-        assert_eq!(mv.cells().len(), 4, "full: no add cell");
-        assert!(!mv.can_add());
-        assert_eq!(mv.layout(), Layout::Grid);
-
-        let side = Layout::SideBySide;
-        assert_eq!(side.cell(1).x, 0.5);
-        assert_eq!((side.cell(0).y, side.cell(0).h), (0.25, 0.5));
-        let grid = Layout::Grid;
-        assert_eq!((grid.cell(3).x, grid.cell(3).y), (0.5, 0.5));
-        assert_eq!(Layout::for_cells(1), Layout::Single);
-        assert_eq!(Layout::Single.cell(0).w, 1.0);
-    }
-
-    #[test]
-    fn the_device_caps_the_tiles() {
-        let mut mv = Multiview::open(10, BOX);
-        add(&mut mv, 11);
-        assert_eq!(mv.cells(), vec![Cell::Tile(0), Cell::Tile(1)]);
-        assert_eq!(mv.layout(), Layout::SideBySide, "1+1 at the cap");
-        // No add cell to press; a stale pick adds nothing either.
-        assert_eq!(mv.tap(2, ok), Outcome::Stay);
-        mv.pick = Some(Pick::Add);
-        mv.picked(12);
-        assert_eq!(mv.tiles().len(), 2);
-        // A cap of one: the tile alone, nothing to add.
-        let single = Multiview::open(
-            1u32,
-            Limits {
-                decoders: 0,
-                connections: None,
-            },
-        );
-        assert_eq!(single.limits().decoders, 1);
-        assert_eq!(single.layout(), Layout::Single);
-        assert_eq!(single.focus(), Cell::Tile(0));
-    }
-
-    #[test]
-    fn moving_the_focus_moves_the_sound() {
-        let mut mv = Multiview::open(10, DESKTOP);
-        add(&mut mv, 11);
-        add(&mut mv, 12);
-        // Cells: 10 11 / 12 Add. The added tile became active.
-        assert_eq!(mv.active().channel, 12);
-        assert_eq!(mv.focus(), Cell::Tile(2));
-        mv.key(Key::Right, ok);
-        assert_eq!(mv.focus(), Cell::Add);
-        assert_eq!(mv.active().channel, 12, "the add cell keeps the sound");
-        mv.key(Key::Up, ok);
-        assert_eq!(mv.focus(), Cell::Tile(1));
-        assert_eq!(mv.active().channel, 11);
-        mv.key(Key::Up, ok);
-        assert_eq!(mv.focus(), Cell::Tile(1), "no wrap");
-        mv.key(Key::Left, ok);
-        assert_eq!(mv.active().channel, 10);
-        mv.key(Key::Down, ok);
-        assert_eq!(mv.active().channel, 12);
-
-        // Three cells (two tiles and add): Down from the right column goes
-        // to the third.
-        let mut three = Multiview::open(1u32, DESKTOP);
-        add(&mut three, 2);
-        three.key(Key::Up, ok);
-        three.key(Key::Right, ok);
-        assert_eq!(three.focus(), Cell::Tile(1));
-        three.key(Key::Down, ok);
-        assert_eq!(three.focus(), Cell::Add);
-    }
-
-    #[test]
-    fn taps_make_active_then_open_options() {
-        let mut mv = Multiview::open(10, DESKTOP);
-        add(&mut mv, 11);
-        assert_eq!(mv.tap(0, ok), Outcome::Stay);
-        assert_eq!(mv.active().channel, 10);
-        assert!(mv.dialog().is_none(), "the first tap only makes it active");
-        mv.tap(0, ok);
-        assert!(matches!(mv.dialog(), Some(Dialog::Options { tile: 0, .. })));
-        // A tap elsewhere closes the dialog first.
-        assert_eq!(mv.tap(1, ok), Outcome::Stay);
-        assert!(mv.dialog().is_none());
-        assert_eq!(mv.active().channel, 10);
-    }
-
-    #[test]
-    fn options_offer_what_applies() {
-        let mut mv = Multiview::open(10, DESKTOP);
-        mv.key(Key::Left, ok);
-        mv.key(Key::Ok, ok);
-        let items = |mv: &Multiview<u32>| match mv.dialog() {
-            Some(Dialog::Options { items, .. }) => items.clone(),
-            _ => vec![],
-        };
-        assert_eq!(
-            items(&mv),
-            vec![TileAction::Replace, TileAction::FullScreen],
-            "the last tile cannot be removed"
-        );
-        mv.key(Key::Back, ok);
-        assert!(mv.dialog().is_none(), "Back closes the dialog only");
-        add(&mut mv, 11);
-        mv.key(Key::Menu, |s| s == 1);
-        assert_eq!(
-            items(&mv),
-            vec![
-                TileAction::Retry,
-                TileAction::Replace,
-                TileAction::FullScreen,
-                TileAction::Remove
-            ]
-        );
-        assert_eq!(mv.key(Key::Ok, ok), Outcome::Retry(1));
-    }
-
-    #[test]
-    fn remove_and_replace_keep_the_other_surfaces() {
-        let mut mv = Multiview::open(10, DESKTOP);
-        add(&mut mv, 11);
-        add(&mut mv, 12);
-        assert_eq!(surfaces(&mv), vec![(0, 10), (1, 11), (2, 12)]);
-        // Remove the first tile (surface 0): the others keep theirs.
-        mv.tap(0, ok);
-        mv.tap(0, ok);
-        let remove = 2;
-        assert_eq!(mv.choose(remove), Outcome::Stay);
-        assert_eq!(surfaces(&mv), vec![(1, 11), (2, 12)]);
-        assert_eq!(mv.active().channel, 11);
-        // Surface 0 is free again for the next one.
-        add(&mut mv, 13);
-        assert_eq!(surfaces(&mv), vec![(1, 11), (2, 12), (0, 13)]);
-        let a = mv.assignments();
-        assert_eq!(a, [Some(13), Some(11), Some(12), None]);
-        // Replace the second tile's channel: same surface.
-        mv.tap(1, ok);
-        mv.tap(1, ok);
-        assert_eq!(mv.choose(0), Outcome::PickChannel);
-        assert_eq!(mv.pick(), Some(Pick::Replace(1)));
-        mv.picked(20);
-        assert_eq!(surfaces(&mv), vec![(1, 11), (2, 20), (0, 13)]);
-        assert_eq!(mv.active().channel, 20);
-        // Picking a channel already on a tile only focuses it.
-        mv.key(Key::Ok, ok);
-        mv.choose(0);
-        mv.picked(11);
-        assert_eq!(surfaces(&mv), vec![(1, 11), (2, 20), (0, 13)]);
-        assert_eq!(mv.active().channel, 11);
-        // A cancelled pick changes nothing.
-        add(&mut mv, 14);
-        assert!(!mv.can_add());
-        mv.key(Key::Ok, ok);
-        mv.choose(0);
-        mv.cancel_pick();
-        assert_eq!(mv.picked(30), Outcome::Stay);
-        assert_eq!(mv.tiles().len(), 4);
-    }
-
-    #[test]
-    fn back_and_full_screen_leave_with_a_tile() {
-        let mut mv = Multiview::open(10, DESKTOP);
-        add(&mut mv, 11);
-        assert_eq!(
-            mv.key(Key::Back, ok),
-            Outcome::Leave {
-                channel: 11,
-                surface: 1
-            }
-        );
-        mv.tap(0, ok);
-        mv.tap(0, ok);
-        assert_eq!(
-            mv.choose(1),
-            Outcome::Leave {
-                channel: 10,
-                surface: 0
-            }
-        );
-    }
-
-    #[test]
-    fn the_connection_limit_warns_before_adding() {
-        let limits = Limits {
-            decoders: 4,
-            connections: Some(2),
-        };
-        let mut mv = Multiview::open(10, limits);
-        assert_eq!(mv.over_connections(), None);
-        add(&mut mv, 11);
-        assert_eq!(mv.over_connections(), Some(2));
-        // The third stream: a warning, Cancel focused.
-        let add_cell = 2;
-        assert_eq!(mv.tap(add_cell, ok), Outcome::Stay);
-        assert_eq!(
-            mv.dialog(),
-            Some(&Dialog::Warning {
-                allowed: 2,
-                focus: 1
-            })
-        );
-        assert_eq!(mv.key(Key::Ok, ok), Outcome::Stay, "Cancel");
-        assert_eq!(mv.tiles().len(), 2);
-        assert!(mv.pick().is_none());
-        // Again, and insist.
-        mv.key(Key::Ok, ok);
-        mv.key(Key::Left, ok);
-        assert_eq!(mv.key(Key::Ok, ok), Outcome::PickChannel);
-        mv.picked(12);
-        assert_eq!(mv.tiles().len(), 3);
-        // Insisting once is enough for this multiview.
-        mv.key(Key::Right, ok);
-        assert_eq!(mv.key(Key::Ok, ok), Outcome::PickChannel);
-        // Replacing opens no new stream: no warning.
-        mv.cancel_pick();
-        let mut at_limit = Multiview::open(
-            1u32,
-            Limits {
-                decoders: 4,
-                connections: Some(1),
-            },
-        );
-        at_limit.key(Key::Left, ok);
-        at_limit.key(Key::Ok, ok);
-        assert_eq!(at_limit.choose(0), Outcome::PickChannel);
-        assert_eq!(at_limit.pick(), Some(Pick::Replace(0)));
-    }
-
-    #[test]
-    fn data_changes_keep_or_drop_tiles() {
-        let mut mv = Multiview::open(10, DESKTOP);
-        add(&mut mv, 11);
-        add(&mut mv, 12);
-        mv.key(Key::Up, ok);
-        mv.key(Key::Right, ok); // tile 1 (11) active
-        assert!(mv.retain(|_, ch| {
-            *ch += 100;
-            *ch != 110
-        }));
-        assert_eq!(surfaces(&mv), vec![(1, 111), (2, 112)]);
-        assert_eq!(mv.active().channel, 111);
-        assert!(!mv.retain(|_, _| false));
-        assert!(mv.tiles().is_empty());
+        self.detour = self.detour.filter(|&d| d != tile).map(shift);
     }
 }
