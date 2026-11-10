@@ -360,7 +360,7 @@ fn higher_priority_source_with_data_wins_per_channel() {
     assert_eq!(store.bound_count(), 2);
     let mut bound: Vec<_> = store
         .bindings()
-        .map(|(k, s, id)| (k.as_str().to_owned(), s, id.to_owned()))
+        .map(|(k, c)| (k.as_str().to_owned(), c.source, c.epg_id.clone()))
         .collect();
     bound.sort();
     assert_eq!(

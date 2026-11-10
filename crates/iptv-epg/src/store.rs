@@ -689,12 +689,11 @@ impl GuideStore {
         Some((self.sources[si as usize].id, c.epg_id.as_str()))
     }
 
-    /// Every bound playlist channel with the source and EPG id its guide
-    /// comes from (unordered).
-    pub fn bindings(&self) -> impl Iterator<Item = (&ChannelKey, SourceId, &str)> {
-        self.bound.iter().filter_map(|(key, &(si, _, cand))| {
-            let c = self.wanted.get(key)?.get(cand as usize)?;
-            Some((key, self.sources[si as usize].id, c.epg_id.as_str()))
+    /// Every bound playlist channel with the candidate its guide comes
+    /// from (source, EPG id, how it matched). Unordered.
+    pub fn bindings(&self) -> impl Iterator<Item = (&ChannelKey, &EpgRef)> {
+        self.bound.iter().filter_map(|(key, &(_, _, cand))| {
+            Some((key, self.wanted.get(key)?.get(cand as usize)?))
         })
     }
 

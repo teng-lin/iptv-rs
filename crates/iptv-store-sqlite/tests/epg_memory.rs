@@ -16,9 +16,14 @@ mod epg_synth;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
-use epg_synth::Shape;
+use std::time::Instant;
+
+use epg_synth::{NOW, Shape};
 use iptv_epg::{GuideStore, StoreOptions};
 use iptv_guide::{EpgSchedule, GuideChannel};
+use iptv_import::EpgSourceConfig;
+use iptv_providers::SecretUrl;
+use iptv_store_sqlite::{EpgFeedMeta, EpgWindow, Store};
 
 thread_local! {
     static LIVE: Cell<isize> = const { Cell::new(0) };
@@ -110,11 +115,104 @@ fn in_memory_import(shape: Shape) -> Report {
     }
 }
 
+/// SQLite's own heap (page cache, statements), not counted above.
+fn sqlite_heap() -> usize {
+    usize::try_from(unsafe { rusqlite::ffi::sqlite3_memory_used() }).unwrap_or(0)
+}
+
+/// Days of finished programmes the guide keeps (`epg.keep_past` default).
+const KEEP_PAST_DAYS: u32 = 2;
+
+/// The stored path: import, write to a file-backed store, drop the import,
+/// then load the guide from `now - keep_past` on without descriptions.
+fn stored_load(shape: Shape) -> (Report, Report) {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().join("guide.sqlite")).unwrap();
+    let source = store
+        .add_source(&iptv_providers::model::Source {
+            name: "Synthetic".into(),
+            config: iptv_providers::model::SourceConfig::M3u(
+                iptv_providers::model::M3uSourceConfig {
+                    location: SecretUrl::new("http://lists.example.com/synthetic.m3u"),
+                    user_agent: None,
+                    referrer: None,
+                },
+            ),
+        })
+        .unwrap();
+    let (guide, programmes) = epg_synth::import(shape, StoreOptions::default());
+    let feeds = [EpgFeedMeta {
+        config: EpgSourceConfig::new(
+            iptv_epg::SourceId(1),
+            SecretUrl::new("http://epg.example.com/guide.xml.gz"),
+        ),
+        fetched_at: NOW,
+        etag: None,
+        last_modified: None,
+        bytes: 0,
+    }];
+    let started = Instant::now();
+    let counts = store.replace_epg(source, &guide, &feeds, 0).unwrap();
+    let replaced_in = started.elapsed();
+    assert_eq!(counts.programmes, programmes);
+    drop(guide);
+    let size = std::fs::metadata(dir.path().join("guide.sqlite")).map_or(0, |m| m.len());
+
+    let mut out = Vec::new();
+    for (label, window) in [
+        (
+            "window (keep_past 2 d)",
+            EpgWindow::from(NOW, KEEP_PAST_DAYS),
+        ),
+        ("everything", EpgWindow::from(NOW, 365)),
+    ] {
+        let started = Instant::now();
+        let ((sched, loaded), live, peak) = measure(|| {
+            let guide = store.load_epg(source, &window).unwrap();
+            let loaded = guide
+                .sources()
+                .iter()
+                .map(|s| s.programme_count())
+                .sum::<usize>();
+            (schedule(shape, guide), loaded)
+        });
+        eprintln!(
+            "epg memory {}ch: stored load, {label}, no descriptions: {loaded} programmes in {:.0} ms: live {:.1} MiB, peak {:.1} MiB (store estimate {:.1} MiB; SQLite heap {:.1} MiB)",
+            shape.channels,
+            started.elapsed().as_secs_f64() * 1e3,
+            mib(live),
+            mib(peak),
+            mib(sched.store().heap_bytes()),
+            mib(sqlite_heap()),
+        );
+        out.push(Report {
+            programmes: loaded as u64,
+            live,
+            peak,
+        });
+        drop(sched);
+    }
+    eprintln!(
+        "epg memory {}ch: replace {programmes} programmes in {:.2} s, file {:.1} MiB",
+        shape.channels,
+        replaced_in.as_secs_f64(),
+        size as f64 / f64::from(1 << 20),
+    );
+    let all = out.pop().unwrap();
+    (out.pop().unwrap(), all)
+}
+
 #[test]
 fn thousand_channel_guide() {
     let r = in_memory_import(Shape::THOUSAND);
     assert!(r.programmes > 80_000, "{}", r.programmes);
     assert!(r.peak >= r.live);
+    let (window, all) = stored_load(Shape::THOUSAND);
+    assert_eq!(all.programmes, r.programmes);
+    // Budgets (measured: ~2-3 MiB live): the stored guide without
+    // descriptions stays far below the in-memory import.
+    assert!(window.live < 5 << 20, "{}", window.live);
+    assert!(all.live < r.live / 2, "{} vs {}", all.live, r.live);
 }
 
 #[test]
@@ -122,4 +220,6 @@ fn thousand_channel_guide() {
 fn default_fixture_guide() {
     let r = in_memory_import(Shape::DEFAULT_FIXTURE);
     assert!(r.programmes > 1_000_000, "{}", r.programmes);
+    let (window, _) = stored_load(Shape::DEFAULT_FIXTURE);
+    assert!(window.live < 40 << 20, "{}", window.live);
 }

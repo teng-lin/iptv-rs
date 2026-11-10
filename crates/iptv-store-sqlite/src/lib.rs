@@ -15,12 +15,17 @@
 //!
 //! One [`Store`] wraps one connection and is `Send`, not `Sync`. Use one
 //! writer and any number of reader stores on the same file; WAL lets them
-//! read while the writer replaces a catalog. EPG programmes are out of
-//! scope here (they stay in memory / cached files).
+//! read while the writer replaces a catalog.
+//! - **Guide data** (EPG) is stored per playlist source and replaced per
+//!   refresh ([`Store::replace_epg`]); the app loads a window of it without
+//!   descriptions ([`Store::load_epg`]) and reads descriptions on demand.
+//!   The wiring for app start and background refresh is documented in
+//!   `src/epg.rs` and the README.
 
 mod catalog;
 mod channels;
 mod codec;
+mod epg;
 mod error;
 mod history;
 pub mod migrate;
@@ -36,6 +41,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use rusqlite::{Connection, OpenFlags};
 
 pub use channels::{ChannelOrder, ChannelQuery, ChannelRow, ChannelScope};
+pub use epg::{EpgCounts, EpgFeedMeta, EpgWindow, StoredEpgFeed, StoredGuide};
 pub use error::{Result, StoreError};
 pub use history::{HISTORY_LIMIT, HistoryEntry, PRUNE_SLACK};
 pub use migrate::SCHEMA_VERSION;
