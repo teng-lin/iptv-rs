@@ -4,9 +4,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # Only our packages: `--all` would also format path dependencies (the NSH checkout).
-cargo fmt -p iptv-core -p iptv-nav -p iptv-settings -p iptv-epg -p iptv-providers -p iptv-guide -p iptv-app --check
-cargo test -p iptv-core -p iptv-nav -p iptv-settings -p iptv-epg -p iptv-providers -p iptv-guide --quiet
-for c in iptv-core iptv-nav iptv-settings iptv-epg iptv-providers iptv-guide; do
+cargo fmt -p iptv-core -p iptv-nav -p iptv-settings -p iptv-epg -p iptv-providers -p iptv-guide -p iptv-import -p iptv-net -p iptv-store-sqlite -p iptv-app --check
+cargo test -p iptv-core -p iptv-nav -p iptv-settings -p iptv-epg -p iptv-providers -p iptv-guide -p iptv-import -p iptv-net -p iptv-store-sqlite --quiet
+for c in iptv-core iptv-nav iptv-settings iptv-epg iptv-providers iptv-guide iptv-import; do
   cargo build -p "$c" --target wasm32-unknown-unknown --quiet
 done
 cargo build -p iptv-app --quiet

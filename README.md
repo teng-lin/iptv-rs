@@ -19,9 +19,12 @@ Android video/input research: [`docs/research/android-video-and-input.md`](docs/
 | `crates/iptv-epg` | Sans-IO XMLTV parser (gzip), EPG channel matching, compact guide store. Wasm-safe |
 | `crates/iptv-providers` | Sans-IO M3U parser, Xtream and Stalker clients, stable ids, catch-up URLs. Wasm-safe |
 | `crates/iptv-guide` | The real guide schedule: imported channels + EPG store behind the `Schedule` trait, with gap filling. Wasm-safe |
+| `crates/iptv-import` | Runtime-agnostic import pipeline: M3U/Xtream/Stalker sources and XMLTV guides into a `Catalog` and `GuideStore`, typed failures, progress, cancel. Wasm-safe |
+| `crates/iptv-net` | Native HTTP adapter (reqwest + rustls) implementing `Fetch`; strips identity headers on cross-host redirects |
+| `crates/iptv-store-sqlite` | SQLite store: provider catalog replaced per refresh, user overlays (favourites, order, hidden, history) kept by stable id, FTS5 search, tested migrations |
 | `crates/iptv-app` | NSH shell: screens, placeholder theme, video layer |
 | `hosts/android` | Kotlin host: `NshView`, Media3 `tv.player` component, TV launcher manifest |
-| `tools/` | `sync-host.sh`, `make-hls-fixtures.sh`, `burst.sh` |
+| `tools/` | `sync-host.sh`, `make-hls-fixtures.sh`, `make-iptv-fixtures.py`, `mock-server.py`, `mock-xtream.py`, `burst.sh` |
 
 ## Prerequisites
 
