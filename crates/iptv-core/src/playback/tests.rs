@@ -8,6 +8,7 @@ fn policy() -> RetryPolicy {
         max_attempts: 4,
         stable_ms: 10_000,
         stall_ms: 15_000,
+        quiet_reconnect_ms: 1_000,
     }
 }
 
@@ -339,4 +340,90 @@ fn the_previous_stream_reports_nothing_while_resolving() {
         h.on_error(ErrorKind::Resolve, "Network".into(), 7)
             .is_some()
     );
+}
+
+#[test]
+fn a_stream_that_played_reconnects_quietly_for_a_moment() {
+    let mut h = Health::new(policy());
+    h.start(true, 0);
+    playing(&mut h, 0);
+    assert!(!h.reconnecting());
+    assert_eq!(h.indicator(5_000), None, "playing shows nothing");
+    // The server closed the live stream: reconnect at once, keep the frame.
+    let r = h.on_state(PlayerState::Ended, 20_000).expect("reconnects");
+    assert!(h.reconnecting(), "the player keeps the last frame");
+    assert_eq!(h.indicator(20_000), None, "no pill for a quick reconnect");
+    assert_eq!(h.indicator_due(), Some(21_000));
+    assert!(h.due(r, 20_000));
+    h.resolved(20_010);
+    assert_eq!(h.on_state(PlayerState::Buffering, 20_100), None);
+    assert_eq!(h.indicator(20_999), None);
+    assert_eq!(
+        h.indicator(21_000),
+        Some(Waiting::Reconnecting { attempt: 1, of: 4 }),
+        "a slow reconnect says so"
+    );
+    // Further attempts count from the first one's start.
+    let r = h
+        .on_error(ErrorKind::Network, "ERROR_CODE_IO".into(), 21_500)
+        .expect("retries");
+    assert_eq!(h.indicator_due(), Some(21_000));
+    assert_eq!(
+        h.indicator(21_500),
+        Some(Waiting::Reconnecting { attempt: 2, of: 4 })
+    );
+    assert!(h.due(r, r.at_ms));
+    h.resolved(r.at_ms);
+    assert_eq!(h.on_state(PlayerState::Ready, r.at_ms + 300), None);
+    assert!(!h.reconnecting(), "it plays again");
+    assert_eq!(h.indicator(r.at_ms + 300), None);
+    assert_eq!(h.indicator_due(), None);
+}
+
+#[test]
+fn a_stream_that_never_played_shows_loading_and_retries_openly() {
+    let mut h = Health::new(policy());
+    h.start(true, 0);
+    assert_eq!(h.indicator(0), Some(Waiting::Loading));
+    h.resolved(10);
+    assert_eq!(h.indicator(10), Some(Waiting::Loading));
+    h.on_error(ErrorKind::Network, "ERROR_CODE_IO".into(), 500)
+        .expect("retries");
+    assert!(!h.reconnecting(), "nothing to keep on screen");
+    assert_eq!(
+        h.indicator(500),
+        Some(Waiting::Reconnecting { attempt: 1, of: 4 })
+    );
+    assert_eq!(h.indicator_due(), None);
+}
+
+#[test]
+fn buffering_failures_and_new_streams_end_a_reconnect() {
+    let mut h = Health::new(policy());
+    h.start(true, 0);
+    playing(&mut h, 0);
+    assert_eq!(h.on_state(PlayerState::Buffering, 1_000), None);
+    assert_eq!(h.indicator(1_000), Some(Waiting::Buffering));
+    assert_eq!(h.on_state(PlayerState::Ready, 1_500), None);
+    h.on_state(PlayerState::Ended, 2_000).expect("reconnects");
+    assert!(h.reconnecting());
+    // Refused: the error stays on screen, with the black shutter.
+    h.on_error(ErrorKind::Http(403), "403".into(), 2_100);
+    assert!(h.failure().is_some());
+    assert!(!h.reconnecting());
+    assert_eq!(h.indicator(9_000), None, "the failure card, not a pill");
+    // A channel change is not a reconnect.
+    h.start(true, 10_000);
+    playing(&mut h, 10_000);
+    h.on_state(PlayerState::Ended, 12_000).expect("reconnects");
+    assert!(h.reconnecting());
+    h.start(true, 12_100);
+    assert!(!h.reconnecting());
+    assert_eq!(h.indicator(12_100), Some(Waiting::Loading));
+    // Catch-up never reconnects on its own.
+    h.start(false, 20_000);
+    assert!(!h.live());
+    playing(&mut h, 20_000);
+    assert_eq!(h.on_state(PlayerState::Ended, 30_000), None);
+    assert!(!h.reconnecting());
 }
