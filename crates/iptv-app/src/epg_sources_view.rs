@@ -24,21 +24,21 @@ mod words;
 
 use iptv_nav::Action;
 use iptv_store_sqlite::SourceId;
-use nsh_core::element::input;
 use nsh_core::prelude::*;
 
 pub use state::Screen as Open;
 use state::{Act, Effect, Item, Key, Layer, Screen};
 
 use crate::data::stored::{self, GuideStatus};
-use crate::theme::{FOCUS_ALPHA, RADIUS, RADIUS_LARGE, RESTING_ALPHA, TEXT_SECONDARY_ALPHA};
+use crate::list_rows::{self, Mark};
+use crate::scale::Scale;
+use crate::theme::{LIST_TEXT, RADIUS, RESTING_ALPHA};
+use crate::ui_kit::{self, ERROR, ROW_THREE, TOUCH};
+use crate::wizard_view::entry;
 use crate::{Ui, tint};
 
 const WHITE: u32 = 0xFFFFFF;
-/// Placeholder error tone (light red of the placeholder palette).
-const ERROR: u32 = 0xEF9A9A;
-const ROW_H: f32 = 76.0;
-const CARD_W: f32 = 600.0;
+const CARD_W: f32 = 660.0;
 
 // --- Actions -------------------------------------------------------------------
 
@@ -173,16 +173,9 @@ pub fn source_title(s: &iptv_store_sqlite::GuideSource) -> String {
 
 // --- View ----------------------------------------------------------------------
 
-fn secondary() -> Rgba {
-    tint(WHITE, TEXT_SECONDARY_ALPHA)
-}
-
-fn focus_bg(ui: Ui, focused: bool) -> Rgba {
-    if focused && ui.keys_shown() {
-        tint(ui.theme.with(|t| t.accent.main), FOCUS_ALPHA)
-    } else {
-        tint(WHITE, 0)
-    }
+/// A row's or action's mark: the pill while focused with the keys shown.
+fn mark(ui: Ui, focused: bool) -> Mark {
+    Mark::of(focused && ui.keys_shown(), false)
 }
 
 fn time_label(at: i64) -> String {
@@ -207,38 +200,27 @@ pub fn layer(ui: Ui) -> impl IntoElement {
         }
     });
     let editing = computed(move || editing(ui));
+    let size = Scale::new();
     when(
         move || is_open(ui),
         move || {
-            view()
-                .absolute()
-                .inset_0()
-                .pt_safe_area()
-                .px(px(48.0))
-                .py(px(24.0))
-                .gap(px(12.0))
-                .bg(move || rgb(ui.theme.with(|t| t.background.window)))
-                .child(header(ui))
-                .child(
-                    text(move || hint(ui))
-                        .text_size(px(13.0))
-                        .text_color(secondary()),
-                )
+            ui_kit::screen(ui, size)
+                .child(header(ui, size))
+                .child(ui_kit::caption(size, move || hint(ui)))
                 .child(when(
                     move || state(ui, |s| s.notice().is_some()).unwrap_or(false),
                     move || {
-                        text(move || {
+                        ui_kit::body(size, move || {
                             state(ui, |s| s.notice().map(words::notice))
                                 .flatten()
                                 .unwrap_or_default()
                         })
-                        .text_size(px(14.0))
                         .text_color(rgb(ERROR))
                     },
                 ))
-                .child(list(ui))
-                .child(sheet(ui))
-                .child(when(move || editing.get(), move || edit_sheet(ui)))
+                .child(list(ui, size))
+                .child(sheet(ui, size))
+                .child(when(move || editing.get(), move || edit_sheet(ui, size)))
         },
     )
 }
@@ -259,7 +241,7 @@ fn hint(ui: Ui) -> &'static str {
     }
 }
 
-fn header(ui: Ui) -> impl IntoElement {
+fn header(ui: Ui, size: Scale) -> impl IntoElement {
     let name = move || {
         let playlist = state(ui, Screen::playlist);
         ui.library.version.get();
@@ -275,33 +257,10 @@ fn header(ui: Ui) -> impl IntoElement {
             |n| format!("Guide sources · {n}"),
         )
     };
-    view()
-        .flex_row()
-        .items_center()
-        .gap(px(12.0))
-        .child(
-            text(name)
-                .flex_1()
-                .number_of_lines(1)
-                .text_size(px(22.0))
-                .text_color(rgb(WHITE)),
-        )
-        .child(
-            text("Close")
-                .px(px(16.0))
-                .py(px(8.0))
-                .rounded(px(RADIUS))
-                .text_size(px(14.0))
-                .text_color(rgb(WHITE))
-                .bg(tint(WHITE, RESTING_ALPHA * 2))
-                .on_press(move || {
-                    ui.touched();
-                    close(ui);
-                }),
-        )
+    ui_kit::header(ui, size, name, close)
 }
 
-fn list(ui: Ui) -> impl IntoElement {
+fn list(ui: Ui, size: Scale) -> impl IntoElement {
     let rows = element_ref();
     let count = move || state(ui, |s| s.items().len()).unwrap_or(0);
     let focused_index =
@@ -313,8 +272,8 @@ fn list(ui: Ui) -> impl IntoElement {
             rows.scroll_to_index(i as u32, percentage(0.5), px(0.0), false);
         }
     });
-    virtual_list(count, move |at| row(ui, at.index(), focused_index))
-        .estimated_item_size(px(ROW_H))
+    virtual_list(count, move |at| row(ui, size, at.index(), focused_index))
+        .estimated_item_size(list_rows::pitch(size, ROW_THREE))
         .element_ref(&rows)
         .flex_1()
 }
@@ -344,7 +303,7 @@ fn update_status(playlist: SourceId) -> (String, bool) {
     }
 }
 
-fn row(ui: Ui, index: usize, focused_index: Memo<Option<usize>>) -> impl IntoElement {
+fn row(ui: Ui, size: Scale, index: usize, focused_index: Memo<Option<usize>>) -> impl IntoElement {
     let item = move || state(ui, |s| s.items().get(index).copied()).flatten();
     let line = move || {
         state(ui, |s| match s.items().get(index) {
@@ -377,14 +336,12 @@ fn row(ui: Ui, index: usize, focused_index: Memo<Option<usize>>) -> impl IntoEle
         None => String::new(),
     };
     let enabled = move || line().is_none_or(|l| l.source.enabled);
-    view()
-        .h(px(ROW_H))
-        .px(px(16.0))
+    let mark = move || mark(ui, focused_index.get() == Some(index));
+    list_rows::row(size, ROW_THREE, mark)
         .flex_row()
         .items_center()
-        .gap(px(14.0))
-        .rounded(px(RADIUS))
-        .bg(move || focus_bg(ui, focused_index.get() == Some(index)))
+        .justify_start()
+        .gap(move || size.px(14.0))
         .on_press(move || {
             ui.touched();
             if let Some(tapped) = item() {
@@ -394,39 +351,33 @@ fn row(ui: Ui, index: usize, focused_index: Memo<Option<usize>>) -> impl IntoEle
         .child(
             view()
                 .flex_1()
-                .gap(px(2.0))
                 .child(
-                    text(title)
+                    ui_kit::label(size, title).text_color(move || match (mark(), enabled()) {
+                        (Mark::Focused, true) => Mark::Focused.text(),
+                        (Mark::Focused, false) => Mark::Focused.disabled(),
+                        (_, true) => rgb(LIST_TEXT),
+                        (_, false) => tint(WHITE, 0x80),
+                    }),
+                )
+                .child(ui_kit::detail(size, summary).text_color(move || mark().secondary()))
+                .child(
+                    ui_kit::caption(size, move || status().0)
                         .number_of_lines(1)
-                        .text_size(px(17.0))
-                        .text_color(move || {
-                            if enabled() {
-                                rgb(WHITE)
-                            } else {
-                                tint(WHITE, 0x80)
-                            }
+                        .text_color(move || match (status().1, mark()) {
+                            (true, _) => rgb(ERROR),
+                            (false, m) => m.secondary(),
                         }),
-                )
-                .child(
-                    text(summary)
-                        .number_of_lines(1)
-                        .text_size(px(13.0))
-                        .text_color(secondary()),
-                )
-                .child(
-                    text(move || status().0)
-                        .number_of_lines(1)
-                        .text_size(px(13.0))
-                        .text_color(move || if status().1 { rgb(ERROR) } else { secondary() }),
                 ),
         )
-        .child(text(switched).text_size(px(14.0)).text_color(move || {
-            if enabled() {
-                rgb(ui.theme.with(|t| t.accent.light))
-            } else {
-                secondary()
-            }
-        }))
+        .child(
+            list_rows::second(size, switched, crate::fonts::SANS).text_color(move || {
+                match (mark(), enabled()) {
+                    (Mark::Focused, _) => Mark::Focused.text(),
+                    (_, true) => rgb(ui.theme.with(|t| t.accent.light)),
+                    (_, false) => ui_kit::secondary(),
+                }
+            }),
+        )
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -436,7 +387,7 @@ enum Sheet2 {
 }
 
 /// The open sheet over the list; rebuilt only when another one opens.
-fn sheet(ui: Ui) -> impl IntoElement {
+fn sheet(ui: Ui, size: Scale) -> impl IntoElement {
     let open = computed(move || match state(ui, Screen::layer) {
         Some(Layer::Actions { feed, .. }) => Some((Sheet2::Actions, feed)),
         Some(Layer::Confirm { feed, .. }) => Some((Sheet2::Confirm, feed)),
@@ -445,8 +396,12 @@ fn sheet(ui: Ui) -> impl IntoElement {
     dynamic(move || {
         let shown = open.get();
         untracked(move || match shown {
-            Some((Sheet2::Actions, feed)) => backdrop(ui, actions_card(ui, feed).into_element()),
-            Some((Sheet2::Confirm, feed)) => backdrop(ui, confirm_card(ui, feed).into_element()),
+            Some((Sheet2::Actions, feed)) => {
+                backdrop(ui, actions_card(ui, size, feed).into_element())
+            }
+            Some((Sheet2::Confirm, feed)) => {
+                backdrop(ui, confirm_card(ui, size, feed).into_element())
+            }
             None => view(),
         })
     })
@@ -471,46 +426,24 @@ fn backdrop(ui: Ui, card: AnyElement) -> View {
         .child(card)
 }
 
-fn card(ui: Ui) -> View {
-    view()
-        .w(px(CARD_W))
-        .px(px(28.0))
-        .py(px(24.0))
-        .gap(px(6.0))
-        .rounded(px(RADIUS_LARGE))
-        .bg(move || rgb(ui.theme.with(|t| t.background.panel)))
+fn card(ui: Ui, size: Scale) -> View {
+    ui_kit::card(ui, size, CARD_W)
+        .gap(move || size.px(6.0))
         // Taps on the card stay on it.
         .on_press(|| {})
 }
 
-fn button(
-    ui: Ui,
-    label: impl IntoReactive<SharedString>,
-    focused: impl Fn() -> bool + 'static,
-    color: u32,
-    on_press: impl Fn() + 'static,
-) -> View {
-    view().flex_row().child(
-        text(label)
-            .flex_1()
-            .px(px(16.0))
-            .py(px(10.0))
-            .rounded(px(RADIUS))
-            .text_size(px(16.0))
-            .text_color(rgb(color))
-            .bg(move || focus_bg(ui, focused()))
-            .on_press(move || {
-                ui.touched();
-                on_press();
-            }),
-    )
-}
-
 /// A small − or + beside the time shift (touch and mouse).
-fn step(ui: Ui, label: &'static str, feed: iptv_epg::SourceId, dir: i32) -> impl IntoElement {
+fn step(
+    ui: Ui,
+    size: Scale,
+    label: &'static str,
+    feed: iptv_epg::SourceId,
+    dir: i32,
+) -> impl IntoElement {
     view()
-        .w(px(48.0))
-        .h(px(40.0))
+        .w(move || size.px(TOUCH))
+        .h(move || size.px(TOUCH - 4.0))
         .items_center()
         .justify_center()
         .rounded(px(RADIUS))
@@ -519,10 +452,10 @@ fn step(ui: Ui, label: &'static str, feed: iptv_epg::SourceId, dir: i32) -> impl
             ui.touched();
             update(ui, |s| s.shift(feed, dir));
         })
-        .child(text(label).text_size(px(18.0)).text_color(rgb(WHITE)))
+        .child(ui_kit::label(size, label))
 }
 
-fn actions_card(ui: Ui, feed: iptv_epg::SourceId) -> impl IntoElement {
+fn actions_card(ui: Ui, size: Scale, feed: iptv_epg::SourceId) -> impl IntoElement {
     let line = move || state(ui, |s| s.line(feed).cloned()).flatten();
     let acts = state(ui, |s| s.acts(feed)).unwrap_or_default();
     let act_row = move |act: Act| {
@@ -535,46 +468,44 @@ fn actions_card(ui: Ui, feed: iptv_epg::SourceId) -> impl IntoElement {
                 .unwrap_or_default()
         };
         let color = if act == Act::Remove { ERROR } else { WHITE };
-        let row = button(ui, label, focused, color, move || {
+        let row = ui_kit::action(ui, size, label, focused, color, move || {
             update(ui, |s| s.act(feed, act));
         });
         if act == Act::Shift {
-            row.gap(px(8.0))
+            row.flex_row()
                 .items_center()
-                .child(step(ui, "−", feed, -1))
-                .child(step(ui, "+", feed, 1))
+                .justify_start()
+                .gap(move || size.px(8.0))
+                .child(view().flex_1())
+                .child(step(ui, size, "−", feed, -1))
+                .child(step(ui, size, "+", feed, 1))
         } else {
             row
         }
     };
-    card(ui)
+    card(ui, size)
+        .child(ui_kit::title(size, move || {
+            line().map(|l| words::title(&l.source)).unwrap_or_default()
+        }))
         .child(
-            text(move || line().map(|l| words::title(&l.source)).unwrap_or_default())
-                .number_of_lines(1)
-                .text_size(px(22.0))
-                .text_color(rgb(WHITE)),
+            ui_kit::body(size, move || {
+                line().map(|l| words::origin(&l.source)).unwrap_or_default()
+            })
+            .number_of_lines(1),
         )
         .child(
-            text(move || line().map(|l| words::origin(&l.source)).unwrap_or_default())
-                .number_of_lines(1)
-                .text_size(px(14.0))
-                .text_color(secondary()),
-        )
-        .child(
-            text(move || {
+            ui_kit::body(size, move || {
                 line()
                     .map(|l| words::status(&l, time_label).0)
                     .unwrap_or_default()
             })
-            .number_of_lines(1)
-            .text_size(px(14.0))
-            .text_color(secondary()),
+            .number_of_lines(1),
         )
-        .child(view().h(px(6.0)))
+        .child(view().h(move || size.px(6.0)))
         .children(acts.into_iter().map(act_row))
 }
 
-fn confirm_card(ui: Ui, feed: iptv_epg::SourceId) -> impl IntoElement {
+fn confirm_card(ui: Ui, size: Scale, feed: iptv_epg::SourceId) -> impl IntoElement {
     let (title, body) = state(ui, |s| {
         s.line(feed).map(|l| {
             (
@@ -588,22 +519,36 @@ fn confirm_card(ui: Ui, feed: iptv_epg::SourceId) -> impl IntoElement {
     let focused = move |remove: bool| {
         move || state(ui, |s| s.layer() == Layer::Confirm { feed, remove }).unwrap_or(false)
     };
-    card(ui)
-        .child(text(title).text_size(px(22.0)).text_color(rgb(WHITE)))
-        .child(text(body).text_size(px(15.0)).text_color(secondary()))
-        .child(view().h(px(8.0)))
-        .child(button(ui, "Keep it", focused(false), WHITE, move || {
-            update(ui, |s| s.confirm(feed, false));
-        }))
-        .child(button(ui, "Remove", focused(true), ERROR, move || {
-            update(ui, |s| s.confirm(feed, true));
-        }))
+    card(ui, size)
+        .child(ui_kit::title(size, title))
+        .child(ui_kit::body(size, body))
+        .child(view().h(move || size.px(8.0)))
+        .child(ui_kit::action(
+            ui,
+            size,
+            "Keep it",
+            focused(false),
+            WHITE,
+            move || {
+                update(ui, |s| s.confirm(feed, false));
+            },
+        ))
+        .child(ui_kit::action(
+            ui,
+            size,
+            "Remove",
+            focused(true),
+            ERROR,
+            move || {
+                update(ui, |s| s.confirm(feed, true));
+            },
+        ))
 }
 
 /// The text sheet for a new source's link, then its name, a name, or a
 /// new link. One field for every step: it takes the keys again whenever
 /// the step changes (Return lets them go).
-fn edit_sheet(ui: Ui) -> impl IntoElement {
+fn edit_sheet(ui: Ui, size: Scale) -> impl IntoElement {
     let field = element_ref();
     let kind = computed(move || state(ui, |s| s.editing().map(|e| e.kind.clone())).flatten());
     effect(move || {
@@ -623,79 +568,33 @@ fn edit_sheet(ui: Ui) -> impl IntoElement {
             .flatten()
             .unwrap_or_default()
     };
-    view()
-        .absolute()
-        .inset_0()
-        .pt_safe_area()
-        .items_center()
-        // Near the top: the keyboard takes the lower half.
-        .pt(px(40.0))
-        .bg(tint(0x000000, 0xA0))
-        .child(
-            view()
-                .w(px(640.0))
-                .p(px(24.0))
-                .gap(px(14.0))
-                .rounded(px(RADIUS_LARGE))
-                .bg(move || rgb(ui.theme.with(|t| t.background.panel)))
-                .child(
-                    text(move || words().0.to_owned())
-                        .text_size(px(14.0))
-                        .text_color(secondary()),
-                )
-                .child(
-                    input()
-                        .element_ref(&field)
-                        .value(current)
-                        .on_change(move |t: &str| {
-                            ui.guide_sources.update(|s| {
-                                if let Some(s) = s {
-                                    s.set_text(t);
-                                }
-                            });
-                        })
-                        .on_submit(move |_: &str| commit(ui))
-                        .auto_focus(true)
-                        .keyboard_type(move || {
-                            if url() {
-                                KeyboardType::Url
-                            } else {
-                                KeyboardType::Default
+    let (outer, card) = entry::frame(ui, size);
+    outer.child(
+        card.child(ui_kit::title(size, move || words().0))
+            .child(
+                entry::sheet_field(ui, size)
+                    .element_ref(&field)
+                    .value(current)
+                    .on_change(move |t: &str| {
+                        ui.guide_sources.update(|s| {
+                            if let Some(s) = s {
+                                s.set_text(t);
                             }
-                        })
-                        .auto_capitalize(AutoCapitalize::None)
-                        .auto_correct(false)
-                        .placeholder(move || words().1.to_owned())
-                        .text_size(px(18.0))
-                        .text_color(rgb(WHITE))
-                        .px(px(14.0))
-                        .py(px(10.0))
-                        .rounded(px(RADIUS))
-                        .border_1()
-                        .border_color(move || rgb(ui.theme.with(|t| t.accent.main)))
-                        .bg(move || rgb(ui.theme.with(|t| t.background.window))),
-                )
-                .child(
-                    view()
-                        .flex_row()
-                        .gap(px(12.0))
-                        .justify_end()
-                        .child(sheet_button(ui, "Cancel", cancel))
-                        .child(sheet_button(ui, "Done", commit)),
-                ),
-        )
-}
-
-fn sheet_button(ui: Ui, label: &'static str, act: fn(Ui)) -> impl IntoElement {
-    text(label)
-        .px(px(20.0))
-        .py(px(10.0))
-        .rounded(px(RADIUS))
-        .text_size(px(15.0))
-        .text_color(rgb(WHITE))
-        .bg(tint(WHITE, RESTING_ALPHA * 2))
-        .on_press(move || {
-            ui.touched();
-            act(ui);
-        })
+                        });
+                    })
+                    .on_submit(move |_: &str| commit(ui))
+                    .auto_focus(true)
+                    .keyboard_type(move || {
+                        if url() {
+                            KeyboardType::Url
+                        } else {
+                            KeyboardType::Default
+                        }
+                    })
+                    .auto_capitalize(AutoCapitalize::None)
+                    .auto_correct(false)
+                    .placeholder(move || words().1.to_owned()),
+            )
+            .child(entry::sheet_buttons(ui, size, cancel, commit)),
+    )
 }

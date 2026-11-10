@@ -24,14 +24,16 @@ use nsh_core::picker::FilePickRequest;
 use nsh_core::prelude::*;
 
 use crate::data::{self, Job, Purpose, Update};
-use crate::theme::{FOCUS_ALPHA, RADIUS, RADIUS_LARGE, RESTING_ALPHA, TEXT_SECONDARY_ALPHA};
+use crate::list_rows::{self, Mark, ROW, ROW_TWO};
+use crate::scale::Scale;
+use crate::theme::{LIST_TEXT, RADIUS, RESTING_ALPHA};
+use crate::ui_kit::{self, ERROR};
 use crate::{Ui, tint};
 
 const WHITE: u32 = 0xFFFFFF;
-const RESTING: u8 = RESTING_ALPHA * 2;
-/// Placeholder error tone (light red of the placeholder palette).
-const ERROR: u32 = 0xEF9A9A;
-const CARD_W: f32 = 640.0;
+const CARD_W: f32 = 720.0;
+/// A form row's label column (dp at full size).
+const LABEL_W: f32 = 150.0;
 
 /// The open wizard and what the screen adds to it.
 #[derive(Clone, PartialEq)]
@@ -221,13 +223,13 @@ pub fn back(ui: Ui) -> bool {
 
 /// The top bar's entry point.
 pub fn add_button(ui: Ui) -> impl IntoElement {
-    text("+ Add playlist")
-        .px(px(12.0))
-        .py(px(5.0))
+    let size = Scale::new();
+    ui_kit::caption(size, "+ Add playlist")
+        .px(move || size.px(12.0))
+        .py(move || size.px(5.0))
         .rounded(px(RADIUS))
-        .text_size(px(13.0))
-        .text_color(rgb(WHITE))
-        .bg(tint(WHITE, RESTING))
+        .text_color(rgb(LIST_TEXT))
+        .bg(tint(WHITE, RESTING_ALPHA * 2))
         .on_press(move || {
             ui.touched();
             open_add(ui);
@@ -294,93 +296,66 @@ fn focused(ui: Ui, target: Target) -> bool {
     ui.keys_shown() && read(ui, |w| w.focus() == Some(target)) == Some(true)
 }
 
-fn focus_fill(ui: Ui, target: Target, resting: u8) -> Rgba {
-    if focused(ui, target) {
-        tint(ui.theme.with(|t| t.accent.main), FOCUS_ALPHA)
-    } else {
-        tint(WHITE, resting)
-    }
+/// A focusable row's mark: the pill while focused with the keys shown.
+fn mark(ui: Ui, target: Target) -> Mark {
+    Mark::of(focused(ui, target), false)
 }
 
-fn card(ui: Ui) -> View {
-    view()
-        .w(px(CARD_W))
-        .px(px(28.0))
-        .py(px(24.0))
-        .gap(px(10.0))
-        .rounded(px(RADIUS_LARGE))
-        .bg(move || rgb(ui.theme.with(|t| t.background.panel)))
-}
-
-fn title(words: &'static str) -> impl IntoElement {
-    text(words).text_size(px(24.0)).text_color(rgb(WHITE))
-}
-
-fn secondary(words: impl IntoReactive<SharedString>) -> Text {
-    text(words)
-        .text_size(px(14.0))
-        .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA))
+fn card(ui: Ui, size: Scale) -> View {
+    ui_kit::card(ui, size, CARD_W).gap(move || size.px(10.0))
 }
 
 /// Remote hints, shown only while keys drive the UI.
-fn hint(ui: Ui, keys: &'static str) -> impl IntoElement {
-    secondary(move || if ui.keys_shown() { keys } else { "" }.to_owned())
-        .text_size(px(12.0))
-        .mt(px(6.0))
+fn hint(ui: Ui, size: Scale, keys: &'static str) -> impl IntoElement {
+    ui_kit::caption(size, move || if ui.keys_shown() { keys } else { "" }).mt(move || size.px(6.0))
 }
 
 /// A focusable button for `target`; a tap sends `Tap(target)`.
-fn button(ui: Ui, label: &'static str, target: Target) -> impl IntoElement {
-    text(label)
-        .self_start()
-        .mt(px(8.0))
-        .px(px(22.0))
-        .py(px(11.0))
-        .rounded(px(RADIUS))
-        .text_size(px(16.0))
-        .text_color(rgb(WHITE))
-        .bg(move || focus_fill(ui, target, RESTING))
-        .on_press(move || {
-            ui.touched();
-            send(ui, WizardEvent::Tap(target));
-        })
+fn button(ui: Ui, size: Scale, label: &'static str, target: Target) -> impl IntoElement {
+    ui_kit::button(
+        ui,
+        size,
+        label,
+        move || focused(ui, target),
+        move || send(ui, WizardEvent::Tap(target)),
+    )
+    .self_start()
+    .mt(move || size.px(8.0))
 }
 
 fn empty(ui: Ui) -> impl IntoElement {
-    card(ui)
-        .child(title("No playlists yet"))
-        .child(secondary(
+    let size = Scale::new();
+    card(ui, size)
+        .child(ui_kit::title(size, "No playlists yet"))
+        .child(ui_kit::body(
+            size,
             "iptv-rs has no channels of its own. Add the playlist or account \
              your TV provider gave you, and the guide fills with its channels.",
         ))
-        .child(button(ui, "Add playlist", Target::AddPlaylist))
-        .child(hint(ui, "OK add a playlist   Back leave"))
+        .child(button(ui, size, "Add playlist", Target::AddPlaylist))
+        .child(hint(ui, size, "OK add a playlist   Back leave"))
 }
 
 fn choose_type(ui: Ui) -> impl IntoElement {
+    let size = Scale::new();
     let row = move |kind: PlaylistKind| {
         let target = Target::Kind(kind);
-        view()
-            .px(px(16.0))
-            .py(px(10.0))
-            .gap(px(2.0))
-            .rounded(px(RADIUS))
-            .bg(move || focus_fill(ui, target, 0))
+        let mark = move || mark(ui, target);
+        list_rows::row(size, ROW_TWO, mark)
             .on_press(move || {
                 ui.touched();
                 send(ui, WizardEvent::Tap(target));
             })
+            .child(ui_kit::label(size, words::kind_title(kind)).text_color(move || mark().text()))
             .child(
-                text(words::kind_title(kind))
-                    .text_size(px(17.0))
-                    .text_color(rgb(WHITE)),
+                ui_kit::detail(size, words::kind_detail(kind))
+                    .text_color(move || mark().secondary()),
             )
-            .child(secondary(words::kind_detail(kind)).text_size(px(13.0)))
     };
-    card(ui)
-        .child(title("What did your provider give you?"))
+    card(ui, size)
+        .child(ui_kit::title(size, "What did your provider give you?"))
         .children(PlaylistKind::ALL.map(row))
-        .child(hint(ui, "▲▼ choose   OK next   Back back"))
+        .child(hint(ui, size, "▲▼ choose   OK next   Back back"))
 }
 
 fn shown_value(field: Field, value: &str) -> String {
@@ -392,46 +367,39 @@ fn shown_value(field: Field, value: &str) -> String {
     }
 }
 
-fn field_row(ui: Ui, field: Field) -> impl IntoElement {
+fn field_row(ui: Ui, size: Scale, field: Field) -> impl IntoElement {
     let target = Target::Field(field);
     let value = move || read(ui, |w| w.value(field).to_owned()).unwrap_or_default();
     let error = move || read(ui, |w| w.error(field)).flatten();
+    let mark = move || mark(ui, target);
     let paste = field.accepts_paste().then(|| {
-        text("Paste")
-            .px(px(12.0))
-            .py(px(6.0))
-            .rounded(px(RADIUS))
-            .text_size(px(13.0))
-            .text_color(rgb(WHITE))
-            .bg(tint(WHITE, RESTING))
-            .on_press(move || {
-                ui.touched();
-                send(ui, WizardEvent::PasteInto(field));
-            })
+        ui_kit::button(
+            ui,
+            size,
+            "Paste",
+            || false,
+            move || send(ui, WizardEvent::PasteInto(field)),
+        )
     });
-    view()
+    list_rows::row(size, ROW, mark)
         .flex_row()
         .items_center()
-        .gap(px(12.0))
-        .px(px(14.0))
-        .py(px(10.0))
-        .rounded(px(RADIUS))
-        .bg(move || focus_fill(ui, target, 0))
+        .justify_start()
+        .gap(move || size.px(12.0))
         .on_press(move || {
             ui.touched();
             send(ui, WizardEvent::Tap(target));
         })
         .child(
-            secondary(words::label(field))
-                .w(px(130.0))
-                .text_size(px(14.0)),
+            ui_kit::detail(size, words::label(field))
+                .w(move || size.px(LABEL_W))
+                .text_color(move || mark().secondary()),
         )
         .child(
             view()
                 .flex_1()
-                .gap(px(2.0))
                 .child(
-                    text(move || {
+                    ui_kit::label(size, move || {
                         let v = value();
                         if v.is_empty() {
                             words::placeholder(field).to_owned()
@@ -439,15 +407,18 @@ fn field_row(ui: Ui, field: Field) -> impl IntoElement {
                             shown_value(field, &v)
                         }
                     })
-                    .number_of_lines(1)
-                    .text_size(px(16.0))
-                    .text_color(move || tint(WHITE, if value().is_empty() { 0x70 } else { 0xFF })),
+                    .text_color(move || match (mark(), value().is_empty()) {
+                        (Mark::Focused, false) => Mark::Focused.text(),
+                        (Mark::Focused, true) => Mark::Focused.disabled(),
+                        (_, false) => rgb(LIST_TEXT),
+                        (_, true) => tint(WHITE, 0x70),
+                    }),
                 )
                 .child(
-                    text(move || error().map_or("", words::field_error).to_owned())
-                        .text_size(px(12.0))
+                    ui_kit::caption(size, move || error().map_or("", words::field_error))
+                        .number_of_lines(1)
                         .text_color(rgb(ERROR))
-                        .h(move || px(if error().is_some() { 16.0 } else { 0.0 })),
+                        .h(move || size.px(if error().is_some() { 18.0 } else { 0.0 })),
                 ),
         )
         .children(paste)
@@ -462,19 +433,20 @@ fn form(ui: Ui, kind: PlaylistKind) -> impl IntoElement {
         })
         .flatten()
     };
-    card(ui)
-        .gap(px(4.0))
-        .child(title(words::kind_title(kind)))
+    let size = Scale::new();
+    card(ui, size)
+        .gap(move || size.px(4.0))
+        .child(ui_kit::title(size, words::kind_title(kind)))
         .child(
-            text(move || banner().unwrap_or("").to_owned())
-                .text_size(px(14.0))
+            ui_kit::caption(size, move || banner().unwrap_or(""))
                 .text_color(rgb(ERROR))
-                .h(move || px(if banner().is_some() { 22.0 } else { 0.0 })),
+                .h(move || size.px(if banner().is_some() { 22.0 } else { 0.0 })),
         )
-        .children(kind.fields().iter().map(|f| field_row(ui, *f)))
-        .child(button(ui, "Add playlist", Target::Submit))
+        .children(kind.fields().iter().map(|f| field_row(ui, size, *f)))
+        .child(button(ui, size, "Add playlist", Target::Submit))
         .child(hint(
             ui,
+            size,
             "▲▼ move   OK type   Menu paste   Back other types",
         ))
 }
@@ -489,20 +461,20 @@ fn processing(ui: Ui) -> impl IntoElement {
     };
     let percent = move || progress().and_then(|p| p.percent());
     let kind = read(ui, Wizard::kind).unwrap_or(PlaylistKind::M3uUrl);
-    card(ui)
-        .child(title("Adding the playlist"))
-        .child(secondary(words::kind_title(kind)))
+    let size = Scale::new();
+    card(ui, size)
+        .child(ui_kit::title(size, "Adding the playlist"))
+        .child(ui_kit::body(size, words::kind_title(kind)))
         .child(
-            text(move || words::stage(progress()))
-                .text_size(px(17.0))
-                .text_color(rgb(WHITE))
-                .mt(px(8.0)),
+            ui_kit::body(size, move || words::stage(progress()))
+                .text_color(rgb(LIST_TEXT))
+                .mt(move || size.px(8.0)),
         )
         .child(
             view()
                 .h(px(4.0))
                 .rounded(px(2.0))
-                .bg(tint(WHITE, RESTING))
+                .bg(tint(WHITE, RESTING_ALPHA * 2))
                 .opacity(move || if percent().is_some() { 1.0_f32 } else { 0.0 })
                 .child(
                     view()
@@ -513,8 +485,8 @@ fn processing(ui: Ui) -> impl IntoElement {
                 ),
         )
         // OK does nothing here (no accidental cancel); Back or a tap cancels.
-        .child(button(ui, "Cancel", Target::CancelImport))
-        .child(hint(ui, "Back cancel"))
+        .child(button(ui, size, "Cancel", Target::CancelImport))
+        .child(hint(ui, size, "Back cancel"))
 }
 
 fn succeeded(ui: Ui) -> impl IntoElement {
@@ -525,12 +497,13 @@ fn succeeded(ui: Ui) -> impl IntoElement {
         })
         .unwrap_or_default()
     };
-    card(ui)
-        .child(title("Playlist added"))
-        .child(text(counts).text_size(px(17.0)).text_color(rgb(WHITE)))
-        .child(secondary("The guide now shows its channels."))
-        .child(button(ui, "Watch", Target::Done))
-        .child(hint(ui, "OK continue"))
+    let size = Scale::new();
+    card(ui, size)
+        .child(ui_kit::title(size, "Playlist added"))
+        .child(ui_kit::body(size, counts).text_color(rgb(LIST_TEXT)))
+        .child(ui_kit::body(size, "The guide now shows its channels."))
+        .child(button(ui, size, "Watch", Target::Done))
+        .child(hint(ui, size, "OK continue"))
 }
 
 fn failed(ui: Ui) -> impl IntoElement {
@@ -542,11 +515,17 @@ fn failed(ui: Ui) -> impl IntoElement {
         .unwrap_or("")
         .to_owned()
     };
-    card(ui)
-        .child(title("This source cannot be used"))
-        .child(secondary(message).text_size(px(16.0)))
-        .child(button(ui, "Choose another type", Target::ChooseAnotherType))
-        .child(hint(ui, "OK choose another type"))
+    let size = Scale::new();
+    card(ui, size)
+        .child(ui_kit::title(size, "This source cannot be used"))
+        .child(ui_kit::body(size, message))
+        .child(button(
+            ui,
+            size,
+            "Choose another type",
+            Target::ChooseAnotherType,
+        ))
+        .child(hint(ui, size, "OK choose another type"))
 }
 
 #[cfg(test)]

@@ -6,11 +6,14 @@ use iptv_store_sqlite::SourceId;
 use nsh_core::prelude::*;
 
 use super::details::Param;
-use super::{ERROR, WHITE, button, secondary, state, update, words};
+use super::{ERROR, WHITE, mark, state, update, words};
 use crate::data::Activity;
+use crate::list_rows::{self, ROW_TWO};
+use crate::scale::Scale;
+use crate::ui_kit;
 use crate::{Ui, rgb};
 
-pub(super) fn card(ui: Ui, id: SourceId) -> impl IntoElement {
+pub(super) fn card(ui: Ui, size: Scale, id: SourceId) -> impl IntoElement {
     let Some((kind, params)) = state(ui, |s| s.details().map(|f| (f.kind(), f.params()))).flatten()
     else {
         return view();
@@ -43,33 +46,24 @@ pub(super) fn card(ui: Ui, id: SourceId) -> impl IntoElement {
                 .filter(|(at, _)| *at == p)
                 .map(|(_, e)| crate::wizard_view::words::field_error(e))
         };
-        view()
-            .px(px(16.0))
-            .py(px(8.0))
-            .gap(px(2.0))
-            .rounded(px(crate::theme::RADIUS))
-            .bg(move || super::focus_bg(ui, focused().unwrap_or(false)))
+        let mark = move || mark(ui, focused().unwrap_or(false));
+        // Two lines, and a third for a problem with the detail.
+        let pitch = move || ROW_TWO + if error().is_some() { 18.0 } else { 0.0 };
+        list_rows::row_with(size, pitch, mark)
             .on_press(move || {
                 ui.touched();
                 update(ui, |s| s.edit_param(p));
             })
-            .child(
-                text(words::param(p))
-                    .text_size(px(13.0))
-                    .text_color(secondary()),
-            )
-            .child(
-                text(value)
-                    .number_of_lines(1)
-                    .text_size(px(16.0))
-                    .text_color(rgb(WHITE)),
-            )
-            .child(
-                text(move || error().unwrap_or("").to_owned())
-                    .text_size(px(12.0))
-                    .text_color(rgb(ERROR))
-                    .h(move || px(if error().is_some() { 16.0 } else { 0.0 })),
-            )
+            .child(ui_kit::detail(size, words::param(p)).text_color(move || mark().secondary()))
+            .child(ui_kit::label(size, value).text_color(move || mark().text()))
+            .child(when(
+                move || error().is_some(),
+                move || {
+                    ui_kit::caption(size, move || error().unwrap_or(""))
+                        .number_of_lines(1)
+                        .text_color(rgb(ERROR))
+                },
+            ))
     };
     let check_focused =
         move || state(ui, |s| s.details().is_some_and(|f| f.focus.is_none())).unwrap_or(false);
@@ -81,25 +75,19 @@ pub(super) fn card(ui: Ui, id: SourceId) -> impl IntoElement {
         }
         .to_owned()
     };
-    super::card(ui)
-        .child(
-            text(words::details_title(kind))
-                .text_size(px(22.0))
-                .text_color(rgb(WHITE)),
-        )
-        .child(
-            text("New details are tried first: the playlist keeps its old ones and its channels unless the new ones work.")
-                .text_size(px(14.0))
-                .text_color(secondary()),
-        )
-        .child(view().h(px(4.0)))
+    super::card(ui, size)
+        .child(ui_kit::title(size, words::details_title(kind)))
+        .child(ui_kit::body(
+            size,
+            "New details are tried first: the playlist keeps its old ones and its channels unless the new ones work.",
+        ))
+        .child(view().h(move || size.px(4.0)))
         .children(params.iter().copied().map(row))
-        .child(button(ui, check_label, check_focused, WHITE, move || {
+        .child(ui_kit::action(ui, size, check_label, check_focused, WHITE, move || {
             update(ui, |s| s.check());
         }))
         .child(
-            text(move || status().0)
-                .text_size(px(14.0))
-                .text_color(move || if status().1 { rgb(ERROR) } else { secondary() }),
+            ui_kit::body(size, move || status().0)
+                .text_color(move || if status().1 { rgb(ERROR) } else { ui_kit::secondary() }),
         )
 }

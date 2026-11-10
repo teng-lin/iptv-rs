@@ -13,13 +13,14 @@ use iptv_core::sound::{audio_delays, delay_label};
 use iptv_core::tracks::Kind as Track;
 use nsh_core::prelude::*;
 
-use crate::theme::{FOCUS_ALPHA, RADIUS, RADIUS_LARGE, TEXT_SECONDARY_ALPHA};
+use crate::list_rows::{self, Mark, ROW};
+use crate::scale::Scale;
+use crate::theme::RADIUS_LARGE;
+use crate::ui_kit;
 use crate::{Playback, Ui, ViewMode, tint};
 
-const WHITE: u32 = 0xFFFFFF;
-const ROW_H: f32 = 42.0;
-/// Rows shown at once; longer lists scroll.
-const MAX_ROWS: usize = 9;
+/// Rows shown at once; longer lists scroll (seven fit a TV's 540 dp).
+const MAX_ROWS: usize = 7;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -249,6 +250,7 @@ pub fn layer(ui: Ui) -> impl IntoElement {
         ui.chooser
             .with(|c| c.as_ref().map_or(0, |c| c.labels.len()))
     };
+    let size = Scale::new();
     let list = element_ref();
     let focus = computed(move || ui.chooser.with(|c| c.as_ref().map(|c| c.list.focus)));
     effect(move || {
@@ -268,30 +270,20 @@ pub fn layer(ui: Ui) -> impl IntoElement {
                 })
             })
         };
-        text(move || {
-            entry().map_or(String::new(), |(label, selected, _)| {
-                format!("{}{label}", if selected { "✓  " } else { "    " })
+        let mark = move || Mark::of(ui.keys_shown() && entry().is_some_and(|(_, _, f)| f), false);
+        list_rows::row(size, ROW, mark)
+            .on_press(move || {
+                ui.touched();
+                pick(ui, at.index());
             })
-        })
-        .h(px(ROW_H))
-        .px(px(16.0))
-        .pt(px(11.0))
-        .rounded(px(RADIUS))
-        .number_of_lines(1)
-        .text_size(px(15.0))
-        .text_color(rgb(WHITE))
-        .bg(move || {
-            let focused = ui.keys_shown() && entry().is_some_and(|(_, _, f)| f);
-            if focused {
-                tint(ui.theme.with(|t| t.accent.main), FOCUS_ALPHA)
-            } else {
-                tint(WHITE, 0)
-            }
-        })
-        .on_press(move || {
-            ui.touched();
-            pick(ui, at.index());
-        })
+            .child(
+                list_rows::name(size, move || {
+                    entry().map_or(String::new(), |(label, selected, _)| {
+                        format!("{}{label}", if selected { "✓  " } else { "    " })
+                    })
+                })
+                .text_color(move || mark().text()),
+            )
     };
     let kind = move || ui.chooser.with(|c| c.as_ref().map(|c| c.kind));
     // Mounted while closed: nothing in it says `PointerEvents::Auto`
@@ -335,10 +327,10 @@ pub fn layer(ui: Ui) -> impl IntoElement {
         .child(
             view()
                 .w(move || {
-                    px(if kind() == Some(Kind::History) {
-                        440.0
+                    size.px(if kind() == Some(Kind::History) {
+                        520.0
                     } else {
-                        320.0
+                        380.0
                     })
                 })
                 .p(px(12.0))
@@ -347,17 +339,15 @@ pub fn layer(ui: Ui) -> impl IntoElement {
                 // Translucent over moving video, like the reference's choosers.
                 .bg(move || tint(ui.theme.with(|t| t.background.panel), 0xD0))
                 .child(
-                    text(move || kind().map_or("", title))
-                        .px(px(16.0))
-                        .py(px(8.0))
-                        .text_size(px(13.0))
-                        .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA)),
+                    ui_kit::heading(size, move || kind().map_or("", title))
+                        .px(move || size.px(list_rows::INSET))
+                        .py(move || size.px(8.0)),
                 )
                 .child(
                     virtual_list(count, row)
-                        .estimated_item_size(px(ROW_H))
+                        .estimated_item_size(list_rows::pitch(size, ROW))
                         .element_ref(&list)
-                        .h(move || px(count().clamp(1, MAX_ROWS) as f32 * ROW_H)),
+                        .h(move || px(count().clamp(1, MAX_ROWS) as f32 * size.whole(ROW))),
                 ),
         )
 }

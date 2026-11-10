@@ -28,15 +28,14 @@ use state::{Act, EditKind, Effect, Item, Key, Layer, Screen};
 pub(crate) use words::masked_link;
 
 use crate::data::{self, Activity, Playlist};
-use crate::theme::{FOCUS_ALPHA, RADIUS, RADIUS_LARGE, RESTING_ALPHA, TEXT_SECONDARY_ALPHA};
+use crate::list_rows::{self, Mark};
+use crate::scale::Scale;
+use crate::ui_kit::{self, ERROR, ROW_THREE};
 use crate::wizard_view::entry::{self, TextSheet};
 use crate::{Ui, ViewMode, tint};
 
 const WHITE: u32 = 0xFFFFFF;
-/// Placeholder error tone (light red of the placeholder palette).
-const ERROR: u32 = 0xEF9A9A;
-const ROW_H: f32 = 76.0;
-const CARD_W: f32 = 580.0;
+const CARD_W: f32 = 640.0;
 
 // --- Actions -------------------------------------------------------------------
 
@@ -204,16 +203,9 @@ fn effect_name(effect: &Effect) -> String {
 
 // --- View ----------------------------------------------------------------------
 
-fn secondary() -> Rgba {
-    tint(WHITE, TEXT_SECONDARY_ALPHA)
-}
-
-fn focus_bg(ui: Ui, focused: bool) -> Rgba {
-    if focused && ui.keys_shown() {
-        tint(ui.theme.with(|t| t.accent.main), FOCUS_ALPHA)
-    } else {
-        tint(WHITE, 0)
-    }
+/// A row's or action's mark: the pill while focused with the keys shown.
+fn mark(ui: Ui, focused: bool) -> Mark {
+    Mark::of(focused && ui.keys_shown(), false)
 }
 
 pub fn layer(ui: Ui) -> impl IntoElement {
@@ -251,25 +243,15 @@ pub fn layer(ui: Ui) -> impl IntoElement {
         });
     });
     let editing = computed(move || editing(ui));
+    let size = Scale::new();
     when(
         move || is_open(ui),
         move || {
-            view()
-                .absolute()
-                .inset_0()
-                .pt_safe_area()
-                .px(px(48.0))
-                .py(px(24.0))
-                .gap(px(12.0))
-                .bg(move || rgb(ui.theme.with(|t| t.background.window)))
-                .child(header(ui))
-                .child(
-                    text(move || hint(ui))
-                        .text_size(px(13.0))
-                        .text_color(secondary()),
-                )
-                .child(list(ui))
-                .child(sheet(ui))
+            ui_kit::screen(ui, size)
+                .child(ui_kit::header(ui, size, "Playlists", close))
+                .child(ui_kit::caption(size, move || hint(ui)))
+                .child(list(ui, size))
+                .child(sheet(ui, size))
                 .child(when(move || editing.get(), move || edit_sheet(ui)))
         },
     )
@@ -286,33 +268,7 @@ fn hint(ui: Ui) -> &'static str {
     }
 }
 
-fn header(ui: Ui) -> impl IntoElement {
-    view()
-        .flex_row()
-        .items_center()
-        .gap(px(12.0))
-        .child(
-            text("Playlists")
-                .flex_1()
-                .text_size(px(22.0))
-                .text_color(rgb(WHITE)),
-        )
-        .child(
-            text("Close")
-                .px(px(16.0))
-                .py(px(8.0))
-                .rounded(px(RADIUS))
-                .text_size(px(14.0))
-                .text_color(rgb(WHITE))
-                .bg(tint(WHITE, RESTING_ALPHA * 2))
-                .on_press(move || {
-                    ui.touched();
-                    close(ui);
-                }),
-        )
-}
-
-fn list(ui: Ui) -> impl IntoElement {
+fn list(ui: Ui, size: Scale) -> impl IntoElement {
     let rows = element_ref();
     let count = move || state(ui, |s| s.items().len()).unwrap_or(0);
     let focused_index =
@@ -324,13 +280,13 @@ fn list(ui: Ui) -> impl IntoElement {
             rows.scroll_to_index(i as u32, percentage(0.5), px(0.0), false);
         }
     });
-    virtual_list(count, move |at| row(ui, at.index(), focused_index))
-        .estimated_item_size(px(ROW_H))
+    virtual_list(count, move |at| row(ui, size, at.index(), focused_index))
+        .estimated_item_size(list_rows::pitch(size, ROW_THREE))
         .element_ref(&rows)
         .flex_1()
 }
 
-fn row(ui: Ui, index: usize, focused_index: Memo<Option<usize>>) -> impl IntoElement {
+fn row(ui: Ui, size: Scale, index: usize, focused_index: Memo<Option<usize>>) -> impl IntoElement {
     let playlist = move || state(ui, |s| s.rows().get(index).cloned()).flatten();
     let item = move || state(ui, |s| s.items().get(index).copied()).flatten();
     let refreshing = move || {
@@ -359,60 +315,58 @@ fn row(ui: Ui, index: usize, focused_index: Memo<Option<usize>>) -> impl IntoEle
         }
         _ => "M3U link or file, Xtream Codes login, Stalker portal".to_owned(),
     };
-    view()
-        .h(px(ROW_H))
-        .px(px(16.0))
+    let mark = move || mark(ui, focused_index.get() == Some(index));
+    list_rows::row(size, ROW_THREE, mark)
         .flex_row()
         .items_center()
-        .gap(px(14.0))
-        .rounded(px(RADIUS))
-        .bg(move || focus_bg(ui, focused_index.get() == Some(index)))
+        .justify_start()
+        .gap(move || size.px(14.0))
         .on_press(move || {
             ui.touched();
             if let Some(tapped) = item() {
                 update(ui, |s| s.tap(tapped));
             }
         })
-        .child(view().w(px(8.0)).h(px(40.0)).rounded(px(4.0)).bg(move || {
-            if shown() {
-                rgb(ui.theme.with(|t| t.accent.main))
-            } else {
-                tint(WHITE, 0)
-            }
-        }))
+        .child(
+            view()
+                .w(move || size.px(8.0))
+                .h(move || size.px(40.0))
+                .rounded(px(4.0))
+                .bg(move || {
+                    if shown() {
+                        rgb(ui.theme.with(|t| t.accent.main))
+                    } else {
+                        tint(WHITE, 0)
+                    }
+                }),
+        )
         .child(
             view()
                 .flex_1()
-                .gap(px(2.0))
+                .child(ui_kit::label(size, title).text_color(move || mark().text()))
+                .child(ui_kit::detail(size, summary).text_color(move || mark().secondary()))
                 .child(
-                    text(title)
+                    ui_kit::caption(size, move || status().0)
                         .number_of_lines(1)
-                        .text_size(px(17.0))
-                        .text_color(rgb(WHITE)),
-                )
-                .child(
-                    text(summary)
-                        .number_of_lines(1)
-                        .text_size(px(13.0))
-                        .text_color(secondary()),
-                )
-                .child(
-                    text(move || status().0)
-                        .number_of_lines(1)
-                        .text_size(px(13.0))
-                        .text_color(move || if status().1 { rgb(ERROR) } else { secondary() }),
+                        .text_color(move || match (status().1, mark()) {
+                            (true, _) => rgb(ERROR),
+                            (false, m) => m.secondary(),
+                        }),
                 ),
         )
         .child(
-            text(move || if shown() { "On screen" } else { "" }.to_owned())
-                .text_size(px(13.0))
-                .text_color(move || rgb(ui.theme.with(|t| t.accent.light))),
+            ui_kit::caption(size, move || if shown() { "On screen" } else { "" }).text_color(
+                move || match mark() {
+                    Mark::Focused => Mark::Focused.text(),
+                    _ => rgb(ui.theme.with(|t| t.accent.light)),
+                },
+            ),
         )
 }
 
 /// The open sheet (actions or delete confirmation) over the list; rebuilt
 /// only when another sheet opens.
-fn sheet(ui: Ui) -> impl IntoElement {
+fn sheet(ui: Ui, size: Scale) -> impl IntoElement {
     // Which sheet, not where its focus is.
     let open = computed(move || match state(ui, Screen::layer) {
         Some(Layer::Actions { id, .. }) => Some((Sheet::Actions, id)),
@@ -423,9 +377,11 @@ fn sheet(ui: Ui) -> impl IntoElement {
     dynamic(move || {
         let shown = open.get();
         untracked(move || match shown {
-            Some((Sheet::Actions, id)) => backdrop(ui, actions_card(ui, id).into_element()),
-            Some((Sheet::Confirm, id)) => backdrop(ui, confirm_card(ui, id).into_element()),
-            Some((Sheet::Details, id)) => backdrop(ui, details_card::card(ui, id).into_element()),
+            Some((Sheet::Actions, id)) => backdrop(ui, actions_card(ui, size, id).into_element()),
+            Some((Sheet::Confirm, id)) => backdrop(ui, confirm_card(ui, size, id).into_element()),
+            Some((Sheet::Details, id)) => {
+                backdrop(ui, details_card::card(ui, size, id).into_element())
+            }
             None => view(),
         })
     })
@@ -457,39 +413,14 @@ fn backdrop(ui: Ui, card: AnyElement) -> View {
         .child(card)
 }
 
-fn card(ui: Ui) -> View {
-    view()
-        .w(px(CARD_W))
-        .px(px(28.0))
-        .py(px(24.0))
-        .gap(px(6.0))
-        .rounded(px(RADIUS_LARGE))
-        .bg(move || rgb(ui.theme.with(|t| t.background.panel)))
+fn card(ui: Ui, size: Scale) -> View {
+    ui_kit::card(ui, size, CARD_W)
+        .gap(move || size.px(6.0))
         // Taps on the card stay on it.
         .on_press(|| {})
 }
 
-fn button(
-    ui: Ui,
-    label: impl IntoReactive<SharedString>,
-    focused: impl Fn() -> bool + 'static,
-    color: u32,
-    on_press: impl Fn() + 'static,
-) -> impl IntoElement {
-    text(label)
-        .px(px(16.0))
-        .py(px(10.0))
-        .rounded(px(RADIUS))
-        .text_size(px(16.0))
-        .text_color(rgb(color))
-        .bg(move || focus_bg(ui, focused()))
-        .on_press(move || {
-            ui.touched();
-            on_press();
-        })
-}
-
-fn actions_card(ui: Ui, id: SourceId) -> impl IntoElement {
+fn actions_card(ui: Ui, size: Scale, id: SourceId) -> impl IntoElement {
     let playlist = move || state(ui, |s| s.row(id).cloned()).flatten();
     let running = move || {
         ui.library.activity.with(|a| {
@@ -510,43 +441,35 @@ fn actions_card(ui: Ui, id: SourceId) -> impl IntoElement {
             words::act(act, kind, shown, running()).to_owned()
         };
         let color = if act == Act::Delete { ERROR } else { WHITE };
-        button(ui, label, focused, color, move || {
+        ui_kit::action(ui, size, label, focused, color, move || {
             update(ui, |s| s.act(id, act));
         })
     };
-    card(ui)
+    card(ui, size)
+        .child(ui_kit::title(size, move || {
+            playlist().map(|p| p.name).unwrap_or_default()
+        }))
+        .child(ui_kit::body(size, move || {
+            playlist().map(|p| words::summary(&p)).unwrap_or_default()
+        }))
         .child(
-            text(move || playlist().map(|p| p.name).unwrap_or_default())
-                .number_of_lines(1)
-                .text_size(px(22.0))
-                .text_color(rgb(WHITE)),
-        )
-        .child(
-            text(move || playlist().map(|p| words::summary(&p)).unwrap_or_default())
-                .text_size(px(14.0))
-                .text_color(secondary()),
-        )
-        .child(
-            text(move || {
+            ui_kit::body(size, move || {
                 playlist()
                     .map(|p| words::guide_line(&p))
                     .unwrap_or_default()
             })
-            .number_of_lines(1)
-            .text_size(px(14.0))
-            .text_color(secondary()),
+            .number_of_lines(1),
         )
         .child(
-            text(move || notice().map_or("", words::notice).to_owned())
-                .text_size(px(14.0))
+            ui_kit::body(size, move || notice().map_or("", words::notice))
                 .text_color(rgb(ERROR))
-                .h(move || px(if notice().is_some() { 20.0 } else { 0.0 })),
+                .h(move || size.px(if notice().is_some() { 22.0 } else { 0.0 })),
         )
-        .child(view().h(px(6.0)))
+        .child(view().h(move || size.px(6.0)))
         .children(acts.into_iter().map(act_row))
 }
 
-fn confirm_card(ui: Ui, id: SourceId) -> impl IntoElement {
+fn confirm_card(ui: Ui, size: Scale, id: SourceId) -> impl IntoElement {
     let (title, body) = state(ui, |s| {
         let Some(p) = s.row(id) else {
             return (String::new(), String::new());
@@ -567,16 +490,30 @@ fn confirm_card(ui: Ui, id: SourceId) -> impl IntoElement {
     let focused = move |delete: bool| {
         move || state(ui, |s| s.layer() == Layer::Confirm { id, delete }).unwrap_or(false)
     };
-    card(ui)
-        .child(text(title).text_size(px(22.0)).text_color(rgb(WHITE)))
-        .child(text(body).text_size(px(15.0)).text_color(secondary()))
-        .child(view().h(px(8.0)))
-        .child(button(ui, "Keep it", focused(false), WHITE, move || {
-            update(ui, |s| s.confirm(id, false));
-        }))
-        .child(button(ui, "Delete", focused(true), ERROR, move || {
-            update(ui, |s| s.confirm(id, true));
-        }))
+    card(ui, size)
+        .child(ui_kit::title(size, title))
+        .child(ui_kit::body(size, body))
+        .child(view().h(move || size.px(8.0)))
+        .child(ui_kit::action(
+            ui,
+            size,
+            "Keep it",
+            focused(false),
+            WHITE,
+            move || {
+                update(ui, |s| s.confirm(id, false));
+            },
+        ))
+        .child(ui_kit::action(
+            ui,
+            size,
+            "Delete",
+            focused(true),
+            ERROR,
+            move || {
+                update(ui, |s| s.confirm(id, true));
+            },
+        ))
 }
 
 fn edit_text(ui: Ui) -> String {
