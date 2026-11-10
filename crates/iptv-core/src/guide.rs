@@ -109,8 +109,17 @@ pub trait Schedule {
     fn catchup_url(&self, _channel: usize, _program: Program, _now: i32) -> Option<String> {
         None
     }
+    /// The channel's content identity (stable across refreshes), used to
+    /// remember channels (previous/last channel) without list indexes.
+    fn channel_key(&self, _channel: usize) -> Option<String> {
+        None
+    }
+    /// The channel with `key`, if this schedule has it.
+    fn find_channel(&self, key: &str) -> Option<usize> {
+        (0..self.channel_count()).find(|&c| self.channel_key(c).as_deref() == Some(key))
+    }
     /// The concrete schedule, for features that need more than this trait
-    /// (programme search reads the EPG store behind the real schedule).
+    /// (programme search reads the EPG store; playback resolves streams).
     fn as_any(&self) -> Option<&dyn core::any::Any> {
         None
     }
@@ -179,6 +188,14 @@ impl Schedule for SyntheticSchedule {
     }
     fn title(&self, _channel: usize, program: Program) -> String {
         format!("Show {}", program.start.rem_euclid(97))
+    }
+    fn channel_key(&self, channel: usize) -> Option<String> {
+        (channel < CHANNELS).then(|| format!("synthetic:{channel}"))
+    }
+    fn find_channel(&self, key: &str) -> Option<usize> {
+        key.strip_prefix("synthetic:")
+            .and_then(|n| n.parse().ok())
+            .filter(|&c| c < CHANNELS)
     }
 }
 

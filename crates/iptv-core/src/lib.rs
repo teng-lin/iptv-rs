@@ -11,6 +11,7 @@ pub mod editor;
 pub mod guide;
 pub mod menu;
 pub mod panels;
+pub mod playback;
 pub mod player_options;
 pub mod reorder;
 pub mod wizard;
