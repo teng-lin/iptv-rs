@@ -1,6 +1,6 @@
 target/
 **/.nsh/
-fixtures/
+/fixtures/
 results/
 hosts/android/.gradle/
 hosts/android/build/
