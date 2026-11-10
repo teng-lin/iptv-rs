@@ -11,9 +11,11 @@ mod channels_view;
 mod chooser;
 mod data;
 mod desktop;
+mod epg_sources_view;
 mod fav_editor;
 mod favorites;
 mod grid;
+mod guide_assign_view;
 mod header;
 mod input;
 mod lists;
@@ -157,6 +159,11 @@ pub struct Ui {
     pub wizard: Signal<Option<wizard_view::Open>>,
     /// The playlists screen, when open.
     pub playlists: Signal<Option<playlists_view::Open>>,
+    /// A playlist's guide sources screen, when open (over the playlists
+    /// and settings screens).
+    pub guide_sources: Signal<Option<epg_sources_view::Open>>,
+    /// The guide data chooser of a channel, when open.
+    pub guide_assign: Signal<Option<guide_assign_view::Open>>,
     /// The stored playlists: which one is shown, their refreshes (`data.rs`).
     pub library: data::Library,
     /// Bumped when a setting changes; read values with `settings::read`.
@@ -359,6 +366,8 @@ pub fn App() -> impl IntoElement {
         search: signal(None),
         wizard: signal(None),
         playlists: signal(None),
+        guide_sources: signal(None),
+        guide_assign: signal(None),
         library: data::Library::new(),
         settings: signal(0),
         settings_screen: signal(None),
@@ -478,8 +487,11 @@ pub fn App() -> impl IntoElement {
         .child(chooser::layer(ui))
         .child(fav_editor::layer(ui))
         .child(settings_view::layer(ui))
-        // The playlists screen opens over settings.
+        .child(guide_assign_view::layer(ui))
+        // The playlists screen opens over settings, a guide sources screen
+        // over both.
         .child(playlists_view::layer(ui))
+        .child(epg_sources_view::layer(ui))
         .child(wizard_view::layer(ui))
 }
 
@@ -501,7 +513,11 @@ fn pointer_moved(ui: Ui, e: &MouseEvent) {
         || ui.editor.with_untracked(Option::is_some)
         || ui.wizard.with_untracked(Option::is_some)
         || untracked(|| {
-            search_view::is_open(ui) || playlists_view::is_open(ui) || settings_view::is_open(ui)
+            search_view::is_open(ui)
+                || playlists_view::is_open(ui)
+                || settings_view::is_open(ui)
+                || epg_sources_view::is_open(ui)
+                || guide_assign_view::is_open(ui)
         });
     let (x, y) = (e.page_position.x.0, e.page_position.y.0);
     if ui.mode.get_untracked() != ViewMode::Fullscreen
@@ -540,6 +556,8 @@ fn bind_back(ui: Ui) {
             && !ui.menu.with(Option::is_some)
             && !ui.description.with(Option::is_some)
             && !search_view::is_open(ui)
+            && !epg_sources_view::is_open(ui)
+            && !guide_assign_view::is_open(ui)
             && !playlists_view::is_open(ui)
             && !settings_view::is_open(ui)
             && !desktop::fullscreen();
@@ -564,8 +582,10 @@ pub(crate) fn go_back(ui: Ui) -> bool {
             || ui.editor.with(Option::is_some);
         match (ui.mode.get(), ui.focus.with(|f| f.pane), panels || menu) {
             _ if ui.wizard.with(Option::is_some) => wizard_view::back(ui),
+            _ if epg_sources_view::is_open(ui) => epg_sources_view::back(ui),
             _ if playlists_view::is_open(ui) => playlists_view::back(ui),
             _ if settings_view::is_open(ui) => settings_view::back(ui),
+            _ if guide_assign_view::is_open(ui) => guide_assign_view::back(ui),
             _ if ui.editor.with(Option::is_some) => {
                 fav_editor::close(ui);
                 true

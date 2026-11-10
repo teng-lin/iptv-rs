@@ -218,9 +218,17 @@ fn run(ui: Ui, key: &'static str) {
             if stored::update_now(ui, move || refresh(ui)) {
                 refresh(ui);
             } else {
-                notify("This playlist has no guide to download");
+                notify("This playlist has no guide source switched on");
             }
         }
+        // The playlist on screen's guide sources, over the settings screen.
+        "epg.manage_sources" | "epg.add_source" => match stored::shown() {
+            Some(playlist) if key == "epg.add_source" => {
+                crate::epg_sources_view::open_add(ui, playlist);
+            }
+            Some(playlist) => crate::epg_sources_view::open(ui, playlist),
+            None => notify("No playlist on screen"),
+        },
         "epg.clear" => {
             let cleared = stored::clear(ui, move |deleted| {
                 notify(if deleted {
@@ -322,9 +330,34 @@ fn command_value(key: &str) -> String {
             }
             GuideStatus::Failed { at, .. } => format!("Failed {}", time_label(at)),
         },
+        "epg.manage_sources" => sources_value(),
         "general.about" => format!("Version {}", env!("CARGO_PKG_VERSION")),
         _ => String::new(),
     }
+}
+
+/// The "Guide sources" row's value: how many, switched on, and failed at
+/// their last download.
+fn sources_value() -> String {
+    let Some(playlist) = stored::shown() else {
+        return "No playlist".to_owned();
+    };
+    let lines = stored::source_lines(playlist);
+    let on = lines.iter().filter(|l| l.source.enabled).count();
+    let failed = lines
+        .iter()
+        .filter(|l| l.source.enabled && l.result.as_ref().is_some_and(|r| r.error.is_some()))
+        .count();
+    let mut value = match (lines.len(), on) {
+        (0, _) => "None".to_owned(),
+        (1, 1) => "1 source".to_owned(),
+        (all, on) if on == all => format!("{all} sources"),
+        (all, on) => format!("{on} of {all} on"),
+    };
+    if failed > 0 {
+        value += &format!(" · {failed} failed");
+    }
+    value
 }
 
 /// A past time as the guide writes it (`14:05`, `Tue 10 · 14:05`).
@@ -631,6 +664,7 @@ fn row_view(
             }
             Some(Row::Command(c)) => {
                 ui.data_version.get();
+                ui.library.version.get();
                 (command_value(c.key), None)
             }
             _ => (String::new(), None),

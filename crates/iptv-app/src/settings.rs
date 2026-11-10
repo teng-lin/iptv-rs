@@ -64,6 +64,8 @@ pub const WIRED: &[&str] = &[
 
 /// The commands the app runs (`settings_view::run`).
 pub const COMMANDS: &[&str] = &[
+    "epg.add_source",
+    "epg.manage_sources",
     "epg.update_now",
     "epg.clear",
     "remote.customize",
@@ -353,6 +355,8 @@ mod tests {
     fn what_the_app_offers() {
         assert_eq!(offer("epg.keep_past"), Offer::Active);
         assert_eq!(offer("epg.update_now"), Offer::Active);
+        assert_eq!(offer("epg.manage_sources"), Offer::Active);
+        assert_eq!(offer("epg.add_source"), Offer::Active);
         assert_eq!(offer("playback.afr"), Offer::Hidden);
         assert_eq!(offer("vod.sort"), Offer::Later);
         assert_eq!(offer("parental.live_enabled"), Offer::Later);

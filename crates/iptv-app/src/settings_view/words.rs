@@ -272,8 +272,14 @@ pub fn description(key: &str) -> Option<&'static str> {
         "remote.customize" => "What each key of the remote does, screen by screen.",
         "general.about" => "The version of this app.",
         "playlists.manage" => {
-            "Add, choose, refresh, rename and delete playlists, and change their guide address."
+            "Add, choose, refresh, rename and delete playlists, and arrange their guide sources."
         }
+        "epg.add_source" => "Add an XMLTV guide link to the playlist on screen.",
+        "epg.manage_sources" => {
+            "The playlist's guide sources: switch on or off, order (the first with a channel \
+             wins), time shift, how each last downloaded."
+        }
+        "epg.update_now" => "Download every guide source of the playlist on screen now.",
         _ => return None,
     })
 }

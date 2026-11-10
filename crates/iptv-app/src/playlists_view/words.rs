@@ -129,10 +129,19 @@ pub fn masked_link(link: &str) -> String {
     shown
 }
 
+/// Where the playlist's guide comes from.
 pub fn guide_line(p: &Playlist) -> String {
-    let from = match &p.guide_link {
-        Some(link) => masked_link(link.expose()),
-        None => "the provider's own".to_owned(),
+    let on: Vec<_> = p.guides.iter().filter(|g| g.enabled).collect();
+    let from = match (on.as_slice(), p.guides.len()) {
+        (_, 0) => "none".to_owned(),
+        ([], _) => "all sources switched off".to_owned(),
+        ([one], 1) if one.is_provider() => "the provider's own".to_owned(),
+        ([one], _) => one
+            .name
+            .clone()
+            .unwrap_or_else(|| masked_link(one.url.expose())),
+        (on, all) if on.len() == all => format!("{all} sources"),
+        (on, all) => format!("{} of {all} sources", on.len()),
     };
     let failed = if p.guide_failed {
         " · did not load last time"
@@ -156,8 +165,7 @@ pub fn act(act: Act, kind: Option<SourceKind>, shown: bool, running: bool) -> &'
         Act::Rename => "Rename",
         Act::Details => kind.map_or("Provider details", details_title),
         Act::UserAgent => "User-Agent",
-        Act::GuideLink => "Guide link",
-        Act::ProviderGuide => "Use only the provider's guide",
+        Act::Guides => "Guide sources",
         Act::Delete => "Delete",
     }
 }
@@ -165,7 +173,6 @@ pub fn act(act: Act, kind: Option<SourceKind>, shown: bool, running: bool) -> &'
 pub fn notice(notice: Notice) -> &'static str {
     match notice {
         Notice::NameEmpty => "A playlist needs a name. The old one is kept.",
-        Notice::Link(e) => crate::wizard_view::words::field_error(e),
         Notice::Unchanged => "Nothing was changed.",
     }
 }
@@ -244,7 +251,7 @@ mod tests {
             channels: 1,
             updated_at: None,
             failed: None,
-            guide_link: None,
+            guides: Vec::new(),
             guide_failed: false,
             user_agent: None,
             from_file: false,
@@ -291,17 +298,35 @@ mod tests {
     }
 
     #[test]
-    fn the_guide_line_names_its_source_and_a_failure() {
+    fn the_guide_line_names_its_sources_and_a_failure() {
+        use crate::data::guides;
+        use iptv_providers::SecretUrl;
         let mut p = playlist();
+        assert_eq!(guide_line(&p), "Guide: none");
+        let provider = [SecretUrl::new(
+            "http://panel.example.test/xmltv.php?password=p",
+        )];
+        p.guides = guides::sync_provider(&[], &provider);
         assert_eq!(guide_line(&p), "Guide: the provider's own");
-        p.guide_link = Some(iptv_providers::SecretUrl::new(
-            "http://guide.example.test/x.xml?token=t",
+        p.guides[0].enabled = false;
+        p.guides.push(guides::user_source(
+            guides::FIRST_USER_FEED,
+            SecretUrl::new("http://guide.example.test/x.xml?token=t"),
+            None,
         ));
         p.guide_failed = true;
         assert_eq!(
             guide_line(&p),
             "Guide: http://guide.example.test/x.xml?token=••• · did not load last time"
         );
+        p.guides[0].enabled = true;
+        p.guide_failed = false;
+        assert_eq!(guide_line(&p), "Guide: 2 sources");
+        p.guides[1].name = Some("Mine".into());
+        p.guides[0].enabled = false;
+        assert_eq!(guide_line(&p), "Guide: Mine");
+        p.guides[1].enabled = false;
+        assert_eq!(guide_line(&p), "Guide: all sources switched off");
     }
 
     #[test]

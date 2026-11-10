@@ -1,6 +1,6 @@
 //! The stored playlists (sources) as the playlists screen sees them, and
 //! what it does to them: which one is shown (remembered in the store, so
-//! the next start opens it), refresh, rename, the guide link, delete.
+//! the next start opens it), refresh, rename, its guide sources, delete.
 //!
 //! One refresh per playlist runs at a time; each has a ticket, so a
 //! cancelled one never overwrites what a newer one reports.
@@ -10,12 +10,11 @@ use std::collections::{BTreeMap, HashMap};
 
 use iptv_core::wizard::{ImportCounts, ImportFailure, ImportProgress};
 use iptv_import::CancelToken;
-use iptv_providers::SecretUrl;
 use iptv_providers::model::{Source, SourceConfig, SourceKind};
-use iptv_store_sqlite::{ImportErrorKind, SourceId, StoreError, StoredSource};
+use iptv_store_sqlite::{GuideSource, ImportErrorKind, SourceId, StoreError, StoredSource};
 use nsh_core::prelude::*;
 
-use super::{Job, Purpose, Update, open_store, start_import_with, stored};
+use super::{Job, Purpose, Update, guides, open_store, start_import_with, stored};
 use crate::Ui;
 
 /// What the data layer tells the screens about the stored playlists.
@@ -52,8 +51,8 @@ pub enum Activity {
     Rejected(ImportFailure),
 }
 
-/// A stored playlist, as listed. Carries no secrets but the guide link,
-/// which redacts itself.
+/// A stored playlist, as listed. Carries no secrets but the guide
+/// addresses, which redact themselves.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Playlist {
     pub id: SourceId,
@@ -64,8 +63,8 @@ pub struct Playlist {
     pub updated_at: Option<i64>,
     /// The last refresh failed (and when); the channels before it remain.
     pub failed: Option<(ImportErrorKind, Option<i64>)>,
-    /// The guide link the user gave it.
-    pub guide_link: Option<SecretUrl>,
+    /// Its guide sources in the user's order.
+    pub guides: Vec<GuideSource>,
     /// The last guide download failed (its stored guide stays).
     pub guide_failed: bool,
     /// The User-Agent its requests send (M3U and Xtream only).
@@ -88,7 +87,7 @@ pub fn playlists() -> Result<Vec<Playlist>, StoreError> {
         .into_iter()
         .map(|s| {
             let guide = store.epg_guide(s.id)?;
-            let settings = store.source_settings(s.id)?;
+            let guides = store.guide_sources(s.id)?;
             let config = store.source(s.id)?.map(|stored| stored.source.config);
             let (user_agent, from_file) = match &config {
                 Some(SourceConfig::M3u(c)) => {
@@ -105,7 +104,7 @@ pub fn playlists() -> Result<Vec<Playlist>, StoreError> {
                 updated_at: s.import.last_success_at,
                 failed: s.import.last_error.map(|k| (k, s.import.last_error_at)),
                 guide_failed: guide.as_ref().is_some_and(|g| g.last_error.is_some()),
-                guide_link: stored::typed_guide(settings, guide.as_ref()),
+                guides,
                 user_agent,
                 from_file,
             })
@@ -320,15 +319,18 @@ pub fn rename(ui: Ui, id: SourceId, name: &str) -> Result<(), StoreError> {
     Ok(())
 }
 
-/// Sets (`None`: removes) the guide link of `id`, then refreshes it so
-/// its guide comes from the new link.
-pub fn set_guide_link(ui: Ui, id: SourceId, link: Option<SecretUrl>) -> Result<(), StoreError> {
-    open_store()?.set_source_epg_url(id, link.as_ref())?;
+/// Changes the guide sources of playlist `id`; false when `edit` changes
+/// nothing. The guide on screen is checked again once the edits settle
+/// (changed feeds are downloaded); another playlist's when it is shown.
+pub fn edit_guides(ui: Ui, id: SourceId, edit: &guides::Edit) -> Result<bool, StoreError> {
+    let mut store = open_store()?;
+    let Some(changed_sources) = guides::apply(&store.guide_sources(id)?, edit) else {
+        return Ok(false);
+    };
+    store.set_guide_sources(id, &changed_sources)?;
     changed(ui);
-    // A running refresh still has the old link.
-    cancel_running(id);
-    refresh(ui, id);
-    Ok(())
+    stored::guides_changed(ui, id);
+    Ok(true)
 }
 
 /// Deletes stored playlist `id` with its channels, guide and favourites.

@@ -78,7 +78,9 @@ navigation rail          groups list            guide (or channel list)     play
 
 | Behaviour | Status | P |
 | --- | --- | --- |
-| Several playlists; choose the one shown; refresh, rename, change EPG URL, delete with consequences stated; add (wizard) | done: playlists screen (`playlists_view.rs`) with show (remembered; startup opens it), refresh now / refresh all, rename, provider details and User-Agent (checked by importing, kept only if they work), one guide link per playlist, delete with consequences; per-playlist last channel. Not yet: several guide sources per playlist, enable/disable, logo priority, catch-up type, update interval, manage groups | P0 |
+| Several playlists; choose the one shown; refresh, rename, change EPG URL, delete with consequences stated; add (wizard) | done: playlists screen (`playlists_view.rs`) with show (remembered; startup opens it), refresh now / refresh all, rename, provider details and User-Agent (checked by importing, kept only if they work), guide sources (see the next row), delete with consequences; per-playlist last channel. Not yet: enable/disable a playlist, logo priority, catch-up type, update interval, manage groups | P0 |
+| Guide sources per playlist (EPG) | done: guide sources screen (`epg_sources_view.rs`; from a playlist's actions and Settings → TV guide data "Guide sources" / "Add a guide source"): the provider's own guides plus any number the user adds (link + optional name; duplicates refused), each switched on/off, ordered (first with a channel wins), time-shifted in 30 min steps (±12 h), renamed, re-linked or removed (the provider's are only switched off); each row shows its last result (channels used, programmes, or the failure kind). Changes are saved at once (store v6 `guide_sources`) and the guide on screen is checked a moment later (changed feeds download). Update now / delete / status act on every source switched on. No global default source shared between playlists (sources are per playlist) | – |
+| Choose a channel's guide | done: Long OK menu → "Choose guide data…" (`guide_assign_view.rs`): Automatic, No guide data, or any channel the stored guides list (search by typing, every / only unused filter); saved by channel key as an overlay; shows at once when the stored guide has its programmes (or for "No guide data"), else the guide downloads right away to apply it (back to Automatic always downloads) | – |
 | Settings screen over the `iptv-settings` catalogue (pages in the reference's order: General, Playlists, TV guide data, Appearance, Playback, Remote control, Parental control, Other, About; switches, choice lists, steppers, text; persisted in `settings.json`) | done: rows the app does not act on are dimmed ("not available yet", "in a later version"); device-level TV-box features are not offered | – |
 | Settings that change behaviour: guide data (update interval, on start, on playlist change, past days kept, descriptions, update now, delete, last update status), catch-up seek keys and steps, panel timeouts, channel-change info, last channel on start, Back twice to leave, User-Agent, search (favourites first, history, past without replay, stay on search), accent and background colours, overlay transparency| done (Back returns to now: always on; its switch is not wired since the Back chain moved to `browse.rs`) | – |
 | Black picture while tuning | missing (needs a `tv.player` prop on both hosts; the Linux player always blanks) | P2 |
@@ -109,8 +111,7 @@ what each core area must let the user do. Tier per row:
 | Multiview | add/remove/enlarge/reduce, full screen one, active audio, per-surface failure, connection-limit warning | **P1** |
 | Recording, reminders, VOD, My list, parental controls | – | P3 |
 
-Gaps against these tiers that no running workstream covers yet: **EPG
-management** (sources, update/clear, status, per-channel assignment) and
+Gaps against these tiers that no running workstream covers yet:
 **remote parity in the player** (Left = channels list over the video,
 Right = most recent channel, Long Back = stop) — the next workstreams.
 
