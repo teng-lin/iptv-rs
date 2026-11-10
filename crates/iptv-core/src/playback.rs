@@ -147,6 +147,10 @@ pub struct RetryPolicy {
     pub stable_ms: u64,
     /// Loading or buffering longer than this is a stall.
     pub stall_ms: u64,
+    /// A stream that played and is being reconnected keeps its last frame
+    /// and shows no waiting indicator for this long (most reconnects of a
+    /// live stream the server closed take less).
+    pub quiet_reconnect_ms: u64,
 }
 
 impl Default for RetryPolicy {
@@ -157,6 +161,7 @@ impl Default for RetryPolicy {
             max_attempts: 5,
             stable_ms: 10_000,
             stall_ms: 15_000,
+            quiet_reconnect_ms: 1_000,
         }
     }
 }
@@ -215,6 +220,18 @@ pub enum Phase {
     Failed(Failure),
 }
 
+/// The waiting indicator over the video ([`Health::indicator`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Waiting {
+    Loading,
+    Buffering,
+    /// Retry `attempt` of `of` of a stream (it played, or failed to start).
+    Reconnecting {
+        attempt: u32,
+        of: u32,
+    },
+}
+
 /// A retry the shell should run at `at_ms` (then call [`Health::due`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Retry {
@@ -238,6 +255,11 @@ pub struct Health {
     since_ms: u64,
     ready_since: Option<u64>,
     session: u64,
+    /// The session's stream played (a retry then reconnects it).
+    played: bool,
+    /// Since when a stream that played is being reconnected: from its
+    /// first retry until it plays again.
+    reconnecting_since: Option<u64>,
 }
 
 impl Default for Health {
@@ -257,6 +279,8 @@ impl Health {
             since_ms: 0,
             ready_since: None,
             session: 0,
+            played: false,
+            reconnecting_since: None,
         }
     }
 
@@ -285,6 +309,50 @@ impl Health {
         )
     }
 
+    /// What the viewer sees while waiting, at `now`: nothing while a stream
+    /// that played reconnects for less than
+    /// [`RetryPolicy::quiet_reconnect_ms`] (its last frame stays), then
+    /// "reconnecting" until it plays again.
+    pub fn indicator(&self, now: u64) -> Option<Waiting> {
+        let reconnecting = Waiting::Reconnecting {
+            attempt: self.attempts,
+            of: self.policy.max_attempts,
+        };
+        match (&self.phase, self.reconnecting_since) {
+            (Phase::Buffering, _) => Some(Waiting::Buffering),
+            (Phase::Resolving | Phase::Loading | Phase::Retrying { .. }, Some(since)) => {
+                let quiet = now.saturating_sub(since) < self.policy.quiet_reconnect_ms;
+                (!quiet).then_some(reconnecting)
+            }
+            (Phase::Retrying { .. }, None) => Some(reconnecting),
+            (Phase::Resolving | Phase::Loading, None) => Some(Waiting::Loading),
+            _ => None,
+        }
+    }
+
+    /// When [`Health::indicator`] changes on its own (a quiet reconnect
+    /// starts showing), if it will.
+    pub fn indicator_due(&self) -> Option<u64> {
+        let since = self.reconnecting_since?;
+        let due = since + self.policy.quiet_reconnect_ms;
+        let waiting = matches!(
+            self.phase,
+            Phase::Resolving | Phase::Loading | Phase::Retrying { .. }
+        );
+        waiting.then_some(due)
+    }
+
+    /// A stream that played is being reconnected (the same session): the
+    /// player keeps its last frame instead of going black.
+    pub fn reconnecting(&self) -> bool {
+        self.reconnecting_since.is_some()
+    }
+
+    /// The session plays live (not catch-up).
+    pub fn live(&self) -> bool {
+        self.live
+    }
+
     /// A new stream was requested (channel change, live/catch-up switch or a
     /// manual retry): fresh attempt count, new session.
     pub fn start(&mut self, live: bool, now: u64) -> u64 {
@@ -292,6 +360,8 @@ impl Health {
         self.live = live;
         self.attempts = 0;
         self.paused = false;
+        self.played = false;
+        self.reconnecting_since = None;
         self.enter(Phase::Resolving, now);
         self.session
     }
@@ -302,6 +372,8 @@ impl Health {
         self.attempts = 0;
         self.phase = Phase::Idle;
         self.ready_since = None;
+        self.played = false;
+        self.reconnecting_since = None;
     }
 
     /// The manual Retry: like [`Health::start`] with the same live flag.
@@ -346,6 +418,8 @@ impl Health {
                 if self.phase != Phase::Playing {
                     // A rebuffer keeps the stability clock running.
                     self.ready_since.get_or_insert(now);
+                    self.played = true;
+                    self.reconnecting_since = None;
                     self.enter(Phase::Playing, now);
                 }
                 None
@@ -381,6 +455,7 @@ impl Health {
         self.ready_since = None;
         if !self.live || !kind.retryable() || self.attempts >= self.policy.max_attempts {
             let attempts = self.attempts;
+            self.reconnecting_since = None;
             self.enter(
                 Phase::Failed(Failure {
                     kind,
@@ -393,6 +468,9 @@ impl Health {
         }
         self.attempts += 1;
         let attempt = self.attempts;
+        if self.played {
+            self.reconnecting_since.get_or_insert(now);
+        }
         // A live stream that closed after playing reconnects at once.
         let delay = if kind == ErrorKind::Ended && attempt == 1 {
             0

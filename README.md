@@ -25,7 +25,7 @@ Android video/input research: [`docs/research/android-video-and-input.md`](docs/
 | `crates/iptv-search` | Channel and programme search (folded, ranked, favourites first), history, search-screen state. Wasm-safe |
 | `crates/iptv-app` | NSH shell: screens, placeholder theme, video layer; on Linux and macOS the `tv.player` component on libmpv (`src/mpv/`: the player, with `gtk.rs` and `mac.rs` for each desktop's view) |
 | `hosts/android` | Kotlin host: `NshView`, Media3 `tv.player` component, TV launcher manifest |
-| `tools/` | `sync-host.sh`, `make-hls-fixtures.sh`, `make-track-fixtures.sh`, `make-iptv-fixtures.py`, `mock-server.py`, `mock-xtream.py`, `burst.sh` |
+| `tools/` | `sync-host.sh`, `make-hls-fixtures.sh`, `make-track-fixtures.sh`, `make-iptv-fixtures.py`, `mock-server.py`, `mock-xtream.py`, `mock-live-cuts.py`, `burst.sh` |
 
 ## Prerequisites
 
@@ -51,10 +51,31 @@ cargo run -p iptv-app                                     # Linux or macOS deskt
 tools/make-hls-fixtures.sh --serve &                      # synthetic HLS on :8089
 tools/make-track-fixtures.sh --serve &                    # several video/audio/subtitle tracks on :8097
                                                           # (--host 10.0.2.2:8097 for the emulators)
+tools/mock-live-cuts.py &                                 # live streams the server cuts, on :8090
 tools/sync-host.sh                                        # build libnsh.so (x86_64, arm64) into the host
 (cd hosts/android && ./gradlew assembleDebug)
 adb -s emulator-5554 install -r hosts/android/app/build/outputs/apk/debug/app-debug.apk
 ```
+
+### Live streams the provider cuts
+
+Providers cut live connections every minute or so, and a player has to
+play on. `tools/mock-live-cuts.py` (ffmpeg and python3; a synthetic test
+pattern with a burned-in clock and frame counter, made live) reproduces
+both kinds of cut:
+
+- live HLS, `/live/<name>.m3u8`: a 302 to a tokenized address whose
+  playlist reloads are refused (403) once the token is older than
+  `--hls-token-secs` (default 40). ffmpeg (mpv) reloads the redirected
+  address and reaches the end of the stream; Media3 reloads the address
+  it was given and gets a new token;
+- live MPEG-TS, `/live/<name>.ts`: the live segments in real time, the
+  connection closed after `--ts-close-secs` (default 70).
+
+`/playlist.m3u` lists two channels of each kind (`--port`, default
+8090). The app bridges both on the desktop and TS on Android (see
+`crates/iptv-app/src/mpv/worker.rs` and `PlayerComponent.kt`); measured
+gaps are in [`docs/perf.md`](docs/perf.md).
 
 Emulators: `tab36` (Pixel Tablet, API 36) and `tv36` (Android TV, API 36).
 Start them with `QT_QPA_PLATFORM=xcb` so the host keyboard reaches them.
@@ -112,6 +133,8 @@ Adding more streams than an Xtream account allows asks first.
 
 Environment: `IPTV_RS_AUDIO=null` mutes the player (mpv `ao`; use it for
 tests), `IPTV_RS_HWDEC` sets mpv's `hwdec` (default `auto-copy-safe`),
+`IPTV_RS_LIVE_BRIDGE=0` turns off playing on across live connections the
+server closes (each one is then reconnected by the app),
 `RUST_LOG=info` shows the player's state (never stream addresses).
 `GDK_DEBUG=no-portals` makes the playlist-file picker GTK's own dialog
 instead of the desktop portal's.

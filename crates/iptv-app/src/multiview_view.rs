@@ -47,17 +47,15 @@ enum TileStatus {
 }
 
 fn tile_status(ui: Ui, surface: usize) -> TileStatus {
+    let now = ui.now_ms();
     ui.player.stream(surface).health.with(|h| match h.phase() {
-        Phase::Idle | Phase::Playing => TileStatus::Playing,
-        Phase::Resolving | Phase::Loading => TileStatus::Waiting("Loading…".into()),
-        Phase::Buffering => TileStatus::Waiting("Buffering…".into()),
-        Phase::Retrying { attempt, .. } => TileStatus::Waiting(format!(
-            "Reconnecting… ({attempt} of {})",
-            h.policy.max_attempts
-        )),
         Phase::Failed(f) => {
             TileStatus::Failed(crate::player_panels::failure_message(&f.kind, false))
         }
+        // A quick reconnect keeps the last frame without a label.
+        _ => h.indicator(now).map_or(TileStatus::Playing, |w| {
+            TileStatus::Waiting(crate::player_panels::waiting_text(&w))
+        }),
     })
 }
 

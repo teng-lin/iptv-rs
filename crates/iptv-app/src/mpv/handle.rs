@@ -40,6 +40,9 @@ impl Mpv {
             ("osd-level", "0".to_owned()),
             ("audio-display", "no".to_owned()),
             ("network-timeout", "15".to_owned()),
+            // Opens a live stream's spare entry once the current one was
+            // read to its end (`worker::Bridge`).
+            ("prefetch-playlist", "yes".to_owned()),
             ("user-agent", DEFAULT_UA.to_owned()),
             ("hwdec", hwdec),
         ];

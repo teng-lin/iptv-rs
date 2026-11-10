@@ -13,8 +13,12 @@
 //!
 //! The `tv.player` contract (both hosts; every instance is independent: its
 //! own player, props and events, several playing at once):
-//! - props `source` `{url, headers, token}` or null, `paused`, `userAgent`,
-//!   `pictureSize`; `videoTrack` (`auto` or a video track id),
+//! - props `source` `{url, headers, token, live, reconnect}` or null (a new
+//!   url or token reopens; the picture goes black until the new stream's
+//!   first frame, except when `reconnect` says the app reopens the stream
+//!   that played, or only the token changed: the last frame stays; `live`
+//!   streams play on across connections the server closes where the
+//!   player can bridge them), `paused`, `userAgent`, `pictureSize`; `videoTrack` (`auto` or a video track id),
 //!   `audioTrack` (`auto` or an audio track id), `textTrack` (`off` or a
 //!   text track id) for the open stream (a new source starts again from
 //!   `auto`/`auto`/`off`); `volume` (0–100; the desktop's, Android keeps
@@ -81,8 +85,8 @@ pub fn surface_rect(ui: Ui, surface: usize) -> (f32, f32, f32, f32) {
     }
 }
 
-/// The stream as the host's `source` prop: `{url, headers, token}`, or
-/// null when nothing plays.
+/// The stream as the host's `source` prop: `{url, headers, token, live,
+/// reconnect}`, or null when nothing plays.
 fn source_prop(ui: Ui, surface: usize) -> Value {
     let stream = ui.player.stream(surface);
     let playing = if surface == 0 {
@@ -94,6 +98,9 @@ fn source_prop(ui: Ui, surface: usize) -> Value {
         return Value::Null;
     }
     let token = stream.token.get();
+    // Set with the token (`player::load`).
+    let live = stream.live.get_untracked();
+    let reconnect = stream.reconnect.get_untracked();
     stream.source.with(|s| {
         s.as_ref().map_or(Value::Null, |s| {
             let headers: serde_json::Map<String, Value> = s
@@ -101,7 +108,13 @@ fn source_prop(ui: Ui, surface: usize) -> Value {
                 .iter()
                 .map(|(k, v)| (k.clone(), Value::String(v.clone())))
                 .collect();
-            json!({ "url": s.url, "headers": headers, "token": token })
+            json!({
+                "url": s.url,
+                "headers": headers,
+                "token": token,
+                "live": live,
+                "reconnect": reconnect,
+            })
         })
     })
 }

@@ -50,6 +50,12 @@ pub struct Stream {
     pub source: Signal<Option<PlaySource>>,
     /// Bumped on every open, so a retry reopens even the same URL.
     pub token: Signal<u64>,
+    /// The open stream is live (not catch-up): the player bridges
+    /// connections the server closes.
+    pub live: Signal<bool>,
+    /// The open is a retry of a stream that played: the player keeps its
+    /// last frame instead of going black.
+    pub reconnect: Signal<bool>,
     /// The playing channel's key (live or catch-up): finds it again in a
     /// new schedule.
     pub key: Signal<Option<String>>,
@@ -74,6 +80,8 @@ impl Stream {
             health: signal(Health::default()),
             source: signal(None),
             token: signal(0),
+            live: signal(true),
+            reconnect: signal(false),
             key: signal(None),
             channel: signal(None),
             size: signal(None),
@@ -296,10 +304,16 @@ fn load(ui: Ui, surface: usize, session: u64, mut source: PlaySource) {
         return; // the viewer moved on
     }
     crate::settings::add_user_agent(&mut source.headers, crate::settings::user_agent());
+    let (live, reconnect) = stream
+        .health
+        .with_untracked(|h| (h.live(), h.reconnecting()));
     log::info!(
-        "iptv player {surface} open: session {session}, {} header(s)",
-        source.headers.len()
+        "iptv player {surface} open: session {session}, {} header(s){}",
+        source.headers.len(),
+        if reconnect { ", reconnecting" } else { "" }
     );
+    stream.live.set(live);
+    stream.reconnect.set(reconnect);
     stream.token.update(|t| *t += 1);
     stream.position_ms.set(0);
     // A new stream: its own tracks, from the default choices.
@@ -386,6 +400,7 @@ fn schedule_retry(ui: Ui, surface: usize, retry: Retry) {
         retry.at_ms.saturating_sub(ui.now_ms())
     );
     let wait = retry.at_ms.saturating_sub(ui.now_ms());
+    watch_indicator(ui, surface);
     later(ui, Duration::from_millis(wait), move || {
         let now = ui.now_ms();
         let mut due = false;
@@ -395,6 +410,22 @@ fn schedule_retry(ui: Ui, surface: usize, retry: Retry) {
             .update(|h| due = h.due(retry, now));
         if due {
             open(ui, surface, retry.session);
+        }
+    });
+}
+
+/// Shows the waiting indicator once a quiet reconnect has taken long
+/// enough (`Health::indicator`).
+fn watch_indicator(ui: Ui, surface: usize) {
+    let health = ui.player.stream(surface).health;
+    let Some(at) = health.with_untracked(|h| h.indicator_due()) else {
+        return;
+    };
+    let wait = at.saturating_sub(ui.now_ms());
+    later(ui, Duration::from_millis(wait), move || {
+        if health.with_untracked(|h| h.indicator_due()) == Some(at) {
+            // Nothing changed but the time: the overlays read it again.
+            health.update(|_| {});
         }
     });
 }
