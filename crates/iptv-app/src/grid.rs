@@ -12,8 +12,6 @@ use crate::{Ui, channel_name, clock, tint};
 
 pub const ROW_H: f32 = 48.0;
 pub const NAME_W: f32 = 250.0;
-/// The channel number before the logo.
-const NUMBER_W: f32 = 30.0;
 /// The logo box: missing or broken logos leave it empty.
 const LOGO_W: f32 = 40.0;
 const LOGO_H: f32 = 28.0;
@@ -39,6 +37,8 @@ pub fn guide(ui: Ui, rows: ElementRef) -> impl IntoElement {
         ui.focus
             .with(|f| (f.pane == Pane::Guide).then(|| (f.channel, f.program(&view).start)))
     });
+    // Rows are numbered by place: the list's length is its widest number.
+    let number_w = computed(move || crate::numbers::column_width(ui.list.with(|l| l.len())));
     scroll_to_focus_on_new_list(ui, rows);
     view()
         .flex_1()
@@ -51,7 +51,7 @@ pub fn guide(ui: Ui, rows: ElementRef) -> impl IntoElement {
                 .child(
                     virtual_list(
                         move || ui.list.with(|l| l.len()),
-                        move |at| row(ui, at, window, now, scale, focused),
+                        move |at| row(ui, at, window, now, scale, focused, number_w),
                     )
                     .estimated_item_size(px(ROW_H))
                     .element_ref(&rows)
@@ -218,6 +218,7 @@ fn row(
     now: Memo<i32>,
     scale: Memo<f32>,
     focused: Memo<Option<(usize, i32)>>,
+    number_w: Memo<f32>,
 ) -> impl IntoElement {
     // The catalog channel behind this row of the list on screen.
     let channel = computed(move || ui.list.with(|l| l.channel(at.index())));
@@ -322,7 +323,7 @@ fn row(
                 .child(
                     // The place in the list on screen.
                     text(move || (at.index() + 1).to_string())
-                        .w(px(NUMBER_W))
+                        .w(move || px(number_w.get()))
                         .number_of_lines(1)
                         .text_size(px(TEXT_SIZE))
                         .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA)),

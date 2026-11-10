@@ -25,6 +25,7 @@ mod menu_view;
 mod mpv;
 mod multiview;
 mod multiview_view;
+mod numbers;
 mod panels;
 mod play_bar;
 mod player;
