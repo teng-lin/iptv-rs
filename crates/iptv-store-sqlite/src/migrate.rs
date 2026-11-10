@@ -48,6 +48,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "epg",
         sql: include_str!("../migrations/0004_epg.sql"),
     },
+    Migration {
+        version: 5,
+        name: "source_settings",
+        sql: include_str!("../migrations/0005_source_settings.sql"),
+    },
 ];
 
 /// The schema version this build writes.

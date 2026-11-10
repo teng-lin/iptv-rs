@@ -21,6 +21,7 @@ mod mpv;
 mod panels;
 mod player;
 mod player_panels;
+mod playlists_view;
 mod rail;
 mod search_view;
 mod seek;
@@ -149,6 +150,10 @@ pub struct Ui {
     pub search: Signal<Option<search_view::Screen>>,
     /// The add-playlist wizard, when open.
     pub wizard: Signal<Option<wizard_view::Open>>,
+    /// The playlists screen, when open.
+    pub playlists: Signal<Option<playlists_view::Open>>,
+    /// The stored playlists: which one is shown, their refreshes (`data.rs`).
+    pub library: data::Library,
     /// Stream, health and history of playback (`player.rs`).
     pub player: player::Player,
 }
@@ -338,6 +343,8 @@ pub fn App() -> impl IntoElement {
         editor: signal(None),
         search: signal(None),
         wizard: signal(None),
+        playlists: signal(None),
+        library: data::Library::new(),
         player: player::Player::new(),
     };
     // Leaving full screen closes the panels.
@@ -446,6 +453,7 @@ pub fn App() -> impl IntoElement {
         .child(menu_view::layer(ui))
         .child(chooser::layer(ui))
         .child(fav_editor::layer(ui))
+        .child(playlists_view::layer(ui))
         .child(wizard_view::layer(ui))
 }
 
@@ -469,7 +477,8 @@ fn bind_back(ui: Ui) {
             && !ui.chooser.with(Option::is_some)
             && !ui.menu.with(Option::is_some)
             && !ui.description.with(Option::is_some)
-            && !search_view::is_open(ui);
+            && !search_view::is_open(ui)
+            && !playlists_view::is_open(ui);
         if !leaves {
             on_back_press(move || go_back(ui));
         }
@@ -487,6 +496,7 @@ pub(crate) fn go_back(ui: Ui) -> bool {
             || ui.editor.with(Option::is_some);
         match (ui.mode.get(), ui.focus.with(|f| f.pane), panels || menu) {
             _ if ui.wizard.with(Option::is_some) => wizard_view::back(ui),
+            _ if playlists_view::is_open(ui) => playlists_view::back(ui),
             _ if ui.editor.with(Option::is_some) => {
                 fav_editor::close(ui);
                 true

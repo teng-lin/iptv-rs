@@ -76,7 +76,7 @@ navigation rail          groups list            guide (or channel list)     play
 
 | Behaviour | Status | P |
 | --- | --- | --- |
-| Several playlists; choose the one shown; refresh, rename, change EPG URL, delete with consequences stated; add (wizard) | missing (wizard only; startup shows the newest) | P0 |
+| Several playlists; choose the one shown; refresh, rename, change EPG URL, delete with consequences stated; add (wizard) | done: playlists screen (`playlists_view.rs`) with show (remembered; startup opens it), refresh now / refresh all, rename, provider details and User-Agent (checked by importing, kept only if they work), one guide link per playlist, delete with consequences; per-playlist last channel. Not yet: several guide sources per playlist, enable/disable, logo priority, catch-up type, update interval, manage groups | P0 |
 | Settings screen over the `iptv-settings` catalogue (sections, rows, choosers, persisted) | missing (catalogue and store exist, no screen) | P1 |
 | Settings that change behaviour now hard-coded: EPG update interval / keep past days, catch-up seek keys and steps, startup channel, stay-on-guide/search, channel numbering | missing | P1 |
 

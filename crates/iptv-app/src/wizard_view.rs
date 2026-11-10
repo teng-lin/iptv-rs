@@ -9,8 +9,8 @@
 //! Entry points: first run without a stored source, the top bar's "Add
 //! playlist" (tap), and Menu in the groups pane (remote).
 
-mod entry;
-mod words;
+pub(crate) mod entry;
+pub(crate) mod words;
 
 use std::cell::RefCell;
 
@@ -23,7 +23,7 @@ use iptv_nav::Action;
 use nsh_core::picker::FilePickRequest;
 use nsh_core::prelude::*;
 
-use crate::data::{self, Job, Update};
+use crate::data::{self, Job, Purpose, Update};
 use crate::theme::{FOCUS_ALPHA, RADIUS, RADIUS_LARGE, RESTING_ALPHA, TEXT_SECONDARY_ALPHA};
 use crate::{Ui, tint};
 
@@ -141,6 +141,8 @@ fn perform(ui: Ui, effect: WizardEffect) {
                 source,
                 epg_url,
                 stored: None,
+                purpose: Purpose::Add,
+                edit: false,
             };
             let token = data::start_import(ui, job, move |update| {
                 send(
@@ -167,6 +169,8 @@ fn perform(ui: Ui, effect: WizardEffect) {
             log::info!("iptv wizard: closed ({exit:?})");
             if let WizardExit::Added { .. } = exit {
                 RUNNING.with(|r| r.borrow_mut().take());
+                // Added from the playlists screen: "Watch" goes to the guide.
+                crate::playlists_view::close(ui);
             }
             ui.wizard.set(None);
         }

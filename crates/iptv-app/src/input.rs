@@ -67,7 +67,7 @@ struct Nav {
 
 /// The surface that owns input now.
 pub fn context(ui: &Ui) -> Context {
-    if crate::wizard_view::is_open(*ui) {
+    if crate::wizard_view::is_open(*ui) || crate::playlists_view::is_open(*ui) {
         return Context::Menu;
     }
     if ui.editor.with(Option::is_some) {
@@ -211,6 +211,10 @@ fn apply(ui: Ui, action: Action) {
     let mv = |m: Move| crate::lists::navigate(ui, m);
     if crate::wizard_view::is_open(ui) {
         crate::wizard_view::key(ui, action);
+        return;
+    }
+    if crate::playlists_view::is_open(ui) {
+        crate::playlists_view::key(ui, action);
         return;
     }
     if ui.editor.with(Option::is_some) {
