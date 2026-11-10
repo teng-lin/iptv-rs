@@ -46,6 +46,7 @@ pub const WIRED: &[&str] = &[
     "epg.update_on_playlist_change",
     "epg.keep_past",
     "epg.store_descriptions",
+    "guide.back_returns_to_now",
     "appearance.accent",
     "appearance.background",
     "appearance.ui_transparency",

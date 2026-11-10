@@ -353,11 +353,8 @@ fn info_card(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> impl IntoElem
                         .child(
                             text(move || {
                                 let ch = channel();
-                                format!(
-                                    "{}  {}",
-                                    crate::schedule().channel_number(ch),
-                                    channel_name(ch)
-                                )
+                                // As in the guide: its place in the list on screen.
+                                format!("{}  {}", crate::lists::number(ui, ch), channel_name(ch))
                             })
                             .flex_1()
                             .number_of_lines(1)

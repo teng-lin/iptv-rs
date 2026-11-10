@@ -40,6 +40,13 @@ pub fn focused_channel(ui: Ui) -> Option<usize> {
     ui.list.with(|l| l.channel(row))
 }
 
+/// The number catalog `channel` shows (the player card, History): its
+/// place in the list on screen, as in the guide, else the catalog's.
+pub fn number(ui: Ui, channel: usize) -> u32 {
+    let catalog = crate::schedule();
+    ui.list.with(|l| l.number_of(channel, &*catalog))
+}
+
 /// The rail's items for the source on screen.
 pub fn rail(ui: Ui) -> Vec<RailItem> {
     rail_items(ui.has_vod.get())
@@ -156,6 +163,7 @@ fn step(ui: Ui, f: impl FnOnce(&mut Focus, &Columns, &ListView) -> Outcome) -> O
     let cols = Columns {
         entries: entry_count(&**view.catalog()),
         rail: &rail,
+        back_to_now: crate::settings::flag(iptv_settings::keys::BACK_RETURNS_TO_NOW),
     };
     let mut outcome = Outcome::None;
     ui.focus.update(|focus| outcome = f(focus, &cols, &view));
@@ -190,6 +198,21 @@ pub fn open_groups(ui: Ui) {
 pub fn tap_entry(ui: Ui, entry: usize) {
     let o = step(ui, |f, cols, _| f.tap_entry(entry, cols));
     follow(ui, o);
+}
+
+/// The player's channel list chose groups column `entry`: the guide shows
+/// its list as its own groups column would (focus at the top, now).
+pub fn preview(ui: Ui, entry: usize) {
+    let changed = step(ui, |f, cols, _| {
+        if f.preview_list(entry, cols) {
+            Outcome::Preview
+        } else {
+            Outcome::None
+        }
+    });
+    if changed == Outcome::Preview {
+        rebuild(ui, false);
+    }
 }
 
 /// A tap on a rail item.

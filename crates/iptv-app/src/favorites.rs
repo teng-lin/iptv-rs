@@ -13,7 +13,7 @@ use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::sync::mpsc::{self, Receiver, Sender};
 
-use iptv_core::favorites::{Favorites, KeyIndex, RECENT_LIMIT, Recent, diff};
+use iptv_core::favorites::{Favorites, History, KeyIndex, RECENT_LIMIT, Recent, diff};
 use iptv_core::guide::Schedule;
 use iptv_providers::ContentId;
 use iptv_providers::model::ContentKind;
@@ -142,6 +142,15 @@ pub fn recent_channels() -> Vec<usize> {
     STATE.with(|s| {
         let s = s.borrow();
         s.recent.channels(&s.index)
+    })
+}
+
+/// The player's History: the recently watched channels (newest first) and
+/// the row of `playing` among them.
+pub fn history(playing: Option<usize>) -> History {
+    STATE.with(|s| {
+        let s = s.borrow();
+        s.recent.history(&s.index, playing)
     })
 }
 

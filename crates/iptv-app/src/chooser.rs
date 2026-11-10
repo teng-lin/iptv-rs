@@ -1,7 +1,8 @@
 //! Translucent choosers over full-screen video: picture size (with "apply
 //! to all channels"), the sleep timer, the video, audio and subtitle
-//! tracks, the audio delay, and the recently played channels (the History
-//! quick action). Option sets follow the reference UX's observed choosers
+//! tracks, the audio delay, and the recently watched channels (the History
+//! quick action: the store's watch history, as the Recently watched list).
+//! Option sets follow the reference UX's observed choosers
 //! (tivimate docs/09); wording is ours. Entries are taken when a chooser
 //! opens; Up/Down move, OK (or a tap) picks and closes, Back closes.
 
@@ -26,7 +27,7 @@ pub enum Kind {
     Sleep,
     Track(Track),
     AudioDelay,
-    /// The recently played channels.
+    /// The recently watched channels.
     History,
 }
 
@@ -68,7 +69,7 @@ fn title(kind: Kind) -> &'static str {
         Kind::Track(Track::Audio) => "Audio",
         Kind::Track(Track::Text) => "Subtitles",
         Kind::AudioDelay => "Audio delay",
-        Kind::History => "Recent channels",
+        Kind::History => "Recently watched",
     }
 }
 
@@ -116,32 +117,34 @@ fn entries(ui: Ui, kind: Kind) -> (Vec<String>, Vec<String>, usize) {
     }
 }
 
-/// The recent channels still in the guide, newest first: "12  Name · now".
+/// The recently watched channels (the store's watch history, as in the
+/// Recently watched list), newest first, numbered as on the player card:
+/// "12  Name ▶ · now". The focus starts on the one playing.
 fn history(ui: Ui) -> (Vec<String>, Vec<String>, usize) {
     let s = crate::schedule();
     let now = ui.focus.with_untracked(|f| f.now);
-    let playing = ui.player.history.with_untracked(|h| {
-        h.recent()
-            .iter()
-            .filter_map(|k| Some((s.find_channel(k)?, k.clone())))
-            .collect::<Vec<_>>()
-    });
-    let labels = playing
+    let h = crate::favorites::history(ui.playing.get_untracked());
+    let labels = h
+        .channels
         .iter()
-        .map(|(ch, _)| {
-            let p = s.program_at(*ch, now);
+        .enumerate()
+        .map(|(row, &ch)| {
+            let p = s.program_at(ch, now);
+            let marker = if h.playing == Some(row) { "  ▶" } else { "" };
             format!(
-                "{}  {} · {}",
-                s.channel_number(*ch),
-                s.channel_name(*ch),
-                s.title(*ch, p)
+                "{}  {}{marker} · {}",
+                crate::lists::number(ui, ch),
+                s.channel_name(ch),
+                s.title(ch, p)
             )
         })
         .collect();
-    let current = ui.playing.get_untracked();
-    let at = playing.iter().position(|(ch, _)| Some(*ch) == current);
-    let keys = playing.into_iter().map(|(_, k)| k).collect();
-    (labels, keys, at.unwrap_or(0))
+    let keys = h
+        .channels
+        .iter()
+        .map(|&ch| s.channel_key(ch).unwrap_or_default())
+        .collect();
+    (labels, keys, h.playing.unwrap_or(0))
 }
 
 pub fn open(ui: Ui, kind: Kind) {
@@ -198,7 +201,7 @@ pub fn pick(ui: Ui, index: usize) {
 
 /// History: plays a recent channel live, full screen, with its card.
 fn play_recent(ui: Ui, key: &str) {
-    let Some(channel) = crate::schedule().find_channel(key) else {
+    let Some(channel) = crate::favorites::channel_of(key) else {
         return;
     };
     crate::lists::show_channel(ui, channel);
@@ -243,12 +246,14 @@ pub fn layer(ui: Ui) -> impl IntoElement {
         }
     });
     let row = move |at: Position| {
-        let index = at.index();
+        // Cells are recycled while a long list scrolls: read `at` where used.
         let entry = move || {
             ui.chooser.with(|c| {
                 c.as_ref().and_then(|c| {
+                    let index = at.index();
                     let label = c.labels.get(index)?.clone();
-                    Some((label, c.list.selected == index, c.list.focus == index))
+                    let checked = c.kind != Kind::History && c.list.selected == index;
+                    Some((label, checked, c.list.focus == index))
                 })
             })
         };
@@ -274,7 +279,7 @@ pub fn layer(ui: Ui) -> impl IntoElement {
         })
         .on_press(move || {
             ui.touched();
-            pick(ui, index);
+            pick(ui, at.index());
         })
     };
     let kind = move || ui.chooser.with(|c| c.as_ref().map(|c| c.kind));
