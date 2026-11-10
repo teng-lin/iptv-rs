@@ -34,7 +34,7 @@ pub fn guide(ui: Ui, rows: ElementRef) -> impl IntoElement {
     let window = computed(move || ui.focus.with(|f| f.window));
     let now = computed(move || ui.focus.with(|f| f.now));
     let focused = computed(move || {
-        ui.data_version.get();
+        ui.guide_data();
         let view = crate::lists::view(ui);
         ui.focus
             .with(|f| (f.pane == Pane::Guide).then(|| (f.channel, f.program(&view).start)))
@@ -141,7 +141,7 @@ fn hint_card(ui: Ui) -> impl IntoElement {
 /// change).
 fn scroll_to_focus_on_new_list(ui: Ui, list: ElementRef) {
     effect(move || {
-        ui.data_version.get();
+        ui.guide_data();
         ui.list.with(|_| ());
         let row = ui.focus.with_untracked(|f| f.channel);
         list.scroll_to_index(
@@ -176,7 +176,7 @@ fn time_bar(
     let tick = move |i: i32| {
         // The epoch comes with the data; now decides which day is "today".
         text(move || {
-            ui.data_version.get();
+            ui.guide_data();
             now.get();
             clock(window.get() + i * STEP)
         })
@@ -222,7 +222,7 @@ fn row(
     // The catalog channel behind this row of the list on screen.
     let channel = computed(move || ui.list.with(|l| l.channel(at.index())));
     let programs = computed(move || {
-        ui.data_version.get();
+        ui.guide_data();
         channel.get().map_or_else(Vec::new, |ch| {
             crate::schedule().programs_between(ch, window.get(), VISIBLE)
         })
@@ -274,7 +274,7 @@ fn row(
             .child(
                 text(move || {
                     // Equal programme minutes on new data still re-read the title.
-                    ui.data_version.get();
+                    ui.guide_data();
                     match (channel.get(), program()) {
                         (Some(ch), Some(p)) => crate::schedule().title(ch, p),
                         _ => String::new(),
@@ -294,7 +294,7 @@ fn row(
     };
     let playing = move || channel.get().is_some() && ui.playing.get() == channel.get();
     let logo = move || {
-        ui.data_version.get();
+        ui.guide_data();
         channel
             .get()
             .and_then(|ch| crate::schedule().channel_logo(ch))
@@ -344,7 +344,7 @@ fn row(
                     text(move || {
                         // Cells are made once per recycled slot: the index
                         // alone does not change when the data does.
-                        ui.data_version.get();
+                        ui.guide_data();
                         let Some(ch) = channel.get() else {
                             return String::new();
                         };

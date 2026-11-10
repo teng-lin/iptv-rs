@@ -1,0 +1,199 @@
+//! The stored guide's older days, read in on demand.
+//!
+//! A shown schedule holds the stored guide from [`LOADED_PAST_DAYS`]
+//! before its start on ([`window`]: the guide's first screen, a day of
+//! "earlier programmes" and the play bar's archive of the last day need
+//! nothing more), not every day `epg.keep_past` keeps: on Android a week
+//! of a large guide was most of the app's memory. Older days are pages
+//! (`iptv_guide::pages`): the first guide cell, programme detail or
+//! catch-up that needs one asks [`loader`] for it, which reads it on its
+//! own thread (`Store::load_epg` of that day) and puts it in the schedule
+//! on screen; `Ui::guide_pages` then redraws what shows programmes.
+//!
+//! Pages go again when the guide's window is back at now ([`bind`]); the
+//! day of the programme playing from the archive is pinned meanwhile, and
+//! catch-up waits for its day before it resolves the archive ([`ready`]).
+
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
+use std::sync::mpsc::{self, TryRecvError};
+use std::time::Duration;
+
+use iptv_epg::{DAY, GuideStore, UnixTime};
+use iptv_guide::EpgSchedule;
+use iptv_guide::pages::{PageRequest, PagedWindow};
+use iptv_store_sqlite::{EpgWindow, SourceId};
+use nsh_core::prelude::*;
+
+use crate::guide::{Schedule, home_window};
+use crate::{Playback, Ui};
+
+/// Days of finished programmes held in memory with the guide (at most
+/// what `epg.keep_past` keeps). Older ones are paged in.
+pub const LOADED_PAST_DAYS: u32 = 1;
+
+/// A page usually takes a few hundred milliseconds: look often.
+const POLL: Duration = Duration::from_millis(30);
+
+thread_local! {
+    /// What waits for a page (catch-up of an older programme): run after
+    /// every page that arrives, each checks again.
+    static WAITERS: RefCell<Vec<Box<dyn FnOnce()>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// What a schedule shown at `now` holds of the stored guide: from
+/// [`LOADED_PAST_DAYS`] (at most `keep_past_days`) before the hour of
+/// `now` on; the store keeps nothing that ended before `keep_past_days`.
+pub fn window(now: UnixTime, keep_past_days: u32) -> PagedWindow {
+    let days = i64::from(LOADED_PAST_DAYS.min(keep_past_days));
+    PagedWindow {
+        loaded_from: now - now.rem_euclid(3600) - days * DAY,
+        oldest: now.saturating_sub(i64::from(keep_past_days).saturating_mul(DAY)),
+    }
+}
+
+/// The store read of [`window`]'s held part.
+pub fn store_window(window: PagedWindow) -> EpgWindow<'static> {
+    EpgWindow {
+        from: window.loaded_from,
+        ..EpgWindow::from(0, 0)
+    }
+}
+
+/// `schedule` (source `source`'s stored guide, as [`window`] at `now`
+/// read it) with its older days paged in on demand.
+pub fn paged(ui: Ui, schedule: EpgSchedule, source: SourceId, now: UnixTime) -> EpgSchedule {
+    let keep = super::stored::keep_past_days(&crate::settings::get());
+    schedule.with_pages(window(now, keep), loader(ui, source))
+}
+
+/// Reads a page on its own thread and puts it in the schedule on screen.
+/// Called from guide queries (maybe inside a view's computation): it only
+/// starts work.
+fn loader(ui: Ui, source: SourceId) -> impl Fn(PageRequest) + 'static {
+    move |request: PageRequest| {
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let window = EpgWindow {
+                from: request.from,
+                to: request.to,
+                ..EpgWindow::from(0, 0)
+            };
+            let started = std::time::Instant::now();
+            let read = super::open_store().and_then(|s| s.load_epg(source, &window));
+            let _ = tx.send((read, started.elapsed()));
+        });
+        super::spawn_in_app(async move {
+            let (read, took) = loop {
+                match rx.try_recv() {
+                    Ok(result) => break result,
+                    Err(TryRecvError::Empty) => timer(POLL).await,
+                    Err(TryRecvError::Disconnected) => return,
+                }
+            };
+            let store = read.unwrap_or_else(|e| {
+                log::warn!("iptv data: older guide day: {e}");
+                GuideStore::default()
+            });
+            arrived(ui, request, store, took);
+        });
+    }
+}
+
+fn arrived(ui: Ui, request: PageRequest, store: GuideStore, took: Duration) {
+    let schedule = crate::schedule();
+    let inserted = epg(&*schedule).is_some_and(|s| {
+        let kb = store.heap_bytes() / 1024;
+        let inserted = s.insert_page(request, store);
+        if inserted {
+            log::info!(
+                "iptv data: guide day -{} paged in ({kb} KiB, read in {} ms); {} held",
+                request.page + 1,
+                took.as_millis(),
+                s.paged_days()
+            );
+        }
+        inserted
+    });
+    if inserted {
+        ui.guide_pages.update(|v| *v += 1);
+    }
+    for waiter in WAITERS.with(|w| std::mem::take(&mut *w.borrow_mut())) {
+        waiter();
+    }
+}
+
+fn epg(schedule: &dyn Schedule) -> Option<&EpgSchedule> {
+    schedule.as_any()?.downcast_ref::<EpgSchedule>()
+}
+
+/// Whether the programmes around `t` are in memory on `schedule`, so a
+/// catch-up there resolves with its programme's real times; when not, its
+/// day is pinned and asked for, and `retry` runs once a page arrived.
+pub fn ready(schedule: &Rc<dyn Schedule>, t: UnixTime, retry: impl FnOnce() + 'static) -> bool {
+    let Some(epg) = epg(&**schedule) else {
+        return true;
+    };
+    epg.pin_page(Some(t));
+    if epg.ensure_loaded(t) {
+        return true;
+    }
+    log::info!("iptv data: catch-up waits for its guide day");
+    WAITERS.with(|w| w.borrow_mut().push(Box::new(retry)));
+    false
+}
+
+/// Keeps the archive playing's day held, and drops the other pages once
+/// the guide's window is back at now.
+pub fn bind(ui: Ui) {
+    effect(move || {
+        ui.data_version.get();
+        let archive = match (ui.playing.get(), ui.playback.get()) {
+            (Some(_), Playback::CatchUp { start, .. }) => Some(start),
+            _ => None,
+        };
+        untracked(|| {
+            let schedule = crate::schedule();
+            if let Some(s) = epg(&*schedule) {
+                s.pin_page(archive.map(|m| s.unix(m)));
+            }
+        });
+    });
+    let away = Cell::new(false);
+    effect(move || {
+        ui.data_version.get();
+        let home = ui.focus.with(|f| f.window == home_window(f.now));
+        if home && away.replace(false) {
+            untracked(|| {
+                let schedule = crate::schedule();
+                if let Some(s) = epg(&*schedule) {
+                    let dropped = s.evict_pages();
+                    if dropped > 0 {
+                        log::info!("iptv data: back at now; dropped {dropped} older guide days");
+                    }
+                }
+            });
+        }
+        away.set(!home);
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const NOW: UnixTime = 1_800_000_000 + 1234;
+
+    #[test]
+    fn the_window_holds_a_day_before_the_hour() {
+        let w = window(NOW, 7);
+        assert_eq!(w.loaded_from, 1_800_000_000 - DAY);
+        assert_eq!(w.oldest, NOW - 7 * DAY);
+        assert_eq!(store_window(w).from, w.loaded_from);
+        assert_eq!(store_window(w).to, UnixTime::MAX);
+        // Keeping less than a day holds no more than is kept.
+        assert_eq!(window(NOW, 0).loaded_from, 1_800_000_000);
+        // Keeping everything (`u32::MAX`): no oldest day.
+        assert!(window(NOW, u32::MAX).oldest < NOW - 1000 * DAY);
+    }
+}

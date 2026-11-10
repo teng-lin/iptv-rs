@@ -237,7 +237,7 @@ fn top_bar(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> impl IntoElemen
         .bg(panel)
         .child(
             text(move || {
-                ui.data_version.get();
+                ui.guide_data();
                 ui.playing.get().map_or(String::new(), group_of)
             })
             .flex_1()
@@ -277,7 +277,7 @@ fn top_bar(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> impl IntoElemen
         )
         .child(
             text(move || {
-                ui.data_version.get();
+                ui.guide_data();
                 let s = crate::schedule();
                 let unix = crate::guide::unix_of(&*s, ui.focus.with(|f| f.now));
                 date_time(unix, crate::time::offset_minutes(unix))
@@ -289,7 +289,7 @@ fn top_bar(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> impl IntoElemen
 
 /// The programme on screen: live now, or the replayed one.
 fn programme(ui: Ui) -> (usize, crate::guide::Program) {
-    ui.data_version.get();
+    ui.guide_data();
     let channel = ui.playing.get().unwrap_or(0);
     let minute = match ui.playback.get() {
         Playback::Live => ui.focus.with(|f| f.now),

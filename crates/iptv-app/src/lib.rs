@@ -157,6 +157,9 @@ pub struct Ui {
     pub playback: Signal<Playback>,
     /// Bumped when the guide data changes (views re-read `schedule()`).
     pub data_version: Signal<u64>,
+    /// Bumped when an older day of the guide was paged in (`data/pages.rs`):
+    /// views showing programmes re-read them ([`Ui::guide_data`]).
+    pub guide_pages: Signal<u64>,
     pub picture: Signal<PictureSettings>,
     pub sleep: Signal<SleepTimer>,
     /// The open chooser over the video (picture size, sleep timer).
@@ -195,6 +198,12 @@ pub struct Ui {
 }
 
 impl Ui {
+    /// Tracks the programmes on screen: a new schedule or a day paged in.
+    /// The value changes with either.
+    pub fn guide_data(&self) -> u64 {
+        self.data_version.get() << 32 | (self.guide_pages.get() & 0xFFFF_FFFF)
+    }
+
     /// OK or a tap on the focused programme: a live one plays (OK on the
     /// channel already playing goes full screen); ended and upcoming ones
     /// only show their details (no catch-up or reminders yet).
@@ -374,6 +383,7 @@ pub fn App() -> impl IntoElement {
         has_vod: signal(false),
         playback: signal(Playback::Live),
         data_version: signal(0),
+        guide_pages: signal(0),
         picture: signal(PictureSettings::default()),
         sleep: signal(SleepTimer::default()),
         chooser: signal(None),
@@ -407,6 +417,7 @@ pub fn App() -> impl IntoElement {
     data::start(ui);
     time::start(ui);
     player::bind(ui);
+    data::pages::bind(ui);
     play_bar::bind(ui);
     multiview::bind(ui);
     bind_back(ui);

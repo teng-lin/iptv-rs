@@ -199,7 +199,7 @@ fn tile(ui: Ui, index: usize) -> impl IntoElement {
                 .pointer_events(PointerEvents::None)
                 .child(
                     text(move || {
-                        ui.data_version.get();
+                        ui.guide_data();
                         channel().map_or(String::new(), |ch| {
                             format!("{}  {}", crate::lists::number(ui, ch), channel_name(ch))
                         })

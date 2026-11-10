@@ -10,8 +10,9 @@
 //! description on demand ([`description_lookup`]).
 //!
 //! The `epg.*` settings drive it (global values, `crate::settings`): the
-//! refresh policy, how many days of finished programmes are kept and
-//! loaded, and whether descriptions are stored. The storage settings
+//! refresh policy, how many days of finished programmes are kept (the
+//! last of them held in memory, older ones paged in: `pages.rs`), and
+//! whether descriptions are stored. The storage settings
 //! travel with each guide's config, so changing them downloads the guide
 //! again at the next check (the stored feeds no longer match).
 //!
@@ -37,8 +38,8 @@ use iptv_providers::SecretUrl;
 use iptv_providers::model::{Channel, ContentKind, Group};
 use iptv_settings::{Settings, Target};
 use iptv_store_sqlite::{
-    ChannelOrder, ChannelQuery, EpgCounts, EpgFeedMeta, EpgWindow, FeedResult, GuideSource,
-    ImportErrorKind, SourceId, StoreError, StoredGuide,
+    ChannelOrder, ChannelQuery, EpgCounts, EpgFeedMeta, FeedResult, GuideSource, ImportErrorKind,
+    SourceId, StoreError, StoredGuide,
 };
 
 use nsh_core::prelude::timer;
@@ -60,8 +61,8 @@ thread_local! {
 /// edits may follow).
 const SETTLE: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// Days of finished programmes kept and loaded, for browsing back and
-/// catch-up (`epg.keep_past`, whole days rounded up).
+/// Days of finished programmes kept, for browsing back and catch-up
+/// (`epg.keep_past`, whole days rounded up).
 pub fn keep_past_days(settings: &Settings) -> u32 {
     store_options(settings, &Target::Global)
         .past_days_to_keep
@@ -106,10 +107,12 @@ pub fn guide_state(source: SourceId) -> Option<StoredGuide> {
     }
 }
 
-/// `source`'s stored guide from [`keep_past_days`] before `now` on,
-/// without descriptions; `None` when nothing is stored.
+/// The part of `source`'s stored guide a schedule shown at `now` holds
+/// (`pages::window`: the last day on; older days are paged in), without
+/// descriptions; `None` when nothing is stored.
 pub fn load_guide(source: SourceId, now: UnixTime) -> Option<GuideStore> {
-    let window = EpgWindow::from(now, keep_past_days(&crate::settings::get()));
+    let window = super::pages::window(now, keep_past_days(&crate::settings::get()));
+    let window = super::pages::store_window(window);
     match open_store().and_then(|s| s.load_epg(source, &window)) {
         Ok(guide) if guide.bound_count() > 0 => Some(guide),
         Ok(_) => None,

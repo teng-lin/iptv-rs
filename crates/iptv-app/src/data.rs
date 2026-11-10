@@ -18,6 +18,7 @@
 pub(crate) mod assign;
 pub(crate) mod guides;
 mod library;
+pub(crate) mod pages;
 pub(crate) mod stored;
 mod wizard_map;
 
@@ -362,6 +363,10 @@ fn show(ui: Ui, imported: Box<Imported>, generation: u64, resume: bool) {
     };
     if let Some(lookup) = imported.source.and_then(stored::description_lookup) {
         schedule = schedule.with_description_lookup(lookup);
+    }
+    // Its guide is the stored one's recent part (`stored::load_guide`).
+    if let Some(source) = imported.source {
+        schedule = pages::paged(ui, schedule, source, imported.now);
     }
     log::info!("iptv data: guide switched to {channels} imported channels");
     crate::favorites::set_source(imported.source);

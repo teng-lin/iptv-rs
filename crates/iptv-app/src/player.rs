@@ -268,6 +268,24 @@ fn open(ui: Ui, surface: usize, session: u64) {
         return;
     };
     let schedule = crate::schedule();
+    // An older day's programme: its real times once its day is paged in.
+    if let Playback::CatchUp { start, .. } = playback
+        && !crate::data::pages::ready(&schedule, crate::guide::unix_of(&*schedule, start), {
+            move || {
+                if ui
+                    .player
+                    .stream(surface)
+                    .health
+                    .with_untracked(|h| h.session())
+                    == session
+                {
+                    open(ui, surface, session);
+                }
+            }
+        })
+    {
+        return;
+    }
     let (archive, offset) = match playback {
         Playback::Live => (None, 0),
         Playback::CatchUp { start, offset } => (Some(schedule.program_at(channel, start)), offset),

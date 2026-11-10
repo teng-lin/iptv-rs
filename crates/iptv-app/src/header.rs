@@ -227,7 +227,7 @@ fn side(ui: Ui) -> impl IntoElement {
 
 pub fn header(ui: Ui) -> impl IntoElement {
     let program = computed(move || {
-        let version = ui.data_version.get();
+        let version = ui.guide_data();
         let view = crate::lists::view(ui);
         ui.focus.with(|f| {
             let p = f.program(&view);
@@ -254,7 +254,7 @@ pub fn header(ui: Ui) -> impl IntoElement {
 /// The date and time at the left of the time bar.
 pub fn date_time(ui: Ui) -> Text {
     text(move || {
-        ui.data_version.get();
+        ui.guide_data();
         let now = ui.focus.with(|f| f.now);
         let unix = crate::guide::unix_of(&*crate::schedule(), now);
         format!(

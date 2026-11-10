@@ -72,13 +72,13 @@ pub fn backdrop(ui: Ui) -> impl IntoElement {
 pub fn group_column(ui: Ui, groups: ElementRef) -> impl IntoElement {
     // New data: the selected group stays in view.
     effect(move || {
-        ui.data_version.get();
+        ui.guide_data();
         let group = ui.focus.with_untracked(|f| f.group);
         groups.scroll_to_index(group as u32, percentage(0.5), px(0.0), false);
     });
     virtual_list(
         move || {
-            ui.data_version.get();
+            ui.guide_data();
             entry_count(&*crate::schedule())
         },
         move |at| {
@@ -108,7 +108,7 @@ pub fn group_column(ui: Ui, groups: ElementRef) -> impl IntoElement {
                 .child(
                     // Re-read on new data: the recycled cell keeps its index.
                     text(move || {
-                        ui.data_version.get();
+                        ui.guide_data();
                         entry_name(at.index(), &*crate::schedule())
                     })
                     .number_of_lines(1)
