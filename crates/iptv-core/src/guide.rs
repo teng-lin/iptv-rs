@@ -93,10 +93,20 @@ pub trait Schedule {
     /// The channel's archive window in days (0: no catch-up).
     fn catchup_days(&self, channel: usize) -> u8;
     fn channel_name(&self, channel: usize) -> String;
-    /// The number shown before the name: the provider's channel number when
-    /// it has one, else the 1-based position.
+    /// The provider's channel number when it has one, else the 1-based
+    /// position. (The guide numbers rows by their place in the list it
+    /// shows: [`crate::lists::ListView`].)
     fn channel_number(&self, channel: usize) -> u32 {
         channel as u32 + 1
+    }
+    /// The channel's logo address, when the playlist names one.
+    fn channel_logo(&self, _channel: usize) -> Option<String> {
+        None
+    }
+    /// Every channel in the playlist's own order (for "All channels"):
+    /// schedules store channels grouped. Default: as stored.
+    fn playlist_order(&self) -> Vec<usize> {
+        (0..self.channel_count()).collect()
     }
     fn group_name(&self, group: usize) -> String;
     fn title(&self, channel: usize, program: Program) -> String;
@@ -250,9 +260,12 @@ pub fn visible_programs(channel: usize, from: i32) -> Vec<Program> {
         .collect()
 }
 
-/// Which surface owns the D-pad.
+/// Which surface owns the D-pad: the navigation rail, the groups column
+/// (both shown beside the guide while either has the focus) or the guide
+/// grid. The columns' rules are in [`crate::browse`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pane {
+    Rail,
     Groups,
     Guide,
 }
@@ -265,14 +278,26 @@ pub enum Move {
     Right,
 }
 
-/// The remote's focus: the pane, the focused group and channel, and the
-/// time cursor that Up/Down keep, so moving between rows stays in the same
-/// time column (TiviMate-style guide navigation).
+/// The remote's focus: the pane, the selected list and the focused row in
+/// it, and the time cursor that Up/Down keep, so moving between rows stays
+/// in the same time column (TiviMate-style guide navigation).
+///
+/// `channel` is a row of the list the guide shows, and the schedule the
+/// focus methods take is that list ([`crate::lists::ListView`]); the
+/// catalog channel behind a row comes from the list.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Focus {
     pub pane: Pane,
+    /// The selected entry of the groups column ([`crate::lists`]): the
+    /// list the guide shows.
     pub group: usize,
+    /// The focused row of that list.
     pub channel: usize,
+    /// The focused item of the navigation rail ([`crate::browse::RailItem`]).
+    pub rail: usize,
+    /// The hint card shown after a group was chosen; Back dismisses it
+    /// first.
+    pub hint: bool,
     pub cursor: i32,
     /// The first minute shown across the guide.
     pub window: i32,
@@ -293,19 +318,21 @@ pub fn home_window(now: i32) -> i32 {
     (now - PAST).div_euclid(STEP) * STEP
 }
 
-/// The first channel of `group`.
+/// The first channel of synthetic `group`.
 pub fn group_start(group: usize) -> usize {
     group * CHANNELS.div_ceil(GROUPS)
 }
 
 impl Focus {
-    /// The guide at the first channel and group at guide minute `now`,
-    /// with the past half hour shown.
+    /// The guide at the first channel of "All channels" at guide minute
+    /// `now`, with the past half hour shown.
     pub fn at(now: i32) -> Self {
         Focus {
             pane: Pane::Guide,
-            group: 0,
+            group: crate::lists::ALL,
             channel: 0,
+            rail: 0,
+            hint: false,
             cursor: now,
             window: home_window(now),
             now,
@@ -346,21 +373,17 @@ impl Focus {
         true
     }
 
-    /// Keeps the group and channel inside `s` (after the guide data
-    /// changed, or on an empty schedule: 0).
+    /// Keeps the focused row inside the list `s` (after it changed, or on
+    /// an empty list: 0).
     pub fn clamp_to(&mut self, s: &dyn Schedule) {
         self.channel = self.channel.min(s.channel_count().saturating_sub(1));
-        self.group = self.group.min(s.group_count().saturating_sub(1));
     }
 
+    /// A direction in the guide grid (`s`: the list it shows). The rail and
+    /// the groups column move through [`Focus::navigate`].
     pub fn apply(&mut self, m: Move, s: &dyn Schedule) {
         match (self.pane, m) {
-            (Pane::Groups, Move::Up) => self.group = self.group.saturating_sub(1),
-            (Pane::Groups, Move::Down) => {
-                self.group = (self.group + 1).min(s.group_count().saturating_sub(1))
-            }
-            (Pane::Groups, Move::Right) => self.enter_group(s),
-            (Pane::Groups, Move::Left) => {}
+            (Pane::Rail | Pane::Groups, _) => return,
             (Pane::Guide, Move::Up) => self.channel = self.channel.saturating_sub(1),
             (Pane::Guide, Move::Down) => {
                 self.channel = (self.channel + 1).min(s.channel_count().saturating_sub(1))
@@ -412,31 +435,18 @@ impl Focus {
         }
     }
 
-    /// OK or Right on a group: the guide at its first channel, now.
-    pub fn enter_group(&mut self, s: &dyn Schedule) {
-        self.pane = Pane::Guide;
-        self.channel = s
-            .group_start(self.group)
-            .min(s.channel_count().saturating_sub(1));
+    /// The list's first row at now (a list just chosen or previewed).
+    pub(crate) fn to_top(&mut self) {
+        self.channel = 0;
         self.cursor = self.now;
         self.window = home_window(self.now);
     }
 
-    /// A tap on a group: the same as focusing it and pressing OK.
-    pub fn tap_group(&mut self, group: usize, s: &dyn Schedule) {
-        self.group = group.min(s.group_count().saturating_sub(1));
-        self.enter_group(s);
-    }
-
-    /// Shows what plays on `channel` (a zap, a resumed channel, a refreshed
-    /// guide): its live programme, its group and the default window.
+    /// Shows what plays on row `channel` of the list `s` (a zap, a resumed
+    /// channel): its live programme and the default window.
     pub fn show_channel(&mut self, channel: usize, s: &dyn Schedule) {
         self.pane = Pane::Guide;
         self.channel = channel.min(s.channel_count().saturating_sub(1));
-        self.group = (0..s.group_count())
-            .rev()
-            .find(|&g| s.group_start(g) <= self.channel)
-            .unwrap_or(0);
         self.cursor = self.now;
         self.window = home_window(self.now);
     }
@@ -512,14 +522,18 @@ mod tests {
     }
 
     #[test]
-    fn show_channel_focuses_its_live_programme_and_group() {
+    fn show_channel_focuses_its_live_programme() {
         // A real guide shown 53 minutes after its epoch, browsing the past.
         let mut f = Focus::at(53);
         f.apply(Move::Left, &S);
         f.apply(Move::Left, &S);
         let channel = group_start(3) + 2;
         f.show_channel(channel, &S);
-        assert_eq!((f.pane, f.channel, f.group), (Pane::Guide, channel, 3));
+        assert_eq!(
+            (f.pane, f.channel, f.group),
+            (Pane::Guide, channel, crate::lists::ALL),
+            "the list stays"
+        );
         assert_eq!(f.cursor, 53, "the cursor is at now, not at the epoch");
         assert_eq!(f.window, home_window(53));
         assert_eq!(f.program(&S).airing(f.now), Airing::Live);
@@ -555,12 +569,9 @@ mod tests {
         assert_eq!(f.pane, Pane::Guide);
         f.apply(Move::Left, &S);
         assert_eq!(f.pane, Pane::Groups);
+        // The grid ignores directions while the columns have the focus.
         f.apply(Move::Down, &S);
-        f.apply(Move::Right, &S);
-        assert_eq!(
-            (f.pane, f.channel, f.cursor),
-            (Pane::Guide, group_start(1), 0)
-        );
+        assert_eq!((f.pane, f.channel), (Pane::Groups, 9));
     }
 
     #[test]
@@ -865,9 +876,8 @@ mod tests {
     }
 
     #[test]
-    fn swapping_the_schedule_clamps_the_focus() {
+    fn a_shorter_list_clamps_the_focus() {
         let mut f = Focus {
-            group: GROUPS - 1,
             channel: CHANNELS - 1,
             ..Focus::at(0)
         };
@@ -876,7 +886,7 @@ mod tests {
             groups: 2,
         };
         f.clamp_to(&small);
-        assert_eq!((f.channel, f.group), (2, 1));
+        assert_eq!(f.channel, 2);
         f.apply(Move::Down, &small);
         assert_eq!(f.channel, 2);
         let empty = Small {
@@ -884,12 +894,10 @@ mod tests {
             groups: 0,
         };
         f.clamp_to(&empty);
-        assert_eq!((f.channel, f.group), (0, 0));
+        assert_eq!(f.channel, 0);
         f.apply(Move::Down, &empty);
-        f.pane = Pane::Groups;
-        f.apply(Move::Down, &empty);
-        f.apply(Move::Right, &empty);
-        assert_eq!((f.channel, f.group), (0, 0));
+        f.apply(Move::Up, &empty);
+        assert_eq!(f.channel, 0);
     }
 
     #[test]

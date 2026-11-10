@@ -1,0 +1,189 @@
+//! The user's channel lists that outlive a catalog: favourites (in the
+//! order they were added) and recently watched channels (newest first).
+//! Both hold channel keys (content identity, stable across refreshes);
+//! [`KeyIndex`] turns them into the catalog channels on screen. The shell
+//! persists them per source.
+
+use std::collections::{BTreeSet, HashMap};
+
+use crate::guide::Schedule;
+
+/// How many recently watched channels are kept.
+pub const RECENT_LIMIT: usize = 30;
+
+/// Catalog channels by key, built once per catalog (a schedule's own
+/// lookup may be linear).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct KeyIndex {
+    rows: HashMap<String, usize>,
+}
+
+impl KeyIndex {
+    pub fn build(catalog: &dyn Schedule) -> Self {
+        let rows = (0..catalog.channel_count())
+            .filter_map(|c| Some((catalog.channel_key(c)?, c)))
+            .collect();
+        KeyIndex { rows }
+    }
+
+    pub fn get(&self, key: &str) -> Option<usize> {
+        self.rows.get(key).copied()
+    }
+
+    /// The channels of `keys` present in the catalog, in `keys`' order.
+    pub fn channels(&self, keys: &[String]) -> Vec<usize> {
+        keys.iter().filter_map(|k| self.get(k)).collect()
+    }
+}
+
+/// Favourite channels by key, in the order they were added.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Favorites {
+    keys: Vec<String>,
+}
+
+impl Favorites {
+    /// From stored keys (duplicates dropped, first kept).
+    pub fn from_keys(keys: impl IntoIterator<Item = String>) -> Self {
+        let mut f = Favorites::default();
+        for k in keys {
+            f.set(&k, true);
+        }
+        f
+    }
+
+    pub fn keys(&self) -> &[String] {
+        &self.keys
+    }
+
+    pub fn contains(&self, key: &str) -> bool {
+        self.keys.iter().any(|k| k == key)
+    }
+
+    /// Adds (at the end) or removes `key`; whether anything changed.
+    pub fn set(&mut self, key: &str, on: bool) -> bool {
+        match (self.contains(key), on) {
+            (false, true) => {
+                self.keys.push(key.to_owned());
+                true
+            }
+            (true, false) => {
+                self.keys.retain(|k| k != key);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The favourites as catalog channels: the Favourites list, in order.
+    pub fn channels(&self, index: &KeyIndex) -> Vec<usize> {
+        index.channels(&self.keys)
+    }
+
+    /// The favourite catalog channels as a set (stars, search ranking).
+    pub fn set_of(&self, index: &KeyIndex) -> BTreeSet<usize> {
+        self.channels(index).into_iter().collect()
+    }
+}
+
+/// Recently watched channels by key, newest first.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Recent {
+    keys: Vec<String>,
+}
+
+impl Recent {
+    /// From stored keys, newest first.
+    pub fn from_keys(keys: impl IntoIterator<Item = String>) -> Self {
+        let mut r = Recent::default();
+        let mut keys: Vec<String> = keys.into_iter().collect();
+        keys.reverse();
+        for k in keys {
+            r.played(&k);
+        }
+        r
+    }
+
+    /// `key` started playing: first in the list, once.
+    pub fn played(&mut self, key: &str) {
+        self.keys.retain(|k| k != key);
+        self.keys.insert(0, key.to_owned());
+        self.keys.truncate(RECENT_LIMIT);
+    }
+
+    pub fn keys(&self) -> &[String] {
+        &self.keys
+    }
+
+    pub fn channels(&self, index: &KeyIndex) -> Vec<usize> {
+        index.channels(&self.keys)
+    }
+}
+
+/// What turned `before` into `after`: (added, removed) channels.
+pub fn diff(before: &BTreeSet<usize>, after: &BTreeSet<usize>) -> (Vec<usize>, Vec<usize>) {
+    (
+        after.difference(before).copied().collect(),
+        before.difference(after).copied().collect(),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::guide::SyntheticSchedule;
+
+    fn key(c: usize) -> String {
+        format!("synthetic:{c}")
+    }
+
+    #[test]
+    fn favourites_keep_their_order_and_survive_a_reordered_catalog() {
+        let mut f = Favorites::default();
+        assert!(f.set(&key(40), true));
+        assert!(f.set(&key(7), true));
+        assert!(!f.set(&key(7), true), "already a favourite");
+        let index = KeyIndex::build(&SyntheticSchedule);
+        assert_eq!(f.channels(&index), vec![40, 7], "the order they were added");
+        assert_eq!(f.set_of(&index), BTreeSet::from([7, 40]));
+        // A catalog where the keys sit at other rows (a refresh).
+        let moved = KeyIndex {
+            rows: HashMap::from([(key(7), 0), (key(40), 1)]),
+        };
+        assert_eq!(f.channels(&moved), vec![1, 0]);
+        // A key the catalog no longer has stays saved but is not listed.
+        f.set("gone", true);
+        assert_eq!(f.channels(&moved), vec![1, 0]);
+        assert!(f.contains("gone"));
+        assert!(f.set(&key(40), false));
+        assert_eq!(f.keys(), &[key(7), "gone".to_owned()]);
+    }
+
+    #[test]
+    fn stored_favourites_drop_duplicates() {
+        let f = Favorites::from_keys([key(1), key(2), key(1)]);
+        assert_eq!(f.keys(), &[key(1), key(2)]);
+    }
+
+    #[test]
+    fn recent_is_newest_first_once_and_bounded() {
+        let mut r = Recent::from_keys([key(3), key(2), key(1)]);
+        assert_eq!(r.keys(), &[key(3), key(2), key(1)]);
+        r.played(&key(1));
+        assert_eq!(r.keys(), &[key(1), key(3), key(2)]);
+        for c in 100..100 + RECENT_LIMIT {
+            r.played(&key(c));
+        }
+        assert_eq!(r.keys().len(), RECENT_LIMIT);
+        assert_eq!(r.keys()[0], key(100 + RECENT_LIMIT - 1));
+        let index = KeyIndex::build(&SyntheticSchedule);
+        assert_eq!(r.channels(&index)[0], 100 + RECENT_LIMIT - 1);
+    }
+
+    #[test]
+    fn diff_names_added_and_removed() {
+        let before = BTreeSet::from([1, 2, 3]);
+        let after = BTreeSet::from([2, 3, 4, 5]);
+        assert_eq!(diff(&before, &after), (vec![4, 5], vec![1]));
+    }
+}

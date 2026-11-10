@@ -40,6 +40,8 @@ pub struct EpgSchedule {
     group_names: Vec<String>,
     /// The index of each group's first channel; channels are stored grouped.
     group_starts: Vec<usize>,
+    /// The channels in the playlist's order (empty: as stored).
+    playlist_order: Vec<usize>,
     store: GuideStore,
     /// Unix time of guide minute 0.
     epoch: UnixTime,
@@ -72,6 +74,7 @@ impl EpgSchedule {
             channels,
             group_names,
             group_starts,
+            playlist_order: Vec::new(),
             store,
             epoch: now - now.rem_euclid(SLOT),
             describe: None,
@@ -111,6 +114,11 @@ impl EpgSchedule {
             .iter()
             .map(|g| g.name.clone())
             .chain(["Other".to_owned()]);
+        // Where each playlist position lands once grouped.
+        let mut stored_at = vec![0; channels.len()];
+        for (at, &(position, _)) in buckets.iter().flatten().enumerate() {
+            stored_at[position as usize - 1] = at;
+        }
         let mut ordered = Vec::new();
         let grouped = names
             .zip(buckets)
@@ -133,6 +141,7 @@ impl EpgSchedule {
             .collect();
         let mut schedule = EpgSchedule::new(grouped, store, now);
         schedule.sources = ordered.into_iter().map(Some).collect();
+        schedule.playlist_order = stored_at;
         schedule
     }
 
@@ -342,6 +351,19 @@ impl Schedule for EpgSchedule {
 
     fn group_name(&self, group: usize) -> String {
         self.group_names.get(group).cloned().unwrap_or_default()
+    }
+
+    fn channel_logo(&self, channel: usize) -> Option<String> {
+        let logo = self.source_channel(channel)?.logo.as_deref()?.trim();
+        (!logo.is_empty()).then(|| logo.to_owned())
+    }
+
+    fn playlist_order(&self) -> Vec<usize> {
+        if self.playlist_order.len() == self.channels.len() {
+            self.playlist_order.clone()
+        } else {
+            (0..self.channels.len()).collect()
+        }
     }
 
     /// Ready URLs only (Stalker `create_link` needs a round trip: use

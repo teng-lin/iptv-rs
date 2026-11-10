@@ -1,7 +1,8 @@
-//! The favourites editor overlay for one group (from the menu's "Manage
-//! favourites…"): a star per channel, OK toggles, Left removes the whole
-//! group, Right adds it, Back leaves; persistent hints and, for touch, a
-//! tap per row plus "Add all" / "Remove all" buttons.
+//! The favourites editor overlay for the list on screen (from the menu's
+//! "Manage favourites…"): a star per channel, OK toggles, Left removes the
+//! whole list, Right adds it, Back leaves; persistent hints and, for touch,
+//! a tap per row plus "Add all" / "Remove all" buttons. Changes are saved
+//! by channel key (`favorites.rs`) at once.
 
 use iptv_core::editor::FavoritesEditor;
 use nsh_core::prelude::*;
@@ -12,21 +13,15 @@ use crate::{Ui, tint};
 const WHITE: u32 = 0xFFFFFF;
 const ROW_H: f32 = 52.0;
 
-/// Opens the editor on the focused group.
+/// Opens the editor on the list on screen, at the focused channel.
 pub fn open(ui: Ui) {
-    let s = crate::schedule();
-    let group = ui.focus.with(|f| f.group);
-    let first = s.group_start(group);
-    let end = if group + 1 < s.group_count() {
-        s.group_start(group + 1)
-    } else {
-        s.channel_count()
-    };
-    ui.editor.set(Some(FavoritesEditor::new(
-        group,
-        first,
-        end.saturating_sub(first),
-    )));
+    let (group, channels) = ui.list.with(|l| (l.entry(), l.channels().to_vec()));
+    let mut editor = FavoritesEditor::new(group, channels);
+    editor.focus = ui
+        .focus
+        .with(|f| f.channel)
+        .min(editor.len().saturating_sub(1));
+    ui.editor.set(Some(editor));
 }
 
 pub fn close(ui: Ui) {
@@ -43,7 +38,7 @@ fn with_favorites(
     f: impl FnOnce(&FavoritesEditor, &mut std::collections::BTreeSet<usize>),
 ) {
     if let Some(editor) = ui.editor.get() {
-        ui.favorites.update(|fav| f(&editor, fav));
+        crate::favorites::edit(ui, |fav| f(&editor, fav));
     }
 }
 
@@ -68,15 +63,18 @@ pub fn layer(ui: Ui) -> impl IntoElement {
             list.scroll_to_index(i as u32, percentage(0.5), px(0.0), false);
         }
     });
-    let count = move || ui.editor.with(|e| e.as_ref().map_or(0, |e| e.len));
+    let count = move || {
+        ui.editor
+            .with(|e| e.as_ref().map_or(0, FavoritesEditor::len))
+    };
     let title = move || {
         ui.editor.with(|e| {
             e.as_ref().map_or(String::new(), |e| {
                 let starred = ui.favorites.with(|f| e.starred(f));
                 format!(
                     "Favourites · {} · {starred} of {}",
-                    crate::schedule().group_name(e.group),
-                    e.len
+                    iptv_core::lists::entry_name(e.group, &*crate::schedule()),
+                    e.len()
                 )
             })
         })
@@ -95,7 +93,10 @@ pub fn layer(ui: Ui) -> impl IntoElement {
             })
     };
     let row = move |at: Position| {
-        let channel = move || ui.editor.with(|e| e.as_ref().map(|e| e.first + at.index()));
+        let channel = move || {
+            ui.editor
+                .with(|e| e.as_ref().and_then(|e| e.channel(at.index())))
+        };
         let starred = move || channel().is_some_and(|ch| ui.favorites.with(|f| f.contains(&ch)));
         let focused = move || ui.keys_shown() && focus.get() == Some(at.index());
         view()
@@ -173,7 +174,7 @@ pub fn layer(ui: Ui) -> impl IntoElement {
         .child(
             text(move || {
                 if ui.keys_shown() {
-                    "OK add or remove   ◀ remove all in group   ▶ add all in group   Back done"
+                    "OK add or remove   ◀ remove all in this list   ▶ add all in this list   Back done"
                 } else {
                     "Tap a channel to add or remove it"
                 }

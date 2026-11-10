@@ -429,10 +429,8 @@ fn choose(ui: Ui, id: ResultId) {
 /// Plays full screen; the screen waits until playback leaves full screen.
 fn watch(ui: Ui, channel: usize, playback: Playback) {
     save_history(ui);
-    ui.focus.update(|f| {
-        let now = f.now;
-        f.tap(channel, now, &*crate::schedule())
-    });
+    let now = ui.focus.with(|f| f.now);
+    crate::lists::tap(ui, channel, now);
     ui.play(channel, playback);
     // Full screen first: the resume effect ignores a suspended screen in full screen.
     ui.mode.set(ViewMode::Fullscreen);

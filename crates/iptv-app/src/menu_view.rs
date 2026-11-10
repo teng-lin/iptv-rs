@@ -5,7 +5,6 @@
 use iptv_core::menu::{Heading, Menu, MenuItem, Origin, Row, program_menu};
 use nsh_core::prelude::*;
 
-use crate::guide::Pane;
 use crate::theme::{FOCUS_ALPHA, RADIUS, RADIUS_LARGE, TEXT_SECONDARY_ALPHA};
 use crate::{Ui, ViewMode, channel_name, clock, tint};
 
@@ -63,7 +62,12 @@ pub fn open(ui: Ui) {
     let now = ui.focus.with(|f| f.now);
     let (channel, minute) = match (ui.mode.get(), ui.playing.get()) {
         (ViewMode::Fullscreen, Some(ch)) => (ch, now),
-        _ => ui.focus.with(|f| (f.channel, f.cursor)),
+        _ => {
+            let Some(ch) = crate::lists::focused_channel(ui) else {
+                return; // an empty list
+            };
+            (ch, ui.focus.with(|f| f.cursor))
+        }
     };
     let program = crate::schedule().program_at(channel, minute);
     let rows = program_menu(
@@ -91,10 +95,7 @@ pub fn close(ui: Ui) {
     if let Some(origin) = origin
         && ui.mode.get() != ViewMode::Fullscreen
     {
-        ui.focus.update(|f| {
-            f.tap(origin.channel, origin.program_start, &*crate::schedule());
-            f.pane = Pane::Guide;
-        });
+        crate::lists::tap(ui, origin.channel, origin.program_start);
     }
 }
 
@@ -127,12 +128,8 @@ pub fn perform(ui: Ui, item: MenuItem) {
             crate::search_view::open(ui);
         }
         MenuItem::ToggleFavorite => {
-            ui.favorites.update(|f| {
-                if !f.remove(&origin.channel) {
-                    f.insert(origin.channel);
-                }
-            });
             close(ui);
+            crate::favorites::toggle(ui, origin.channel);
         }
         other => {
             log::info!("iptv menu {other:?} not implemented yet");
@@ -156,7 +153,7 @@ fn heading_text(ui: Ui, heading: Heading) -> String {
             )
         }
         Heading::Channel => channel_name(origin.channel),
-        Heading::Group => ui.focus.with(|f| crate::schedule().group_name(f.group)),
+        Heading::Group => crate::lists::list_name(ui),
     }
 }
 

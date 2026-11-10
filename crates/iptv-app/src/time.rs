@@ -93,9 +93,10 @@ pub fn tick(ui: Ui) {
     reload_time_zone();
     let now = now_minute();
     if ui.focus.with(|f| f.now) != now {
-        let s = schedule();
+        // The focus is on a row of the list on screen.
+        let view = crate::lists::view(ui);
         ui.focus.update(|f| {
-            f.tick(now, &*s);
+            f.tick(now, &view);
         });
     }
 }

@@ -85,7 +85,7 @@ pub fn context(ui: &Ui) -> Context {
     match (ui.mode.get(), ui.focus.with(|f| f.pane)) {
         (ViewMode::Fullscreen, _) if ui.panels.with(|p| p.captures_input()) => Context::Controls,
         (ViewMode::Fullscreen, _) => Context::Player,
-        (_, Pane::Groups) => Context::Groups,
+        (_, Pane::Groups | Pane::Rail) => Context::Groups,
         _ => Context::Guide,
     }
 }
@@ -208,7 +208,7 @@ fn apply(ui: Ui, action: Action) {
     // Any key while panels show keeps them up.
     ui.update_panels(|p, now| p.touch(now));
     let controls = ui.panels.with(|p| p.captures_input()) && ui.mode.get() == ViewMode::Fullscreen;
-    let mv = |m: Move| ui.focus.update(|f| f.apply(m, &*crate::schedule()));
+    let mv = |m: Move| crate::lists::navigate(ui, m);
     if crate::wizard_view::is_open(ui) {
         crate::wizard_view::key(ui, action);
         return;
@@ -268,11 +268,16 @@ fn apply(ui: Ui, action: Action) {
         crate::search_view::key(ui, action);
         return;
     }
+    // Any key but Back dismisses the hint card (Back does, as its own step).
+    if action != Action::Back && ui.focus.with(|f| f.hint) {
+        ui.focus.update(|f| f.hint = false);
+    }
     match action {
         // Menu in the groups pane adds a playlist; elsewhere it opens the menu.
         Action::ShowMenu if ui.focus.with(|f| f.pane) == Pane::Groups => {
             crate::wizard_view::open_add(ui)
         }
+        Action::ShowMenu if ui.focus.with(|f| f.pane) == Pane::Rail => {}
         Action::ShowMenu => crate::menu_view::open(ui),
         Action::MoveLeft if controls => ui.update_panels(|p, now| p.move_focus(-1, now)),
         Action::MoveRight if controls => ui.update_panels(|p, now| p.move_focus(1, now)),
@@ -281,10 +286,7 @@ fn apply(ui: Ui, action: Action) {
         Action::MoveDown => mv(Move::Down),
         Action::MoveLeft => mv(Move::Left),
         Action::MoveRight => mv(Move::Right),
-        Action::Select => match ui.focus.with(|f| f.pane) {
-            Pane::Groups => ui.focus.update(|f| f.enter_group(&*crate::schedule())),
-            Pane::Guide => ui.watch(),
-        },
+        Action::Select => crate::lists::ok(ui),
         // Over a failed stream, OK retries.
         Action::ShowPanels if crate::player::failed(&ui) => crate::player::retry(ui),
         Action::ShowPanels => ui.update_panels(|p, now| p.show_controls(now)),
@@ -295,11 +297,17 @@ fn apply(ui: Ui, action: Action) {
             ViewMode::Fullscreen => ViewMode::Overlay,
             _ => ViewMode::Guide,
         }),
-        Action::ShowGroups => ui.focus.update(|f| f.pane = Pane::Groups),
-        Action::PastPrograms => ui.focus.update(|f| f.enter_past(&*crate::schedule())),
-        Action::ReturnToNow => ui.focus.update(|f| {
-            f.return_to_now(&*crate::schedule());
-        }),
+        Action::ShowGroups => crate::lists::open_groups(ui),
+        Action::PastPrograms => {
+            let view = crate::lists::view(ui);
+            ui.focus.update(|f| f.enter_past(&view));
+        }
+        Action::ReturnToNow => {
+            let view = crate::lists::view(ui);
+            ui.focus.update(|f| {
+                f.return_to_now(&view);
+            });
+        }
         Action::ReturnToPlayer if ui.playing.get().is_some() => ui.mode.set(ViewMode::Fullscreen),
         Action::PlayPause => ui.paused.update(|p| *p = !*p),
         // Catch-up seeking (`seek.rs`); nothing to seek in a live stream.
@@ -325,19 +333,23 @@ fn apply(ui: Ui, action: Action) {
     }
 }
 
-/// Channel up/down: switches playback and keeps the focus on it.
+/// Channel up/down: switches playback and keeps the focus on it. Wraps
+/// within the list on screen (from the playing channel's row, else the
+/// focused one); a channel the list does not have zaps within its group.
 fn zap(ui: Ui, step: isize) {
-    let from = ui
-        .playing
-        .get()
-        .unwrap_or_else(|| ui.focus.with(|f| f.channel));
-    // Wraps within the channel's group.
-    let to = iptv_core::playback::zap_target(&*crate::schedule(), from, step);
-    ui.focus.update(|f| {
-        f.pane = Pane::Guide;
-        f.channel = to;
-        f.cursor = f.now;
-    });
+    let list = ui.list.get();
+    let playing = ui.playing.get();
+    let from_row = playing
+        .and_then(|ch| list.row_of(ch))
+        .or_else(|| playing.is_none().then(|| ui.focus.with(|f| f.channel)));
+    let to = match from_row.and_then(|row| list.zap(row, step)) {
+        Some(row) => list.channel(row),
+        None => playing.map(|ch| iptv_core::playback::zap_target(&*crate::schedule(), ch, step)),
+    };
+    let Some(to) = to else {
+        return;
+    };
+    crate::lists::show_channel(ui, to);
     ui.play(to, crate::Playback::Live);
     // Channel-change feedback over full-screen video.
     if ui.mode.get() == ViewMode::Fullscreen {
@@ -355,11 +367,7 @@ pub fn press_control(ui: Ui, control: Control) {
         Control::SleepTimer => crate::chooser::open(ui, crate::chooser::Kind::Sleep),
         Control::Favorite => {
             if let Some(ch) = ui.playing.get() {
-                ui.favorites.update(|f| {
-                    if !f.remove(&ch) {
-                        f.insert(ch);
-                    }
-                });
+                crate::favorites::toggle(ui, ch);
             }
         }
         other => log::info!("iptv control {other:?} not implemented yet"),
@@ -369,9 +377,9 @@ pub fn press_control(ui: Ui, control: Control) {
 /// Page up/down: moves the focus by the rows on screen.
 fn page(ui: Ui, dir: isize) {
     let rows = ui.visible_rows.get().map_or(8, |(a, b)| (b - a).max(1));
+    let len = ui.list.with(|l| l.len());
     ui.focus.update(|f| {
-        let to = (f.channel as isize + dir * rows as isize)
-            .clamp(0, (crate::schedule().channel_count() as isize - 1).max(0));
+        let to = (f.channel as isize + dir * rows as isize).clamp(0, (len as isize - 1).max(0));
         f.channel = to as usize;
     });
 }

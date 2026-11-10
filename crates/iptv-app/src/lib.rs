@@ -1,7 +1,8 @@
 //! iptv-rs NSH shell (TV + tablet): remote (D-pad) and touch drive one
-//! app-owned focus model (`guide.rs`); the layout follows the reference
-//! UX's regions (context bar, groups, guide grid, preview + info panel) over
-//! one persistent video layer (`video.rs`).
+//! app-owned focus model (`guide.rs`, `browse.rs`); the layout follows the
+//! reference UX's regions (header with the preview and the focused
+//! programme, navigation rail and groups beside the guide grid) over one
+//! persistent video layer (`video.rs`). The guide shows one list at a time (`lists.rs`).
 
 pub use iptv_core::guide;
 pub mod theme;
@@ -9,14 +10,18 @@ pub mod theme;
 mod chooser;
 mod data;
 mod fav_editor;
+mod favorites;
 mod grid;
+mod header;
 mod input;
+mod lists;
 mod menu_view;
 #[cfg(target_os = "linux")]
 mod mpv;
 mod panels;
 mod player;
 mod player_panels;
+mod rail;
 mod search_view;
 mod seek;
 pub mod time;
@@ -33,6 +38,7 @@ use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use iptv_core::editor::FavoritesEditor;
+use iptv_core::lists::ChannelList;
 use iptv_core::menu::{Menu, Origin};
 use iptv_core::panels::Panels;
 use iptv_core::player_options::{PictureSettings, SleepTimer};
@@ -94,7 +100,11 @@ pub struct Stats {
 /// The app's state, shared by the regions (signals are `Copy`).
 #[derive(Clone, Copy)]
 pub struct Ui {
+    /// The remote's focus; its `channel` is a row of `list`.
     pub focus: Signal<Focus>,
+    /// The list the guide shows: catalog channels (`lists.rs`).
+    pub list: Signal<Rc<ChannelList>>,
+    /// The playing channel (catalog).
     pub playing: Signal<Option<usize>>,
     pub input: Signal<Input>,
     pub mode: Signal<ViewMode>,
@@ -120,7 +130,11 @@ pub struct Ui {
     pub menu: Signal<Option<Menu>>,
     /// The programme description popover, if open.
     pub description: Signal<Option<Origin>>,
+    /// The favourite channels on screen (catalog channels); kept by key
+    /// and changed through `favorites.rs`.
     pub favorites: Signal<BTreeSet<usize>>,
+    /// The source has movies or shows (the rail lists them).
+    pub has_vod: Signal<bool>,
     /// Live or catch-up for the playing channel.
     pub playback: Signal<Playback>,
     /// Bumped when the guide data changes (views re-read `schedule()`).
@@ -144,9 +158,11 @@ impl Ui {
     /// channel already playing goes full screen); ended and upcoming ones
     /// only show their details (no catch-up or reminders yet).
     pub fn watch(&self) {
-        let (channel, program, now) = self
-            .focus
-            .with(|f| (f.channel, f.program(&*crate::schedule()), f.now));
+        let view = lists::view(*self);
+        let (row, program, now) = self.focus.with(|f| (f.channel, f.program(&view), f.now));
+        let Some(channel) = view.channel(row) else {
+            return;
+        };
         match program.airing(now) {
             Airing::Live => {
                 let live = self.playback.get() == Playback::Live;
@@ -246,21 +262,20 @@ pub fn schedule() -> Rc<dyn Schedule> {
 }
 
 /// Swaps the guide data (after an import) and tells the views to re-read.
-/// The focus opens at the new schedule's now; channel indices into the old
-/// data (playing, favourites, open menus) that no longer exist are dropped.
+/// The guide keeps its list and focused channel by identity, at the new
+/// schedule's now; channel indices into the old data (playing, open menus)
+/// that no longer exist are dropped, favourites are found again by key.
 pub fn set_schedule(ui: &Ui, schedule: Rc<dyn Schedule>) {
+    let kept = lists::keep(*ui);
     SCHEDULE.with(|s| *s.borrow_mut() = schedule.clone());
     time::mark_shown();
     let n = schedule.channel_count();
-    let mut focus = Focus::at(time::now_minute());
-    focus.clamp_to(&*schedule);
-    ui.focus.set(focus);
     if ui.playing.get_untracked().is_some_and(|ch| ch >= n) {
         ui.playing.set(None);
     }
-    if ui.favorites.with_untracked(|f| f.iter().any(|&ch| ch >= n)) {
-        ui.favorites.update(|f| f.retain(|&ch| ch < n));
-    }
+    favorites::catalog_changed(*ui, &*schedule);
+    lists::restore(*ui, kept);
+    let n = ui.list.with_untracked(|l| l.len());
     let rows = ui.visible_rows.get_untracked();
     let clamped = rows.and_then(|(a, b)| (n > 0).then(|| (a.min(n - 1), b.min(n - 1))));
     if clamped != rows {
@@ -292,6 +307,12 @@ pub fn channel_name(ch: usize) -> String {
 pub fn App() -> impl IntoElement {
     let ui = Ui {
         focus: signal(Focus::default()),
+        list: signal(Rc::new(ChannelList::build(
+            iptv_core::lists::ALL,
+            &*schedule(),
+            &[],
+            &[],
+        ))),
         playing: signal(None),
         input: signal(Input::Keys),
         mode: signal(ViewMode::Guide),
@@ -308,6 +329,7 @@ pub fn App() -> impl IntoElement {
         menu: signal(None),
         description: signal(None),
         favorites: signal(BTreeSet::new()),
+        has_vod: signal(false),
         playback: signal(Playback::Live),
         data_version: signal(0),
         picture: signal(PictureSettings::default()),
@@ -325,6 +347,7 @@ pub fn App() -> impl IntoElement {
             ui.panels.update(|p| p.hide());
         }
     });
+    favorites::catalog_changed(ui, &*schedule());
     input::bind(ui);
     data::start(ui);
     time::start(ui);
@@ -335,6 +358,7 @@ pub fn App() -> impl IntoElement {
     let groups = element_ref();
     let channel = computed(move || ui.focus.with(|f| f.channel));
     let group = computed(move || ui.focus.with(|f| f.group));
+    let shown = computed(move || lists::columns_shown(ui));
     // Keys scroll only when the focus comes within EDGE rows of the
     // viewport's edge (touch scrolls on its own).
     const EDGE: usize = 2;
@@ -354,11 +378,17 @@ pub fn App() -> impl IntoElement {
                 false,
             );
         } else if ch + EDGE > last {
-            let target = (ch + EDGE).min(schedule().channel_count().saturating_sub(1));
+            let len = ui.list.with_untracked(|l| l.len());
+            let target = (ch + EDGE).min(len.saturating_sub(1));
             rows.scroll_to_index(target as u32, percentage(1.0), px(0.0), false);
         }
     });
-    effect(move || groups.scroll_to_index(group.get() as u32, percentage(0.5), px(0.0), false));
+    // The groups column shows the selected group when it opens or moves.
+    effect(move || {
+        if shown.get() {
+            groups.scroll_to_index(group.get() as u32, percentage(0.5), px(0.0), false);
+        }
+    });
 
     let fullscreen = move || ui.mode.get() == ViewMode::Fullscreen;
     view()
@@ -378,15 +408,15 @@ pub fn App() -> impl IntoElement {
                         PointerEvents::Auto
                     }
                 })
-                .child(panels::top_bar(ui))
+                .child(header::header(ui))
                 .child(
                     view()
                         .flex_1()
                         .flex_row()
+                        .child(rail::column(ui))
                         .child(panels::group_column(ui, groups))
                         .child(grid::guide(ui, rows)),
-                )
-                .child(panels::info_panel(ui)),
+                ),
         )
         .child(
             // Full screen: a tap toggles the player panels.
@@ -419,20 +449,21 @@ pub fn App() -> impl IntoElement {
         .child(wizard_view::layer(ui))
 }
 
-/// Back: player panels → hidden; full screen/overlay → guide; guide →
-/// groups; groups → leave the app (no handler, so the platform's Back
-/// leaves).
+/// Back: player panels → hidden; full screen/overlay → guide; then the
+/// guide screen's chain (`browse.rs`): hint card → guide → groups → rail →
+/// leave the app (no handler, so the platform's Back leaves).
 fn bind_back(ui: Ui) {
     let back_target = computed(move || {
         let panels = ui.panels.with(|p| p.shown) != iptv_core::panels::Shown::Hidden;
         let menu = ui.menu.with(Option::is_some)
             || ui.description.with(Option::is_some)
             || ui.chooser.with(Option::is_some)
-            || ui.editor.with(Option::is_some);
+            || ui.editor.with(Option::is_some)
+            || ui.focus.with(|f| f.hint);
         (ui.mode.get(), ui.focus.with(|f| f.pane), panels || menu)
     });
     effect(move || {
-        let leaves = matches!(back_target.get(), (ViewMode::Guide, Pane::Groups, _))
+        let leaves = matches!(back_target.get(), (ViewMode::Guide, Pane::Rail, false))
             && !ui.wizard.with(Option::is_some)
             && !ui.editor.with(Option::is_some)
             && !ui.chooser.with(Option::is_some)
@@ -476,17 +507,8 @@ pub(crate) fn go_back(ui: Ui) -> bool {
                 ui.panels.update(|p| p.hide());
                 true
             }
-            (ViewMode::Guide, Pane::Groups, _) => false,
-            (ViewMode::Guide, Pane::Guide, _) => {
-                // Back on a past/future programme returns to now; on now, to the groups.
-                let mut moved = false;
-                ui.focus
-                    .update(|f| moved = f.return_to_now(&*crate::schedule()));
-                if !moved {
-                    ui.focus.update(|f| f.pane = Pane::Groups);
-                }
-                true
-            }
+            // Hint, past programme → now, guide → groups → rail → leave.
+            (ViewMode::Guide, _, _) => lists::back(ui),
             _ => {
                 ui.mode.set(ViewMode::Guide);
                 true

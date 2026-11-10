@@ -133,6 +133,7 @@ pub fn start(ui: &Ui) {
         ui.player.history.update(|h| h.played(&key));
         if changed {
             save_last_channel(&key);
+            crate::favorites::played(&key);
         }
     }
     open(ui, session);
@@ -366,8 +367,7 @@ pub fn go_live(ui: Ui) {
 }
 
 fn show_channel(ui: Ui, channel: usize) {
-    ui.focus
-        .update(|f| f.show_channel(channel, &*crate::schedule()));
+    crate::lists::show_channel(ui, channel);
 }
 
 fn last_channel_path() -> std::path::PathBuf {
@@ -393,8 +393,8 @@ fn load_last_channel() -> Option<String> {
     (!key.is_empty()).then(|| key.to_owned())
 }
 
-/// Data changes keep the playing channel's row (rows are rebuilt by
-/// identity); stall checks pause while paused.
+/// Data changes keep the playing channel (found again by key); stall
+/// checks pause while paused.
 pub fn bind(ui: Ui) {
     effect(move || {
         ui.data_version.get();
@@ -419,12 +419,11 @@ fn follow_playing(ui: Ui) {
     };
     let key = ui.player.key.get_untracked();
     match key.and_then(|k| crate::schedule().find_channel(&k)) {
+        // The guide keeps its own focus by identity (`lists::restore`).
         Some(row) => {
             if row != playing {
                 ui.playing.set(Some(row));
             }
-            // The new schedule reset the focus: put it back on what plays.
-            show_channel(ui, row);
         }
         // Another source (or the channel left it): its row now means
         // another channel, so nothing plays.

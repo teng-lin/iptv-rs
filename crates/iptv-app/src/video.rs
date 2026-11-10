@@ -1,13 +1,12 @@
 //! The persistent video layer: one `tv.player` native component (registered by
 //! the Android host, `hosts/android`, and on Linux by `mpv`), laid out per view mode — the preview
-//! rectangle in the info panel, or the whole screen under an overlay or under
+//! rectangle in the guide's header, or the whole screen under an overlay or under
 //! nothing. Changing modes changes layout only; the player is never recreated.
 //! What it plays comes from `player.rs` (resolution, retries).
 
 use nsh_core::prelude::*;
 use serde_json::{Value, json};
 
-use crate::panels::{INFO_H, INFO_PAD_X, INFO_PAD_Y, PREVIEW_H, PREVIEW_W};
 use crate::{Ui, ViewMode};
 
 /// The local mock server (`tools/mock-server.py`) as the player reaches it:
@@ -38,18 +37,13 @@ pub fn catchup_url(channel: usize, start: i32, offset: i32) -> String {
 }
 
 /// The player's rectangle (x, y, width, height in px) for the view mode:
-/// the preview in the info panel, or the whole window.
+/// the preview in the guide's header, or the whole window.
 pub fn rect(ui: Ui) -> (f32, f32, f32, f32) {
     let w = window();
     if ui.mode.get() != ViewMode::Guide {
         (0.0, 0.0, w.width.0, w.height.0)
     } else {
-        (
-            INFO_PAD_X,
-            w.height.0 - INFO_H + INFO_PAD_Y,
-            PREVIEW_W,
-            PREVIEW_H,
-        )
+        crate::panels::preview_rect()
     }
 }
 

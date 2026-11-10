@@ -129,6 +129,9 @@ impl Keymap {
             b(Some(Guide), K::Ok, Long, A::ShowMenu),
             b(Some(Guide), K::Left, Long, A::PastPrograms),
             b(Some(Guide), K::Back, Long, A::ReturnToPlayer),
+            // Ch+/Ch- page the guide's channel list (observed); over video they zap.
+            b(Some(Guide), K::ChannelUp, Short, A::PageUp),
+            b(Some(Guide), K::ChannelDown, Short, A::PageDown),
             // Full screen: OK shows panels, Up/Down zap, Left/Right bring the guide.
             b(Some(Player), K::Ok, Short, A::ShowPanels),
             b(Some(Player), K::Up, Short, A::ChannelUp),
@@ -251,6 +254,20 @@ mod tests {
         assert_eq!(
             k.resolve(Context::Guide, RemoteKey::PageDown, Press::Short),
             Some(Action::PageDown)
+        );
+        assert_eq!(
+            k.resolve(Context::Guide, RemoteKey::ChannelUp, Press::Short),
+            Some(Action::PageUp),
+            "Ch+ pages the guide"
+        );
+        assert_eq!(
+            k.resolve(Context::Guide, RemoteKey::ChannelDown, Press::Short),
+            Some(Action::PageDown)
+        );
+        assert_eq!(
+            k.resolve(Context::Player, RemoteKey::ChannelUp, Press::Short),
+            Some(Action::ChannelUp),
+            "and zaps over video"
         );
         for ctx in [Context::Player, Controls] {
             assert_eq!(

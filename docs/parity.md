@@ -22,26 +22,26 @@ navigation rail          groups list            guide (or channel list)     play
 
 | Behaviour | Reference | Us | Status | P |
 | --- | --- | --- | --- | --- |
-| A group shows only its channels | Moving focus over groups filters the guide live; OK commits and focuses the group's first channel | One long list; choosing a group scrolls to it | missing | P0 |
-| "All channels" | First real group, the default selection | none | missing | P0 |
-| "Favorites" | Group above All channels, the user's favourite channels | Favourites are an unsaved set of row numbers; no group | missing | P0 |
-| Recent channels / History | Player panel button; recent channels list | In-memory history for previous channel only | missing | P1 |
-| Tapping or clicking a group | Same as focusing it: filters | Scrolls the list | missing | P0 |
-| Navigation rail | Left of the groups: Search, TV, Recordings, My list, Settings (+ Movies, Shows when the playlist has VOD); collapsed to icons, expands with labels when focused | none | missing | P0 |
+| A group shows only its channels | Moving focus over groups filters the guide live; OK commits and focuses the group's first channel | Same (`iptv_core::browse`, `lists`); an empty list cannot be entered | done | P0 |
+| "All channels" | First real group, the default selection | Same, in the playlist's order | done | P0 |
+| "Favorites" | Group above All channels, the user's favourite channels | Favourites group (order added), kept by channel key per source in the store; menu, player control and editor update it live; empty state with a hint | done | P0 |
+| Recent channels / History | Player panel button; recent channels list | "Recently watched" group after Favourites (store watch history, newest first); player History panel is workstream 2 | partial | P1 |
+| Tapping or clicking a group | Same as focusing it: filters | Same; a tap on the list name opens the groups | done | P0 |
+| Navigation rail | Left of the groups: Search, TV, Recordings, My list, Settings (+ Movies, Shows when the playlist has VOD); collapsed to icons, expands with labels when focused | Same, plus Playlists; items without a screen are dimmed and skipped; Playlists and Settings open nothing yet | done | P0 |
 | Playlists | In Settings | none (newest source only) | missing | P0 (ours: a rail entry, see §5) |
-| Back chain | hint → guide → groups → rail → leave | guide → groups → leave | partial | P0 |
-| Left from the guide's live programme | Opens groups + rail together (the guide shifts right) | Opens the groups | partial | P1 |
-| Hint card after entering a group | Long OK menu / Left groups / Long Left past | Bottom hint line | partial | P3 |
-| Channel numbers | Position in the current list (1..n) | Provider number, else position | partial | P1 (setting later) |
-| Channel logos | In rows, the info area and the player card | none | missing | P1 |
-| Playing marker | ▶ after the playing channel's name | Name tinted | partial | P2 |
+| Back chain | hint → guide → groups → rail → leave | Same | done | P0 |
+| Left from the guide's live programme | Opens groups + rail together (the guide shifts right) | Same | done | P1 |
+| Hint card after entering a group | Long OK menu / Left groups / Long Left past | Same keys in our words; any key or Back dismisses it, else 6 s | done | P3 |
+| Channel numbers | Position in the current list (1..n) | Same in the guide and its header; the player card still shows the provider number | partial | P1 (setting later) |
+| Channel logos | In rows, the info area and the player card | Rows and the guide header; not yet the player card | partial | P1 |
+| Playing marker | ▶ after the playing channel's name | Same (name also tinted) | done | P2 |
 
 ## 2. Guide screen
 
 | Behaviour | Reference | Us | Status | P |
 | --- | --- | --- | --- | --- |
-| Preview + programme info | Preview top-left; to its right the focused programme's title, times, progress, minutes left, season/episode, description, group name, favourite star | Preview and info in a bottom panel | partial | P1 |
-| Date and time | At the left of the time bar | Clock in a top bar | partial | P2 |
+| Preview + programme info | Preview top-left; to its right the focused programme's title, times, progress, minutes left, season/episode, description, group name, favourite star | Same without season/episode (not imported) | partial | P1 |
+| Date and time | At the left of the time bar | Same | done | P2 |
 | Programme grid, now line, past dimming, Long Left past, Back to now | as built | as built | done | – |
 | Long OK menu (search, settings, programme and channel sections) | as built | as built (several items disabled) | partial | P2 |
 | Channel list mode (no grid) | Setting / "Channels list" | none | missing | P2 |
