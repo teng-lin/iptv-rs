@@ -4,12 +4,11 @@
 //! pill.
 
 use super::*;
-use crate::fonts::{CAPTION, CONDENSED, LIST_ITEM, SANS, TITLE};
+use crate::fonts::{CAPTION, CONDENSED, SANS};
 use crate::list_rows::{self, Mark, ROW, ROW_TWO};
 use crate::scale::Scale;
-use crate::theme::{FOCUS_ALPHA, LIST_TEXT, RADIUS, RESTING_ALPHA};
+use crate::ui_kit;
 
-const WHITE: u32 = 0xFFFFFF;
 fn state<R>(ui: Ui, f: impl FnOnce(&Screen) -> R) -> Option<R> {
     ui.search.with(|s| s.as_ref().map(f))
 }
@@ -17,10 +16,6 @@ fn state<R>(ui: Ui, f: impl FnOnce(&Screen) -> R) -> Option<R> {
 /// A row's mark: the focus while the keys are shown.
 fn mark(ui: Ui, focused: bool) -> Mark {
     Mark::of(focused && ui.keys_shown(), false)
-}
-
-fn secondary() -> Rgba {
-    Mark::Plain.secondary()
 }
 
 pub fn layer(ui: Ui) -> impl IntoElement {
@@ -49,16 +44,9 @@ pub fn layer(ui: Ui) -> impl IntoElement {
 fn screen(ui: Ui) -> impl IntoElement {
     let size = Scale::new();
     let idle = computed(move || state(ui, |s| s.state.phase() == Phase::Idle).unwrap_or(true));
-    view()
-        .absolute()
-        .inset_0()
-        .pt_safe_area()
-        .px(px(48.0))
-        .py(px(24.0))
-        .gap(px(12.0))
-        .bg(move || rgb(ui.theme.with(|t| t.background.window)))
+    ui_kit::screen(ui, size)
         .child(header(ui, size))
-        .child(list_rows::small(size, move || hint(ui), CAPTION))
+        .child(ui_kit::caption(size, move || hint(ui)))
         .child(
             view().flex_1().child(
                 when(move || idle.get(), move || history(ui, size))
@@ -79,18 +67,8 @@ fn hint(ui: Ui) -> &'static str {
     }
 }
 
-fn button(ui: Ui, label: &'static str, act: fn(Ui)) -> impl IntoElement {
-    text(label)
-        .px(px(16.0))
-        .py(px(8.0))
-        .rounded(px(RADIUS))
-        .text_size(px(14.0))
-        .text_color(rgb(WHITE))
-        .bg(tint(WHITE, RESTING_ALPHA * 2))
-        .on_press(move || {
-            ui.touched();
-            act(ui);
-        })
+fn button(ui: Ui, size: Scale, label: &'static str, act: fn(Ui)) -> impl IntoElement {
+    ui_kit::button(ui, size, label, || false, move || act(ui))
 }
 
 fn header(ui: Ui, size: Scale) -> impl IntoElement {
@@ -120,15 +98,10 @@ fn header(ui: Ui, size: Scale) -> impl IntoElement {
     view()
         .flex_row()
         .items_center()
-        .gap(px(12.0))
+        .gap(move || size.px(12.0))
+        .child(ui_kit::title(size, "Search"))
         .child(
-            text("Search")
-                .font_family(SANS)
-                .text_size(move || size.px(TITLE))
-                .text_color(rgb(LIST_TEXT)),
-        )
-        .child(
-            input()
+            ui_kit::field(size, input())
                 .element_ref(&field)
                 .flex_1()
                 .value(move || state(ui, |s| s.state.query().to_owned()).unwrap_or_default())
@@ -137,19 +110,8 @@ fn header(ui: Ui, size: Scale) -> impl IntoElement {
                 .auto_capitalize(AutoCapitalize::None)
                 .auto_correct(false)
                 .return_key_type(ReturnKeyType::Search)
-                .text_size(move || size.px(LIST_ITEM))
-                .text_color(rgb(LIST_TEXT))
-                .placeholder_color(secondary())
-                .px(px(14.0))
-                .py(px(10.0))
-                .rounded(px(RADIUS))
-                .bg(move || {
-                    if field_focused() && ui.keys_shown() {
-                        tint(ui.theme.with(|t| t.accent.main), FOCUS_ALPHA)
-                    } else {
-                        tint(WHITE, RESTING_ALPHA)
-                    }
-                })
+                .test_id("search-field")
+                .bg(move || ui_kit::field_fill(ui, field_focused()))
                 .on_change(move |text: &str| {
                     let same = state(ui, |s| s.state.query() == text).unwrap_or(true);
                     if !same {
@@ -168,8 +130,10 @@ fn header(ui: Ui, size: Scale) -> impl IntoElement {
                     }
                 }),
         )
-        .child(button(ui, "Clear", |ui| apply(ui, SearchAction::Clear)))
-        .child(button(ui, "Close", close))
+        .child(button(ui, size, "Clear", |ui| {
+            apply(ui, SearchAction::Clear)
+        }))
+        .child(button(ui, size, "Close", close))
 }
 
 fn history(ui: Ui, size: Scale) -> impl IntoElement {
@@ -196,21 +160,16 @@ fn history(ui: Ui, size: Scale) -> impl IntoElement {
     };
     view()
         .flex_1()
-        .gap(px(8.0))
-        .child(
-            text(move || {
-                if !options(&crate::settings::read(ui)).show_history {
-                    ""
-                } else if count() == 0 {
-                    "No recent searches yet"
-                } else {
-                    "Recent searches"
-                }
-            })
-            .font_family(SANS)
-            .text_size(move || size.px(CAPTION))
-            .text_color(secondary()),
-        )
+        .gap(move || size.px(8.0))
+        .child(ui_kit::heading(size, move || {
+            if !options(&crate::settings::read(ui)).show_history {
+                ""
+            } else if count() == 0 {
+                "No recent searches yet"
+            } else {
+                "Recent searches"
+            }
+        }))
         .child(
             virtual_list(count, row)
                 .estimated_item_size(list_rows::pitch(size, ROW))
@@ -222,34 +181,9 @@ fn tab_button(ui: Ui, tab: Tab, size: Scale) -> impl IntoElement {
     let selected = move || state(ui, |s| s.state.tab() == tab).unwrap_or(false);
     let focused =
         move || selected() && state(ui, |s| *s.state.focus() == Focus::Tabs) == Some(true);
-    text(move || {
-        state(ui, |s| tab_label(tab, s.state.count(tab), s.programmes)).unwrap_or_default()
-    })
-    .px(px(16.0))
-    .py(px(8.0))
-    .rounded(px(RADIUS))
-    .font_family(SANS)
-    .text_size(move || size.px(CAPTION))
-    .text_color(move || {
-        if focused() && ui.keys_shown() {
-            Mark::Focused.text()
-        } else if selected() {
-            rgb(ui.theme.with(|t| t.accent.light))
-        } else {
-            secondary()
-        }
-    })
-    .bg(move || {
-        if focused() && ui.keys_shown() {
-            Mark::Focused.bg()
-        } else if selected() {
-            tint(WHITE, RESTING_ALPHA)
-        } else {
-            tint(WHITE, 0)
-        }
-    })
-    .on_press(move || {
-        ui.touched();
+    let label =
+        move || state(ui, |s| tab_label(tab, s.state.count(tab), s.programmes)).unwrap_or_default();
+    ui_kit::tab(ui, size, label, selected, focused, move || {
         apply(ui, SearchAction::ShowTab(tab));
     })
 }
@@ -299,22 +233,19 @@ fn results(ui: Ui, size: Scale) -> impl IntoElement {
     });
     view()
         .flex_1()
-        .gap(px(8.0))
+        .gap(move || size.px(8.0))
         .child(
             view()
                 .flex_row()
                 .items_center()
-                .gap(px(8.0))
+                .gap(move || size.px(8.0))
                 .child(tab_button(ui, Tab::Channels, size))
                 .child(tab_button(ui, Tab::Programs, size))
                 .child(
-                    text(move || status(ui))
+                    ui_kit::caption(size, move || status(ui))
                         .flex_1()
-                        .px(px(12.0))
-                        .number_of_lines(1)
-                        .font_family(SANS)
-                        .text_size(move || size.px(CAPTION))
-                        .text_color(secondary()),
+                        .px(move || size.px(12.0))
+                        .number_of_lines(1),
                 ),
         )
         .child(
@@ -391,14 +322,11 @@ fn result_row(
                 .child(list_rows::second(size, line2, SANS).text_color(move || mark().secondary())),
         )
         .child(
-            text(marker)
-                .font_family(SANS)
-                .text_size(move || size.px(CAPTION))
-                .text_color(move || match item() {
-                    Some((_, Some(h))) if h.airing == Airing::Live && mark() != Mark::Focused => {
-                        rgb(ui.theme.with(|t| t.accent.light))
-                    }
-                    _ => mark().secondary(),
-                }),
+            list_rows::small(size, marker, CAPTION).text_color(move || match item() {
+                Some((_, Some(h))) if h.airing == Airing::Live && mark() != Mark::Focused => {
+                    rgb(ui.theme.with(|t| t.accent.light))
+                }
+                _ => mark().secondary(),
+            }),
         )
 }

@@ -7,13 +7,11 @@
 use iptv_core::editor::FavoritesEditor;
 use nsh_core::prelude::*;
 
+use crate::Ui;
 use crate::fonts::{CAPTION, LIST_ITEM, SANS, TITLE};
 use crate::list_rows::{self, Mark, ROW};
 use crate::scale::Scale;
-use crate::theme::{LIST_TEXT, RADIUS, RESTING_ALPHA};
-use crate::{Ui, tint};
-
-const WHITE: u32 = 0xFFFFFF;
+use crate::theme::LIST_TEXT;
 
 /// Opens the editor on the list on screen, at the focused channel.
 pub fn open(ui: Ui) {
@@ -83,17 +81,7 @@ pub fn layer(ui: Ui) -> impl IntoElement {
         })
     };
     let button = move |label: &'static str, act: fn(Ui)| {
-        text(label)
-            .px(px(16.0))
-            .py(px(8.0))
-            .rounded(px(RADIUS))
-            .text_size(px(14.0))
-            .text_color(rgb(WHITE))
-            .bg(tint(WHITE, RESTING_ALPHA * 2))
-            .on_press(move || {
-                ui.touched();
-                act(ui);
-            })
+        crate::ui_kit::button(ui, size, label, || false, move || act(ui))
     };
     let row = move |at: Position| {
         let channel = move || {

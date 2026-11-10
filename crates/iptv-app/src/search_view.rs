@@ -36,7 +36,7 @@ mod view;
 
 pub use view::layer;
 
-use crate::{Playback, Ui, ViewMode, channel_name, clock, tint};
+use crate::{Playback, Ui, ViewMode, channel_name, clock};
 
 /// Typing pause before a search runs.
 const DEBOUNCE: Duration = Duration::from_millis(200);

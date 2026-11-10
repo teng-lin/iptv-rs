@@ -89,8 +89,17 @@ pub fn pitch(size: Scale, pitch: f32) -> impl Fn() -> Points + Copy {
 /// A row `pitch` apart from the next (its fill [`GAP`] in from both), its
 /// content centred vertically, marked by `mark`.
 pub fn row(size: Scale, pitch: f32, mark: impl Fn() -> Mark + 'static) -> View {
+    row_with(size, move || pitch, mark)
+}
+
+/// [`row`] whose pitch changes (a settings row gains a second line).
+pub fn row_with(
+    size: Scale,
+    pitch: impl Fn() -> f32 + 'static,
+    mark: impl Fn() -> Mark + 'static,
+) -> View {
     view()
-        .h(move || px(size.whole(pitch) - 2.0 * size.whole(GAP)))
+        .h(move || px(size.whole(pitch()) - 2.0 * size.whole(GAP)))
         .my(move || px(size.whole(GAP)))
         .px(move || size.px(INSET))
         .justify_center()
