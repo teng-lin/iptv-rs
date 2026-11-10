@@ -270,7 +270,10 @@ pub fn label(key: &str) -> &'static str {
 pub fn description(key: &str) -> Option<&'static str> {
     Some(match key {
         "remote.customize" => "What each key of the remote does, screen by screen.",
-        "general.about" => "The version of this app.",
+        "general.about" => {
+            "The version of this app. Text is set in Roboto and Roboto Condensed (Google, \
+             SIL Open Font License 1.1)."
+        }
         "playlists.manage" => {
             "Add, choose, refresh, rename and delete playlists, and arrange their guide sources."
         }

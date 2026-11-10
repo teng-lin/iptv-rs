@@ -14,6 +14,7 @@ mod desktop;
 mod epg_sources_view;
 mod fav_editor;
 mod favorites;
+mod fonts;
 mod grid;
 mod guide_assign_view;
 mod header;
@@ -356,6 +357,7 @@ pub fn channel_name(ch: usize) -> String {
 
 #[component]
 pub fn App() -> impl IntoElement {
+    fonts::register();
     settings::load();
     let ui = Ui {
         focus: signal(Focus::default()),
