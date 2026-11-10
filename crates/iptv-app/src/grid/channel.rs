@@ -22,7 +22,7 @@ const GAP: f32 = 14.0;
 const MARKER_W: f32 = 20.0;
 
 /// Shown where a channel has no logo (an image needs a source).
-fn no_logo() -> String {
+pub(crate) fn no_logo() -> String {
     "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1' height='1'/%3E"
         .to_owned()
 }

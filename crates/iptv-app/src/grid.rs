@@ -9,6 +9,7 @@
 //! dp, the same on TV, tablet and desktop (`fonts.rs` has the type).
 
 mod channel;
+pub(crate) use channel::no_logo;
 mod ruler;
 
 use iptv_core::lists::{FAVORITES, RECENT};
