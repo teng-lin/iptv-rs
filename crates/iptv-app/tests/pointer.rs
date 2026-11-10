@@ -76,6 +76,17 @@ fn clicks_reach_the_guide_under_the_hidden_layers() {
     step(app.wait_for("text:★ Test Channel Two"));
     step(app.press("label:Video"));
     step(app.wait_for_gone("label:Mute", Duration::from_secs(2)));
+    // Every button of the bar is reachable on a narrow and a wide window,
+    // and the popups it opens close on a second press or a press beside
+    // them while the bar stays.
+    for (w, h) in [(760.0, 480.0), (1600.0, 900.0)] {
+        step(app.set_viewport(Size::new(px(w), px(h))));
+        bar_buttons(&mut app, step);
+    }
+    step(app.set_viewport(Size::new(px(1280.0), px(720.0))));
+    step(app.press("label:Video"));
+    step(app.wait_for_gone("label:Mute", Duration::from_secs(2)));
+
     // A TV has no pointer: a press there (an assistive one) shows the
     // remote's card instead, whose TV guide goes back to the guide.
     step(app.set_environment("a TV", |e| e.idiom = Idiom::Tv));
@@ -99,4 +110,57 @@ fn clicks_reach_the_guide_under_the_hidden_layers() {
     // too) opens the wizard.
     step(app.press("text:+ Add playlist"));
     step(app.wait_for("text:Playlist link"));
+}
+
+/// Presses every button of the play bar over full-screen video (shown by
+/// a tap), checking what the popups do.
+fn bar_buttons(app: &mut Headless, step: impl Fn(Result<(), String>)) {
+    let gone = |app: &mut Headless, s: &str| app.wait_for_gone(s, Duration::from_secs(2));
+    if !app.screen().matches("label:Mute").unwrap() {
+        step(app.press("label:Video"));
+    }
+    step(app.wait_for("label:Mute"));
+    for name in [
+        "Mute",
+        "Mute",
+        "Rewind",
+        "Play or pause",
+        "Play or pause",
+        "Fast-forward",
+        "Favourite",
+        "Favourite",
+        "Subtitles and tracks",
+        "Full screen",
+        "Full screen",
+    ] {
+        step(app.press(&format!("label:{name}")));
+    }
+    // Programme details: a second press closes them.
+    let details = "text:/^Test Channel Two · \\d/";
+    step(app.press("label:Programme details"));
+    step(app.wait_for(details));
+    step(app.press("label:Programme details"));
+    step(gone(app, details));
+    // Picture size: a second press closes it, and so does a press beside
+    // it; the bar stays meanwhile.
+    step(app.press("label:Picture size"));
+    step(app.wait_for("text:Stretch to fill"));
+    step(app.press("label:Picture size"));
+    step(gone(app, "text:Stretch to fill"));
+    step(app.press("label:Picture size"));
+    step(app.wait_for("text:Stretch to fill"));
+    step(app.press("label:Close the chooser"));
+    step(gone(app, "text:Stretch to fill"));
+    assert!(app.screen().matches("label:Mute").unwrap(), "the bar stays");
+    // The channel list replaces the bar; Back closes it.
+    step(app.press("label:Channel list"));
+    step(gone(app, "label:Mute"));
+    step(app.press_key("backspace"));
+    // The guide leaves full screen; the playing channel's name comes back.
+    step(app.press("label:Video"));
+    step(app.press("label:TV guide"));
+    step(gone(app, "label:Mute"));
+    step(app.press("text:★ Test Channel Two"));
+    step(app.press("label:Video"));
+    step(app.wait_for("label:Mute"));
 }
