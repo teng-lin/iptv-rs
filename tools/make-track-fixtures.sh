@@ -48,8 +48,10 @@ hls() { # name, ffmpeg input and codec arguments: one HLS media playlist
 
 vtt() { # name, srt: one WebVTT segment, timed against the TS streams
   ffmpeg -loglevel error -y -i "$2" "$dir/hls/$1.vtt"
-  # ffmpeg's TS streams start at 1.4 s (126000 at 90 kHz).
-  sed -i '1a X-TIMESTAMP-MAP=MPEGTS:126000,LOCAL:00:00:00.000' "$dir/hls/$1.vtt"
+  # ffmpeg's TS streams start at 1.4 s (126000 at 90 kHz). After the first
+  # line (awk: BSD sed's -i takes a suffix, GNU's does not).
+  awk 'NR == 1 { print; print "X-TIMESTAMP-MAP=MPEGTS:126000,LOCAL:00:00:00.000"; next } { print }' \
+    "$dir/hls/$1.vtt" > "$dir/hls/$1.vtt.tmp" && mv "$dir/hls/$1.vtt.tmp" "$dir/hls/$1.vtt"
   printf '#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:%d\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXTINF:%d.0,\n%s.vtt\n#EXT-X-ENDLIST\n' \
     $secs $secs "$1" > "$dir/hls/$1.m3u8"
 }
