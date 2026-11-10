@@ -63,7 +63,7 @@ struct Nav {
 
 /// The surface that owns input now.
 pub fn context(ui: &Ui) -> Context {
-    if ui.menu.with(Option::is_some) {
+    if ui.menu.with(Option::is_some) || ui.description.with(Option::is_some) {
         return Context::Menu;
     }
     match (ui.mode.get(), ui.focus.with(|f| f.pane)) {
@@ -172,6 +172,13 @@ fn apply(ui: Ui, action: Action) {
     ui.update_panels(|p, now| p.touch(now));
     let controls = ui.panels.with(|p| p.captures_input()) && ui.mode.get() == ViewMode::Fullscreen;
     let mv = |m: Move| ui.focus.update(|f| f.apply(m));
+    if ui.description.with(Option::is_some) {
+        // The popover has no actions; Back (or Menu) closes it.
+        if matches!(action, Action::Back | Action::ShowMenu) {
+            crate::menu_view::close(ui);
+        }
+        return;
+    }
     if ui.menu.with(Option::is_some) {
         match action {
             Action::MoveUp => ui
@@ -212,6 +219,10 @@ fn apply(ui: Ui, action: Action) {
             _ => ViewMode::Guide,
         }),
         Action::ShowGroups => ui.focus.update(|f| f.pane = Pane::Groups),
+        Action::PastPrograms => ui.focus.update(|f| f.enter_past()),
+        Action::ReturnToNow => ui.focus.update(|f| {
+            f.return_to_now();
+        }),
         Action::ReturnToPlayer if ui.playing.get().is_some() => ui.mode.set(ViewMode::Fullscreen),
         Action::PlayPause => ui.paused.update(|p| *p = !*p),
         Action::ChannelUp => zap(ui, -1),

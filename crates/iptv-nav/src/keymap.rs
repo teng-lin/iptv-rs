@@ -18,7 +18,8 @@ pub enum Context {
     /// The control row over full-screen video (Left/Right/OK move and
     /// press its buttons; Up/Down still zap).
     Controls,
-    /// A context menu (Up/Down move, OK selects, Left or Back closes).
+    /// A context menu or popover (Up/Down move, OK selects, Back closes;
+    /// Left/Right do nothing, as observed in the reference UX).
     Menu,
 }
 
@@ -124,8 +125,8 @@ impl Keymap {
             // Control row: directions/OK use the global moves; Up/Down zap.
             b(Some(Controls), K::Up, Short, A::ChannelUp),
             b(Some(Controls), K::Down, Short, A::ChannelDown),
-            // Menus: Left closes like Back; Right does nothing.
-            b(Some(Menu), K::Left, Short, A::Back),
+            // Menus: Left and Right do nothing (observed); Back closes.
+            b(Some(Menu), K::Left, Short, A::Ignore),
             b(Some(Menu), K::Right, Short, A::Ignore),
         ];
         defaults.extend((0..=9).map(|d| b(g, K::Digit(d), Short, A::Digit(d))));
@@ -221,16 +222,13 @@ mod tests {
     }
 
     #[test]
-    fn menus_move_vertically_and_left_closes() {
+    fn menus_move_vertically_and_ignore_left_right() {
         let k = Keymap::defaults();
         assert_eq!(
             k.resolve(Menu, RemoteKey::Down, Press::Short),
             Some(Action::MoveDown)
         );
-        assert_eq!(
-            k.resolve(Menu, RemoteKey::Left, Press::Short),
-            Some(Action::Back)
-        );
+        assert_eq!(k.resolve(Menu, RemoteKey::Left, Press::Short), None);
         assert_eq!(k.resolve(Menu, RemoteKey::Right, Press::Short), None);
         assert!(!k.has_long(Menu, RemoteKey::Ok));
     }

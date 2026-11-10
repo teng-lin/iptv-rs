@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use guide::{Airing, Focus, Pane};
 use std::collections::BTreeSet;
 
-use iptv_core::menu::Menu;
+use iptv_core::menu::{Menu, Origin};
 use iptv_core::panels::Panels;
 use nsh_core::prelude::*;
 use theme::Theme;
@@ -76,6 +76,8 @@ pub struct Ui {
     pub epoch: Instant,
     /// The open context menu, if any.
     pub menu: Signal<Option<Menu>>,
+    /// The programme description popover, if open.
+    pub description: Signal<Option<Origin>>,
     pub favorites: Signal<BTreeSet<usize>>,
 }
 
@@ -153,10 +155,18 @@ pub fn tint(rgb_hex: u32, alpha: u8) -> Rgba {
     rgba(theme::with_alpha(rgb_hex, alpha))
 }
 
-/// Guide minute 0 is 18:00 on the synthetic clock.
+/// Guide minute 0 is 18:00 on Monday 9 November on the synthetic clock;
+/// other days show their date, as the guide does when browsing the past.
 pub fn clock(minute: i32) -> String {
-    let m = (18 * 60 + minute).rem_euclid(24 * 60);
-    format!("{:02}:{:02}", m / 60, m % 60)
+    const DAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    let total = 18 * 60 + minute;
+    let (day, m) = (total.div_euclid(24 * 60), total.rem_euclid(24 * 60));
+    let time = format!("{:02}:{:02}", m / 60, m % 60);
+    if day == 0 {
+        time
+    } else {
+        format!("{} {} · {time}", DAYS[day.rem_euclid(7) as usize], 9 + day)
+    }
 }
 
 pub fn channel_name(ch: usize) -> String {
@@ -179,6 +189,7 @@ pub fn App() -> impl IntoElement {
         video_size: signal(None),
         epoch: Instant::now(),
         menu: signal(None),
+        description: signal(None),
         favorites: signal(BTreeSet::new()),
     };
     // Leaving full screen closes the panels.
@@ -277,21 +288,28 @@ pub fn App() -> impl IntoElement {
 fn bind_back(ui: Ui) {
     let back_target = computed(move || {
         let panels = ui.panels.with(|p| p.shown) != iptv_core::panels::Shown::Hidden;
-        let menu = ui.menu.with(Option::is_some);
+        let menu = ui.menu.with(Option::is_some) || ui.description.with(Option::is_some);
         (ui.mode.get(), ui.focus.with(|f| f.pane), panels || menu)
     });
     effect(move || match back_target.get() {
-        _ if ui.menu.with(Option::is_some) => on_back_press(move || {
-            menu_view::close(ui);
-            true
-        }),
+        _ if ui.menu.with(Option::is_some) || ui.description.with(Option::is_some) => {
+            on_back_press(move || {
+                menu_view::close(ui);
+                true
+            })
+        }
         (ViewMode::Fullscreen, _, true) => on_back_press(move || {
             ui.panels.update(|p| p.hide());
             true
         }),
         (ViewMode::Guide, Pane::Groups, _) => {}
         (ViewMode::Guide, Pane::Guide, _) => on_back_press(move || {
-            ui.focus.update(|f| f.pane = Pane::Groups);
+            // Back on a past/future programme returns to now; on now, to the groups.
+            let mut moved = false;
+            ui.focus.update(|f| moved = f.return_to_now());
+            if !moved {
+                ui.focus.update(|f| f.pane = Pane::Groups);
+            }
             true
         }),
         _ => on_back_press(move || {

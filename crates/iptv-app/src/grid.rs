@@ -145,7 +145,7 @@ fn row(
             .on_press(move || {
                 let Some(p) = program() else { return };
                 ui.touched();
-                ui.focus.update(|f| f.tap(at.index(), p.start.max(0)));
+                ui.focus.update(|f| f.tap(at.index(), p.start));
                 ui.watch();
             })
             .child(

@@ -1,34 +1,63 @@
-//! Context menus (Long OK / Menu): a list of items with enabled state, focus
-//! that skips disabled items, and the content the menu was opened on so
-//! focus returns there when it closes.
+//! Context menus (Long OK / Menu): rows of section headings and actions,
+//! focus that skips headings and disabled actions, and the content the menu
+//! was opened on so focus returns there when it closes.
 //!
-//! [`program_menu`] builds the guide's programme menu from the programme's
-//! airing state and the channel's catch-up window: actions that cannot work
-//! are absent or disabled, never offered as if they would (AC04). The item
-//! order is iptv-rs's own and is revisited with the reference UX's runtime
-//! findings (`~/src/tivimate/docs/08-*`).
+//! [`program_menu`] follows the reference UX's observed structure
+//! (`~/src/tivimate/docs/08-menus-and-past-programmes.md`, section A):
+//! global actions, then the programme's, the channel's and the group's
+//! sections. Programme actions that cannot apply are **omitted** (not shown
+//! disabled); which actions are enabled is the app's call (what it has
+//! built). Labels are the shell's own (i18n), not stored here.
 
 use crate::guide::{Airing, Program};
 
-/// Menu actions. Labels are the shell's (i18n), not stored here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MenuItem {
-    /// Play the channel live.
-    Watch,
-    /// Play a live programme from its start (catch-up).
-    WatchFromStart,
-    /// Play an ended programme from the archive (catch-up).
-    PlayRecorded,
-    Record,
+    // Global.
+    Search,
+    Settings,
+    // Programme.
+    StartFromBeginning,
+    ExternalPlayer,
     Reminder,
+    Record,
+    CustomRecording,
+    SaveToList,
     Description,
+    // Channel.
     ToggleFavorite,
+    BlockChannel,
+    HideChannel,
+    AssignEpg,
+    ChannelOptions,
+    // Group.
+    ManageFavorites,
+    ManageBlocked,
+    ManageHidden,
+    ReorderChannels,
+    CopyChannels,
+    CreateGroup,
+    GroupOptions,
+}
+
+/// Section headings (never focused).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Heading {
+    Program,
+    Channel,
+    Group,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Entry {
-    pub item: MenuItem,
-    pub enabled: bool,
+pub enum Row {
+    Heading(Heading),
+    Action { item: MenuItem, enabled: bool },
+}
+
+impl Row {
+    fn focusable(&self) -> bool {
+        matches!(self, Row::Action { enabled: true, .. })
+    }
 }
 
 /// What the menu was opened on: focus returns here on close.
@@ -40,39 +69,44 @@ pub struct Origin {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Menu {
-    pub entries: Vec<Entry>,
+    pub rows: Vec<Row>,
     pub focus: usize,
     pub origin: Origin,
 }
 
 impl Menu {
-    /// A menu focused on its first enabled entry.
-    pub fn new(entries: Vec<Entry>, origin: Origin) -> Menu {
-        let focus = entries.iter().position(|e| e.enabled).unwrap_or(0);
+    /// A menu focused on its first enabled action.
+    pub fn new(rows: Vec<Row>, origin: Origin) -> Menu {
+        let focus = rows.iter().position(Row::focusable).unwrap_or(0);
         Menu {
-            entries,
+            rows,
             focus,
             origin,
         }
     }
 
     pub fn focused(&self) -> Option<MenuItem> {
-        self.entries
-            .get(self.focus)
-            .filter(|e| e.enabled)
-            .map(|e| e.item)
+        match self.rows.get(self.focus) {
+            Some(Row::Action {
+                item,
+                enabled: true,
+            }) => Some(*item),
+            _ => None,
+        }
     }
 
-    /// Moves to the next enabled entry in `step`'s direction; stays at the
+    /// Moves to the next focusable row in `step`'s direction; stays at the
     /// ends (no wrap).
     pub fn move_focus(&mut self, step: isize) {
         let mut at = self.focus as isize;
         loop {
             at += step.signum();
-            match self.entries.get(at as usize) {
-                _ if at < 0 => return,
+            if at < 0 {
+                return;
+            }
+            match self.rows.get(at as usize) {
                 None => return,
-                Some(e) if e.enabled => {
+                Some(r) if r.focusable() => {
                     self.focus = at as usize;
                     return;
                 }
@@ -81,129 +115,208 @@ impl Menu {
         }
     }
 
-    /// A tap: focus the entry and return it if it is enabled.
+    /// A tap: focus the row and return its action if it is enabled.
     pub fn tap(&mut self, index: usize) -> Option<MenuItem> {
-        let entry = self.entries.get(index).filter(|e| e.enabled)?;
-        self.focus = index;
-        Some(entry.item)
+        match self.rows.get(index) {
+            Some(Row::Action {
+                item,
+                enabled: true,
+            }) => {
+                self.focus = index;
+                Some(*item)
+            }
+            _ => None,
+        }
     }
 }
 
-/// The guide's programme menu. `catchup_days`: the channel's archive window
-/// (0 = no catch-up); `now`: minutes on the guide clock.
+/// The programme actions that apply, in order (`now`: guide minutes;
+/// `catchup_days`: the channel's archive window, 0 = none).
+pub fn program_actions(program: Program, catchup_days: u8, now: i32) -> Vec<MenuItem> {
+    use MenuItem::*;
+    let in_archive = catchup_days > 0 && program.start >= now - i32::from(catchup_days) * 24 * 60;
+    let mut items = match program.airing() {
+        Airing::Live if catchup_days > 0 => vec![StartFromBeginning, ExternalPlayer, Record],
+        Airing::Live => vec![ExternalPlayer, Record],
+        Airing::Ended if in_archive => vec![StartFromBeginning, ExternalPlayer],
+        Airing::Ended => vec![],
+        Airing::Upcoming => vec![Reminder, Record],
+    };
+    items.extend([CustomRecording, SaveToList, Description]);
+    items
+}
+
+/// The guide's full context menu for a programme. `enabled` says which
+/// actions the app can perform.
 pub fn program_menu(
     program: Program,
     catchup_days: u8,
     now: i32,
-    favorite_known: bool,
-) -> Vec<Entry> {
-    let in_archive = catchup_days > 0 && program.start >= now - i32::from(catchup_days) * 24 * 60;
-    let on = |item| Entry {
+    enabled: impl Fn(MenuItem) -> bool,
+) -> Vec<Row> {
+    use MenuItem::*;
+    let action = |item| Row::Action {
         item,
-        enabled: true,
+        enabled: enabled(item),
     };
-    let off = |item| Entry {
-        item,
-        enabled: false,
-    };
-    let mut entries = match program.airing() {
-        Airing::Live => {
-            let mut e = vec![on(MenuItem::Watch)];
-            if catchup_days > 0 {
-                e.push(on(MenuItem::WatchFromStart));
-            }
-            e.push(off(MenuItem::Record));
-            e
-        }
-        Airing::Ended if in_archive => vec![on(MenuItem::PlayRecorded)],
-        // Past without an archive: nothing to play; only details remain.
-        Airing::Ended => vec![],
-        Airing::Upcoming => vec![off(MenuItem::Reminder), off(MenuItem::Record)],
-    };
-    entries.push(on(MenuItem::Description));
-    entries.push(Entry {
-        item: MenuItem::ToggleFavorite,
-        enabled: favorite_known,
-    });
-    entries
+    let mut rows = vec![
+        action(Search),
+        action(Settings),
+        Row::Heading(Heading::Program),
+    ];
+    rows.extend(
+        program_actions(program, catchup_days, now)
+            .into_iter()
+            .map(action),
+    );
+    rows.push(Row::Heading(Heading::Channel));
+    rows.extend(
+        [
+            ToggleFavorite,
+            BlockChannel,
+            HideChannel,
+            AssignEpg,
+            ChannelOptions,
+        ]
+        .map(action),
+    );
+    rows.push(Row::Heading(Heading::Group));
+    rows.extend(
+        [
+            ManageFavorites,
+            ManageBlocked,
+            ManageHidden,
+            ReorderChannels,
+            CopyChannels,
+            CreateGroup,
+            GroupOptions,
+        ]
+        .map(action),
+    );
+    rows
 }
 
 #[cfg(test)]
 mod tests {
+    use super::MenuItem::*;
     use super::*;
 
     const DAY: i32 = 24 * 60;
+    const LIVE: Program = Program {
+        start: -10,
+        end: 50,
+    };
+    const ENDED: Program = Program {
+        start: -120,
+        end: -60,
+    };
+    const FUTURE: Program = Program { start: 60, end: 90 };
 
-    fn items(entries: &[Entry]) -> Vec<MenuItem> {
-        entries.iter().map(|e| e.item).collect()
+    #[test]
+    fn programme_actions_follow_the_observed_matrix() {
+        assert_eq!(
+            program_actions(LIVE, 3, 0),
+            [
+                StartFromBeginning,
+                ExternalPlayer,
+                Record,
+                CustomRecording,
+                SaveToList,
+                Description
+            ]
+        );
+        assert_eq!(
+            program_actions(LIVE, 0, 0),
+            [
+                ExternalPlayer,
+                Record,
+                CustomRecording,
+                SaveToList,
+                Description
+            ]
+        );
+        assert_eq!(
+            program_actions(ENDED, 3, 0),
+            [
+                StartFromBeginning,
+                ExternalPlayer,
+                CustomRecording,
+                SaveToList,
+                Description
+            ]
+        );
+        assert_eq!(
+            program_actions(ENDED, 0, 0),
+            [CustomRecording, SaveToList, Description]
+        );
+        assert_eq!(
+            program_actions(FUTURE, 3, 0),
+            [Reminder, Record, CustomRecording, SaveToList, Description]
+        );
     }
 
     #[test]
-    fn live_programmes_offer_watch_and_from_start_only_with_catchup() {
-        let live = Program {
-            start: -10,
-            end: 50,
-        };
-        let with = program_menu(live, 3, 0, true);
-        assert_eq!(
-            &items(&with)[..2],
-            &[MenuItem::Watch, MenuItem::WatchFromStart]
-        );
-        let without = program_menu(live, 0, 0, true);
-        assert!(!items(&without).contains(&MenuItem::WatchFromStart));
-    }
-
-    #[test]
-    fn ended_programmes_play_only_inside_the_archive_window() {
-        let ended = Program {
-            start: -120,
-            end: -60,
-        };
-        assert_eq!(
-            items(&program_menu(ended, 3, 0, true))[0],
-            MenuItem::PlayRecorded
-        );
+    fn programmes_older_than_the_archive_lose_playback() {
         let old = Program {
             start: -4 * DAY,
             end: -4 * DAY + 30,
         };
-        assert!(!items(&program_menu(old, 3, 0, true)).contains(&MenuItem::PlayRecorded));
-        assert!(!items(&program_menu(ended, 0, 0, true)).contains(&MenuItem::PlayRecorded));
+        assert!(!program_actions(old, 3, 0).contains(&StartFromBeginning));
     }
 
     #[test]
-    fn future_programmes_never_offer_playback() {
-        let future = Program { start: 60, end: 90 };
-        let m = items(&program_menu(future, 3, 0, true));
-        assert!(!m.contains(&MenuItem::Watch) && !m.contains(&MenuItem::PlayRecorded));
-        assert!(m.contains(&MenuItem::Description));
-    }
-
-    #[test]
-    fn focus_skips_disabled_entries_and_stops_at_the_ends() {
-        let origin = Origin {
-            channel: 4,
-            program_start: 60,
-        };
-        let future = Program { start: 60, end: 90 };
-        let mut m = Menu::new(program_menu(future, 0, 0, true), origin);
+    fn sections_come_in_order_and_headings_never_take_focus() {
+        let rows = program_menu(LIVE, 3, 0, |_| true);
+        let headings: Vec<usize> = rows
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| matches!(r, Row::Heading(_)))
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(headings.len(), 3);
+        assert_eq!(
+            rows[0],
+            Row::Action {
+                item: Search,
+                enabled: true
+            }
+        );
+        assert_eq!(rows[2], Row::Heading(Heading::Program));
+        let mut m = Menu::new(
+            rows,
+            Origin {
+                channel: 0,
+                program_start: -10,
+            },
+        );
+        assert_eq!(m.focused(), Some(Search));
+        m.move_focus(1);
+        m.move_focus(1);
         assert_eq!(
             m.focused(),
-            Some(MenuItem::Description),
-            "reminder/record disabled"
+            Some(StartFromBeginning),
+            "skipped the programme heading"
         );
+    }
+
+    #[test]
+    fn focus_skips_disabled_actions_and_stops_at_the_ends() {
+        let only = |i| matches!(i, Description | ToggleFavorite);
+        let mut m = Menu::new(
+            program_menu(FUTURE, 0, 0, only),
+            Origin {
+                channel: 4,
+                program_start: 60,
+            },
+        );
+        assert_eq!(m.focused(), Some(Description));
         m.move_focus(-1);
-        assert_eq!(
-            m.focused(),
-            Some(MenuItem::Description),
-            "nothing enabled above"
-        );
+        assert_eq!(m.focused(), Some(Description), "nothing enabled above");
         m.move_focus(1);
-        assert_eq!(m.focused(), Some(MenuItem::ToggleFavorite));
+        assert_eq!(m.focused(), Some(ToggleFavorite));
         m.move_focus(1);
-        assert_eq!(m.focused(), Some(MenuItem::ToggleFavorite));
-        assert_eq!(m.tap(0), None, "a disabled entry does nothing");
-        assert_eq!(m.tap(2), Some(MenuItem::Description));
-        assert_eq!(m.origin, origin);
+        assert_eq!(m.focused(), Some(ToggleFavorite), "nothing enabled below");
+        assert_eq!(m.tap(0), None, "disabled");
+        assert_eq!(m.tap(2), None, "a heading");
     }
 }

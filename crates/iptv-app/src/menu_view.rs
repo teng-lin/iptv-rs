@@ -1,140 +1,198 @@
-//! The programme context menu (Long OK / Menu): a side panel over a scrim.
-//! State lives in `iptv_core::menu`; this opens, draws and performs it.
+//! The guide's context menu (Long OK / Menu) as a scrolling side panel, and
+//! the programme description popover. State lives in `iptv_core::menu`;
+//! this opens, draws and performs it. Labels are iptv-rs's own wording.
 
 use iptv_core::guide::{catchup_days, program_at};
-use iptv_core::menu::{Menu, MenuItem, Origin, program_menu};
+use iptv_core::menu::{Heading, Menu, MenuItem, Origin, Row, program_menu};
 use nsh_core::prelude::*;
 
 use crate::guide::Pane;
-use crate::theme::{FOCUS_ALPHA, RADIUS, RESTING_ALPHA, TEXT_SECONDARY_ALPHA};
+use crate::theme::{FOCUS_ALPHA, RADIUS, RADIUS_LARGE, TEXT_SECONDARY_ALPHA};
 use crate::{Ui, ViewMode, channel_name, clock, tint};
 
 const WHITE: u32 = 0xFFFFFF;
-const PANEL_W: f32 = 340.0;
+const PANEL_W: f32 = 360.0;
+const ROW_H: f32 = 48.0;
+
+/// The actions this build can perform; the rest show disabled.
+fn implemented(item: MenuItem) -> bool {
+    matches!(item, MenuItem::Description | MenuItem::ToggleFavorite)
+}
 
 fn label(item: MenuItem, favorite: bool) -> &'static str {
+    use MenuItem::*;
     match item {
-        MenuItem::Watch => "Watch",
-        MenuItem::WatchFromStart => "Watch from the start",
-        MenuItem::PlayRecorded => "Play recording",
-        MenuItem::Record => "Record",
-        MenuItem::Reminder => "Remind me",
-        MenuItem::Description => "Details",
-        MenuItem::ToggleFavorite if favorite => "Remove from favourites",
-        MenuItem::ToggleFavorite => "Add to favourites",
+        Search => "Search",
+        Settings => "Settings",
+        StartFromBeginning => "Play from the beginning",
+        ExternalPlayer => "Open in another player",
+        Reminder => "Remind me",
+        Record => "Record",
+        CustomRecording => "Schedule a recording…",
+        SaveToList => "Save to my list",
+        Description => "Details",
+        ToggleFavorite if favorite => "Remove from favourites",
+        ToggleFavorite => "Add to favourites",
+        BlockChannel => "Block channel",
+        HideChannel => "Hide channel",
+        AssignEpg => "Choose guide data…",
+        ChannelOptions => "Channel options…",
+        ManageFavorites => "Manage favourites…",
+        ManageBlocked => "Manage blocked channels…",
+        ManageHidden => "Manage hidden channels…",
+        ReorderChannels => "Reorder channels",
+        CopyChannels => "Copy channels to a group…",
+        CreateGroup => "New group…",
+        GroupOptions => "Group options…",
     }
 }
 
-/// Long OK / Menu: the focused programme's menu (in full screen, the playing
-/// channel's current programme).
+fn synthetic_title(p: crate::guide::Program) -> String {
+    format!("Show {}", p.start.rem_euclid(97))
+}
+
+/// Long OK / Menu: the menu for the focused programme (in full screen, the
+/// playing channel's current programme).
 pub fn open(ui: Ui) {
     let (channel, minute) = match (ui.mode.get(), ui.playing.get()) {
         (ViewMode::Fullscreen, Some(ch)) => (ch, 0),
         _ => ui.focus.with(|f| (f.channel, f.cursor)),
     };
     let program = program_at(channel, minute);
-    let entries = program_menu(program, catchup_days(channel), 0, true);
+    let rows = program_menu(program, catchup_days(channel), 0, implemented);
     let origin = Origin {
         channel,
         program_start: program.start,
     };
-    ui.menu.set(Some(Menu::new(entries, origin)));
+    ui.menu.set(Some(Menu::new(rows, origin)));
 }
 
-/// Closes the menu; guide focus returns to the programme it was opened on.
+/// Closes the menu or popover; guide focus stays on the programme it was
+/// opened on (it does not jump to now).
 pub fn close(ui: Ui) {
-    let Some(origin) = ui.menu.with(|m| m.as_ref().map(|m| m.origin)) else {
-        return;
-    };
+    let origin = ui
+        .menu
+        .with(|m| m.as_ref().map(|m| m.origin))
+        .or_else(|| ui.description.get());
     ui.menu.set(None);
-    if ui.mode.get() != ViewMode::Fullscreen {
-        ui.focus
-            .update(|f| f.tap(origin.channel, origin.program_start.max(0)));
-        ui.focus.update(|f| f.pane = Pane::Guide);
+    ui.description.set(None);
+    if let Some(origin) = origin
+        && ui.mode.get() != ViewMode::Fullscreen
+    {
+        ui.focus.update(|f| {
+            f.tap(origin.channel, origin.program_start);
+            f.pane = Pane::Guide;
+        });
     }
 }
 
 pub fn perform(ui: Ui, item: MenuItem) {
-    let channel = ui.menu.with(|m| m.as_ref().map(|m| m.origin.channel));
-    close(ui);
-    let Some(channel) = channel else { return };
+    let Some(origin) = ui.menu.with(|m| m.as_ref().map(|m| m.origin)) else {
+        return;
+    };
+    ui.menu.set(None);
     match item {
-        MenuItem::Watch => {
-            ui.playing.set(Some(channel));
-            ui.paused.set(false);
+        // Details replaces the menu; Back from it returns to the guide.
+        MenuItem::Description => ui.description.set(Some(origin)),
+        MenuItem::ToggleFavorite => {
+            ui.favorites.update(|f| {
+                if !f.remove(&origin.channel) {
+                    f.insert(origin.channel);
+                }
+            });
+            close(ui);
         }
-        MenuItem::ToggleFavorite => ui.favorites.update(|f| {
-            if !f.remove(&channel) {
-                f.insert(channel);
-            }
-        }),
         other => {
-            log::info!("iptv menu {other:?} not implemented yet (catch-up, details, recordings)")
+            log::info!("iptv menu {other:?} not implemented yet");
+            close(ui);
         }
+    }
+}
+
+fn heading_text(ui: Ui, heading: Heading) -> String {
+    let Some(origin) = ui.menu.with(|m| m.as_ref().map(|m| m.origin)) else {
+        return String::new();
+    };
+    match heading {
+        Heading::Program => {
+            let p = program_at(origin.channel, origin.program_start);
+            format!(
+                "{} · {}–{}",
+                synthetic_title(p),
+                clock(p.start),
+                clock(p.end)
+            )
+        }
+        Heading::Channel => channel_name(origin.channel),
+        Heading::Group => ui.focus.with(|f| format!("Group {:02}", f.group + 1)),
     }
 }
 
 pub fn layer(ui: Ui) -> impl IntoElement {
     let open = move || ui.menu.with(Option::is_some);
-    let title = move || {
-        ui.menu.with(|m| {
-            m.as_ref().map_or(String::new(), |m| {
-                let p = program_at(m.origin.channel, m.origin.program_start.max(-30));
-                format!(
-                    "{} · {}–{}",
-                    channel_name(m.origin.channel),
-                    clock(p.start),
-                    clock(p.end)
-                )
-            })
-        })
-    };
-    let entry = move |index: usize| {
-        let entry = move || {
+    let count = move || ui.menu.with(|m| m.as_ref().map_or(0, |m| m.rows.len()));
+    let list = element_ref();
+    let focus = computed(move || ui.menu.with(|m| m.as_ref().map(|m| m.focus)));
+    effect(move || {
+        if let Some(i) = focus.get() {
+            list.scroll_to_index(i as u32, percentage(0.5), px(0.0), false);
+        }
+    });
+    let row = move |at: Position| {
+        let row = move || {
             ui.menu
-                .with(|m| m.as_ref().and_then(|m| m.entries.get(index).copied()))
+                .with(|m| m.as_ref().and_then(|m| m.rows.get(at.index()).copied()))
         };
         let favorite = move || {
             let ch = ui.menu.with(|m| m.as_ref().map(|m| m.origin.channel));
             ch.is_some_and(|ch| ui.favorites.with(|f| f.contains(&ch)))
         };
-        let focused = move || {
-            ui.keys_shown()
-                && ui
-                    .menu
-                    .with(|m| m.as_ref().is_some_and(|m| m.focus == index))
-        };
-        text(move || entry().map_or(String::new(), |e| label(e.item, favorite()).to_owned()))
-            .px(px(16.0))
-            .py(px(12.0))
-            .rounded(px(RADIUS))
-            .text_size(px(16.0))
-            .text_color(move || {
-                let enabled = entry().is_some_and(|e| e.enabled);
-                tint(
-                    WHITE,
-                    if enabled {
-                        0xFF
-                    } else {
-                        TEXT_SECONDARY_ALPHA / 2
-                    },
-                )
+        let focused = move || ui.keys_shown() && focus.get() == Some(at.index());
+        text(move || match row() {
+            Some(Row::Heading(h)) => heading_text(ui, h),
+            Some(Row::Action { item, .. }) => label(item, favorite()).to_owned(),
+            None => String::new(),
+        })
+        .h(px(ROW_H))
+        .px(px(16.0))
+        .pt(move || {
+            px(if matches!(row(), Some(Row::Heading(_))) {
+                18.0
+            } else {
+                13.0
             })
-            .bg(move || {
-                if focused() {
-                    tint(ui.theme.with(|t| t.accent.main), FOCUS_ALPHA)
-                } else {
-                    tint(WHITE, 0)
-                }
+        })
+        .rounded(px(RADIUS))
+        .number_of_lines(1)
+        .text_size(move || {
+            px(if matches!(row(), Some(Row::Heading(_))) {
+                13.0
+            } else {
+                16.0
             })
-            .opacity(move || if entry().is_some() { 1.0_f32 } else { 0.0 })
-            .on_press(move || {
-                ui.touched();
-                let picked = ui.menu.with(|m| m.clone()).and_then(|mut m| m.tap(index));
-                if let Some(item) = picked {
-                    perform(ui, item);
-                }
-            })
+        })
+        .text_color(move || match row() {
+            Some(Row::Action { enabled: true, .. }) => rgb(WHITE),
+            Some(Row::Heading(_)) => tint(WHITE, TEXT_SECONDARY_ALPHA),
+            _ => tint(WHITE, 0x50),
+        })
+        .bg(move || {
+            if focused() {
+                tint(ui.theme.with(|t| t.accent.main), FOCUS_ALPHA)
+            } else {
+                tint(WHITE, 0)
+            }
+        })
+        .on_press(move || {
+            ui.touched();
+            let picked = ui
+                .menu
+                .with(|m| m.clone())
+                .and_then(|mut m| m.tap(at.index()));
+            if let Some(item) = picked {
+                perform(ui, item);
+            }
+        })
     };
     view()
         .absolute()
@@ -148,29 +206,75 @@ pub fn layer(ui: Ui) -> impl IntoElement {
                 PointerEvents::None
             }
         })
-        .child(
-            // Scrim: a tap outside closes the menu.
-            view().flex_1().bg(tint(0x000000, 0x80)).on_press(move || {
-                ui.touched();
-                close(ui);
-            }),
-        )
+        .child(view().flex_1().bg(tint(0x000000, 0x80)).on_press(move || {
+            ui.touched();
+            close(ui);
+        }))
         .child(
             view()
                 .w(px(PANEL_W))
                 .pt_safe_area()
-                .px(px(16.0))
-                .py(px(24.0))
-                .gap(px(6.0))
+                .px(px(12.0))
+                .py(px(16.0))
                 .bg(move || rgb(ui.theme.with(|t| t.background.panel)))
                 .child(
-                    text(title)
-                        .px(px(16.0))
-                        .pb(px(12.0))
-                        .text_size(px(14.0))
-                        .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA)),
+                    virtual_list(count, row)
+                        .estimated_item_size(px(ROW_H))
+                        .element_ref(&list)
+                        .flex_1(),
+                ),
+        )
+        .child(description(ui))
+}
+
+/// The description popover: title, time range and text; no actions (those
+/// live in the menu). Back or a tap closes it.
+fn description(ui: Ui) -> impl IntoElement {
+    let shown = move || ui.description.get().is_some();
+    let program = move || {
+        ui.description
+            .get()
+            .map(|o| (o.channel, program_at(o.channel, o.program_start)))
+    };
+    view()
+        .absolute()
+        .inset_0()
+        .items_end()
+        .pt_safe_area()
+        .px(px(40.0))
+        .py(px(40.0))
+        .bg(move || tint(0x000000, if shown() { 0x80 } else { 0 }))
+        .opacity(move || if shown() { 1.0_f32 } else { 0.0 })
+        .pointer_events(move || if shown() { PointerEvents::Auto } else { PointerEvents::None })
+        .on_press(move || {
+            ui.touched();
+            close(ui);
+        })
+        .child(
+            view()
+                .w(px(480.0))
+                .gap(px(10.0))
+                .p(px(24.0))
+                .rounded(px(RADIUS_LARGE))
+                .bg(move || rgb(ui.theme.with(|t| t.background.panel)))
+                .child(
+                    text(move || program().map_or(String::new(), |(_, p)| synthetic_title(p)))
+                        .text_size(px(22.0))
+                        .text_color(rgb(WHITE)),
                 )
-                .children((0..6).map(entry))
-                .child(view().h(px(1.0)).bg(tint(WHITE, RESTING_ALPHA))),
+                .child(
+                    text(move || {
+                        program().map_or(String::new(), |(ch, p)| {
+                            format!("{} · {}–{}", channel_name(ch), clock(p.start), clock(p.end))
+                        })
+                    })
+                    .text_size(px(14.0))
+                    .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA)),
+                )
+                .child(
+                    text("A synthetic programme description for testing the guide. Real descriptions come from the EPG.")
+                        .text_size(px(15.0))
+                        .text_color(rgb(WHITE)),
+                ),
         )
 }
