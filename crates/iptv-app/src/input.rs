@@ -257,10 +257,16 @@ fn zap(ui: Ui, step: isize) {
 pub fn press_control(ui: Ui, control: Control) {
     ui.update_panels(|p, now| p.touch(now));
     match control {
-        Control::PlayPause => ui.paused.update(|p| *p = !*p),
-        // Live streams resume at the live edge when unpaused; catch-up later.
-        Control::GoLive => ui.paused.set(false),
-        Control::Guide => ui.mode.set(ViewMode::Overlay),
+        Control::ChannelList => ui.mode.set(ViewMode::Overlay),
+        Control::Favorite => {
+            if let Some(ch) = ui.playing.get() {
+                ui.favorites.update(|f| {
+                    if !f.remove(&ch) {
+                        f.insert(ch);
+                    }
+                });
+            }
+        }
         other => log::info!("iptv control {other:?} not implemented yet"),
     }
 }

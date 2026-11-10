@@ -121,7 +121,9 @@ impl Keymap {
             b(Some(Player), K::Down, Short, A::ChannelDown),
             b(Some(Player), K::Left, Short, A::ShowGuide),
             b(Some(Player), K::Right, Short, A::ShowGuide),
-            b(Some(Player), K::Ok, Long, A::ShowMenu),
+            // Long OK and Menu open the control strip (observed).
+            b(Some(Player), K::Ok, Long, A::ShowPanels),
+            b(Some(Player), K::Menu, Short, A::ShowPanels),
             // Control row: directions/OK use the global moves; Up/Down zap.
             b(Some(Controls), K::Up, Short, A::ChannelUp),
             b(Some(Controls), K::Down, Short, A::ChannelDown),

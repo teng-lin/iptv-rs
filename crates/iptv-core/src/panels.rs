@@ -16,24 +16,40 @@ pub enum Shown {
     Both,
 }
 
-/// Buttons in the control row, in order.
+/// Buttons in the full-screen control strip, in the reference UX's
+/// observed order (tivimate docs/08, section E). Play/pause and live are
+/// on the remote's media keys, not in the strip.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Control {
-    PlayPause,
-    GoLive,
-    Audio,
-    Subtitles,
-    Guide,
+    Search,
+    ChannelList,
+    Recordings,
+    Multiview,
+    VideoTracks,
+    AudioTracks,
+    AudioOffset,
+    Captions,
+    Scaling,
+    SleepTimer,
     Favorite,
+    ChannelOptions,
+    Settings,
 }
 
-pub const CONTROLS: [Control; 6] = [
-    Control::PlayPause,
-    Control::GoLive,
-    Control::Audio,
-    Control::Subtitles,
-    Control::Guide,
+pub const CONTROLS: [Control; 13] = [
+    Control::Search,
+    Control::ChannelList,
+    Control::Recordings,
+    Control::Multiview,
+    Control::VideoTracks,
+    Control::AudioTracks,
+    Control::AudioOffset,
+    Control::Captions,
+    Control::Scaling,
+    Control::SleepTimer,
     Control::Favorite,
+    Control::ChannelOptions,
+    Control::Settings,
 ];
 
 /// Auto-hide delays. iptv-rs defaults; they become settings.
@@ -151,7 +167,7 @@ mod tests {
             ..Panels::default()
         };
         p.show_controls(0);
-        assert_eq!((p.shown, p.focused()), (Shown::Both, Control::PlayPause));
+        assert_eq!((p.shown, p.focused()), (Shown::Both, Control::Search));
         assert!(p.captures_input());
         assert_eq!(p.hide_at_ms(), Some(7_000));
     }
@@ -192,11 +208,11 @@ mod tests {
         p.move_focus(-1, 1);
         assert_eq!(p.focus, 0);
         p.move_focus(99, 2);
-        assert_eq!(p.focused(), Control::Favorite);
+        assert_eq!(p.focused(), Control::Settings);
         p.show_controls(3);
-        assert_eq!(p.focused(), Control::Favorite, "still open: focus stays");
+        assert_eq!(p.focused(), Control::Settings, "still open: focus stays");
         p.hide();
         p.show_controls(4);
-        assert_eq!(p.focused(), Control::PlayPause);
+        assert_eq!(p.focused(), Control::Search);
     }
 }

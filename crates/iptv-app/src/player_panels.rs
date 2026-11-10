@@ -14,16 +14,30 @@ const WHITE: u32 = 0xFFFFFF;
 /// Panel fill over video: the theme's panel colour, mostly opaque.
 const PANEL_ALPHA: u8 = 0xE0;
 
-fn label(control: Control, paused: bool) -> &'static str {
+/// Our own wording for the strip's controls.
+fn label(control: Control, favorite: bool) -> &'static str {
+    use Control::*;
     match control {
-        Control::PlayPause if paused => "▶ Play",
-        Control::PlayPause => "❚❚ Pause",
-        Control::GoLive => "● Live",
-        Control::Audio => "Audio",
-        Control::Subtitles => "Subtitles",
-        Control::Guide => "Guide",
-        Control::Favorite => "☆ Favourite",
+        Search => "Search",
+        ChannelList => "Channels",
+        Recordings => "Recordings",
+        Multiview => "Multiview",
+        VideoTracks => "Video",
+        AudioTracks => "Audio",
+        AudioOffset => "Audio delay",
+        Captions => "Subtitles",
+        Scaling => "Picture size",
+        SleepTimer => "Sleep timer",
+        Favorite if favorite => "★ Favourite",
+        Favorite => "☆ Favourite",
+        ChannelOptions => "Channel options",
+        Settings => "Settings",
     }
+}
+
+/// The controls this build can perform; the rest show disabled.
+pub fn implemented(control: Control) -> bool {
+    matches!(control, Control::ChannelList | Control::Favorite)
 }
 
 /// "SD" / "HD" / "FHD" / "4K" from the video height.
@@ -190,9 +204,7 @@ fn info_card(
                 ),
         )
         .child(
-            view()
-                .flex_row()
-                .gap(px(10.0))
+            strip(ui, with_controls)
                 .opacity(move || if with_controls() { 1.0_f32 } else { 0.0 })
                 .pointer_events(move || {
                     if with_controls() {
@@ -201,25 +213,44 @@ fn info_card(
                         PointerEvents::None
                     }
                 })
-                .h(move || px(if with_controls() { 44.0 } else { 0.0 }))
-                .children(
-                    CONTROLS
-                        .iter()
-                        .enumerate()
-                        .map(move |(i, control)| button(ui, i, *control)),
-                ),
+                .h(move || px(if with_controls() { 44.0 } else { 0.0 })),
         )
+}
+
+/// The control strip: a horizontal list that keeps the focused control
+/// on screen.
+fn strip(ui: Ui, with_controls: impl Fn() -> bool + Copy + 'static) -> VirtualList {
+    let list = element_ref();
+    let focus = computed(move || ui.panels.with(|p| p.focus));
+    effect(move || {
+        let at = focus.get();
+        if with_controls() {
+            list.scroll_to_index(at as u32, percentage(0.5), px(0.0), true);
+        }
+    });
+    virtual_list(CONTROLS.len(), move |at| {
+        button(ui, at.index(), CONTROLS[at.index()])
+    })
+    .horizontal()
+    .estimated_item_size(px(150.0))
+    .element_ref(&list)
 }
 
 fn button(ui: Ui, index: usize, control: Control) -> impl IntoElement {
     let focused =
         move || ui.keys_shown() && ui.panels.with(|p| p.captures_input() && p.focus == index);
-    text(move || label(control, ui.paused.get()))
+    let favorite = move || {
+        ui.playing
+            .get()
+            .is_some_and(|ch| ui.favorites.with(|f| f.contains(&ch)))
+    };
+    text(move || label(control, favorite()))
+        .mr(px(10.0))
         .px(px(16.0))
         .py(px(10.0))
         .rounded(px(RADIUS))
         .text_size(px(14.0))
-        .text_color(rgb(WHITE))
+        .text_color(tint(WHITE, if implemented(control) { 0xFF } else { 0x60 }))
         .bg(move || {
             if focused() {
                 tint(ui.theme.with(|t| t.accent.main), FOCUS_ALPHA)
