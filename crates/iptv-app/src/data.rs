@@ -1,20 +1,26 @@
 //! Real data: imports a source and its EPG off the UI thread, keeps it in
 //! the SQLite store, and swaps the guide to the imported schedule.
 //!
-//! At startup the newest stored source is refreshed; with none, the
-//! add-playlist wizard opens on its empty state (`wizard_view`). The wizard
-//! adds sources through [`start_import`]. A new source is stored only once
-//! its import succeeded, so a failed or cancelled attempt leaves nothing
-//! behind.
+//! At startup the stored source shown last (the active playlist, kept in
+//! the store) is refreshed, else the newest; with none, the add-playlist
+//! wizard opens on its empty state (`wizard_view`). The wizard adds sources
+//! through [`start_import`]. A new source is stored only once its import
+//! succeeded, so a failed or cancelled attempt leaves nothing behind. The
+//! playlists screen switches, refreshes, renames and deletes stored
+//! sources through [`library`].
 //!
 //! A stored source's saved channels and guide are on screen before its
 //! refresh reaches the network, and stay when the refresh fails. Its guide
 //! is downloaded again only when the refresh policy says so (`stored`).
+//! Only the source on screen has guide timers: each shown import starts a
+//! new generation, and timers of an older one stop.
 
+mod library;
 mod stored;
 mod wizard_map;
 
 use std::cell::Cell;
+use std::collections::BTreeSet;
 use std::future::Future;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -34,9 +40,12 @@ use iptv_import::{
 use iptv_net::{NetClient, NetConfig};
 use iptv_providers::SecretUrl;
 use iptv_providers::model::{Channel, Group, Source};
-use iptv_store_sqlite::{CatalogCounts, SourceId, Store, StoreError, StoredSource};
+use iptv_store_sqlite::{CatalogCounts, ImportErrorKind, SourceId, Store, StoreError};
 use nsh_core::prelude::*;
 
+pub use library::{
+    Activity, Library, Playlist, delete, playlists, refresh, rename, set_guide_link, switch_to,
+};
 pub use wizard_map::source_from_draft;
 
 use crate::Ui;
@@ -69,6 +78,46 @@ pub struct Job {
     /// `None`: add the source to the store once it imported. `Some`:
     /// refresh that stored source.
     pub stored: Option<SourceId>,
+    pub purpose: Purpose,
+}
+
+/// Why a source is imported, which decides what reaches the screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Purpose {
+    /// A new source from the wizard: shown once it imported.
+    Add,
+    /// The stored source opening at startup: its stored channels and guide
+    /// at once, then refreshed; its last channel may start.
+    Startup,
+    /// The user chose another stored source: as at startup, but nothing
+    /// starts playing.
+    Switch,
+    /// "Refresh now" of the source on screen: the refreshed data replaces
+    /// what is shown.
+    Refresh,
+    /// "Refresh now" of another stored source: kept in the store only; the
+    /// screen and its guide timers stay as they are.
+    Background,
+}
+
+impl Purpose {
+    fn shows(self) -> bool {
+        self != Self::Background
+    }
+
+    /// What the store has is shown before the network.
+    fn shows_stored_first(self) -> bool {
+        matches!(self, Self::Startup | Self::Switch)
+    }
+
+    /// The guide's refresh trigger: opening uses the stored guide while it
+    /// is fresh; an added or refreshed playlist downloads it again.
+    fn trigger(self) -> Trigger {
+        match self {
+            Self::Startup | Self::Switch => Trigger::Startup,
+            Self::Add | Self::Refresh | Self::Background => Trigger::PlaylistChanged,
+        }
+    }
 }
 
 /// What an import reports, on the UI thread.
@@ -166,29 +215,12 @@ pub fn spawn_in_app(future: impl Future<Output = ()> + 'static) {
     });
 }
 
-/// Startup: refreshes the newest stored source, or opens the wizard.
+/// Startup: refreshes the active (else the newest) stored source, or
+/// opens the wizard.
 pub fn start(ui: Ui) {
     APP_OWNER.with(|o| o.set(Some(Owner::current())));
-    match newest_source() {
-        Ok(Some(stored)) => {
-            log::info!(
-                "iptv data: refreshing source {} ({:?})",
-                stored.id.0,
-                stored.source.kind()
-            );
-            let job = Job {
-                source: stored.source,
-                epg_url: None,
-                stored: Some(stored.id),
-            };
-            let _ = start_import(ui, job, |update| match update {
-                Update::Done(Ok(counts)) => log::info!("iptv data: refreshed {counts:?}"),
-                Update::Done(Err(f)) => {
-                    log::warn!("iptv data: refresh failed ({f:?}); keeping what is on screen")
-                }
-                Update::Progress(_) => {}
-            });
-        }
+    match library::startup_source() {
+        Ok(Some(stored)) => library::run(ui, stored, Purpose::Startup),
         Ok(None) => crate::wizard_view::open_first_run(ui),
         Err(e) => {
             log::warn!("iptv data: store unavailable ({e}); opening the wizard");
@@ -197,32 +229,47 @@ pub fn start(ui: Ui) {
     }
 }
 
-fn newest_source() -> Result<Option<StoredSource>, StoreError> {
-    let store = open_store()?;
-    match store.sources()?.last() {
-        Some(summary) => store.source(summary.id),
-        None => Ok(None),
-    }
+/// A new generation owns the guide: older imports no longer show and
+/// their guide timers stop.
+fn next_generation() -> u64 {
+    GENERATION.with(|g| {
+        g.set(g.get() + 1);
+        g.get()
+    })
 }
 
 /// Imports `job` on its own thread. `on_update` hears progress (coalesced
-/// per poll) and then one [`Update::Done`]; on success the guide switches
-/// to the source at once and again when its guide data arrives. Cancel
-/// with the returned token.
+/// per poll) and then one [`Update::Done`]; on success (unless the job is
+/// a [`Purpose::Background`] refresh) the guide switches to the source at
+/// once and again when its guide data arrives. Cancel with the returned
+/// token.
 pub fn start_import(ui: Ui, job: Job, on_update: impl Fn(Update) + 'static) -> CancelToken {
     let cancel = CancelToken::new();
-    let generation = GENERATION.with(|g| {
-        g.set(g.get() + 1);
-        g.get()
-    });
-    // A stored source's refresh may start the last channel; a new one not.
-    let refresh = job.stored.is_some();
+    start_import_with(ui, job, cancel.clone(), on_update);
+    cancel
+}
+
+/// [`start_import`] with the caller's cancel token.
+fn start_import_with(ui: Ui, job: Job, cancel: CancelToken, on_update: impl Fn(Update) + 'static) {
+    let purpose = job.purpose;
+    let shows = purpose.shows();
+    let generation = if shows {
+        next_generation()
+    } else {
+        GENERATION.with(Cell::get)
+    };
+    // Only the startup refresh may start the last channel.
+    let resume = purpose == Purpose::Startup;
     let (tx, rx) = mpsc::channel();
     {
         let cancel = cancel.clone();
         std::thread::spawn(move || run(job, &tx, &cancel));
     }
-    let show = move |imported: Box<Imported>| show(ui, imported, generation, refresh);
+    let show = move |imported: Box<Imported>| {
+        if shows {
+            show(ui, imported, generation, resume);
+        }
+    };
     spawn_in_app(async move {
         let mut finished = false;
         loop {
@@ -242,9 +289,10 @@ pub fn start_import(ui: Ui, job: Job, on_update: impl Fn(Update) + 'static) -> C
                         })));
                     }
                     Ok(Msg::Guide(imported)) => show(imported),
-                    Ok(Msg::NextCheck { source, at }) => {
+                    Ok(Msg::NextCheck { source, at }) if shows => {
                         schedule_check(ui, source, at, generation);
                     }
+                    Ok(Msg::NextCheck { .. }) => {}
                     Err(TryRecvError::Empty) => break,
                     Err(TryRecvError::Disconnected) => {
                         open = false;
@@ -265,13 +313,15 @@ pub fn start_import(ui: Ui, job: Job, on_update: impl Fn(Update) + 'static) -> C
             timer(POLL).await;
         }
     });
-    cancel
 }
 
 /// Puts `imported` on screen unless a newer import owns the guide.
-fn show(ui: Ui, imported: Box<Imported>, generation: u64, refresh: bool) {
+fn show(ui: Ui, imported: Box<Imported>, generation: u64, resume: bool) {
     if GENERATION.with(Cell::get) != generation {
         return;
+    }
+    if imported.source != ui.library.shown.get_untracked() {
+        source_changed(ui, imported.source);
     }
     let channels = imported.channels.len();
     let schedule = EpgSchedule::from_catalog(
@@ -296,7 +346,29 @@ fn show(ui: Ui, imported: Box<Imported>, generation: u64, refresh: bool) {
     }
     log::info!("iptv data: guide switched to {channels} imported channels");
     crate::set_schedule(&ui, Rc::new(schedule));
-    crate::player::source_ready(ui, refresh && imported.resume);
+    crate::player::source_ready(ui, resume && imported.resume);
+}
+
+/// Another stored source (or none) is about to be shown: what played and
+/// the favourites belong to the old one, and the choice is remembered.
+fn source_changed(ui: Ui, source: Option<SourceId>) {
+    log::info!("iptv data: showing source {:?}", source.map(|id| id.0));
+    crate::player::source_changed(ui);
+    if ui.favorites.with_untracked(|f| !f.is_empty()) {
+        ui.favorites.set(BTreeSet::new());
+    }
+    ui.library.shown.set(source);
+    if let Some(id) = source {
+        library::remember_shown(id);
+    }
+}
+
+/// No stored source is left: the guide shows nothing real and no timers
+/// run (the wizard's first-run state goes over it).
+fn show_nothing(ui: Ui) {
+    next_generation();
+    source_changed(ui, None);
+    crate::set_schedule(&ui, Rc::new(iptv_core::guide::SyntheticSchedule));
 }
 
 /// Looks at `source`'s guide again at `at` (unix time), unless a newer
@@ -364,7 +436,7 @@ async fn guide_pipeline(source: SourceId, tx: &Sender<Msg>) {
     let Some(state) = stored::guide_state(source) else {
         return;
     };
-    let guides = state.configs();
+    let guides = stored::current_configs(source, &state);
     let (groups, channels) = match stored::catalog(source) {
         Ok(catalog) => catalog,
         Err(e) => {
@@ -445,8 +517,11 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
     };
     let now = now_unix();
     let stored_guide = job.stored.and_then(stored::guide_state);
-    // A stored source: what the store has is on screen before any network.
-    if let Some(view) = job.stored.and_then(|id| stored_view(&job, id, now)) {
+    // Opening a stored source: what the store has is on screen before any
+    // network.
+    if job.purpose.shows_stored_first()
+        && let Some(view) = job.stored.and_then(|id| stored_view(&job, id, now))
+    {
         let _ = tx.send(Msg::Guide(view));
     }
     let Ok(net) = NetClient::new(NetConfig::default()) else {
@@ -460,24 +535,29 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
             Ok(catalog) => catalog,
             Err(e) => {
                 log::warn!("iptv data: {:?} import failed: {e}", job.source.kind());
-                record_failure(job.stored, &e);
+                if !matches!(e, ImportError::Cancelled) {
+                    record_failure(job.stored, stored::error_kind(&e));
+                }
                 // The stored guide stays on screen: keep it current.
                 if let (Some(id), Some(state)) = (job.stored, stored_guide.as_ref())
                     && let Ok((_, channels)) = stored::catalog(id)
                 {
-                    send_next_check(tx, id, &state.configs(), &channels);
+                    send_next_check(tx, id, &stored::current_configs(id, state), &channels);
                 }
                 return fail(wizard_map::failure_of(&e));
             }
         };
     if catalog.is_empty() {
+        record_failure(job.stored, ImportErrorKind::Other);
         return fail(ImportFailure::new(FailureKind::EmptyPlaylist));
     }
-    let guides = stored::configs(
-        stored::own_guides(&catalog),
-        job.epg_url.clone(),
-        stored_guide.as_ref(),
-    );
+    // The guide link: the one just typed (a new source), else the one the
+    // user gave the stored source.
+    let typed = job.epg_url.clone().or_else(|| {
+        job.stored
+            .and_then(|id| stored::typed_guide(stored::settings(id), stored_guide.as_ref()))
+    });
+    let guides = stored::configs(stored::own_guides(&catalog), typed);
     // A guide the user typed is part of adding the source: it must load
     // before the source is kept, and its failure points at its field.
     let typed_guide = match job.epg_url {
@@ -548,13 +628,8 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
         report(keep_guide(id, import, &guides, &catalog.channels, now));
         return send_next_check(tx, id, &guides, &catalog.channels);
     }
-    let trigger = if job.stored.is_some() {
-        Trigger::Startup
-    } else {
-        Trigger::PlaylistChanged
-    };
     match stored::plan(
-        trigger,
+        job.purpose.trigger(),
         &guides,
         &catalog.channels,
         stored_guide.as_ref(),
@@ -685,13 +760,21 @@ fn save(job: &Job, catalog: &Catalog) -> Result<(SourceId, CatalogCounts), Store
         Some(id) => (id, false),
         None => (store.add_source(&job.source)?, true),
     };
-    let written = store.replace_catalog(
-        id,
-        &catalog.groups,
-        &catalog.channels,
-        &catalog.vod,
-        &catalog.series,
-    );
+    // A new source keeps the guide link it was added with (or none).
+    let written = if added {
+        store.set_source_epg_url(id, job.epg_url.as_ref())
+    } else {
+        Ok(())
+    }
+    .and_then(|()| {
+        store.replace_catalog(
+            id,
+            &catalog.groups,
+            &catalog.channels,
+            &catalog.vod,
+            &catalog.series,
+        )
+    });
     if written.is_err() && added {
         let _ = store.delete_source(id);
     }
@@ -705,11 +788,10 @@ fn save(job: &Job, catalog: &Catalog) -> Result<(SourceId, CatalogCounts), Store
 }
 
 /// Notes a failed refresh on the stored source (kind only).
-fn record_failure(stored: Option<SourceId>, error: &ImportError) {
+fn record_failure(stored: Option<SourceId>, kind: ImportErrorKind) {
     let Some(id) = stored else {
         return;
     };
-    let kind = stored::error_kind(error);
     if let Err(e) = open_store().and_then(|mut s| s.record_import_failure(id, kind)) {
         log::warn!("iptv data: could not record the failure: {e}");
     }

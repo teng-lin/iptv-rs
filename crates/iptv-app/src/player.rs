@@ -6,10 +6,11 @@
 //! back to live, and the last channel on startup.
 //!
 //! The last channel starts after the startup refresh of a stored source
-//! (never under the first-run wizard). It is a one-line file, `last_channel` in
-//! [`crate::data::data_dir`], holding the channel's content key (never a
-//! list index). It moves to the store's history once the store keeps one
-//! for playback.
+//! (never under the first-run wizard). Each playlist has its own: a
+//! one-line file, `last_channel-<source id>` in [`crate::data::data_dir`],
+//! holding the channel's content key (never a list index); builds before
+//! that kept one `last_channel` file, still read when a playlist has none.
+//! It moves to the store's history once the store keeps one for playback.
 
 use std::rc::Rc;
 use std::time::Duration;
@@ -22,6 +23,7 @@ use iptv_import::{CancelToken, SourceMeta};
 use iptv_net::{NetClient, NetConfig};
 use iptv_providers::model::SourceConfig;
 use iptv_providers::xtream::StreamFormat;
+use iptv_store_sqlite::SourceId;
 use nsh_core::prelude::*;
 
 use crate::guide::Schedule;
@@ -132,7 +134,7 @@ pub fn start(ui: &Ui) {
             .with_untracked(|h| h.current() != Some(&key));
         ui.player.history.update(|h| h.played(&key));
         if changed {
-            save_last_channel(&key);
+            save_last_channel(ui.library.shown.get_untracked(), &key);
         }
     }
     open(ui, session);
@@ -370,12 +372,17 @@ fn show_channel(ui: Ui, channel: usize) {
         .update(|f| f.show_channel(channel, &*crate::schedule()));
 }
 
-fn last_channel_path() -> std::path::PathBuf {
-    crate::data::data_dir().join(LAST_CHANNEL_FILE)
+/// The last channel's file of playlist `source` (the shared one of older
+/// builds for none).
+fn last_channel_path(source: Option<SourceId>) -> std::path::PathBuf {
+    crate::data::data_dir().join(match source {
+        Some(id) => format!("{LAST_CHANNEL_FILE}-{}", id.0),
+        None => LAST_CHANNEL_FILE.to_owned(),
+    })
 }
 
-fn save_last_channel(key: &str) {
-    let path = last_channel_path();
+fn save_last_channel(source: Option<SourceId>, key: &str) {
+    let path = last_channel_path(source);
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
@@ -387,10 +394,34 @@ fn save_last_channel(key: &str) {
     }
 }
 
-fn load_last_channel() -> Option<String> {
-    let key = std::fs::read_to_string(last_channel_path()).ok()?;
-    let key = key.trim();
-    (!key.is_empty()).then(|| key.to_owned())
+fn load_last_channel(source: Option<SourceId>) -> Option<String> {
+    let read = |path| {
+        let key = std::fs::read_to_string(path).ok()?;
+        let key = key.trim();
+        (!key.is_empty()).then(|| key.to_owned())
+    };
+    read(last_channel_path(source)).or_else(|| read(last_channel_path(None)))
+}
+
+/// Playlist `source` was deleted: its last channel goes too.
+pub fn forget_source(source: SourceId) {
+    let _ = std::fs::remove_file(last_channel_path(Some(source)));
+}
+
+/// Another playlist is about to be shown (`data.rs`): what plays and the
+/// channel history belong to the old one (channel keys are unique only
+/// within a playlist, so the new one may reuse the playing key).
+pub fn source_changed(ui: Ui) {
+    if ui.playing.get_untracked().is_some() {
+        log::info!("iptv player: another playlist is shown; stopping");
+        ui.playing.set(None);
+        stop(ui);
+        if ui.mode.get_untracked() != ViewMode::Guide {
+            ui.mode.set(ViewMode::Guide);
+        }
+    }
+    ui.player.key.set(None);
+    ui.player.history.set(ChannelHistory::default());
 }
 
 /// Data changes keep the playing channel's row (rows are rebuilt by
@@ -451,7 +482,8 @@ pub fn source_ready(ui: Ui, refresh: bool) {
     {
         return;
     }
-    let Some(channel) = load_last_channel().and_then(|k| crate::schedule().find_channel(&k)) else {
+    let last = load_last_channel(ui.library.shown.get_untracked());
+    let Some(channel) = last.and_then(|k| crate::schedule().find_channel(&k)) else {
         return;
     };
     log::info!("iptv player: resuming the last channel");

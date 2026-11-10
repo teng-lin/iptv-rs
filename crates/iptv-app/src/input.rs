@@ -67,7 +67,7 @@ struct Nav {
 
 /// The surface that owns input now.
 pub fn context(ui: &Ui) -> Context {
-    if crate::wizard_view::is_open(*ui) {
+    if crate::wizard_view::is_open(*ui) || crate::playlists_view::is_open(*ui) {
         return Context::Menu;
     }
     if ui.editor.with(Option::is_some) {
@@ -123,6 +123,9 @@ pub fn bind(ui: Ui) {
     // Spike shortcuts for the view modes.
     on_key("o", move |_| ui.toggle(ViewMode::Overlay));
     on_key("f", move |_| ui.toggle(ViewMode::Fullscreen));
+    // Development: the playlists screen until the navigation rail opens it.
+    #[cfg(target_os = "linux")]
+    on_key("l", move |_| crate::playlists_view::open(ui));
 }
 
 fn key_event(ui: Ui, nav: &Rc<RefCell<Nav>>, key: RemoteKey, phase: Phase) {
@@ -211,6 +214,10 @@ fn apply(ui: Ui, action: Action) {
     let mv = |m: Move| ui.focus.update(|f| f.apply(m, &*crate::schedule()));
     if crate::wizard_view::is_open(ui) {
         crate::wizard_view::key(ui, action);
+        return;
+    }
+    if crate::playlists_view::is_open(ui) {
+        crate::playlists_view::key(ui, action);
         return;
     }
     if ui.editor.with(Option::is_some) {

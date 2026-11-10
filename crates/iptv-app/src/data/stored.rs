@@ -15,7 +15,7 @@ use iptv_providers::SecretUrl;
 use iptv_providers::model::{Channel, ContentKind, Group};
 use iptv_store_sqlite::{
     ChannelOrder, ChannelQuery, EpgCounts, EpgFeedMeta, EpgWindow, ImportErrorKind, SourceId,
-    StoreError, StoredGuide,
+    SourceSettings, StoreError, StoredGuide,
 };
 
 use super::{CUSTOM_EPG, open_store};
@@ -71,24 +71,55 @@ pub fn own_guides(catalog: &Catalog) -> Vec<EpgSourceConfig> {
     catalog.epg_sources(CUSTOM_EPG.0 + 1)
 }
 
-/// The guides to load: a typed one first (the one just typed, else the one
-/// stored with the source's guide), then the source's `own`.
-pub fn configs(
-    mut configs: Vec<EpgSourceConfig>,
-    typed: Option<SecretUrl>,
+/// What the user chose for `source` (`None` when nothing was saved).
+pub fn settings(source: SourceId) -> Option<SourceSettings> {
+    match open_store().and_then(|s| s.source_settings(source)) {
+        Ok(settings) => settings,
+        Err(e) => {
+            log::warn!("iptv data: source settings: {e}");
+            None
+        }
+    }
+}
+
+/// The guide link the user gave a stored source: what its settings say;
+/// for a source added before they existed (no settings), the typed guide
+/// kept with its stored guide.
+pub fn typed_guide(
+    settings: Option<SourceSettings>,
     stored: Option<&StoredGuide>,
-) -> Vec<EpgSourceConfig> {
-    let typed = match typed {
-        Some(url) => Some(custom(url)),
+) -> Option<SecretUrl> {
+    match settings {
+        Some(settings) => settings.epg_url,
         None => stored
             .into_iter()
             .flat_map(StoredGuide::configs)
-            .find(|c| c.id == CUSTOM_EPG),
-    };
-    if let Some(typed) = typed {
-        configs.insert(0, typed);
+            .find(|c| c.id == CUSTOM_EPG)
+            .map(|c| c.url),
+    }
+}
+
+/// The guides to load: the `typed` one first, then the source's `own`.
+pub fn configs(
+    mut configs: Vec<EpgSourceConfig>,
+    typed: Option<SecretUrl>,
+) -> Vec<EpgSourceConfig> {
+    if let Some(url) = typed {
+        configs.insert(0, custom(url));
     }
     configs
+}
+
+/// A stored source's guides without its playlist: the source's own feeds
+/// as stored with its guide, and the guide link it has now (which may have
+/// changed since the guide was stored).
+pub fn current_configs(source: SourceId, state: &StoredGuide) -> Vec<EpgSourceConfig> {
+    let own = state
+        .configs()
+        .into_iter()
+        .filter(|c| c.id != CUSTOM_EPG)
+        .collect();
+    configs(own, typed_guide(settings(source), Some(state)))
 }
 
 /// The config of a guide the user typed: before the source's own.
@@ -275,11 +306,15 @@ mod tests {
         }
     }
 
+    fn saved(url: Option<SecretUrl>) -> Option<SourceSettings> {
+        Some(SourceSettings { epg_url: url })
+    }
+
     #[test]
     fn a_fresh_stored_guide_is_kept_at_startup() {
-        let guides = configs(own(), None, None);
+        let guides = configs(own(), None);
         let stored = stored(&guides);
-        let again = configs(own(), None, Some(&stored));
+        let again = configs(own(), typed_guide(saved(None), Some(&stored)));
         assert_eq!(again, guides);
         assert!(matches!(
             plan(Trigger::Startup, &again, &[], Some(&stored), NOW),
@@ -288,18 +323,39 @@ mod tests {
     }
 
     #[test]
-    fn a_typed_guide_stays_with_the_stored_guide() {
-        let guides = configs(own(), Some(typed()), None);
+    fn a_typed_guide_is_kept_with_the_source() {
+        let guides = configs(own(), Some(typed()));
         assert_eq!(guides[0], custom(typed()));
         assert_eq!(guides.len(), 2);
         let stored = stored(&guides);
-        // The typed address is not kept with the source, only with its guide.
-        let again = configs(own(), None, Some(&stored));
+        let again = configs(own(), typed_guide(saved(Some(typed())), Some(&stored)));
         assert_eq!(again, guides);
         assert!(matches!(
             plan(Trigger::Startup, &again, &[], Some(&stored), NOW),
             Decision::Keep { .. }
         ));
+    }
+
+    #[test]
+    fn a_source_added_before_settings_keeps_the_guide_it_was_typed_with() {
+        let stored = stored(&configs(own(), Some(typed())));
+        assert_eq!(typed_guide(None, Some(&stored)), Some(typed()));
+        assert_eq!(typed_guide(None, None), None);
+        // Removed by the user: the stored guide's typed feed is not used.
+        assert_eq!(typed_guide(saved(None), Some(&stored)), None);
+    }
+
+    #[test]
+    fn a_changed_or_removed_guide_link_downloads_the_guide_again() {
+        let stored = stored(&configs(own(), Some(typed())));
+        let other = SecretUrl::new("http://other.example.test/guide.xml".to_owned());
+        for link in [Some(other), None] {
+            let now = configs(own(), typed_guide(saved(link), Some(&stored)));
+            assert_eq!(
+                plan(Trigger::Startup, &now, &[], Some(&stored), NOW),
+                Decision::Refresh(RefreshReason::FeedsChanged)
+            );
+        }
     }
 
     #[test]
@@ -312,7 +368,7 @@ mod tests {
 
     #[test]
     fn the_next_check_is_when_the_guide_gets_stale_or_runs_short() {
-        let guides = configs(own(), None, None);
+        let guides = configs(own(), None);
         let mut stored = stored(&guides);
         let next =
             |s: &StoredGuide| check_at(plan(Trigger::Timer, &guides, &[], Some(s), NOW), NOW);
@@ -334,7 +390,7 @@ mod tests {
 
     #[test]
     fn a_day_old_guide_is_downloaded_again() {
-        let guides = configs(own(), None, None);
+        let guides = configs(own(), None);
         let mut stored = stored(&guides);
         stored.replaced_at = Some(NOW - DAY);
         assert!(matches!(
