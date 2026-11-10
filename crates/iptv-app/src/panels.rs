@@ -77,6 +77,7 @@ pub fn top_bar(ui: Ui) -> impl IntoElement {
                     .text_size(px(12.0))
                     .text_color(secondary()),
                 )
+                .child(crate::wizard_view::add_button(ui))
                 .child(
                     text(move || {
                         ui.data_version.get();

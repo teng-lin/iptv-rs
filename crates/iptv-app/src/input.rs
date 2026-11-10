@@ -63,6 +63,9 @@ struct Nav {
 
 /// The surface that owns input now.
 pub fn context(ui: &Ui) -> Context {
+    if crate::wizard_view::is_open(*ui) {
+        return Context::Menu;
+    }
     if ui.editor.with(Option::is_some) {
         return Context::Editor;
     }
@@ -181,6 +184,10 @@ fn apply(ui: Ui, action: Action) {
     ui.update_panels(|p, now| p.touch(now));
     let controls = ui.panels.with(|p| p.captures_input()) && ui.mode.get() == ViewMode::Fullscreen;
     let mv = |m: Move| ui.focus.update(|f| f.apply(m, &*crate::schedule()));
+    if crate::wizard_view::is_open(ui) {
+        crate::wizard_view::key(ui, action);
+        return;
+    }
     if ui.editor.with(Option::is_some) {
         match action {
             Action::MoveUp => crate::fav_editor::move_focus(ui, -1),
@@ -237,6 +244,10 @@ fn apply(ui: Ui, action: Action) {
         return;
     }
     match action {
+        // Menu in the groups pane adds a playlist; elsewhere it opens the menu.
+        Action::ShowMenu if ui.focus.with(|f| f.pane) == Pane::Groups => {
+            crate::wizard_view::open_add(ui)
+        }
         Action::ShowMenu => crate::menu_view::open(ui),
         Action::MoveLeft if controls => ui.update_panels(|p, now| p.move_focus(-1, now)),
         Action::MoveRight if controls => ui.update_panels(|p, now| p.move_focus(1, now)),

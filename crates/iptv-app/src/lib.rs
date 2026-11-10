@@ -17,6 +17,7 @@ mod player_panels;
 mod search_view;
 pub mod time;
 mod video;
+mod wizard_view;
 
 pub use time::clock;
 
@@ -112,6 +113,8 @@ pub struct Ui {
     pub editor: Signal<Option<FavoritesEditor>>,
     /// The search screen, while open (also while a result it chose plays).
     pub search: Signal<Option<search_view::Screen>>,
+    /// The add-playlist wizard, when open.
+    pub wizard: Signal<Option<wizard_view::Open>>,
 }
 
 impl Ui {
@@ -286,6 +289,7 @@ pub fn App() -> impl IntoElement {
         chooser: signal(None),
         editor: signal(None),
         search: signal(None),
+        wizard: signal(None),
     };
     // Leaving full screen closes the panels.
     effect(move || {
@@ -383,6 +387,7 @@ pub fn App() -> impl IntoElement {
         .child(menu_view::layer(ui))
         .child(chooser::layer(ui))
         .child(fav_editor::layer(ui))
+        .child(wizard_view::layer(ui))
 }
 
 /// Back: player panels → hidden; full screen/overlay → guide; guide →
@@ -397,6 +402,7 @@ fn bind_back(ui: Ui) {
         (ui.mode.get(), ui.focus.with(|f| f.pane), panels || menu)
     });
     effect(move || match back_target.get() {
+        _ if ui.wizard.with(Option::is_some) => on_back_press(move || wizard_view::back(ui)),
         _ if ui.editor.with(Option::is_some) => on_back_press(move || {
             fav_editor::close(ui);
             true
