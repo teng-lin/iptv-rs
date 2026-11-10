@@ -83,7 +83,7 @@ from the guide's menu (Menu, `m`).
 
 Over full-screen video: OK shows the info card with TV guide and
 History, Down the control row (Up back), Menu the control row at once,
-Long OK the menu; Left the channel list (Left in it: the groups), Long
+Long OK the menu; Left the guide's list (Left in it: the groups), Long
 Left the list beside the video, Right the most recent channel, Up/Down
 change channel, Long Back stops. During catch-up Left/Right seek. Moving
 the mouse shows the panels with play/pause, mute, volume and full screen
