@@ -101,6 +101,9 @@ pub fn context(ui: &Ui) -> Context {
     if crate::search_view::is_open(*ui) {
         return Context::Editor; // Up/Down/Left/Right, OK and digits
     }
+    if crate::multiview::is_open(*ui) {
+        return Context::Editor; // Up/Down/Left/Right, OK, Menu
+    }
     match (ui.mode.get(), ui.focus.with(|f| f.pane)) {
         (ViewMode::Fullscreen, _) if ui.panels.with(|p| p.captures_input()) => Context::Controls,
         (ViewMode::Fullscreen, _) => Context::Player,
@@ -410,6 +413,10 @@ fn apply(ui: Ui, key: RemoteKey, action: Action) {
         crate::search_view::key(ui, action);
         return;
     }
+    if crate::multiview::is_open(ui) {
+        crate::multiview::key(ui, action);
+        return;
+    }
     // Any key but Back dismisses the hint card (Back does, as its own step).
     if action != Action::Back && ui.focus.with(|f| f.hint) {
         ui.focus.update(|f| f.hint = false);
@@ -491,9 +498,12 @@ fn apply(ui: Ui, key: RemoteKey, action: Action) {
     }
 }
 
-/// Long Back (or Stop): nothing plays; back to the guide.
-fn stop_playback(ui: Ui) {
-    if ui.playing.get_untracked().is_none() {
+/// Long Back (or Stop): nothing plays (multiview's tiles neither); back to
+/// the guide.
+pub(crate) fn stop_playback(ui: Ui) {
+    let multiview = untracked(|| crate::multiview::is_open(ui));
+    crate::multiview::close(ui);
+    if ui.playing.get_untracked().is_none() && !multiview {
         return;
     }
     log::info!("iptv player: stopped by the viewer");
@@ -552,6 +562,7 @@ pub fn press_control(ui: Ui, control: Control) {
     }
     match control {
         Control::Search => crate::search_view::open(ui),
+        Control::Multiview => crate::multiview::open(ui),
         Control::ChannelList => crate::channels_view::open(ui, ListMode::Overlay),
         Control::Scaling => crate::chooser::open(ui, Kind::Picture),
         Control::SleepTimer => crate::chooser::open(ui, Kind::Sleep),

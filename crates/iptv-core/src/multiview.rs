@@ -343,12 +343,10 @@ impl<C: Clone + PartialEq> Multiview<C> {
     }
 
     /// A tap on cell `index`: a tile becomes active, the active one opens
-    /// its options; the add cell adds. Any dialog closes.
+    /// its options; the add cell adds. With a dialog open, any tap (also
+    /// beside the cells) only closes it.
     pub fn tap(&mut self, index: usize, failed: impl Fn(usize) -> bool) -> Outcome<C> {
-        if index >= self.cell_count() {
-            return Outcome::Stay;
-        }
-        if self.dialog.take().is_some() {
+        if self.dialog.take().is_some() || index >= self.cell_count() {
             return Outcome::Stay;
         }
         let again = index == self.focus && index == self.active;

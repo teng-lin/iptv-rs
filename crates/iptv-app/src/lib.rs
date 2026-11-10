@@ -23,6 +23,8 @@ mod media;
 mod menu_view;
 #[cfg(target_os = "linux")]
 mod mpv;
+mod multiview;
+mod multiview_view;
 mod panels;
 mod player;
 mod player_panels;
@@ -124,14 +126,9 @@ pub struct Ui {
     /// Player panels over full-screen video.
     pub panels: Signal<Panels>,
     pub paused: Signal<bool>,
-    /// The playing video's size, from the player.
-    /// Where the open stream is (ms from where it was opened), as the
-    /// player last reported.
-    pub position_ms: Signal<u64>,
     /// A catch-up seek being chosen: the target, in seconds into the
     /// programme, opened once the keys pause (`seek.rs`).
     pub seek_target: Signal<Option<i32>>,
-    pub video_size: Signal<Option<(u32, u32)>>,
     /// The app's monotonic clock origin (core state machines take ms).
     pub epoch: Instant,
     /// The open context menu, if any.
@@ -170,10 +167,13 @@ pub struct Ui {
     pub settings: Signal<u64>,
     /// The settings screen, when open.
     pub settings_screen: Signal<Option<iptv_settings::screen::Screen>>,
-    /// Stream, health and history of playback (`player.rs`).
+    /// Each player surface's stream, health, position, size and tracks;
+    /// the channel history (`player.rs`).
     pub player: player::Player,
-    /// The stream's tracks and format, track choices and sound (`media.rs`).
+    /// Volume, mute and audio delay (`media.rs`).
     pub media: media::Media,
+    /// Several channels at once, while open (`multiview.rs`).
+    pub multiview: Signal<Option<multiview::State>>,
     /// The channel list over full-screen video, while open.
     pub channels: Signal<Option<iptv_core::channel_list::ChannelList>>,
     /// A Long Back acted: the platform's Back on its release is swallowed
@@ -352,8 +352,6 @@ pub fn App() -> impl IntoElement {
         visible_rows: signal(None),
         panels: signal(Panels::default()),
         paused: signal(false),
-        video_size: signal(None),
-        position_ms: signal(0),
         seek_target: signal(None),
         epoch: Instant::now(),
         menu: signal(None),
@@ -376,6 +374,7 @@ pub fn App() -> impl IntoElement {
         settings_screen: signal(None),
         player: player::Player::new(),
         media: media::Media::new(),
+        multiview: signal(None),
         channels: signal(None),
         back_guard: signal(iptv_nav::BackGuard::default()),
     };
@@ -393,6 +392,7 @@ pub fn App() -> impl IntoElement {
     data::start(ui);
     time::start(ui);
     player::bind(ui);
+    multiview::bind(ui);
     bind_back(ui);
 
     let rows = element_ref();
@@ -437,9 +437,16 @@ pub fn App() -> impl IntoElement {
         .bg(move || rgb(ui.theme.with(|t| t.background.window)))
         // A moving mouse over full-screen video shows the player panels.
         .on_mouse_move(move |e: &MouseEvent| pointer_moved(ui, e))
-        // Layers, bottom to top: opaque backdrop, video, UI, full-screen tap catcher.
+        // Layers, bottom to top: opaque backdrop, video (multiview's other
+        // surfaces while their tiles play), UI, full-screen tap catcher.
         .child(panels::backdrop(ui))
-        .child(video::layer(ui))
+        .child(video::layer(ui, 0))
+        .children((1..player::SURFACES).map(move |s| {
+            when(
+                move || multiview::mounted(ui, s),
+                move || video::layer(ui, s),
+            )
+        }))
         .child(
             view()
                 .flex_1()
@@ -485,6 +492,7 @@ pub fn App() -> impl IntoElement {
         )
         .child(player_panels::status(ui))
         .child(player_panels::layer(ui))
+        .child(multiview_view::layer(ui))
         .child(channels_view::layer(ui))
         .child(search_view::layer(ui))
         .child(menu_view::layer(ui))
@@ -499,8 +507,12 @@ pub fn App() -> impl IntoElement {
         .child(wizard_view::layer(ui))
 }
 
-/// A tap on full-screen video: the card and its buttons, or nothing.
+/// A tap on full-screen video: the card and its buttons, or nothing
+/// (multiview takes its own taps; beside its tiles nothing happens).
 fn toggle_panels(ui: Ui) {
+    if untracked(|| multiview::is_open(ui)) {
+        return;
+    }
     if ui.panels.with(|p| p.shown) == iptv_core::panels::Shown::Hidden {
         ui.update_panels(|p, now| p.show_card(now));
     } else {
@@ -526,6 +538,7 @@ fn pointer_moved(ui: Ui, e: &MouseEvent) {
     let (x, y) = (e.page_position.x.0, e.page_position.y.0);
     if ui.mode.get_untracked() != ViewMode::Fullscreen
         || open
+        || untracked(|| multiview::is_open(ui))
         || !desktop::pointer_moved(x, y, ui.now_ms())
     {
         return;
@@ -617,6 +630,8 @@ pub(crate) fn go_back(ui: Ui) -> bool {
                 desktop::set_fullscreen(false);
                 true
             }
+            // A dialog closes, else the active tile goes full screen.
+            _ if multiview::is_open(ui) => multiview::back(ui),
             (ViewMode::Fullscreen, _, true) => {
                 ui.panels.update(|p| p.hide());
                 true

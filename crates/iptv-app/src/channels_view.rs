@@ -36,12 +36,25 @@ pub fn open(ui: Ui, mode: ListMode) {
     }
     ui.panels.update(|p| p.hide());
     let list = ui.list.get_untracked();
-    let state = ChannelList::open(mode, ui.playing.get_untracked(), &list);
+    // Picking for multiview: from the active tile's channel.
+    let from = crate::multiview::pick_from(ui).or(ui.playing.get_untracked());
+    let state = ChannelList::open(mode, from, &list);
     ui.channels.set(Some(state));
 }
 
 pub fn close(ui: Ui) {
     ui.channels.set(None);
+    crate::multiview::list_closed(ui);
+}
+
+/// What OK on a channel compares with: nothing while picking for
+/// multiview (every channel is a choice), else the playing channel.
+fn playing(ui: Ui) -> Option<usize> {
+    if crate::multiview::picking(ui) {
+        None
+    } else {
+        ui.playing.get_untracked()
+    }
 }
 
 fn groups_shown(ui: Ui) -> bool {
@@ -81,6 +94,10 @@ fn update(ui: Ui, f: impl FnOnce(&mut ChannelList, &Rows, usize) -> Outcome) {
     match outcome {
         Outcome::Stay => {}
         Outcome::Close => close(ui),
+        Outcome::Play(channel) if crate::multiview::picking(ui) => {
+            crate::multiview::picked(ui, channel);
+            close(ui);
+        }
         Outcome::Play(channel) => {
             log::info!("iptv channel list: play {channel}");
             crate::lists::show_channel(ui, channel);
@@ -97,7 +114,7 @@ fn update(ui: Ui, f: impl FnOnce(&mut ChannelList, &Rows, usize) -> Outcome) {
 
 /// The remote while the list shows.
 pub fn key(ui: Ui, action: Action) {
-    let playing = ui.playing.get_untracked();
+    let playing = playing(ui);
     let step = |by: isize| update(ui, move |c, l, n| c.move_focus(by, l, n));
     match action {
         Action::MoveUp => step(-1),
@@ -114,6 +131,9 @@ pub fn key(ui: Ui, action: Action) {
         }),
         Action::Select => update(ui, |c, l, _| c.select(playing, l)),
         Action::Back => update(ui, |c, _, _| c.back()),
+        // Picking for multiview: nothing plays here.
+        Action::ChannelUp | Action::ChannelDown | Action::PlayPause
+            if crate::multiview::picking(ui) => {}
         Action::ChannelUp | Action::ChannelDown => {
             crate::input::zap(ui, if action == Action::ChannelUp { -1 } else { 1 });
             if let Some(ch) = ui.playing.get_untracked() {
@@ -340,7 +360,7 @@ fn channel_row(ui: Ui, at: Position, focus: Memo<Option<(usize, bool)>>) -> impl
         .bg(move || focus_bg(ui, focused(), resting()))
         .on_press(move || {
             ui.touched();
-            let playing = ui.playing.get_untracked();
+            let playing = playing(ui);
             update(ui, |c, l, _| c.tap_row(at.index(), playing, l));
         })
         .child(
