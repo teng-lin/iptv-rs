@@ -80,7 +80,36 @@ navigation rail          groups list            guide (or channel list)     play
 | Settings screen over the `iptv-settings` catalogue (sections, rows, choosers, persisted) | missing (catalogue and store exist, no screen) | P1 |
 | Settings that change behaviour now hard-coded: EPG update interval / keep past days, catch-up seek keys and steps, startup channel, stay-on-guide/search, channel numbering | missing | P1 |
 
-## 6. Workstreams (2026-11-10)
+## 6. Priorities (user, 2026-11-10)
+
+Core: **playlists, EPG, favourites, search, playback**. **Remote control** is
+critical on TV. Recording, VOD, parental controls and the rest come later.
+Features that only make sense on an Android TV box are not copied (or wait):
+auto start on boot/wake, picture-in-picture on Home, AFR, audio
+passthrough, decoder choice, UDP proxy, voice search, app self-update,
+statistics, beta channel.
+
+The reference's settings tree (runtime, with Premium) is the checklist for
+what each core area must let the user do. Tier per row:
+
+| Area | Reference controls (behaviour) | Tier |
+| --- | --- | --- |
+| Playlists | list of playlists; add; update all; per playlist: enable, name, EPG sources, catch-up type, User-Agent, provider parameters (edit login), manage groups (hide/rename/order), update options | **P0** (screen + switch + edit login/EPG); manage groups P1 |
+| EPG | EPG sources (add/remove, default, per playlist); past days to keep; store descriptions; update interval / on app start / on playlist change; update now; clear; last update status; assign EPG to a channel | **P0** sources + update/clear + status; P1 per-channel assignment |
+| Favourites | Favorites group; add/remove from menu and player; favourites editor; order | **P0** |
+| Search | channels + programmes; history; favourites first; past programmes without catch-up; stay on search after switching | done; settings **P1** |
+| Playback | info panel + controls; tracks (video/audio/subtitles); audio delay; picture size; sleep timer; buffer size; black screen when switching; panels timeout; clock; history / recent channels; external player; catch-up and skip steps | **P0** panels, tracks, history, desktop controls; P1 buffer, timeout, clock, black screen; P2 external player |
+| Remote control | per-context key bindings, guide: OK watch, Long OK menu, Back back, Long Back return to player, Left groups, Right later programmes, Ch± page; player: OK panels, Long OK menu, Back back, Long Back stop playback, Left channels list over video, Long Left channels list in preview, Right most recent channel; catch-up seek key schemes | **P0** defaults on TV; P1 user remapping |
+| Appearance | guide: sorting, preview on/off, numbers, names, two-line names/titles, catch-up icon, highlight current; player: channels list style, info panel, clock, panels timeout; groups sorting; logos; font size; theme; transparency | P1 (numbers, logos, preview, timeout); P2 rest |
+| General | last channel on start; confirm exit with second Back; User-Agent; backup/restore | P1 (start, exit, UA); P2 backup |
+| Recording, reminders, VOD, My list, parental controls, multiview | – | P3 |
+
+Gaps against these tiers that no running workstream covers yet: **EPG
+management** (sources, update/clear, status, per-channel assignment) and
+**remote parity in the player** (Left = channels list over the video,
+Right = most recent channel, Long Back = stop) — the next workstreams.
+
+## 7. Workstreams (2026-11-10)
 
 1. **Groups and navigation** (§1, §2 layout): list model with virtual groups
    (Favorites, All channels, Recent), live filtering, favourites saved by
