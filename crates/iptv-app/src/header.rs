@@ -1,20 +1,27 @@
 //! The guide's header: the preview at the top left (the video layer is laid
 //! out under it in guide mode, `panels::preview_rect`) and, to its right,
-//! the focused programme (title, times, minutes left, progress,
-//! description, channel logo, number, name and group, favourite star) with
-//! remote hints; at the right the list on screen (a tap opens the groups)
-//! and Add playlist.
+//! the focused programme: its title (Roboto Medium) with the favourite star
+//! at the right, its times with a progress bar and the minutes left (the
+//! group's name at the right), and its description in grey. At the right
+//! the list on screen (a tap opens the groups) and Add playlist.
 
 use iptv_core::lists::group_of;
 use nsh_core::prelude::*;
 
-use crate::guide::{Airing, Pane, Program};
-use crate::panels::{HEADER_H, HEADER_PAD_X, HEADER_PAD_Y, PREVIEW_H, PREVIEW_W};
-use crate::theme::{RADIUS, RESTING_ALPHA, TEXT_SECONDARY_ALPHA, TEXT_SIZE};
-use crate::{Ui, channel_name, clock, tint};
+use crate::fonts::{HEADER_BODY, HEADER_TIMES, HEADER_TITLE, MEDIUM, SANS};
+use crate::guide::{Airing, Program};
+use crate::panels::{PREVIEW_MARGIN, PREVIEW_RADIUS, header_now};
+use crate::theme::{BRIGHT_TEXT, RADIUS, RESTING_ALPHA, TEXT_SECONDARY_ALPHA};
+use crate::{Ui, ViewMode, clock, tint};
 
 const WHITE: u32 = 0xFFFFFF;
-const PROGRESS_W: f32 = 240.0;
+/// The progress bar on the times line.
+const PROGRESS_W: f32 = 64.0;
+const PROGRESS_H: f32 = 4.0;
+/// Lines of description under the times.
+const BODY_LINES: u32 = 4;
+/// The opaque ring that rounds the video's corners in the preview.
+const RING: f32 = 12.0;
 
 fn secondary() -> Rgba {
     tint(WHITE, TEXT_SECONDARY_ALPHA)
@@ -25,25 +32,36 @@ fn secondary() -> Rgba {
 /// empty list.
 type Focused = Option<(u64, i32, usize, usize, Program)>;
 
-/// Its times and how far along it is, in our words.
-fn times(now: i32, p: Program) -> String {
-    let span = format!("{}–{}", clock(p.start), clock(p.end));
+/// Its times, in our words.
+fn span(p: Program) -> String {
+    format!("{} – {}", clock(p.start), clock(p.end))
+}
+
+/// How far along it is, in our words.
+fn left(now: i32, p: Program) -> String {
     match p.airing(now) {
-        Airing::Live => format!("{span} · {} min left", p.end - now),
-        Airing::Upcoming => format!("{span} · in {} min", p.start - now),
-        Airing::Ended => format!("{span} · ended"),
+        Airing::Live => format!("{} min left", p.end - now),
+        Airing::Upcoming => format!("in {} min", p.start - now),
+        Airing::Ended => "ended".to_owned(),
     }
 }
 
 fn preview(ui: Ui) -> impl IntoElement {
-    // Transparent: the video layer sits under this rectangle in guide
-    // mode. A tap opens full screen.
+    // Transparent while something plays: the video layer sits under this
+    // rectangle in guide mode. A tap opens full screen.
+    let idle = move || ui.playing.get().is_none();
     view()
-        .w(px(PREVIEW_W))
-        .h(px(PREVIEW_H))
-        .rounded(px(RADIUS))
-        .border_1()
-        .border_color(tint(WHITE, RESTING_ALPHA * 2))
+        .w(move || px(header_now().1))
+        .h(move || px(header_now().2))
+        .rounded(px(PREVIEW_RADIUS))
+        .bg(move || {
+            let cell = ui.theme.with(|t| t.guide().cell);
+            if idle() {
+                crate::grid::fill(ui, cell)
+            } else {
+                tint(cell, 0)
+            }
+        })
         .items_center()
         .justify_center()
         .on_press(move || {
@@ -53,16 +71,30 @@ fn preview(ui: Ui) -> impl IntoElement {
             }
         })
         .child(
-            text(move || {
-                if ui.playing.get().is_none() {
-                    "Nothing playing".to_owned()
-                } else {
-                    String::new()
-                }
-            })
-            .text_size(px(TEXT_SIZE))
-            .text_color(secondary()),
+            text(move || if idle() { "Nothing playing" } else { "" })
+                .font_family(SANS)
+                .text_size(px(HEADER_TIMES))
+                .text_color(secondary()),
         )
+}
+
+/// Rounds the video's corners: a ring of the window colour whose inner edge
+/// is the preview's rounded rectangle (guide mode only).
+fn preview_ring(ui: Ui) -> impl IntoElement {
+    view()
+        .absolute()
+        .left(px(PREVIEW_MARGIN - RING))
+        .top(px(PREVIEW_MARGIN - RING))
+        .w(move || px(header_now().1 + 2.0 * RING))
+        .h(move || px(header_now().2 + 2.0 * RING))
+        .border(px(RING))
+        .rounded(px(PREVIEW_RADIUS + RING))
+        .border_color(move || rgb(ui.theme.with(|t| t.background.window)))
+        .opacity(move || {
+            let shown = ui.mode.get() == ViewMode::Guide && ui.playing.get().is_some();
+            if shown { 1.0_f32 } else { 0.0 }
+        })
+        .pointer_events(PointerEvents::None)
 }
 
 fn details(ui: Ui, program: Memo<Focused>) -> impl IntoElement {
@@ -83,14 +115,21 @@ fn details(ui: Ui, program: Memo<Focused>) -> impl IntoElement {
     };
     let live =
         move || program.with(|p| p.is_some_and(|(_, now, _, _, p)| p.airing(now) == Airing::Live));
+    let group = move || {
+        program.with(|p| {
+            let (_, _, _, ch, _) = (*p)?;
+            let catalog = crate::schedule();
+            group_of(&*catalog, ch).map(|g| catalog.group_name(g))
+        })
+    };
     view()
         .flex_1()
-        .gap(px(3.0))
+        .gap(px(6.0))
         .child(
             view()
                 .flex_row()
                 .items_center()
-                .gap(px(10.0))
+                .gap(px(12.0))
                 .child(
                     text(move || {
                         program.with(|p| {
@@ -99,98 +138,77 @@ fn details(ui: Ui, program: Memo<Focused>) -> impl IntoElement {
                             })
                         })
                     })
-                    .flex_shrink(1.0)
+                    .flex_1()
                     .number_of_lines(1)
-                    .text_size(px(20.0))
+                    .font_family(SANS)
+                    .font_weight(MEDIUM)
+                    .text_size(px(HEADER_TITLE))
                     .text_color(rgb(WHITE)),
                 )
                 .child(
                     text(move || if favourite() { "★" } else { "" })
-                        .text_size(px(16.0))
+                        .text_size(px(HEADER_TITLE * 0.8))
                         .text_color(move || rgb(ui.theme.with(|t| t.accent.light))),
                 ),
         )
         .child(
-            text(move || {
-                program.with(|p| p.map_or_else(String::new, |(_, now, _, _, p)| times(now, p)))
-            })
-            .number_of_lines(1)
-            .text_size(px(13.0))
-            .text_color(secondary()),
-        )
-        .child(
-            // Progress of a live programme.
+            // Times, progress and minutes left; the group at the right.
             view()
-                .w(px(PROGRESS_W))
-                .h(px(4.0))
-                .my(px(2.0))
-                .rounded(px(2.0))
-                .bg(tint(WHITE, RESTING_ALPHA * 2))
-                .opacity(move || if live() { 1.0_f32 } else { 0.0 })
+                .flex_row()
+                .items_center()
+                .gap(px(12.0))
+                .child(
+                    text(move || program.with(|p| p.map(|p| span(p.4)).unwrap_or_default()))
+                        .number_of_lines(1)
+                        .font_family(SANS)
+                        .text_size(px(HEADER_TIMES))
+                        .text_color(rgb(BRIGHT_TEXT)),
+                )
                 .child(
                     view()
-                        .h_full()
-                        .rounded(px(2.0))
-                        .w(move || {
-                            let done = program
-                                .with(|p| p.map_or(0.0, |(_, now, _, _, p)| p.progress(now)));
-                            px(PROGRESS_W * done)
-                        })
-                        .bg(move || rgb(ui.theme.with(|t| t.accent.main))),
+                        .w(move || px(if live() { PROGRESS_W } else { 0.0 }))
+                        .h(px(PROGRESS_H))
+                        .rounded(px(PROGRESS_H / 2.0))
+                        .bg(tint(WHITE, RESTING_ALPHA * 3))
+                        .child(
+                            view()
+                                .h_full()
+                                .rounded(px(PROGRESS_H / 2.0))
+                                .w(move || {
+                                    let done = program.with(|p| {
+                                        p.map_or(0.0, |(_, now, _, _, p)| p.progress(now))
+                                    });
+                                    px(if live() { PROGRESS_W * done } else { 0.0 })
+                                })
+                                .bg(move || rgb(ui.theme.with(|t| t.accent.main))),
+                        ),
+                )
+                .child(
+                    text(move || {
+                        program
+                            .with(|p| p.map(|(_, now, _, _, p)| left(now, p)).unwrap_or_default())
+                    })
+                    .number_of_lines(1)
+                    .font_family(SANS)
+                    .text_size(px(HEADER_TIMES))
+                    .text_color(secondary()),
+                )
+                .child(
+                    text(move || group().unwrap_or_default())
+                        .flex_1()
+                        .number_of_lines(1)
+                        .text_right()
+                        .font_family(SANS)
+                        .text_size(px(HEADER_TIMES))
+                        .text_color(secondary()),
                 ),
         )
         .child(
             text(move || description.get().unwrap_or_default())
-                .text_size(px(12.0))
-                .number_of_lines(2)
+                .number_of_lines(BODY_LINES)
+                .font_family(SANS)
+                .text_size(px(HEADER_BODY))
                 .text_color(secondary()),
-        )
-        .child(
-            // The channel's logo, its place in the list, name and group.
-            view()
-                .flex_row()
-                .items_center()
-                .gap(px(8.0))
-                .child(
-                    image(move || {
-                        let ch = program.with(|p| p.map(|p| p.3));
-                        ch.and_then(|ch| crate::schedule().channel_logo(ch))
-                            .unwrap_or_else(crate::grid::no_logo)
-                    })
-                    .w(px(30.0))
-                    .h(px(20.0))
-                    .object_fit(ResizeMode::Contain),
-                )
-                .child(
-                    text(move || {
-                        program.with(|p| {
-                            let Some((_, _, row, ch, _)) = *p else {
-                                return String::new();
-                            };
-                            let catalog = crate::schedule();
-                            let group = group_of(&*catalog, ch).map(|g| catalog.group_name(g));
-                            match group {
-                                Some(g) => format!("{}  {} · {g}", row + 1, channel_name(ch)),
-                                None => format!("{}  {}", row + 1, channel_name(ch)),
-                            }
-                        })
-                    })
-                    .flex_shrink(1.0)
-                    .number_of_lines(1)
-                    .text_size(px(13.0))
-                    .text_color(rgb(WHITE)),
-                ),
-        )
-        .child(
-            text(move || match (ui.focus.with(|f| f.pane), ui.keys_shown()) {
-                (Pane::Guide, true) => "OK watch   ◀ groups   Back groups",
-                (Pane::Groups, true) => "OK choose   ▲▼ browse   ◀ sidebar   Back sidebar",
-                (Pane::Rail, true) => "OK open   ▶ groups   Back exit",
-                (_, false) => "Tap a programme to watch · tap the list name for groups",
-            })
-            .number_of_lines(1)
-            .text_size(px(12.0))
-            .text_color(secondary()),
         )
 }
 
@@ -237,33 +255,16 @@ pub fn header(ui: Ui) -> impl IntoElement {
     });
     view()
         .pt_safe_area()
-        .bg(move || ui.surface(ui.theme.with(|t| t.background.panel)))
+        .bg(move || ui.surface(ui.theme.with(|t| t.background.window)))
         .child(
             view()
-                .h(px(HEADER_H))
-                .px(px(HEADER_PAD_X))
-                .py(px(HEADER_PAD_Y))
+                .h(move || px(header_now().0))
+                .p(px(PREVIEW_MARGIN))
                 .flex_row()
-                .gap(px(18.0))
+                .gap(px(24.0))
                 .child(preview(ui))
                 .child(details(ui, program))
-                .child(side(ui)),
+                .child(side(ui))
+                .child(preview_ring(ui)),
         )
-}
-
-/// The date and time at the left of the time bar.
-pub fn date_time(ui: Ui) -> Text {
-    text(move || {
-        ui.guide_data();
-        let now = ui.focus.with(|f| f.now);
-        let unix = crate::guide::unix_of(&*crate::schedule(), now);
-        format!(
-            "{}  {}",
-            iptv_core::clock::date(unix, crate::time::offset_minutes(unix)),
-            clock(now)
-        )
-    })
-    .number_of_lines(1)
-    .text_size(px(13.0))
-    .text_color(rgb(WHITE))
 }

@@ -179,11 +179,13 @@ fn bar_buttons(app: &mut Headless, step: impl Fn(Result<(), String>)) {
     step(app.press("label:Video"));
     step(app.wait_for("label:Mute"));
     step(app.press("label:Video"));
-    // The guide leaves full screen; the playing channel's name comes back.
+    // The guide leaves full screen; the playing channel's name comes back
+    // (cut with two dots where the window is narrow: the harness still
+    // reports the 760 pt window here).
     step(app.press("label:Video"));
     step(app.press("label:TV guide"));
     step(gone(app, "label:Mute"));
-    step(app.press("text:★ Test Channel Two"));
+    step(app.press("text:/^★ Test( Channel Two|.*\\.\\.)$/"));
     step(app.press("label:Video"));
     step(app.wait_for("label:Mute"));
 }
