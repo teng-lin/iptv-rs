@@ -307,7 +307,11 @@ impl Schedule for EpgSchedule {
     }
 
     fn program_at(&self, channel: usize, minute: i32) -> Program {
-        let t = self.unix(minute);
+        // What airs at the minute's last second: a programme starting partway
+        // through a minute (its start rounds down to it) owns that minute, so
+        // the minute a cell starts at finds that cell's programme, not the one
+        // before it, and cells never overlap.
+        let t = self.unix(minute) + 59;
         let key = self.key(channel);
         let (start, end) = match key.and_then(|k| self.store.programme_at(k, t)) {
             Some(p) => (p.start(), p.stop()),

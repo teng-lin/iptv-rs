@@ -32,8 +32,16 @@ fn store_for(keys: &[(&ChannelKey, Option<&str>, &str)]) -> GuideStore {
 }
 
 fn store_with(keys: &[(&ChannelKey, Option<&str>, &str)], descriptions: bool) -> GuideStore {
+    store_from(&xmltv(), keys, descriptions)
+}
+
+fn store_from(
+    xml: &str,
+    keys: &[(&ChannelKey, Option<&str>, &str)],
+    descriptions: bool,
+) -> GuideStore {
     let parsed =
-        parse_xmltv(xmltv().as_bytes(), ParseOptions::default()).expect("synthetic xmltv parses");
+        parse_xmltv(xml.as_bytes(), ParseOptions::default()).expect("synthetic xmltv parses");
     let mut builder = SourceBuilder::new(
         SourceId(1),
         0,
@@ -83,6 +91,44 @@ fn schedule() -> EpgSchedule {
         store,
         NOW,
     )
+}
+
+#[test]
+fn a_programme_starting_mid_minute_owns_that_minute() {
+    // "Second" starts 30 s into minute 30: the minute rounds down to it.
+    let p = |from: i64, to: i64, title: &str| {
+        format!(
+            "<programme channel=\"a.test\" start=\"{}\" stop=\"{}\"><title>{title}</title></programme>",
+            format_xmltv_time(NOW + from),
+            format_xmltv_time(NOW + to),
+        )
+    };
+    let xml = format!(
+        "<?xml version=\"1.0\"?><tv><channel id=\"a.test\"><display-name>Alpha</display-name></channel>{}{}</tv>",
+        p(0, 30 * 60 + 30, "First"),
+        p(30 * 60 + 30, 60 * 60, "Second"),
+    );
+    let a = ChannelKey::new("a");
+    let store = store_from(&xml, &[(&a, Some("a.test"), "Alpha")], false);
+    let channel = GuideChannel {
+        key: a,
+        name: "Alpha".to_owned(),
+        number: 0,
+        catchup_days: 0,
+    };
+    let s = EpgSchedule::new(vec![("News".to_owned(), vec![channel])], store, NOW);
+    let second = s.program_at(0, 30);
+    assert_eq!(s.title(0, second), "Second", "the minute it starts in");
+    assert_eq!(second, Program { start: 30, end: 60 });
+    let first = s.program_at(0, 29);
+    assert_eq!(s.title(0, first), "First");
+    assert_eq!(first.end, 30, "cells meet without overlapping");
+    // A tap on the cell (its start minute) focuses that programme.
+    let mut f = Focus::at(10);
+    f.tap(0, second.start, &s);
+    assert_eq!(s.title(0, f.program(&s)), "Second");
+    let cells = s.programs_between(0, 0, 60);
+    assert_eq!(cells, vec![first, second]);
 }
 
 #[test]
