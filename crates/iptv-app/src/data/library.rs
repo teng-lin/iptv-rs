@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, HashMap};
 use iptv_core::wizard::{ImportCounts, ImportFailure, ImportProgress};
 use iptv_import::CancelToken;
 use iptv_providers::SecretUrl;
-use iptv_providers::model::SourceKind;
+use iptv_providers::model::{Source, SourceConfig, SourceKind};
 use iptv_store_sqlite::{ImportErrorKind, SourceId, StoreError, StoredSource};
 use nsh_core::prelude::*;
 
@@ -39,12 +39,17 @@ impl Library {
     }
 }
 
-/// A stored playlist's refresh this session.
+/// A stored playlist's refresh (or check of new details) this session.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Activity {
     Running(Option<ImportProgress>),
-    /// Finished; on failure the stored channels stay.
+    /// Finished; on failure the stored channels stay. New details that
+    /// imported are saved.
     Done(Result<ImportCounts, ImportFailure>),
+    /// New details are being tried.
+    Checking(Option<ImportProgress>),
+    /// New details did not import: the stored ones and their data stay.
+    Rejected(ImportFailure),
 }
 
 /// A stored playlist, as listed. Carries no secrets but the guide link,
@@ -61,6 +66,12 @@ pub struct Playlist {
     pub failed: Option<(ImportErrorKind, Option<i64>)>,
     /// The guide link the user gave it.
     pub guide_link: Option<SecretUrl>,
+    /// The last guide download failed (its stored guide stays).
+    pub guide_failed: bool,
+    /// The User-Agent its requests send (M3U and Xtream only).
+    pub user_agent: Option<String>,
+    /// An M3U playlist read from a file (no link to change).
+    pub from_file: bool,
 }
 
 thread_local! {
@@ -78,6 +89,14 @@ pub fn playlists() -> Result<Vec<Playlist>, StoreError> {
         .map(|s| {
             let guide = store.epg_guide(s.id)?;
             let settings = store.source_settings(s.id)?;
+            let config = store.source(s.id)?.map(|stored| stored.source.config);
+            let (user_agent, from_file) = match &config {
+                Some(SourceConfig::M3u(c)) => {
+                    (c.user_agent.clone(), !c.location.expose().contains("://"))
+                }
+                Some(SourceConfig::Xtream(c)) => (c.user_agent.clone(), false),
+                _ => (None, false),
+            };
             Ok(Playlist {
                 id: s.id,
                 name: s.name,
@@ -85,7 +104,10 @@ pub fn playlists() -> Result<Vec<Playlist>, StoreError> {
                 channels: s.import.counts.channels,
                 updated_at: s.import.last_success_at,
                 failed: s.import.last_error.map(|k| (k, s.import.last_error_at)),
+                guide_failed: guide.as_ref().is_some_and(|g| g.last_error.is_some()),
                 guide_link: stored::typed_guide(settings, guide.as_ref()),
+                user_agent,
+                from_file,
             })
         })
         .collect()
@@ -148,8 +170,9 @@ fn cancel_running(id: SourceId) {
 }
 
 /// Imports stored playlist `stored` for `purpose`, reporting into the
-/// library's activity.
-pub(super) fn run(ui: Ui, stored: StoredSource, purpose: Purpose) {
+/// library's activity. With `edit`, `stored.source` holds new details to
+/// try (saved only if they import).
+pub(super) fn run(ui: Ui, stored: StoredSource, purpose: Purpose, edit: bool) {
     let id = stored.id;
     log::info!(
         "iptv data: {purpose:?} of source {} ({:?})",
@@ -167,11 +190,19 @@ pub(super) fn run(ui: Ui, stored: StoredSource, purpose: Purpose) {
         epg_url: None,
         stored: Some(id),
         purpose,
+        edit,
     };
     let token = CancelToken::new();
     RUNNING.with(|r| r.borrow_mut().insert(id, (ticket, token.clone())));
     ui.library.activity.update(|a| {
-        a.insert(id, Activity::Running(None));
+        a.insert(
+            id,
+            if edit {
+                Activity::Checking(None)
+            } else {
+                Activity::Running(None)
+            },
+        );
     });
     start_import_with(ui, job, token, move |update| {
         if !current() {
@@ -182,7 +213,14 @@ pub(super) fn run(ui: Ui, stored: StoredSource, purpose: Purpose) {
             return;
         }
         let activity = match update {
+            Update::Progress(p) if edit => Activity::Checking(Some(p)),
             Update::Progress(p) => Activity::Running(Some(p)),
+            Update::Done(Err(f)) if edit => {
+                log::warn!("iptv data: the new details did not import ({f:?}); the old ones stay");
+                RUNNING.with(|r| r.borrow_mut().remove(&id));
+                changed(ui);
+                Activity::Rejected(f)
+            }
             Update::Done(result) => {
                 match &result {
                     Ok(counts) => log::info!("iptv data: refreshed {counts:?}"),
@@ -212,7 +250,7 @@ pub fn switch_to(ui: Ui, id: SourceId) {
     };
     // A refresh of it in the background gives way to the shown one.
     cancel_running(id);
-    run(ui, stored, Purpose::Switch);
+    run(ui, stored, Purpose::Switch, false);
 }
 
 /// Downloads stored playlist `id` again (unless that already runs): the
@@ -224,12 +262,56 @@ pub fn refresh(ui: Ui, id: SourceId) {
     let Some(stored) = load(id) else {
         return;
     };
-    let purpose = if ui.library.shown.get_untracked() == Some(id) {
+    run(ui, stored, refresh_purpose(ui, id), false);
+}
+
+/// The shown playlist refreshes in place, another one into the store only.
+fn refresh_purpose(ui: Ui, id: SourceId) -> Purpose {
+    if ui.library.shown.get_untracked() == Some(id) {
         Purpose::Refresh
     } else {
         Purpose::Background
+    }
+}
+
+/// Refreshes every stored playlist (each one not refreshing already).
+pub fn refresh_all(ui: Ui) {
+    match playlists() {
+        Ok(all) => all.iter().for_each(|p| refresh(ui, p.id)),
+        Err(e) => log::warn!("iptv data: the store is unavailable: {e}"),
+    }
+}
+
+/// Stored playlist `id` with its details (secrets included: for the
+/// details form only, never shown or logged).
+pub fn source_details(id: SourceId) -> Option<Source> {
+    load(id).map(|stored| stored.source)
+}
+
+/// Tries `source` (new details of stored playlist `id`): they replace the
+/// stored ones once they imported; on failure the playlist stays as it was.
+pub fn try_details(ui: Ui, id: SourceId, source: Source) {
+    let Some(mut stored) = load(id) else {
+        return;
     };
-    run(ui, stored, purpose);
+    // Only the details change; the name is the stored one.
+    stored.source.config = source.config;
+    cancel_running(id);
+    run(ui, stored, refresh_purpose(ui, id), true);
+}
+
+/// Sets the User-Agent of playlist `id` (`None`: the app's own), tried
+/// like other new details.
+pub fn set_user_agent(ui: Ui, id: SourceId, user_agent: Option<String>) {
+    let Some(mut source) = source_details(id) else {
+        return;
+    };
+    match &mut source.config {
+        SourceConfig::M3u(c) => c.user_agent = user_agent,
+        SourceConfig::Xtream(c) => c.user_agent = user_agent,
+        SourceConfig::Stalker(_) => return,
+    }
+    try_details(ui, id, source);
 }
 
 pub fn rename(ui: Ui, id: SourceId, name: &str) -> Result<(), StoreError> {
@@ -265,7 +347,7 @@ pub fn delete(ui: Ui, id: SourceId) -> Result<(), StoreError> {
         return Ok(());
     }
     match newest()? {
-        Some(next) => run(ui, next, Purpose::Switch),
+        Some(next) => run(ui, next, Purpose::Switch, false),
         None => {
             super::show_nothing(ui);
             crate::playlists_view::close(ui);

@@ -142,6 +142,7 @@ fn perform(ui: Ui, effect: WizardEffect) {
                 epg_url,
                 stored: None,
                 purpose: Purpose::Add,
+                edit: false,
             };
             let token = data::start_import(ui, job, move |update| {
                 send(

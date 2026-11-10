@@ -1,9 +1,12 @@
 //! The playlists screen: the stored playlists (name, type, channel count,
-//! last update or last failure, the one on screen marked) and an "Add
-//! playlist" row. OK (or Menu, or a tap) on a playlist opens its actions:
-//! show it, refresh it now, rename it, change its guide link (or use only
-//! the provider's guide), delete it after a confirmation that states what
-//! goes. `state.rs` owns focus and flow; `data::library` does the work.
+//! last update or last failure, the one on screen marked), "Refresh all"
+//! (with two or more) and "Add playlist". OK (or Menu, or a tap) on a
+//! playlist opens its actions: show it, refresh it now, rename it, change
+//! its provider details (link, server and login, portal and MAC address:
+//! checked by importing them, kept only if that works), its User-Agent,
+//! its guide link (or use only the provider's guide), delete it after a
+//! confirmation that states what goes. `state.rs` and `details.rs` own
+//! focus and flow; `data::library` does the work.
 //!
 //! Remote: Up/Down move, OK acts, Menu opens a playlist's actions, Back
 //! closes the open sheet, then the screen. Touch and mouse: every row and
@@ -12,6 +15,8 @@
 //! user info and query values hidden, and a link carrying them is never
 //! put into the text field. Wording is iptv-rs's own.
 
+mod details;
+mod details_card;
 mod state;
 mod words;
 
@@ -144,6 +149,27 @@ fn perform(ui: Ui, effect: Effect) {
         Effect::Rename(id, name) => data::rename(ui, id, &name),
         Effect::SetGuide(id, link) => data::set_guide_link(ui, id, link),
         Effect::Delete(id) => data::delete(ui, id),
+        Effect::RefreshAll => {
+            data::refresh_all(ui);
+            Ok(())
+        }
+        Effect::OpenDetails(id) => {
+            if let Some(source) = data::source_details(id) {
+                update(ui, |s| {
+                    s.open_details(source);
+                    None
+                });
+            }
+            Ok(())
+        }
+        Effect::TryDetails(id, source) => {
+            data::try_details(ui, id, source);
+            Ok(())
+        }
+        Effect::SetUserAgent(id, agent) => {
+            data::set_user_agent(ui, id, agent);
+            Ok(())
+        }
         Effect::Close => {
             close(ui);
             Ok(())
@@ -163,6 +189,12 @@ fn effect_name(effect: &Effect) -> String {
         Effect::Rename(id, _) => format!("rename {}", id.0),
         Effect::SetGuide(id, link) => format!("guide link of {}: set {}", id.0, link.is_some()),
         Effect::Delete(id) => format!("delete {}", id.0),
+        Effect::RefreshAll => "refresh all".to_owned(),
+        Effect::OpenDetails(id) => format!("details of {}", id.0),
+        Effect::TryDetails(id, _) => format!("try new details of {}", id.0),
+        Effect::SetUserAgent(id, agent) => {
+            format!("User-Agent of {}: set {}", id.0, agent.is_some())
+        }
         Effect::Close => "close".to_owned(),
     }
 }
@@ -193,6 +225,27 @@ pub fn layer(ui: Ui) -> impl IntoElement {
                 }
             });
         }
+    });
+    // New details checked: saved closes the form, refused keeps it.
+    effect(move || {
+        let ended = ui.library.activity.with(|a| {
+            a.iter()
+                .filter_map(|(id, act)| match act {
+                    Activity::Done(Ok(_)) => Some((*id, true)),
+                    Activity::Done(Err(_)) | Activity::Rejected(_) => Some((*id, false)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        });
+        untracked(|| {
+            ui.playlists.update(|s| {
+                if let Some(s) = s {
+                    ended
+                        .iter()
+                        .for_each(|(id, saved)| s.details_checked(*id, *saved));
+                }
+            });
+        });
     });
     let editing = computed(move || editing(ui));
     when(
@@ -225,6 +278,7 @@ fn hint(ui: Ui) -> &'static str {
         (true, Layer::List) => "▲▼ choose   OK actions   Back close",
         (true, Layer::Actions { .. }) => "▲▼ choose   OK do it   Back close the sheet",
         (true, Layer::Confirm { .. }) => "▲▼ choose   OK confirm   Back keep it",
+        (true, Layer::Details { .. }) => "▲▼ choose   OK change or check   Back leave unchanged",
         (false, _) => "Tap a playlist for what you can do with it",
     }
 }
@@ -257,7 +311,7 @@ fn header(ui: Ui) -> impl IntoElement {
 
 fn list(ui: Ui) -> impl IntoElement {
     let rows = element_ref();
-    let count = move || state(ui, |s| s.rows().len() + 1).unwrap_or(0);
+    let count = move || state(ui, |s| s.items().len()).unwrap_or(0);
     let focused_index =
         computed(move || state(ui, |s| s.items().iter().position(|i| *i == s.focus())).flatten());
     effect(move || {
@@ -275,23 +329,32 @@ fn list(ui: Ui) -> impl IntoElement {
 
 fn row(ui: Ui, index: usize, focused_index: Memo<Option<usize>>) -> impl IntoElement {
     let playlist = move || state(ui, |s| s.rows().get(index).cloned()).flatten();
-    let item = move || playlist().map_or(Item::Add, |p| Item::Playlist(p.id));
-    let shown = move || playlist().is_some_and(|p| ui.library.shown.get() == Some(p.id));
-    let activity = move |id: SourceId| ui.library.activity.with(|a| a.get(&id).cloned());
-    let status = move || {
-        playlist().map_or((String::new(), false), |p| {
-            words::status(&p, activity(p.id).as_ref(), crate::time::wall_unix())
+    let item = move || state(ui, |s| s.items().get(index).copied()).flatten();
+    let refreshing = move || {
+        ui.library.activity.with(|a| {
+            a.values()
+                .filter(|act| matches!(act, Activity::Running(_) | Activity::Checking(_)))
+                .count()
         })
     };
-    let title = move || match playlist() {
-        Some(p) => p.name,
-        None => "+ Add playlist".to_owned(),
+    let shown = move || playlist().is_some_and(|p| ui.library.shown.get() == Some(p.id));
+    let activity = move |id: SourceId| ui.library.activity.with(|a| a.get(&id).cloned());
+    let status = move || match (playlist(), item()) {
+        (Some(p), _) => words::status(&p, activity(p.id).as_ref(), crate::time::wall_unix()),
+        (None, Some(Item::RefreshAll)) => (words::refreshing(refreshing()), false),
+        _ => (String::new(), false),
     };
-    let summary = move || {
-        playlist().map_or_else(
-            || "M3U link or file, Xtream Codes login, Stalker portal".to_owned(),
-            |p| words::summary(&p),
-        )
+    let title = move || match (playlist(), item()) {
+        (Some(p), _) => p.name,
+        (None, Some(Item::RefreshAll)) => "Refresh all playlists".to_owned(),
+        _ => "+ Add playlist".to_owned(),
+    };
+    let summary = move || match (playlist(), item()) {
+        (Some(p), _) => words::summary(&p),
+        (None, Some(Item::RefreshAll)) => {
+            "Each one downloads again; the one on screen updates in place".to_owned()
+        }
+        _ => "M3U link or file, Xtream Codes login, Stalker portal".to_owned(),
     };
     view()
         .h(px(ROW_H))
@@ -303,8 +366,9 @@ fn row(ui: Ui, index: usize, focused_index: Memo<Option<usize>>) -> impl IntoEle
         .bg(move || focus_bg(ui, focused_index.get() == Some(index)))
         .on_press(move || {
             ui.touched();
-            let tapped = item();
-            update(ui, |s| s.tap(tapped));
+            if let Some(tapped) = item() {
+                update(ui, |s| s.tap(tapped));
+            }
         })
         .child(view().w(px(8.0)).h(px(40.0)).rounded(px(4.0)).bg(move || {
             if shown() {
@@ -346,29 +410,32 @@ fn row(ui: Ui, index: usize, focused_index: Memo<Option<usize>>) -> impl IntoEle
 /// The open sheet (actions or delete confirmation) over the list; rebuilt
 /// only when another sheet opens.
 fn sheet(ui: Ui) -> impl IntoElement {
+    // Which sheet, not where its focus is.
     let open = computed(move || match state(ui, Screen::layer) {
-        Some(Layer::Actions { id, .. }) => Some((id, false)),
-        Some(Layer::Confirm { id, .. }) => Some((id, true)),
-        _ => None,
+        Some(Layer::Actions { id, .. }) => Some((Sheet::Actions, id)),
+        Some(Layer::Confirm { id, .. }) => Some((Sheet::Confirm, id)),
+        Some(Layer::Details { id }) => Some((Sheet::Details, id)),
+        Some(Layer::List) | None => None,
     });
     dynamic(move || {
         let shown = open.get();
         untracked(move || match shown {
-            None => view().into_element(),
-            Some((id, confirm)) => backdrop(
-                ui,
-                if confirm {
-                    confirm_card(ui, id).into_element()
-                } else {
-                    actions_card(ui, id).into_element()
-                },
-            )
-            .into_element(),
+            Some((Sheet::Actions, id)) => backdrop(ui, actions_card(ui, id).into_element()),
+            Some((Sheet::Confirm, id)) => backdrop(ui, confirm_card(ui, id).into_element()),
+            Some((Sheet::Details, id)) => backdrop(ui, details_card::card(ui, id).into_element()),
+            None => view(),
         })
     })
 }
 
-fn backdrop(ui: Ui, card: AnyElement) -> impl IntoElement {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Sheet {
+    Actions,
+    Confirm,
+    Details,
+}
+
+fn backdrop(ui: Ui, card: AnyElement) -> View {
     view()
         .absolute()
         .inset_0()
@@ -422,9 +489,12 @@ fn button(
 fn actions_card(ui: Ui, id: SourceId) -> impl IntoElement {
     let playlist = move || state(ui, |s| s.row(id).cloned()).flatten();
     let running = move || {
-        ui.library
-            .activity
-            .with(|a| matches!(a.get(&id), Some(Activity::Running(_))))
+        ui.library.activity.with(|a| {
+            matches!(
+                a.get(&id),
+                Some(Activity::Running(_) | Activity::Checking(_))
+            )
+        })
     };
     let acts = state(ui, |s| s.acts(id)).unwrap_or_default();
     let notice = move || state(ui, |s| s.notice()).flatten();
@@ -433,7 +503,8 @@ fn actions_card(ui: Ui, id: SourceId) -> impl IntoElement {
             move || state(ui, |s| s.layer() == Layer::Actions { id, focus: act }).unwrap_or(false);
         let label = move || {
             let shown = ui.library.shown.get() == Some(id);
-            words::act(act, shown, running()).to_owned()
+            let kind = playlist().map(|p| p.kind);
+            words::act(act, kind, shown, running()).to_owned()
         };
         let color = if act == Act::Delete { ERROR } else { WHITE };
         button(ui, label, focused, color, move || {
@@ -519,7 +590,8 @@ fn set_edit_text(ui: Ui, text: &str) {
     });
 }
 
-/// The text sheet for a rename or a guide link; made when entry starts.
+/// The text sheet for a rename, a User-Agent, a guide link or a provider
+/// detail; made when entry starts.
 fn edit_sheet(ui: Ui) -> impl IntoElement {
     let Some((kind, prefilled, has_link)) = ui.playlists.with_untracked(|s| {
         let s = s.as_ref()?;
@@ -529,8 +601,22 @@ fn edit_sheet(ui: Ui) -> impl IntoElement {
     }) else {
         return view();
     };
+    let mut masked = false;
     let (label, placeholder, url) = match kind {
         EditKind::Rename => ("Playlist name", "How the playlist is listed", false),
+        EditKind::UserAgent => (
+            "User-Agent",
+            "Empty: the app's own; some providers ask for a particular one",
+            false,
+        ),
+        EditKind::Param(p) => {
+            masked = p == details::Param::Password;
+            (
+                words::param(p),
+                words::param_placeholder(p, prefilled),
+                p.is_link(),
+            )
+        }
         // A link with an account in it is not shown: typing replaces it.
         EditKind::GuideLink if has_link && !prefilled => (
             "Guide link (XMLTV)",
@@ -549,7 +635,7 @@ fn edit_sheet(ui: Ui) -> impl IntoElement {
             label,
             placeholder,
             url,
-            masked: false,
+            masked,
             text: edit_text,
             set_text: set_edit_text,
             commit,

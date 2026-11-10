@@ -44,7 +44,8 @@ use iptv_store_sqlite::{CatalogCounts, ImportErrorKind, SourceId, Store, StoreEr
 use nsh_core::prelude::*;
 
 pub use library::{
-    Activity, Library, Playlist, delete, playlists, refresh, rename, set_guide_link, switch_to,
+    Activity, Library, Playlist, delete, playlists, refresh, refresh_all, rename, set_guide_link,
+    set_user_agent, source_details, switch_to, try_details,
 };
 pub use wizard_map::source_from_draft;
 
@@ -79,6 +80,10 @@ pub struct Job {
     /// refresh that stored source.
     pub stored: Option<SourceId>,
     pub purpose: Purpose,
+    /// `source` holds new details (link, login, User-Agent) for the stored
+    /// source: they replace the stored ones once they imported; a failure
+    /// leaves the stored source and its data as they were.
+    pub edit: bool,
 }
 
 /// Why a source is imported, which decides what reaches the screen.
@@ -220,7 +225,7 @@ pub fn spawn_in_app(future: impl Future<Output = ()> + 'static) {
 pub fn start(ui: Ui) {
     APP_OWNER.with(|o| o.set(Some(Owner::current())));
     match library::startup_source() {
-        Ok(Some(stored)) => library::run(ui, stored, Purpose::Startup),
+        Ok(Some(stored)) => library::run(ui, stored, Purpose::Startup, false),
         Ok(None) => crate::wizard_view::open_first_run(ui),
         Err(e) => {
             log::warn!("iptv data: store unavailable ({e}); opening the wizard");
@@ -535,7 +540,8 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
             Ok(catalog) => catalog,
             Err(e) => {
                 log::warn!("iptv data: {:?} import failed: {e}", job.source.kind());
-                if !matches!(e, ImportError::Cancelled) {
+                // New details that failed say nothing about the stored ones.
+                if !matches!(e, ImportError::Cancelled) && !job.edit {
                     record_failure(job.stored, stored::error_kind(&e));
                 }
                 // The stored guide stays on screen: keep it current.
@@ -548,7 +554,9 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
             }
         };
     if catalog.is_empty() {
-        record_failure(job.stored, ImportErrorKind::Other);
+        if !job.edit {
+            record_failure(job.stored, ImportErrorKind::Other);
+        }
         return fail(ImportFailure::new(FailureKind::EmptyPlaylist));
     }
     // The guide link: the one just typed (a new source), else the one the
@@ -753,13 +761,18 @@ async fn download_guide<P: ProgressSink>(
 }
 
 /// Stores the catalog: under a new source (removed again if the catalog
-/// cannot be written) or the refreshed one.
+/// cannot be written) or the refreshed one (with its new details when they
+/// were edited).
 fn save(job: &Job, catalog: &Catalog) -> Result<(SourceId, CatalogCounts), StoreError> {
     let mut store = open_store()?;
     let (id, added) = match job.stored {
         Some(id) => (id, false),
         None => (store.add_source(&job.source)?, true),
     };
+    if let (Some(id), true) = (job.stored, job.edit) {
+        store.update_source(id, &job.source)?;
+        log::info!("iptv data: saved the new details of source {}", id.0);
+    }
     // A new source keeps the guide link it was added with (or none).
     let written = if added {
         store.set_source_epg_url(id, job.epg_url.as_ref())

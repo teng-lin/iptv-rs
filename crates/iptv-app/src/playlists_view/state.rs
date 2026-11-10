@@ -1,19 +1,24 @@
-//! The playlists screen's state: the stored playlists and an "Add playlist"
-//! row, a sheet of actions for one playlist, a delete confirmation, and
-//! text entry (rename, guide link). Focus is kept by identity (a
+//! The playlists screen's state: the stored playlists, "Refresh all" and
+//! "Add playlist" rows, a sheet of actions for one playlist, its provider
+//! details form (`details.rs`), a delete confirmation, and text entry
+//! (rename, User-Agent, guide link, a detail). Focus is kept by identity (a
 //! playlist's id), never by list position. Pure: the view feeds it remote
 //! keys and taps and carries out the [`Effect`]s it returns.
 
 use iptv_core::wizard::{Field, FieldError, validate_field};
 use iptv_providers::SecretUrl;
+use iptv_providers::model::{Source, SourceKind};
 use iptv_store_sqlite::SourceId;
 
+use super::details::{Form, Param};
 use crate::data::Playlist;
 
 /// A focusable row of the list.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Item {
     Playlist(SourceId),
+    /// Shown with two playlists or more.
+    RefreshAll,
     Add,
 }
 
@@ -23,6 +28,9 @@ pub enum Act {
     Show,
     Refresh,
     Rename,
+    /// Link, server and login, or portal and MAC address.
+    Details,
+    UserAgent,
     GuideLink,
     /// Remove the guide link: only the provider's guides load.
     ProviderGuide,
@@ -41,12 +49,18 @@ pub enum Layer {
         id: SourceId,
         delete: bool,
     },
+    /// The provider details form of `id` ([`Screen::details`]).
+    Details {
+        id: SourceId,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EditKind {
     Rename,
+    UserAgent,
     GuideLink,
+    Param(Param),
 }
 
 /// Text entry over the actions sheet.
@@ -65,6 +79,8 @@ pub struct Editing {
 pub enum Notice {
     NameEmpty,
     Link(FieldError),
+    /// "Check and save" with nothing edited.
+    Unchanged,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,6 +102,12 @@ pub enum Effect {
     Rename(SourceId, String),
     SetGuide(SourceId, Option<SecretUrl>),
     Delete(SourceId),
+    RefreshAll,
+    /// Load the stored details of `id` for [`Screen::open_details`].
+    OpenDetails(SourceId),
+    /// Import these new details; they replace the stored ones if they work.
+    TryDetails(SourceId, Source),
+    SetUserAgent(SourceId, Option<String>),
     Close,
 }
 
@@ -104,6 +126,7 @@ pub struct Screen {
     layer: Layer,
     editing: Option<Editing>,
     notice: Option<Notice>,
+    details: Option<Form>,
 }
 
 impl Screen {
@@ -119,6 +142,7 @@ impl Screen {
             layer: Layer::List,
             editing: None,
             notice: None,
+            details: None,
         }
     }
 
@@ -146,18 +170,36 @@ impl Screen {
         self.notice
     }
 
-    /// The list's rows in order: the playlists, then "Add playlist".
+    pub fn details(&self) -> Option<&Form> {
+        self.details.as_ref()
+    }
+
+    /// The list's rows in order: the playlists, "Refresh all" (with two or
+    /// more), then "Add playlist".
     pub fn items(&self) -> Vec<Item> {
         let mut items: Vec<Item> = self.rows.iter().map(|r| Item::Playlist(r.id)).collect();
+        if self.rows.len() > 1 {
+            items.push(Item::RefreshAll);
+        }
         items.push(Item::Add);
         items
     }
 
     /// The actions offered for `id`.
     pub fn acts(&self, id: SourceId) -> Vec<Act> {
-        let linked = self.row(id).is_some_and(|r| r.guide_link.is_some());
-        let mut acts = vec![Act::Show, Act::Refresh, Act::Rename, Act::GuideLink];
-        if linked {
+        let Some(row) = self.row(id) else {
+            return Vec::new();
+        };
+        let mut acts = vec![Act::Show, Act::Refresh, Act::Rename];
+        // A file has no link to change (adding it again picks a new one).
+        if !row.from_file {
+            acts.push(Act::Details);
+        }
+        if row.kind != SourceKind::Stalker {
+            acts.push(Act::UserAgent);
+        }
+        acts.push(Act::GuideLink);
+        if row.guide_link.is_some() {
             acts.push(Act::ProviderGuide);
         }
         acts.push(Act::Delete);
@@ -165,21 +207,27 @@ impl Screen {
     }
 
     /// New rows from the store: focus stays on the same playlist; when it
-    /// is gone, on the row that took its place.
+    /// is gone, on the playlist that took its place (else the one before
+    /// it, else "Add playlist").
     pub fn set_rows(&mut self, rows: Vec<Playlist>) {
         let at = self.items().iter().position(|i| *i == self.focus);
         self.rows = rows;
-        let items = self.items();
-        if !items.contains(&self.focus) {
-            let index = at.unwrap_or(0).min(items.len() - 1);
-            // The row after a deleted one moved up; the add row stays last.
-            self.focus = items[index];
+        if !self.items().contains(&self.focus) {
+            self.focus = match (self.focus, self.rows.len()) {
+                (Item::Playlist(_), n) if n > 0 => {
+                    Item::Playlist(self.rows[at.unwrap_or(0).min(n - 1)].id)
+                }
+                _ => Item::Add,
+            };
         }
         let gone = |id| !self.rows.iter().any(|r| r.id == id);
         match self.layer {
-            Layer::Actions { id, .. } | Layer::Confirm { id, .. } if gone(id) => {
+            Layer::Actions { id, .. } | Layer::Confirm { id, .. } | Layer::Details { id }
+                if gone(id) =>
+            {
                 self.layer = Layer::List;
                 self.editing = None;
+                self.details = None;
             }
             Layer::Actions { id, focus } if !self.acts(id).contains(&focus) => {
                 self.layer = Layer::Actions {
@@ -212,6 +260,7 @@ impl Screen {
                 Key::Ok => self.confirm(id, delete),
                 Key::Back | Key::Menu => self.confirm(id, false),
             },
+            Layer::Details { id } => self.details_key(id, key),
         }
     }
 
@@ -222,6 +271,7 @@ impl Screen {
             (Key::Up, _) => self.focus = items[at.saturating_sub(1)],
             (Key::Down, _) => self.focus = items[(at + 1).min(items.len() - 1)],
             (Key::Ok, Item::Add) => return Some(Effect::Add),
+            (Key::Ok, Item::RefreshAll) => return Some(Effect::RefreshAll),
             (Key::Ok | Key::Menu, Item::Playlist(id)) => {
                 self.layer = Layer::Actions {
                     id,
@@ -229,7 +279,7 @@ impl Screen {
                 };
             }
             (Key::Back, _) => return Some(Effect::Close),
-            (Key::Menu, Item::Add) => {}
+            (Key::Menu, _) => {}
         }
         None
     }
@@ -290,6 +340,94 @@ impl Screen {
                 self.layer = Layer::Confirm { id, delete: false };
                 None
             }
+            Act::Details => Some(Effect::OpenDetails(id)),
+            Act::UserAgent => {
+                self.editing = Some(Editing {
+                    id,
+                    kind: EditKind::UserAgent,
+                    text: row.user_agent.unwrap_or_default(),
+                    prefilled: true,
+                });
+                None
+            }
+        }
+    }
+
+    /// The stored details of the playlist whose actions are open, loaded:
+    /// the form opens on them.
+    pub fn open_details(&mut self, source: Source) {
+        if let Layer::Actions { id, .. } = self.layer {
+            self.details = Some(Form::new(id, source));
+            self.layer = Layer::Details { id };
+        }
+    }
+
+    fn details_key(&mut self, id: SourceId, key: Key) -> Option<Effect> {
+        match key {
+            Key::Up | Key::Down => {
+                let step = if key == Key::Up { -1 } else { 1 };
+                self.details.iter_mut().for_each(|f| f.move_focus(step));
+                None
+            }
+            Key::Ok => match self.details.as_ref()?.focus {
+                Some(p) => self.edit_param(p),
+                None => self.check(),
+            },
+            Key::Back | Key::Menu => {
+                self.details = None;
+                self.layer = Layer::Actions {
+                    id,
+                    focus: Act::Details,
+                };
+                None
+            }
+        }
+    }
+
+    /// Text entry for detail `p`: started with its value when it can be
+    /// shown, else empty (left empty, the value stays).
+    pub fn edit_param(&mut self, p: Param) -> Option<Effect> {
+        let form = self.details.as_mut()?;
+        if form.checking {
+            return None;
+        }
+        form.focus = Some(p);
+        let prefill = form.prefill(p);
+        self.editing = Some(Editing {
+            id: form.id,
+            kind: EditKind::Param(p),
+            prefilled: prefill.is_some(),
+            text: prefill.unwrap_or_default(),
+        });
+        None
+    }
+
+    /// "Check and save": imports the edited details (once at a time).
+    pub fn check(&mut self) -> Option<Effect> {
+        let form = self.details.as_mut()?;
+        form.focus = None;
+        if form.checking {
+            return None;
+        }
+        if !form.changed() {
+            self.notice = Some(Notice::Unchanged);
+            return None;
+        }
+        form.checking = true;
+        Some(Effect::TryDetails(form.id, form.edited().clone()))
+    }
+
+    /// The check of `id`'s new details ended: saved, the form closes;
+    /// refused, it stays with the edits for another try.
+    pub fn details_checked(&mut self, id: SourceId, saved: bool) {
+        let Some(form) = self.details.as_mut().filter(|f| f.id == id && f.checking) else {
+            return;
+        };
+        form.checking = false;
+        if saved {
+            self.details = None;
+            self.layer = Layer::List;
+            self.focus = Item::Playlist(id);
         }
     }
 
@@ -316,8 +454,12 @@ impl Screen {
         self.list_key(Key::Ok)
     }
 
-    /// A tap beside an open sheet: as Back.
+    /// A tap beside an open sheet: as Back (the details form stays: its
+    /// edits would be lost).
     pub fn dismiss(&mut self) -> Option<Effect> {
+        if matches!(self.layer, Layer::Details { .. }) {
+            return None;
+        }
         match self.layer {
             Layer::List => None,
             _ => self.key(Key::Back),
@@ -341,6 +483,19 @@ impl Screen {
         let row = self.row(id)?.clone();
         let text = editing.text.trim();
         let effect = match editing.kind {
+            // Left empty when it started empty: the value stays.
+            EditKind::Param(_) if text.is_empty() && !editing.prefilled => None,
+            EditKind::Param(p) => {
+                if let Some(form) = &mut self.details {
+                    // An error stays in the form, beside the detail.
+                    let _ = form.set(p, &editing.text);
+                }
+                return None;
+            }
+            EditKind::UserAgent => {
+                let agent = (!text.is_empty()).then(|| text.to_owned());
+                (agent != row.user_agent).then_some(Effect::SetUserAgent(id, agent))
+            }
             EditKind::Rename if text.is_empty() => {
                 self.notice = Some(Notice::NameEmpty);
                 None
@@ -388,6 +543,9 @@ mod tests {
             updated_at: Some(1_800_000_000),
             failed: None,
             guide_link: None,
+            guide_failed: false,
+            user_agent: None,
+            from_file: false,
         }
     }
 
@@ -406,6 +564,9 @@ mod tests {
         let mut s = Screen::new(rows(), Some(B));
         assert_eq!(s.focus(), Item::Playlist(B));
         s.key(Key::Down);
+        s.key(Key::Down);
+        assert_eq!(s.focus(), Item::RefreshAll);
+        assert_eq!(s.key(Key::Ok), Some(Effect::RefreshAll));
         s.key(Key::Down);
         assert_eq!(s.focus(), Item::Add);
         s.key(Key::Down);
@@ -431,9 +592,14 @@ mod tests {
         assert_eq!(s.focus(), Item::Playlist(C));
         let mut s = Screen::new(rows(), Some(C));
         s.set_rows(vec![row(A, "First"), row(B, "Second")]);
-        assert_eq!(s.focus(), Item::Add);
+        assert_eq!(s.focus(), Item::Playlist(B), "the one before the last");
         s.set_rows(vec![]);
         assert_eq!(s.focus(), Item::Add);
+        // One playlist left: no "Refresh all" row.
+        assert_eq!(
+            Screen::new(vec![row(A, "First")], None).items(),
+            [Item::Playlist(A), Item::Add]
+        );
     }
 
     #[test]
@@ -454,6 +620,8 @@ mod tests {
                 Act::Show,
                 Act::Refresh,
                 Act::Rename,
+                Act::Details,
+                Act::UserAgent,
                 Act::GuideLink,
                 Act::Delete
             ]
@@ -596,6 +764,96 @@ mod tests {
         // The playlist of an open sheet was deleted elsewhere.
         s.act(C, Act::Delete);
         s.set_rows(vec![row(A, "First")]);
-        assert_eq!((s.layer(), s.focus()), (Layer::List, Item::Add));
+        assert_eq!((s.layer(), s.focus()), (Layer::List, Item::Playlist(A)));
+    }
+
+    fn xtream_source() -> Source {
+        use iptv_providers::Secret;
+        use iptv_providers::model::{SourceConfig, XtreamCredentials};
+        Source {
+            name: "Second".into(),
+            config: SourceConfig::Xtream(XtreamCredentials {
+                server_url: "http://panel.example.test".into(),
+                username: Secret::new("synthetic-user"),
+                password: Secret::new("synthetic-pass"),
+                user_agent: None,
+            }),
+        }
+    }
+
+    #[test]
+    fn provider_details_are_checked_before_they_replace_the_stored_ones() {
+        let mut rows = rows();
+        rows[1].kind = SourceKind::Xtream;
+        let mut s = Screen::new(rows, Some(B));
+        s.key(Key::Ok);
+        assert_eq!(s.act(B, Act::Details), Some(Effect::OpenDetails(B)));
+        s.open_details(xtream_source());
+        assert_eq!(s.layer(), Layer::Details { id: B });
+        // Nothing changed: nothing to check.
+        assert_eq!(s.check(), None);
+        assert_eq!(s.notice(), Some(Notice::Unchanged));
+        // The check button is last; above it, the password, which starts
+        // empty; left empty, it stays.
+        assert_eq!(s.details().unwrap().focus, None);
+        s.key(Key::Up);
+        s.key(Key::Ok);
+        let e = s.editing().unwrap();
+        assert_eq!((e.text.as_str(), e.prefilled), ("", false));
+        assert_eq!(s.commit(), None);
+        assert!(!s.details().unwrap().changed());
+        s.edit_param(Param::Password);
+        s.set_text("another-pass");
+        s.key(Key::Ok);
+        assert!(s.details().unwrap().changed());
+        s.key(Key::Down);
+        let Some(Effect::TryDetails(id, tried)) = s.key(Key::Ok) else {
+            panic!("no check");
+        };
+        assert_eq!(id, B);
+        assert_ne!(tried, xtream_source());
+        // While it is checked, a second check does nothing.
+        assert_eq!(s.check(), None);
+        // Refused: the form stays with the edits; saved: it closes.
+        s.details_checked(B, false);
+        assert!(s.details().unwrap().changed());
+        assert!(s.check().is_some());
+        s.details_checked(B, true);
+        assert_eq!((s.layer(), s.details()), (Layer::List, None));
+        // Back leaves the form without trying anything.
+        s.act(B, Act::Details);
+        s.open_details(xtream_source());
+        assert_eq!(s.dismiss(), None, "a tap beside it keeps the edits");
+        assert_eq!(s.key(Key::Back), None);
+        assert_eq!(
+            s.layer(),
+            Layer::Actions {
+                id: B,
+                focus: Act::Details
+            }
+        );
+    }
+
+    #[test]
+    fn user_agent_and_which_actions_a_playlist_has() {
+        let mut rows = rows();
+        rows[0].from_file = true;
+        rows[1].kind = SourceKind::Stalker;
+        rows[2].user_agent = Some("Synthetic/1".into());
+        let mut s = Screen::new(rows, Some(A));
+        assert!(!s.acts(A).contains(&Act::Details), "a file has no link");
+        assert!(!s.acts(B).contains(&Act::UserAgent), "portals send none");
+        s.act(C, Act::UserAgent);
+        assert_eq!(s.editing().map(|e| e.text.as_str()), Some("Synthetic/1"));
+        assert_eq!(s.commit(), None, "unchanged");
+        s.act(C, Act::UserAgent);
+        s.set_text(" ");
+        assert_eq!(s.commit(), Some(Effect::SetUserAgent(C, None)));
+        s.act(A, Act::UserAgent);
+        s.set_text("Other/2");
+        assert_eq!(
+            s.commit(),
+            Some(Effect::SetUserAgent(A, Some("Other/2".into())))
+        );
     }
 }
