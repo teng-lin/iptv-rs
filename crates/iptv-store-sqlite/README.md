@@ -34,9 +34,44 @@ the NDK. A web store is a later, separate adapter.
   whole file as sensitive. `Debug` of `ChannelRow` leaves the stream out;
   `StoredSource` uses the redacting types of `iptv-providers`; errors name
   columns, never values; import failures store only an error kind.
-- **EPG programmes are out of scope** (in memory / cached files for now).
+- **Guide data is provider data.** `replace_epg` swaps a playlist source's
+  whole stored guide (feeds, bound EPG channels, bindings, programmes,
+  descriptions) in one transaction; a failed download (`record_epg_failure`)
+  keeps the stored guide. Only EPG channels a playlist channel is bound to
+  are stored; channels sharing one EPG channel share its rows. Feed URLs
+  can embed credentials (Xtream `xmltv.php`) and are stored like the
+  catalog's stream URLs (sensitive file, `SecretUrl` in reads).
 
-## Schema (v3)
+## Guide data (EPG)
+
+- `replace_epg(source, &GuideStore, &[EpgFeedMeta], match_fingerprint)`:
+  after `iptv_import::import_epg`; `EpgFeedMeta::from_import` builds the
+  feed rows (settings the feed was fetched with, fetch time, bytes; ETag /
+  Last-Modified columns exist but the network layer does not expose them
+  yet).
+- `load_epg(source, &EpgWindow)`: programmes overlapping `[from, to)` for
+  all or some playlist channel keys, into a `GuideStore` bound by those
+  keys, normally without descriptions; `epg_description(source, key,
+  start)` reads one on demand (`EpgSchedule::with_description_lookup`).
+- `epg_guide(source)`: `StoredGuide` with `refresh_state()` for the refresh
+  policy (`iptv_import::decide` / `plan_startup`) and `configs()` to refresh
+  without downloading the playlist.
+- `prune_epg(before)`, `delete_epg(source)`; deleting a source deletes its
+  guide.
+
+The startup and background-refresh wiring for the app is in the module
+docs of `src/epg.rs`. Memory (`tests/epg_memory.rs`, release, Rust heap):
+
+| Guide | In memory, as imported | Stored, loaded from now − 2 d, no descriptions |
+| --- | --- | --- |
+| 1000 ch, 82.5k programmes | 7.5 MiB (11.5 before compaction) | 2.0 MiB |
+| 5000 ch × 9 d, 1.23M programmes | 97.6 MiB (159.4 before) | 11.9 MiB (22.3 MiB for all 9 days) |
+
+SQLite's own heap comes on top (page cache, up to `cache_size` = 16 MiB
+per connection). Replacing 1.23M programmes takes ~3.5 s (file 160 MiB
+with descriptions); loading the window ~0.25 s on a desktop CPU.
+
+## Schema (v4)
 
 | Table | Kind | Key | Notes |
 | --- | --- | --- | --- |
@@ -54,6 +89,12 @@ the NDK. A web store is a later, separate adapter.
 | `custom_groups`, `custom_group_members` | overlay | id / (group, channel) | ordered |
 | `watch_history` | overlay | id | per play; newest 2000 per source kept |
 | `channel_fts` | derived | rowid = `channels.rowid` | FTS5 over displayed + provider name; rebuilt at open when missing |
+| `epg_guides` | guide | source | replaced/attempted at, last error kind, match fingerprint, bound count, latest end |
+| `epg_feeds` | guide | (source, feed) | URL and import settings, fetched at, ETag/Last-Modified, bytes, counts |
+| `epg_channels` | guide | id, unique (source, feed, EPG channel) | bound EPG channels only |
+| `epg_bindings` | guide | (source, channel key) | playlist channel → EPG channel, match kind |
+| `epg_programmes` | guide | (channel, start) | times, title, sub-title, category, icon, rating, catch-up id, season/episode, flags; index on stop |
+| `epg_descriptions` | guide | (channel, start) | apart from the grid rows, read on demand |
 
 ## Concurrency
 

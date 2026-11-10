@@ -28,13 +28,17 @@ fn xmltv() -> String {
 }
 
 fn store_for(keys: &[(&ChannelKey, Option<&str>, &str)]) -> GuideStore {
+    store_with(keys, true)
+}
+
+fn store_with(keys: &[(&ChannelKey, Option<&str>, &str)], descriptions: bool) -> GuideStore {
     let parsed =
         parse_xmltv(xmltv().as_bytes(), ParseOptions::default()).expect("synthetic xmltv parses");
     let mut builder = SourceBuilder::new(
         SourceId(1),
         0,
         StoreOptions {
-            store_descriptions: true,
+            store_descriptions: descriptions,
             ..Default::default()
         },
         NOW,
@@ -95,6 +99,27 @@ fn real_programmes_map_to_guide_minutes_with_titles_and_descriptions() {
     assert_eq!(s.title(0, p), "Alpha News");
     assert_eq!(s.description(0, p).as_deref(), Some("About Alpha News."));
     assert_eq!(s.catchup_days(0), 3);
+}
+
+#[test]
+fn descriptions_left_out_of_memory_come_from_the_lookup() {
+    let a = ChannelKey::new("a");
+    let store = store_with(&[(&a, Some("a.test"), "Alpha")], false);
+    let ch = GuideChannel {
+        key: a,
+        name: "Alpha".to_owned(),
+        number: 1,
+        catchup_days: 0,
+    };
+    let plain = EpgSchedule::new(vec![("News".to_owned(), vec![ch.clone()])], store, NOW);
+    let p = plain.program_at(0, 0);
+    assert_eq!(plain.description(0, p), None);
+    let store = store_with(&[(&ch.key, Some("a.test"), "Alpha")], false);
+    let lazy = EpgSchedule::new(vec![("News".to_owned(), vec![ch])], store, NOW)
+        .with_description_lookup(|key, start| Some(format!("{key} at {}", start - NOW)));
+    assert_eq!(lazy.description(0, p).as_deref(), Some("a at -1800"));
+    // No programme there: nothing to look up.
+    assert_eq!(lazy.description(0, lazy.program_at(0, 70)), None);
 }
 
 #[test]

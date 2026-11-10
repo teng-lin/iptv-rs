@@ -45,6 +45,13 @@ pub const GROUP_SORT: EnumKey = EnumKey("channels.group_sort");
 pub const RECENT_COUNT: IntKey = IntKey("history.recent_count");
 pub const USER_AGENT: TextKey = TextKey("general.user_agent");
 
+// EPG refresh and storage (iptv-import refresh policy).
+pub const EPG_UPDATE_INTERVAL: DurationKey = DurationKey("epg.update_interval");
+pub const EPG_UPDATE_ON_START: BoolKey = BoolKey("epg.update_on_start");
+pub const EPG_UPDATE_ON_PLAYLIST_CHANGE: BoolKey = BoolKey("epg.update_on_playlist_change");
+pub const EPG_KEEP_PAST: DurationKey = DurationKey("epg.keep_past");
+pub const EPG_STORE_DESCRIPTIONS: BoolKey = BoolKey("epg.store_descriptions");
+
 /// Every typed key with its expected type name, for the schema test.
 pub const ALL: &[(&str, &str)] = &[
     (LONG_PRESS.0, "duration"),
@@ -63,4 +70,9 @@ pub const ALL: &[(&str, &str)] = &[
     (GROUP_SORT.0, "enum"),
     (RECENT_COUNT.0, "integer"),
     (USER_AGENT.0, "text"),
+    (EPG_UPDATE_INTERVAL.0, "duration"),
+    (EPG_UPDATE_ON_START.0, "bool"),
+    (EPG_UPDATE_ON_PLAYLIST_CHANGE.0, "bool"),
+    (EPG_KEEP_PAST.0, "duration"),
+    (EPG_STORE_DESCRIPTIONS.0, "bool"),
 ];

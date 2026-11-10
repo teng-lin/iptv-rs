@@ -12,6 +12,8 @@
 //!   a [`iptv_epg::GuideStore`], matched against the catalog's channels.
 //!   [`Catalog::epg_sources`] turns the M3U header's `url-tvg`/`x-tvg-url`
 //!   (or the Xtream export) into [`EpgSourceConfig`]s.
+//! - [`decide`] / [`plan_startup`]: when to download a stored guide again
+//!   ([`RefreshPolicy`] from the `epg.update_*` settings).
 //!
 //! Failures are typed ([`ImportError`], [`FailureKind`]) so a failure never
 //! looks like an empty source. Progress goes to a [`ProgressSink`];
@@ -30,6 +32,7 @@ mod error;
 mod fetch;
 mod m3u;
 mod progress;
+mod refresh;
 mod stalker;
 mod xtream;
 
@@ -40,6 +43,10 @@ pub use error::{AuthProblem, FailureKind, ImportError, ParseProblem, Step};
 pub use fetch::{BodyStream, Fetch, FetchError, FetchErrorKind, MemoryBody, StreamingResponse};
 pub use m3u::import_m3u_text;
 pub use progress::{NoProgress, Phase, Progress, ProgressSink};
+pub use refresh::{
+    Decision, GuideState, RefreshPolicy, RefreshReason, StartupPlan, Trigger, decide,
+    matching_fingerprint, plan_startup, store_options,
+};
 
 use iptv_providers::model::SourceConfig;
 

@@ -223,6 +223,73 @@ fn descriptions_and_extras() {
     assert_eq!(a.sub_title(), Some("Pilot"));
 }
 
+/// What a stored guide does: read every field back as plain values and
+/// rebuild an equal source from them.
+#[test]
+fn programme_data_round_trips() {
+    let mut p = prog("c", T0, Some(T0 + H), "Full");
+    p.desc = Some("About it".into());
+    p.sub_title = Some("Part one".into());
+    p.categories = vec!["Drama".into()];
+    p.icon = Some("https://img.example.com/y.png".into());
+    p.catchup_id = Some("cu-7".into());
+    p.rating = Some(Rating {
+        system: None,
+        value: "12".into(),
+    });
+    p.episode_num = vec![EpisodeNum {
+        system: Some("onscreen".into()),
+        value: "S02E05".into(),
+    }];
+    let plain = prog("c", T0 + H, Some(T0 + 2 * H), "Plain");
+    let src = build(1, 0, vec![p, plain], StoreOptions::default(), T0);
+    let rows: Vec<ProgrammeData<'_>> = src
+        .schedule("c")
+        .unwrap()
+        .iter()
+        .map(|p| p.data())
+        .collect();
+    assert_eq!(rows[0].season, Some(2));
+    assert_eq!(rows[0].episode, Some(5));
+    assert_eq!(rows[0].rating, Some("12"));
+    assert_eq!(rows[1].desc, None);
+
+    let mut b = SourceBuilder::new(SourceId(1), 0, StoreOptions::default(), T0);
+    for r in &rows {
+        b.push_data("c", r);
+    }
+    let again = b.finish();
+    let back: Vec<ProgrammeData<'_>> = again
+        .schedule("c")
+        .unwrap()
+        .iter()
+        .map(|p| p.data())
+        .collect();
+    assert_eq!(back, rows);
+
+    // Loaded without descriptions: everything else stays.
+    let mut b = SourceBuilder::new(
+        SourceId(1),
+        0,
+        StoreOptions {
+            store_descriptions: false,
+            ..StoreOptions::default()
+        },
+        T0,
+    );
+    b.push_data("c", &rows[0]);
+    let lean = b.finish();
+    let first = lean.schedule("c").unwrap().get(0).unwrap().data();
+    assert_eq!(first.desc, None);
+    assert_eq!(
+        ProgrammeData {
+            desc: rows[0].desc,
+            ..first
+        },
+        rows[0]
+    );
+}
+
 #[test]
 fn repeated_titles_are_interned_once() {
     let progs: Vec<_> = (0..1000)
@@ -291,6 +358,18 @@ fn higher_priority_source_with_data_wins_per_channel() {
     assert_eq!(at(&store, "kz"), None);
     assert_eq!(store.binding(&"ka".into()), Some((SourceId(2), "a")));
     assert_eq!(store.bound_count(), 2);
+    let mut bound: Vec<_> = store
+        .bindings()
+        .map(|(k, c)| (k.as_str().to_owned(), c.source, c.epg_id.clone()))
+        .collect();
+    bound.sort();
+    assert_eq!(
+        bound,
+        [
+            ("ka".to_owned(), SourceId(2), "a".to_owned()),
+            ("kb".to_owned(), SourceId(1), "b".to_owned())
+        ]
+    );
 
     // Re-ingesting the high source with a lower priority flips the winner.
     store.replace_source(build(

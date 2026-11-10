@@ -15,6 +15,8 @@ pub(crate) struct Interner {
     heads: HashMap<u64, u32, BuildHasherDefault<PassThrough>>,
     /// Collision chain: next symbol with the same hash.
     next: Vec<u32>,
+    /// [`Self::freeze`] dropped `heads` and `next`.
+    frozen: bool,
 }
 
 impl Interner {
@@ -36,13 +38,15 @@ impl Interner {
             if self.get(at) == s {
                 return at;
             }
-            at = self.next[at as usize];
+            at = self.next.get(at as usize).copied().unwrap_or(END);
         }
         let sym = self.spans.len() as u32;
         self.spans.push((self.data.len() as u32, s.len() as u32));
         self.data.push_str(s);
-        self.next.push(head);
-        self.heads.insert(h, sym);
+        if !self.frozen {
+            self.next.push(head);
+            self.heads.insert(h, sym);
+        }
         sym
     }
 
@@ -55,11 +59,16 @@ impl Interner {
         (sym != NONE).then(|| self.get(sym))
     }
 
-    pub(crate) fn shrink(&mut self) {
+    /// Ends interning: drops the lookup tables (about 20 bytes per distinct
+    /// string) and trims the arena. Reads keep working; a later
+    /// [`Self::intern`] still returns a valid symbol but no longer dedups
+    /// against strings interned before the freeze.
+    pub(crate) fn freeze(&mut self) {
+        self.heads = HashMap::default();
+        self.next = Vec::new();
+        self.frozen = true;
         self.data.shrink_to_fit();
         self.spans.shrink_to_fit();
-        self.next.shrink_to_fit();
-        self.heads.shrink_to_fit();
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -126,5 +135,11 @@ mod tests {
         }
         assert_eq!(i.intern("title 42"), i.intern("title 42"));
         assert_eq!(i.len(), 10_002);
+        let before = i.heap_bytes();
+        i.freeze();
+        assert!(i.heap_bytes() < before);
+        assert_eq!(i.get(a), "News");
+        let late = i.intern("late");
+        assert_eq!(i.get(late), "late");
     }
 }

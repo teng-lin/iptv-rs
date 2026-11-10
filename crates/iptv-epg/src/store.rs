@@ -8,6 +8,7 @@
 
 use std::collections::HashMap;
 
+use crate::extra::{self, Extra, Field, NO_EXTRA};
 use crate::intern::{Interner, NONE, Sym};
 use crate::matching::{ChannelKey, EpgRef, SourceId};
 use crate::time::{DAY, UnixTime};
@@ -51,31 +52,38 @@ pub struct IngestReport {
     pub overlaps_trimmed: u64,
 }
 
-const NO_EXTRA: u32 = u32::MAX;
 const NO_STOP: i64 = i64::MIN;
 
 /// One programme in a schedule: 16 bytes, times relative to the schedule
-/// base.
+/// base (seconds; a schedule spans at most ~136 years).
 #[derive(Clone, Copy, Debug)]
 struct Slot {
     start: u32,
     dur: u32,
     title: Sym,
+    /// Offset of the packed extras ([`extra`]), or [`NO_EXTRA`].
     extra: u32,
 }
 
-/// Fields most guide cells do not need.
-#[derive(Clone, Copy, Debug, Default)]
-struct Extra {
-    sub_title: Sym,
-    desc: Sym,
-    category: Sym,
-    icon: Sym,
-    rating: Sym,
-    catchup_id: Sym,
-    /// One-based; 0 = unknown.
-    season: u16,
-    episode: u16,
+/// One programme's fields as plain values: what [`SourceBuilder::push_data`]
+/// takes and [`ProgrammeRef::data`] returns, so a stored guide round-trips
+/// without building XMLTV records.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ProgrammeData<'a> {
+    pub start: UnixTime,
+    /// `None`: ends where the next programme starts.
+    pub stop: Option<UnixTime>,
+    pub title: &'a str,
+    pub sub_title: Option<&'a str>,
+    pub desc: Option<&'a str>,
+    /// First category.
+    pub category: Option<&'a str>,
+    pub icon: Option<&'a str>,
+    pub rating: Option<&'a str>,
+    pub catchup_id: Option<&'a str>,
+    /// One-based.
+    pub season: Option<u16>,
+    pub episode: Option<u16>,
 }
 
 #[derive(Default)]
@@ -98,7 +106,8 @@ pub struct EpgSource {
     id: SourceId,
     priority: i32,
     strings: Interner,
-    extras: Vec<Extra>,
+    /// Packed extras ([`extra`]).
+    extras: Vec<u32>,
     schedules: Vec<Schedule>,
     by_epg_id: HashMap<Box<str>, u32>,
     channels: Vec<XmltvChannel>,
@@ -145,7 +154,7 @@ impl EpgSource {
     /// Rough heap usage in bytes.
     pub fn heap_bytes(&self) -> usize {
         self.strings.heap_bytes()
-            + self.extras.capacity() * size_of::<Extra>()
+            + self.extras.capacity() * size_of::<u32>()
             + self
                 .schedules
                 .iter()
@@ -194,7 +203,7 @@ pub struct SourceBuilder {
     opts: StoreOptions,
     cutoff: Option<i64>,
     strings: Interner,
-    extras: Vec<Extra>,
+    extras: Vec<u32>,
     by_epg_id: HashMap<Box<str>, u32>,
     raw: Vec<Vec<RawProgramme>>,
     channels: Vec<XmltvChannel>,
@@ -230,6 +239,31 @@ impl SourceBuilder {
     }
 
     pub fn push_programme(&mut self, p: XmltvProgramme) {
+        let (season, episode) = p
+            .episode_num
+            .iter()
+            .find_map(|e| e.season_episode())
+            .unwrap_or_default();
+        let narrow = |n: Option<u32>| n.map(|n| n.min(u32::from(u16::MAX)) as u16);
+        let data = ProgrammeData {
+            start: p.start,
+            stop: p.stop,
+            title: &p.title,
+            sub_title: p.sub_title.as_deref(),
+            desc: p.desc.as_deref(),
+            category: p.categories.first().map(String::as_str),
+            icon: p.icon.as_deref(),
+            rating: p.rating.as_ref().map(|r| r.value.as_str()),
+            catchup_id: p.catchup_id.as_deref(),
+            season: narrow(season),
+            episode: narrow(episode),
+        };
+        self.push_data(&p.channel, &data);
+    }
+
+    /// Adds one programme of EPG channel `channel` from plain values (a
+    /// stored guide). Same rules as [`Self::push_programme`].
+    pub fn push_data(&mut self, channel: &str, p: &ProgrammeData<'_>) {
         self.report.programmes_in += 1;
         let stop = p.stop.unwrap_or(NO_STOP);
         if p.stop.is_some() && stop <= p.start {
@@ -241,48 +275,33 @@ impl SourceBuilder {
             return;
         }
         let s = &mut self.strings;
-        let (season, episode) = p
-            .episode_num
-            .iter()
-            .find_map(|e| e.season_episode())
-            .unwrap_or_default();
-        let extra = Extra {
-            sub_title: p.sub_title.as_deref().map_or(NONE, |v| s.intern(v)),
-            desc: match &p.desc {
-                Some(d) if self.opts.store_descriptions => s.intern(d),
-                _ => NONE,
-            },
-            category: p.categories.first().map_or(NONE, |v| s.intern(v)),
-            icon: p.icon.as_deref().map_or(NONE, |v| s.intern(v)),
-            rating: p.rating.as_ref().map_or(NONE, |r| s.intern(&r.value)),
-            catchup_id: p.catchup_id.as_deref().map_or(NONE, |v| s.intern(v)),
-            season: season.map_or(0, |n| n.min(u32::from(u16::MAX)) as u16),
-            episode: episode.map_or(0, |n| n.min(u32::from(u16::MAX)) as u16),
+        let mut e = Extra {
+            season: p.season.unwrap_or(0),
+            episode: p.episode.unwrap_or(0),
+            ..Extra::default()
         };
-        let has_extra = extra.sub_title
-            | extra.desc
-            | extra.category
-            | extra.icon
-            | extra.rating
-            | extra.catchup_id
-            != NONE
-            || extra.season != 0
-            || extra.episode != 0;
-        let extra = if has_extra {
-            self.extras.push(extra);
-            (self.extras.len() - 1) as u32
-        } else {
-            NO_EXTRA
-        };
-        let title = s.intern(&p.title);
-        let next = self.raw.len() as u32;
-        let ch = *self
-            .by_epg_id
-            .entry(p.channel.into_boxed_str())
-            .or_insert(next);
-        if ch == next {
-            self.raw.push(Vec::new());
+        let desc = p.desc.filter(|_| self.opts.store_descriptions);
+        for (field, value) in [
+            (Field::SubTitle, p.sub_title),
+            (Field::Desc, desc),
+            (Field::Category, p.category),
+            (Field::Icon, p.icon),
+            (Field::Rating, p.rating),
+            (Field::CatchupId, p.catchup_id),
+        ] {
+            e.set(field, value.map_or(NONE, |v| s.intern(v)));
         }
+        let extra = extra::push(&mut self.extras, &e);
+        let title = s.intern(p.title);
+        let next = self.raw.len() as u32;
+        let ch = match self.by_epg_id.get(channel) {
+            Some(&ch) => ch,
+            None => {
+                self.by_epg_id.insert(channel.into(), next);
+                self.raw.push(Vec::new());
+                next
+            }
+        };
         self.raw[ch as usize].push(RawProgramme {
             start: p.start,
             stop,
@@ -350,7 +369,7 @@ impl SourceBuilder {
                 slots,
             });
         }
-        self.strings.shrink();
+        self.strings.freeze();
         self.extras.shrink_to_fit();
         EpgSource {
             id: self.id,
@@ -390,45 +409,69 @@ impl<'a> ProgrammeRef<'a> {
         self.src.id
     }
 
-    fn extra(&self) -> Option<&'a Extra> {
-        self.src.extras.get(self.slot.extra as usize)
-    }
-
-    fn text(&self, f: impl Fn(&Extra) -> Sym) -> Option<&'a str> {
-        self.extra().and_then(|e| self.src.strings.opt(f(e)))
+    fn text(&self, field: Field) -> Option<&'a str> {
+        let at = self.slot.extra;
+        if at == NO_EXTRA {
+            return None;
+        }
+        self.src
+            .strings
+            .opt(extra::text(&self.src.extras, at, field))
     }
 
     pub fn sub_title(&self) -> Option<&'a str> {
-        self.text(|e| e.sub_title)
+        self.text(Field::SubTitle)
     }
 
     /// `None` also when the source was stored without descriptions.
     pub fn desc(&self) -> Option<&'a str> {
-        self.text(|e| e.desc)
+        self.text(Field::Desc)
     }
 
     /// First category.
     pub fn category(&self) -> Option<&'a str> {
-        self.text(|e| e.category)
+        self.text(Field::Category)
     }
 
     pub fn icon(&self) -> Option<&'a str> {
-        self.text(|e| e.icon)
+        self.text(Field::Icon)
     }
 
     pub fn rating(&self) -> Option<&'a str> {
-        self.text(|e| e.rating)
+        self.text(Field::Rating)
     }
 
     pub fn catchup_id(&self) -> Option<&'a str> {
-        self.text(|e| e.catchup_id)
+        self.text(Field::CatchupId)
     }
 
     /// One-based season and episode, when known.
     pub fn season_episode(&self) -> (Option<u16>, Option<u16>) {
+        let at = self.slot.extra;
+        if at == NO_EXTRA {
+            return (None, None);
+        }
+        let (s, e) = extra::episode(&self.src.extras, at);
         let nz = |n: u16| (n != 0).then_some(n);
-        self.extra()
-            .map_or((None, None), |e| (nz(e.season), nz(e.episode)))
+        (nz(s), nz(e))
+    }
+
+    /// Every field as plain values (to store the guide).
+    pub fn data(&self) -> ProgrammeData<'a> {
+        let (season, episode) = self.season_episode();
+        ProgrammeData {
+            start: self.start(),
+            stop: Some(self.stop()),
+            title: self.title(),
+            sub_title: self.sub_title(),
+            desc: self.desc(),
+            category: self.category(),
+            icon: self.icon(),
+            rating: self.rating(),
+            catchup_id: self.catchup_id(),
+            season,
+            episode,
+        }
     }
 
     pub fn is_airing(&self, now: UnixTime) -> bool {
@@ -644,6 +687,14 @@ impl GuideStore {
         let &(si, _, cand) = self.bound.get(key)?;
         let c = &self.wanted.get(key)?[cand as usize];
         Some((self.sources[si as usize].id, c.epg_id.as_str()))
+    }
+
+    /// Every bound playlist channel with the candidate its guide comes
+    /// from (source, EPG id, how it matched). Unordered.
+    pub fn bindings(&self) -> impl Iterator<Item = (&ChannelKey, &EpgRef)> {
+        self.bound.iter().filter_map(|(key, &(_, _, cand))| {
+            Some((key, self.wanted.get(key)?.get(cand as usize)?))
+        })
     }
 
     pub fn schedule(&self, key: &ChannelKey) -> Option<ScheduleRef<'_>> {
