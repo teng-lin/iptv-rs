@@ -436,3 +436,26 @@ fn live_url_placeholders_are_expanded() {
         Ok("http://xc.example.com/timeshift/demo/secret/60/2023-11-14:22-13/7.m3u8?k=1700010000")
     );
 }
+
+#[test]
+fn catchup_correction_shifts_programme_times() {
+    // −1.5 h: the guide is 90 minutes ahead of the archive.
+    let text = "#EXTM3U catchup-correction=\"-1.5\"\n\
+        #EXTINF:-1 catchup=\"default\" catchup-days=\"1\" catchup-source=\"http://arc.example.com/{utc}/{utcend}/{H}{M}/{lutc}/{offset}\",A\nhttp://l.example.com/a\n\
+        #EXTINF:-1 catchup=\"shift\" catchup-days=\"1\" catchup-correction=\"0.5\",B\nhttp://l.example.com/b\n";
+    let items = parse_m3u(text).channels.items;
+    assert_eq!(
+        build_catchup_url(&items[0], REQ).as_deref(),
+        Ok("http://arc.example.com/1699994600/1699998200/2043/1700010000/15400")
+    );
+    assert_eq!(
+        build_catchup_url(&items[1], REQ).as_deref(),
+        Ok("http://l.example.com/b?utc=1700001800&lutc=1700010000")
+    );
+    // A correction that moves the start past now is a future programme.
+    let late = CatchupRequest::new(1_700_000_000, 1_700_003_600, 1_700_001_000);
+    assert_eq!(
+        build_catchup_url(&items[1], late),
+        Err(CatchupError::FutureProgramme)
+    );
+}

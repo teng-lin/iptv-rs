@@ -35,8 +35,12 @@
 //!
 //! ## Timing
 //!
-//! The replay runs from `start − buffer_before_secs + offset_secs` to
-//! `end + buffer_after_secs` (the end buffer stops at `now`). "Start" in the
+//! `catchup-correction` ([`crate::model::CatchUp::correction_secs`]) is
+//! added to the programme's `start` and `end` first (Kodi: the times used to
+//! build the URL are corrected); `now` is not shifted, and the checks below
+//! use the corrected times. The replay then runs from
+//! `start − buffer_before_secs + offset_secs` to `end + buffer_after_secs`
+//! (the end buffer stops at `now`). "Start" in the
 //! rules above is that replay start. A programme that starts after `now`,
 //! or a replay start after `now`, is [`CatchupError::FutureProgramme`]; a
 //! replay start past the replay end, or before the archive window
@@ -138,7 +142,8 @@ pub fn build_catchup_url(channel: &Channel, req: CatchupRequest) -> Result<Strin
     ) {
         return Err(CatchupError::Unsupported);
     }
-    let vars = window(&req, catch_up.window_days(req.default_window_days))?;
+    let days = catch_up.window_days(req.default_window_days);
+    let vars = window(&req, days, catch_up.correction_secs)?;
     let live = &expand(live, &vars, Scope::Live);
     let source = catch_up
         .source
@@ -186,10 +191,11 @@ fn checked(url: String) -> Result<String, CatchupError> {
     }
 }
 
-/// Applies buffers and the seek offset, and checks the result against now
-/// and the archive window.
-fn window(req: &CatchupRequest, days: u32) -> Result<Vars, CatchupError> {
-    let (start, end, now) = (req.start, req.end, req.now);
+/// Applies the correction, buffers and seek offset, and checks the result
+/// against now and the archive window.
+fn window(req: &CatchupRequest, days: u32, correction_secs: i32) -> Result<Vars, CatchupError> {
+    let shift = i64::from(correction_secs);
+    let (start, end, now) = (req.start + shift, req.end + shift, req.now);
     if start > now {
         return Err(CatchupError::FutureProgramme);
     }
