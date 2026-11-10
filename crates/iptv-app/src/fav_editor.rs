@@ -7,11 +7,13 @@
 use iptv_core::editor::FavoritesEditor;
 use nsh_core::prelude::*;
 
-use crate::theme::{FOCUS_ALPHA, RADIUS, RESTING_ALPHA, TEXT_SECONDARY_ALPHA};
+use crate::fonts::{CAPTION, LIST_ITEM, SANS, TITLE};
+use crate::list_rows::{self, Mark, ROW};
+use crate::scale::Scale;
+use crate::theme::{LIST_TEXT, RADIUS, RESTING_ALPHA};
 use crate::{Ui, tint};
 
 const WHITE: u32 = 0xFFFFFF;
-const ROW_H: f32 = 52.0;
 
 /// Opens the editor on the list on screen, at the focused channel.
 pub fn open(ui: Ui) {
@@ -56,6 +58,7 @@ pub fn set_group(ui: Ui) {
 
 pub fn layer(ui: Ui) -> impl IntoElement {
     let open = move || ui.editor.with(Option::is_some);
+    let size = Scale::new();
     let list = element_ref();
     let focus = computed(move || ui.editor.with(|e| e.as_ref().map(|e| e.focus)));
     effect(move || {
@@ -99,20 +102,12 @@ pub fn layer(ui: Ui) -> impl IntoElement {
         };
         let starred = move || channel().is_some_and(|ch| ui.favorites.with(|f| f.contains(&ch)));
         let focused = move || ui.keys_shown() && focus.get() == Some(at.index());
-        view()
-            .h(px(ROW_H))
-            .px(px(16.0))
+        let mark = move || Mark::of(focused(), false);
+        list_rows::row(size, ROW, mark)
             .flex_row()
             .items_center()
+            .justify_start()
             .gap(px(16.0))
-            .rounded(px(RADIUS))
-            .bg(move || {
-                if focused() {
-                    tint(ui.theme.with(|t| t.accent.main), FOCUS_ALPHA)
-                } else {
-                    tint(WHITE, 0)
-                }
-            })
             .on_press(move || {
                 ui.touched();
                 ui.editor
@@ -121,23 +116,23 @@ pub fn layer(ui: Ui) -> impl IntoElement {
             })
             .child(
                 text(move || if starred() { "★" } else { "☆" })
-                    .w(px(24.0))
-                    .text_size(px(20.0))
+                    .w(move || size.px(LIST_ITEM + 4.0))
+                    .text_size(move || size.px(LIST_ITEM))
                     .text_color(move || {
-                        if starred() {
+                        if starred() && mark() != Mark::Focused {
                             rgb(ui.theme.with(|t| t.accent.light))
+                        } else if starred() {
+                            mark().text()
                         } else {
-                            tint(WHITE, TEXT_SECONDARY_ALPHA)
+                            mark().secondary()
                         }
                     }),
             )
             .child(
-                text(move || {
+                list_rows::name(size, move || {
                     channel().map_or(String::new(), |ch| crate::schedule().channel_name(ch))
                 })
-                .number_of_lines(1)
-                .text_size(px(16.0))
-                .text_color(rgb(WHITE)),
+                .text_color(move || mark().text()),
             )
     };
     view()
@@ -164,8 +159,9 @@ pub fn layer(ui: Ui) -> impl IntoElement {
                 .child(
                     text(title)
                         .flex_1()
-                        .text_size(px(20.0))
-                        .text_color(rgb(WHITE)),
+                        .font_family(SANS)
+                        .text_size(move || size.px(TITLE))
+                        .text_color(rgb(LIST_TEXT)),
                 )
                 .child(button("Add all", set_group))
                 .child(button("Remove all", clear_group))
@@ -179,12 +175,13 @@ pub fn layer(ui: Ui) -> impl IntoElement {
                     "Tap a channel to add or remove it"
                 }
             })
-            .text_size(px(13.0))
-            .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA)),
+            .font_family(SANS)
+            .text_size(move || size.px(CAPTION))
+            .text_color(Mark::Plain.secondary()),
         )
         .child(
             virtual_list(count, row)
-                .estimated_item_size(px(ROW_H))
+                .estimated_item_size(list_rows::pitch(size, ROW))
                 .element_ref(&list)
                 .flex_1(),
         )

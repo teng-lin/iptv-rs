@@ -133,6 +133,9 @@ pub const FOCUSED_CELL: u32 = 0xD0D2D4;
 pub const FOCUSED_TEXT: u32 = 0x060606;
 /// Titles of the focused row and channel names: white, a touch dimmer.
 pub const BRIGHT_TEXT: u32 = 0xFBFBFB;
+/// Names in the lists (groups, channels, results, menu items) on the
+/// window and panel colours.
+pub const LIST_TEXT: u32 = 0xECECED;
 /// White over a programme for the other programmes of the focused row
 /// (`#424547` on Dark).
 pub const ROW_ALPHA: u8 = 0x24;

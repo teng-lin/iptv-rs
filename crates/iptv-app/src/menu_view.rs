@@ -5,12 +5,14 @@
 use iptv_core::menu::{Heading, Menu, MenuItem, Origin, Row, program_menu};
 use nsh_core::prelude::*;
 
-use crate::theme::{FOCUS_ALPHA, RADIUS, RADIUS_LARGE, TEXT_SECONDARY_ALPHA};
+use crate::fonts::{HEADER_BODY, HEADER_TIMES, LIST_ITEM, MEDIUM, SANS, SECTION, TITLE};
+use crate::list_rows::{self, Mark, ROW};
+use crate::scale::Scale;
+use crate::theme::{LIST_TEXT, RADIUS_LARGE};
 use crate::{Ui, ViewMode, channel_name, clock, tint};
 
-const WHITE: u32 = 0xFFFFFF;
-const PANEL_W: f32 = 360.0;
-const ROW_H: f32 = 48.0;
+/// The panel's width at full size (scaled with the guide).
+const PANEL_W: f32 = 400.0;
 
 /// The actions this build can perform; the rest show disabled.
 fn implemented(item: MenuItem) -> bool {
@@ -172,6 +174,7 @@ pub fn layer(ui: Ui) -> impl IntoElement {
     let open = move || ui.menu.with(Option::is_some);
     let count = move || ui.menu.with(|m| m.as_ref().map_or(0, |m| m.rows.len()));
     let list = element_ref();
+    let size = Scale::new();
     let focus = computed(move || ui.menu.with(|m| m.as_ref().map(|m| m.focus)));
     effect(move || {
         if let Some(i) = focus.get() {
@@ -188,51 +191,32 @@ pub fn layer(ui: Ui) -> impl IntoElement {
             ch.is_some_and(|ch| ui.favorites.with(|f| f.contains(&ch)))
         };
         let focused = move || ui.keys_shown() && focus.get() == Some(at.index());
-        text(move || match row() {
+        let mark = move || Mark::of(focused(), false);
+        let heading = move || matches!(row(), Some(Row::Heading(_)));
+        let name = list_rows::name(size, move || match row() {
             Some(Row::Heading(h)) => heading_text(ui, h),
             Some(Row::Action { item, .. }) => label(item, favorite()).to_owned(),
             None => String::new(),
         })
-        .h(px(ROW_H))
-        .px(px(16.0))
-        .pt(move || {
-            px(if matches!(row(), Some(Row::Heading(_))) {
-                18.0
-            } else {
-                13.0
-            })
-        })
-        .rounded(px(RADIUS))
-        .number_of_lines(1)
-        .text_size(move || {
-            px(if matches!(row(), Some(Row::Heading(_))) {
-                13.0
-            } else {
-                16.0
-            })
-        })
+        // Headings in the lists' heading size.
+        .text_size(move || size.px(if heading() { SECTION } else { LIST_ITEM }))
         .text_color(move || match row() {
-            Some(Row::Action { enabled: true, .. }) => rgb(WHITE),
-            Some(Row::Heading(_)) => tint(WHITE, TEXT_SECONDARY_ALPHA),
-            _ => tint(WHITE, 0x50),
-        })
-        .bg(move || {
-            if focused() {
-                tint(ui.theme.with(|t| t.accent.main), FOCUS_ALPHA)
-            } else {
-                tint(WHITE, 0)
-            }
-        })
-        .on_press(move || {
-            ui.touched();
-            let picked = ui
-                .menu
-                .with(|m| m.clone())
-                .and_then(|mut m| m.tap(at.index()));
-            if let Some(item) = picked {
-                perform(ui, item);
-            }
-        })
+            Some(Row::Action { enabled: true, .. }) => mark().text(),
+            Some(Row::Heading(_)) => mark().secondary(),
+            _ => mark().disabled(),
+        });
+        list_rows::row(size, ROW, mark)
+            .child(name)
+            .on_press(move || {
+                ui.touched();
+                let picked = ui
+                    .menu
+                    .with(|m| m.clone())
+                    .and_then(|mut m| m.tap(at.index()));
+                if let Some(item) = picked {
+                    perform(ui, item);
+                }
+            })
     };
     let menu_opacity = move || if open() { 1.0_f32 } else { 0.0 };
     view()
@@ -266,7 +250,7 @@ pub fn layer(ui: Ui) -> impl IntoElement {
         )
         .child(
             view()
-                .w(px(PANEL_W))
+                .w(move || px(size.whole(PANEL_W)))
                 .opacity(menu_opacity)
                 .pt_safe_area()
                 .px(px(12.0))
@@ -274,7 +258,7 @@ pub fn layer(ui: Ui) -> impl IntoElement {
                 .bg(move || rgb(ui.theme.with(|t| t.background.panel)))
                 .child(
                     virtual_list(count, row)
-                        .estimated_item_size(px(ROW_H))
+                        .estimated_item_size(list_rows::pitch(size, ROW))
                         .element_ref(&list)
                         .flex_1(),
                 ),
@@ -285,6 +269,7 @@ pub fn layer(ui: Ui) -> impl IntoElement {
 /// The description popover: title, time range and text; no actions (those
 /// live in the menu). Back or a tap closes it.
 fn description(ui: Ui) -> impl IntoElement {
+    let size = Scale::new();
     let shown = move || ui.description.get().is_some();
     let program = move || {
         ui.description.get().map(|o| {
@@ -317,8 +302,10 @@ fn description(ui: Ui) -> impl IntoElement {
                 .bg(move || rgb(ui.theme.with(|t| t.background.panel)))
                 .child(
                     text(move || program().map_or(String::new(), |(ch, p)| title(ch, p)))
-                        .text_size(px(22.0))
-                        .text_color(rgb(WHITE)),
+                        .font_family(SANS)
+                        .font_weight(MEDIUM)
+                        .text_size(move || size.px(TITLE))
+                        .text_color(rgb(LIST_TEXT)),
                 )
                 .child(
                     text(move || {
@@ -326,13 +313,15 @@ fn description(ui: Ui) -> impl IntoElement {
                             format!("{} · {}–{}", channel_name(ch), clock(p.start), clock(p.end))
                         })
                     })
-                    .text_size(px(14.0))
-                    .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA)),
+                    .font_family(SANS)
+                    .text_size(move || size.px(HEADER_TIMES))
+                    .text_color(Mark::Plain.secondary()),
                 )
                 .child(
                     text("A synthetic programme description for testing the guide. Real descriptions come from the EPG.")
-                        .text_size(px(15.0))
-                        .text_color(rgb(WHITE)),
+                        .font_family(SANS)
+                        .text_size(move || size.px(HEADER_BODY))
+                        .text_color(rgb(LIST_TEXT)),
                 ),
         )
 }

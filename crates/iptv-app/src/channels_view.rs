@@ -14,14 +14,16 @@ use iptv_core::lists::{ChannelList as Rows, FAVORITES, entry_count, entry_name};
 use iptv_nav::Action;
 use nsh_core::prelude::*;
 
-use crate::theme::{FOCUS_ALPHA, RADIUS, RESTING_ALPHA, TEXT_SECONDARY_ALPHA};
+use crate::fonts::{CONDENSED, HEADER_TIMES, MEDIUM, SANS, SECTION, TITLE};
+use crate::list_rows::{self, INSET, Mark, ROW, ROW_TWO};
+use crate::panels::GROUPS_W;
+use crate::scale::Scale;
+use crate::theme::BRIGHT_TEXT;
 use crate::{Playback, Ui, ViewMode, clock, tint};
 
-const WHITE: u32 = 0xFFFFFF;
-const LIST_W: f32 = 420.0;
-const GROUPS_W: f32 = 260.0;
-const ROW_H: f32 = 58.0;
-const GROUP_H: f32 = 46.0;
+/// The list's width at full size (scaled with the guide, as is the groups
+/// column's, `panels::GROUPS_W`).
+const LIST_W: f32 = 460.0;
 /// Page Up/Down moves this many rows.
 const PAGE: isize = 8;
 
@@ -64,7 +66,13 @@ fn groups_shown(ui: Ui) -> bool {
 
 /// The width the list takes at the left.
 fn panel_width(ui: Ui) -> f32 {
-    LIST_W + if groups_shown(ui) { GROUPS_W } else { 0.0 }
+    let scale = crate::scale::now();
+    (LIST_W * scale).round()
+        + if groups_shown(ui) {
+            (GROUPS_W * scale).round()
+        } else {
+            0.0
+        }
 }
 
 /// The video's rectangle while the list shows beside it: right of the
@@ -193,36 +201,35 @@ pub fn layer(ui: Ui) -> impl IntoElement {
         let alpha = if overlay() { 0xE0 } else { 0xFF };
         tint(ui.theme.with(|t| t.background.panel), alpha)
     };
-    let heading = |s: Box<dyn Fn() -> String>| {
-        text(s)
-            .px(px(14.0))
+    let size = Scale::new();
+    let heading = move |s: Box<dyn Fn() -> String>| {
+        list_rows::small(size, s, SECTION)
+            .px(move || size.px(INSET))
             .py(px(10.0))
             .number_of_lines(1)
-            .text_size(px(15.0))
-            .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA))
     };
     let groups_column = view()
-        .w(move || px(if groups() { GROUPS_W } else { 0.0 }))
+        .w(move || px(if groups() { size.whole(GROUPS_W) } else { 0.0 }))
         .opacity(move || if groups() { 1.0_f32 } else { 0.0 })
         .overflow_hidden()
         .pt_safe_area()
         .py(px(16.0))
         .bg(panel)
-        .child(heading(Box::new(|| "Groups".to_owned())).px(px(22.0)))
+        .child(heading(Box::new(|| "Groups".to_owned())).px(move || size.px(INSET + 8.0)))
         .child(
             virtual_list(
                 move || {
                     ui.data_version.get();
                     entry_count(&*crate::schedule())
                 },
-                move |at| entry_row(ui, at, entry_focus),
+                move |at| entry_row(ui, at, entry_focus, size),
             )
-            .estimated_item_size(px(GROUP_H))
+            .estimated_item_size(list_rows::pitch(size, ROW))
             .element_ref(&entries)
             .flex_1(),
         );
     let channels_column = view()
-        .w(px(LIST_W))
+        .w(move || px(size.whole(LIST_W)))
         .pt_safe_area()
         .px(px(12.0))
         .py(px(16.0))
@@ -250,9 +257,9 @@ pub fn layer(ui: Ui) -> impl IntoElement {
         .child(
             virtual_list(
                 move || ui.list.with(|l| l.len()),
-                move |at| channel_row(ui, at, row_focus),
+                move |at| channel_row(ui, at, row_focus, size),
             )
-            .estimated_item_size(px(ROW_H))
+            .estimated_item_size(list_rows::pitch(size, ROW_TWO))
             .element_ref(&rows)
             .flex_1(),
         );
@@ -284,50 +291,44 @@ pub fn layer(ui: Ui) -> impl IntoElement {
                     ui.touched();
                     close(ui);
                 })
-                .child(when(move || !overlay(), move || preview_info(ui))),
+                .child(when(move || !overlay(), move || preview_info(ui, size))),
         )
-}
-
-fn focus_bg(ui: Ui, focused: bool, current: bool) -> Rgba {
-    if focused {
-        tint(ui.theme.with(|t| t.accent.main), FOCUS_ALPHA)
-    } else if current {
-        tint(WHITE, RESTING_ALPHA)
-    } else {
-        tint(WHITE, 0)
-    }
 }
 
 /// An entry of the groups column; the list shown is marked. Cells are
 /// recycled: `at` is read where it is used.
-fn entry_row(ui: Ui, at: Position, focus: Memo<Option<(usize, bool)>>) -> impl IntoElement {
+fn entry_row(
+    ui: Ui,
+    at: Position,
+    focus: Memo<Option<(usize, bool)>>,
+    size: Scale,
+) -> impl IntoElement {
     let current = move || ui.list.with(|l| l.entry()) == at.index();
     let focused = move || ui.keys_shown() && focus.get() == Some((at.index(), true));
-    view()
-        .h(px(GROUP_H))
+    let mark = move || Mark::of(focused(), current());
+    list_rows::row(size, ROW, mark)
         .mx(px(8.0))
-        .px(px(14.0))
-        .justify_center()
-        .rounded(px(RADIUS))
-        .bg(move || focus_bg(ui, focused(), current()))
         .on_press(move || {
             ui.touched();
             update(ui, |c, l, _| c.tap_entry(at.index(), l));
         })
         .child(
-            text(move || {
+            list_rows::name(size, move || {
                 ui.data_version.get();
                 entry_name(at.index(), &*crate::schedule())
             })
-            .number_of_lines(1)
-            .text_size(px(16.0))
-            .text_color(rgb(WHITE)),
+            .text_color(move || mark().text()),
         )
 }
 
 /// A row of the list: its number (row + 1, as in the guide), name, the
 /// playing marker, and what is on now.
-fn channel_row(ui: Ui, at: Position, focus: Memo<Option<(usize, bool)>>) -> impl IntoElement {
+fn channel_row(
+    ui: Ui,
+    at: Position,
+    focus: Memo<Option<(usize, bool)>>,
+    size: Scale,
+) -> impl IntoElement {
     let entry = move || {
         ui.data_version.get();
         let ch = ui.list.with(|l| l.channel(at.index()))?;
@@ -352,34 +353,31 @@ fn channel_row(ui: Ui, at: Position, focus: Memo<Option<(usize, bool)>>) -> impl
     let focused = move || ui.keys_shown() && focus().is_some_and(|f| f.1);
     // While the groups have the focus, the row it returns to stays marked.
     let resting = move || focus().is_some_and(|f| !f.1);
-    view()
-        .h(px(ROW_H))
-        .px(px(14.0))
-        .justify_center()
-        .gap(px(2.0))
-        .rounded(px(RADIUS))
-        .bg(move || focus_bg(ui, focused(), resting()))
+    let mark = move || Mark::of(focused(), resting());
+    list_rows::row(size, ROW_TWO, mark)
         .on_press(move || {
             ui.touched();
             let playing = playing(ui);
             update(ui, |c, l, _| c.tap_row(at.index(), playing, l));
         })
         .child(
-            text(move || entry().map_or(String::new(), |e| e.0))
-                .number_of_lines(1)
-                .text_size(px(16.0))
-                .text_color(rgb(WHITE)),
+            list_rows::name(size, move || entry().map_or(String::new(), |e| e.0))
+                .text_color(move || mark().text()),
         )
         .child(
-            text(move || entry().map_or(String::new(), |e| e.1))
-                .number_of_lines(1)
-                .text_size(px(13.0))
-                .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA)),
+            // What is on: a programme title, in the grid's type.
+            list_rows::second(
+                size,
+                move || entry().map_or(String::new(), |e| e.1),
+                CONDENSED,
+            )
+            .text_color(move || mark().secondary()),
         )
 }
 
 /// Under the preview: the focused channel and its programme now.
-fn preview_info(ui: Ui) -> impl IntoElement {
+/// In the guide header's type.
+fn preview_info(ui: Ui, size: Scale) -> impl IntoElement {
     let info = move || {
         ui.data_version.get();
         let row = ui.channels.get()?.row;
@@ -402,20 +400,22 @@ fn preview_info(ui: Ui) -> impl IntoElement {
         .px(px(40.0))
         .gap(px(6.0))
         .pointer_events(PointerEvents::None)
-        .child(
-            text(move || info().map_or(String::new(), |i| i.0))
-                .text_size(px(15.0))
-                .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA)),
-        )
+        .child(list_rows::small(
+            size,
+            move || info().map_or(String::new(), |i| i.0),
+            HEADER_TIMES,
+        ))
         .child(
             text(move || info().map_or(String::new(), |i| i.1))
-                .text_size(px(24.0))
-                .font_weight(FontWeight::BOLD)
-                .text_color(rgb(WHITE)),
+                .font_family(SANS)
+                .font_weight(MEDIUM)
+                .text_size(move || size.px(TITLE))
+                .text_color(rgb(BRIGHT_TEXT)),
         )
         .child(
             text(move || info().map_or(String::new(), |i| i.2))
-                .text_size(px(15.0))
-                .text_color(rgb(WHITE)),
+                .font_family(SANS)
+                .text_size(move || size.px(HEADER_TIMES))
+                .text_color(rgb(BRIGHT_TEXT)),
         )
 }

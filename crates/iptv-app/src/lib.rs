@@ -19,6 +19,7 @@ mod grid;
 mod guide_assign_view;
 mod header;
 mod input;
+mod list_rows;
 mod lists;
 mod media;
 mod menu_view;
