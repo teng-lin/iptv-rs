@@ -4,7 +4,7 @@ import android.app.Activity
 import android.content.Intent
 import android.content.res.Configuration
 import android.os.Bundle
-import com.longbridge.nsh.HostBridge
+import com.longbridge.nsh.DevActivity
 import com.longbridge.nsh.NshView
 
 /**
@@ -16,9 +16,9 @@ class TvActivity : Activity() {
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
-        HostBridge.edgeToEdge(this)
+        DevActivity.edgeToEdge(this)
         nsh = NshView(this)
-        HostBridge.useStandaloneLimits(nsh)
+        nsh.useStandaloneLimits()
         nsh.registerComponent(PlayerComponent.NAME) { context -> PlayerComponent(this, context) }
         setContentView(nsh)
         nsh.handleNotificationIntent(intent)
@@ -28,7 +28,7 @@ class TvActivity : Activity() {
 
     override fun onConfigurationChanged(config: Configuration) {
         super.onConfigurationChanged(config)
-        HostBridge.systemBars(this)
+        DevActivity.systemBars(this)
     }
 
     override fun onNewIntent(intent: Intent) {

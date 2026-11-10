@@ -14,7 +14,7 @@
   `wasm32-unknown-unknown`.
 - **State lives in the core.** Views render state and send actions; focus is
   restored by content identity, never by list index.
-- **NSH fork.** NSH comes from `~/src/nsh`, branch `tv-dpad-spike`. Keep
+- **NSH fork.** NSH comes from `~/src/nsh`, branch `tv-keys`. Keep
   patches small with tests; they go upstream later.
 - **Video layer.** One persistent player surface under the UI; modes change
   layout only. Never hide, detach or re-parent the player view (see

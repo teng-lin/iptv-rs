@@ -7,17 +7,19 @@ use std::time::{Duration, Instant};
 
 use iptv_core::panels::Control;
 use iptv_nav::{Action, Context, Keymap, Phase, PressDetector, RemoteKey};
+use nsh_core::keymap::KeyPhase;
 use nsh_core::prelude::*;
 
 use crate::guide::{CHANNELS, Focus, Move, Pane};
 use crate::{Input, Ui, ViewMode};
 
-/// Long press needs key releases from NSH (branch `tv-keys`). Until then
-/// every key is a plain press and long bindings are not consulted.
-const LONG_PRESS: bool = false;
+/// Long press needs key releases, which NSH (branch `tv-keys`) reports on
+/// Android only. Elsewhere every key is a plain press and long bindings are
+/// not consulted (a deferred short press would never see its release).
+const LONG_PRESS: bool = cfg!(target_os = "android");
 
-/// NSH keystroke names and the remote keys they stand for. Keyboard letters
-/// stand in for remote buttons on the desktop and in emulators.
+/// NSH keystroke names and the remote keys they stand for: the remote's own
+/// keys, then keyboard stand-ins for the desktop and emulators.
 const KEYS: &[(&str, RemoteKey)] = &[
     ("up", RemoteKey::Up),
     ("down", RemoteKey::Down),
@@ -26,6 +28,25 @@ const KEYS: &[(&str, RemoteKey)] = &[
     ("enter", RemoteKey::Ok),
     ("pageup", RemoteKey::PageUp),
     ("pagedown", RemoteKey::PageDown),
+    ("menu", RemoteKey::Menu),
+    ("guide", RemoteKey::Guide),
+    ("info", RemoteKey::Info),
+    ("channelup", RemoteKey::ChannelUp),
+    ("channeldown", RemoteKey::ChannelDown),
+    ("playpause", RemoteKey::PlayPause),
+    ("play", RemoteKey::Play),
+    ("pause", RemoteKey::Pause),
+    ("stop", RemoteKey::Stop),
+    ("rewind", RemoteKey::Rewind),
+    ("fastforward", RemoteKey::FastForward),
+    ("record", RemoteKey::Record),
+    ("next", RemoteKey::Next),
+    ("previous", RemoteKey::Previous),
+    ("red", RemoteKey::Red),
+    ("green", RemoteKey::Green),
+    ("yellow", RemoteKey::Yellow),
+    ("blue", RemoteKey::Blue),
+    // Keyboard stand-ins.
     ("m", RemoteKey::Menu),
     ("g", RemoteKey::Guide),
     ("i", RemoteKey::Info),
@@ -66,8 +87,13 @@ pub fn bind(ui: Ui) {
     bindings.extend(digits.map(|(d, k)| (d.to_string(), k)));
     for (name, key) in bindings {
         let nav = nav.clone();
-        on_key_with(&name, repeat, move |_| {
-            key_event(ui, &nav, key, Phase::Down)
+        on_key_event(&name, repeat, move |e: &KeyCommand| {
+            let phase = match e.phase {
+                KeyPhase::Press => Phase::Down,
+                KeyPhase::Repeat => Phase::Repeat,
+                KeyPhase::Release => Phase::Up,
+            };
+            key_event(ui, &nav, key, phase)
         });
     }
     // Spike shortcuts for the view modes.
@@ -114,15 +140,20 @@ fn key_event(ui: Ui, nav: &Rc<RefCell<Nav>>, key: RemoteKey, phase: Phase) {
         });
     }
     let us = t.elapsed().as_micros();
+    if phase == Phase::Up && action.is_none() {
+        return; // releases are logged only when they act (a deferred short press)
+    }
     ui.stats.update(|s| {
         s.keys += 1;
         s.last_us = us;
         s.max_us = s.max_us.max(us);
     });
     log::info!(
-        "iptv key={} ctx={ctx:?} action={action:?} n={} handler_us={us}",
+        "iptv key={} phase={phase:?} ctx={ctx:?} action={action:?} n={} handler_us={us} mode={:?} panels={:?}",
         key.name(),
-        ui.stats.with(|s| s.keys)
+        ui.stats.with(|s| s.keys),
+        ui.mode.get(),
+        ui.panels.with(|p| p.shown)
     );
 }
 

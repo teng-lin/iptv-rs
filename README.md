@@ -22,7 +22,7 @@ Android video/input research: [`docs/research/android-video-and-input.md`](docs/
 
 - Rust stable with `x86_64-linux-android`, `aarch64-linux-android`, `wasm32-unknown-unknown`.
 - JDK 21, Android SDK (platform 35, build-tools 35.0.1, platform-tools, emulator), NDK 30.
-- NSH CLI built from the fork: `~/src/nsh` (branch `tv-dpad-spike`), `cargo build --release -p nsh-cli`.
+- NSH CLI built from the fork: `~/src/nsh` (branch `tv-keys`), `cargo build --release -p nsh-cli`.
 - `ffmpeg` and `python3` for synthetic test streams.
 
 ## Run

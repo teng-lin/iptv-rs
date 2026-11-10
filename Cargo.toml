@@ -12,7 +12,7 @@ publish = false
 [workspace.dependencies]
 iptv-core = { path = "crates/iptv-core" }
 iptv-nav = { path = "crates/iptv-nav" }
-# The NSH fork checkout (branch tv-dpad-spike); upstream PR planned.
+# The NSH fork checkout (branch tv-keys); upstream PR planned.
 nsh-core = { path = "/home/blackmyth/src/nsh/crates/nsh-core" }
 nsh-base = { path = "/home/blackmyth/src/nsh/crates/nsh-base" }
 nsh-platform-linux = { path = "/home/blackmyth/src/nsh/crates/nsh-platform-linux", default-features = false }
