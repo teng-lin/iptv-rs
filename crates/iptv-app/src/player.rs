@@ -291,14 +291,17 @@ fn open(ui: Ui, surface: usize, session: u64) {
         Playback::CatchUp { start, offset } => (Some(schedule.program_at(channel, start)), offset),
     };
     let Some(epg) = real_schedule(&schedule) else {
-        // The synthetic guide plays the local test streams.
-        let url = match playback {
-            Playback::Live => crate::video::stream_url(channel),
-            Playback::CatchUp { start, offset } => {
-                crate::video::catchup_url(channel, start, offset)
-            }
-        };
-        load(ui, surface, session, PlaySource::new(url));
+        // The synthetic guide plays the local test streams (debug builds).
+        match crate::video::synthetic_url(channel, playback) {
+            Some(url) => load(ui, surface, session, PlaySource::new(url)),
+            None => fail(
+                ui,
+                surface,
+                session,
+                ErrorKind::Unavailable,
+                "no stream".into(),
+            ),
+        }
         return;
     };
     let at = archive.map(|p| crate::guide::unix_of(&*schedule, p.start));

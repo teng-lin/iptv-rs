@@ -84,9 +84,15 @@ Start them with `QT_QPA_PLATFORM=xcb` so the host keyboard reaches them.
 
 `cargo run -p iptv-app` opens a 960×540 window (Wayland or X11). Video plays
 through libmpv rendering into a GTK GL area under the UI. Without a stored
-playlist the wizard opens; its playlist link defaults to the mock server at
-`http://127.0.0.1:8089/iptv/playlist.m3u` (generate desktop fixtures with
-`python3 -I tools/make-iptv-fixtures.py --host 127.0.0.1:8089`). Data lives in
+playlist the wizard opens with an empty playlist link; a build with
+`IPTV_RS_DEV_PLAYLIST` set starts it with that address instead (e.g.
+`IPTV_RS_DEV_PLAYLIST=http://127.0.0.1:8089/iptv/playlist.m3u cargo run -p iptv-app`
+for the mock server; generate desktop fixtures with
+`python3 -I tools/make-iptv-fixtures.py --host 127.0.0.1:8089`; for the
+emulator `IPTV_RS_DEV_PLAYLIST=http://10.0.2.2:8089/iptv/playlist.m3u tools/sync-host.sh`).
+Release builds never carry a development address: the synthetic guide shown
+before a playlist plays the mock server's streams in debug builds only.
+Data lives in
 `~/.local/share/iptv-rs` (settings in `settings.json` there). Settings open
 from the guide's menu (Menu, `m`).
 
