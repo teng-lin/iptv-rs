@@ -181,16 +181,23 @@ fn row(
                     ui.watch();
                 })
                 .child(
-                    text(move || channel_name(at.index()))
-                        .number_of_lines(1)
-                        .text_size(px(TEXT_SIZE))
-                        .text_color(move || {
-                            if playing() {
-                                rgb(ui.theme.with(|t| t.accent.light))
-                            } else {
-                                rgb(WHITE)
-                            }
-                        }),
+                    text(move || {
+                        let star = ui.favorites.with(|f| f.contains(&at.index()));
+                        format!(
+                            "{}{}",
+                            if star { "★ " } else { "" },
+                            channel_name(at.index())
+                        )
+                    })
+                    .number_of_lines(1)
+                    .text_size(px(TEXT_SIZE))
+                    .text_color(move || {
+                        if playing() {
+                            rgb(ui.theme.with(|t| t.accent.light))
+                        } else {
+                            rgb(WHITE)
+                        }
+                    }),
                 ),
         )
         .child(view().flex_1().children((0..MAX_CELLS).map(cell)))

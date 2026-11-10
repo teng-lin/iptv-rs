@@ -77,6 +77,12 @@ fn program_seq(channel: usize) -> impl Iterator<Item = Program> {
     })
 }
 
+/// Synthetic catch-up window: even channels keep a 3-day archive, odd
+/// channels have none (so both cases are always on screen).
+pub fn catchup_days(channel: usize) -> u8 {
+    if channel % 2 == 0 { 3 } else { 0 }
+}
+
 /// The programme of `channel` airing at `minute` (clamped to the horizon).
 pub fn program_at(channel: usize, minute: i32) -> Program {
     let minute = minute.clamp(0, HORIZON - 1);

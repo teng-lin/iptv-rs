@@ -7,4 +7,5 @@
 //! settings and view models as separate crates.
 
 pub mod guide;
+pub mod menu;
 pub mod panels;

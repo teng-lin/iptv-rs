@@ -8,6 +8,7 @@ pub mod theme;
 
 mod grid;
 mod input;
+mod menu_view;
 mod panels;
 mod player_panels;
 mod video;
@@ -15,6 +16,9 @@ mod video;
 use std::time::{Duration, Instant};
 
 use guide::{Airing, Focus, Pane};
+use std::collections::BTreeSet;
+
+use iptv_core::menu::Menu;
 use iptv_core::panels::Panels;
 use nsh_core::prelude::*;
 use theme::Theme;
@@ -70,6 +74,9 @@ pub struct Ui {
     pub video_size: Signal<Option<(u32, u32)>>,
     /// The app's monotonic clock origin (core state machines take ms).
     pub epoch: Instant,
+    /// The open context menu, if any.
+    pub menu: Signal<Option<Menu>>,
+    pub favorites: Signal<BTreeSet<usize>>,
 }
 
 impl Ui {
@@ -171,6 +178,8 @@ pub fn App() -> impl IntoElement {
         paused: signal(false),
         video_size: signal(None),
         epoch: Instant::now(),
+        menu: signal(None),
+        favorites: signal(BTreeSet::new()),
     };
     // Leaving full screen closes the panels.
     effect(move || {
@@ -260,6 +269,7 @@ pub fn App() -> impl IntoElement {
                 }),
         )
         .child(player_panels::layer(ui))
+        .child(menu_view::layer(ui))
 }
 
 /// Back: player panels → hidden; full screen/overlay → guide; guide →
@@ -267,9 +277,14 @@ pub fn App() -> impl IntoElement {
 fn bind_back(ui: Ui) {
     let back_target = computed(move || {
         let panels = ui.panels.with(|p| p.shown) != iptv_core::panels::Shown::Hidden;
-        (ui.mode.get(), ui.focus.with(|f| f.pane), panels)
+        let menu = ui.menu.with(Option::is_some);
+        (ui.mode.get(), ui.focus.with(|f| f.pane), panels || menu)
     });
     effect(move || match back_target.get() {
+        _ if ui.menu.with(Option::is_some) => on_back_press(move || {
+            menu_view::close(ui);
+            true
+        }),
         (ViewMode::Fullscreen, _, true) => on_back_press(move || {
             ui.panels.update(|p| p.hide());
             true

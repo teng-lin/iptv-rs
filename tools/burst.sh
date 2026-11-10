@@ -20,7 +20,7 @@ sent_ms=$(( ($(date +%s%N) - start) / 1000000 ))
 sleep 1.5
 
 log="$out/$label.logcat.txt"
-$adb logcat -d | grep 'iptv key=' > "$log" || true
+$adb logcat -d | grep 'iptv key=' | grep -v 'phase=Up' > "$log" || true
 got=$(wc -l < "$log")
 $adb shell dumpsys gfxinfo "$pkg" > "$out/$label.gfxinfo.txt"
 $adb exec-out screencap -p > "$out/$label.png"

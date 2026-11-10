@@ -63,6 +63,9 @@ struct Nav {
 
 /// The surface that owns input now.
 pub fn context(ui: &Ui) -> Context {
+    if ui.menu.with(Option::is_some) {
+        return Context::Menu;
+    }
     match (ui.mode.get(), ui.focus.with(|f| f.pane)) {
         (ViewMode::Fullscreen, _) if ui.panels.with(|p| p.captures_input()) => Context::Controls,
         (ViewMode::Fullscreen, _) => Context::Player,
@@ -169,7 +172,26 @@ fn apply(ui: Ui, action: Action) {
     ui.update_panels(|p, now| p.touch(now));
     let controls = ui.panels.with(|p| p.captures_input()) && ui.mode.get() == ViewMode::Fullscreen;
     let mv = |m: Move| ui.focus.update(|f| f.apply(m));
+    if ui.menu.with(Option::is_some) {
+        match action {
+            Action::MoveUp => ui
+                .menu
+                .update(|m| m.as_mut().into_iter().for_each(|m| m.move_focus(-1))),
+            Action::MoveDown => ui
+                .menu
+                .update(|m| m.as_mut().into_iter().for_each(|m| m.move_focus(1))),
+            Action::Select => {
+                if let Some(item) = ui.menu.with(|m| m.as_ref().and_then(|m| m.focused())) {
+                    crate::menu_view::perform(ui, item);
+                }
+            }
+            Action::Back | Action::ShowMenu => crate::menu_view::close(ui),
+            _ => {}
+        }
+        return;
+    }
     match action {
+        Action::ShowMenu => crate::menu_view::open(ui),
         Action::MoveLeft if controls => ui.update_panels(|p, now| p.move_focus(-1, now)),
         Action::MoveRight if controls => ui.update_panels(|p, now| p.move_focus(1, now)),
         Action::Select if controls => press_control(ui, ui.panels.with(|p| p.focused())),

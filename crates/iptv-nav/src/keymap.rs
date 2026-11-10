@@ -18,6 +18,8 @@ pub enum Context {
     /// The control row over full-screen video (Left/Right/OK move and
     /// press its buttons; Up/Down still zap).
     Controls,
+    /// A context menu (Up/Down move, OK selects, Left or Back closes).
+    Menu,
 }
 
 /// What the app should do.
@@ -82,7 +84,7 @@ impl Keymap {
     /// iptv-rs's default remote map.
     pub fn defaults() -> Keymap {
         use Action as A;
-        use Context::{Controls, Guide, Player};
+        use Context::{Controls, Guide, Menu, Player};
         use Press::{Long, Short};
         use RemoteKey as K;
         let g = None;
@@ -122,6 +124,9 @@ impl Keymap {
             // Control row: directions/OK use the global moves; Up/Down zap.
             b(Some(Controls), K::Up, Short, A::ChannelUp),
             b(Some(Controls), K::Down, Short, A::ChannelDown),
+            // Menus: Left closes like Back; Right does nothing.
+            b(Some(Menu), K::Left, Short, A::Back),
+            b(Some(Menu), K::Right, Short, A::Ignore),
         ];
         defaults.extend((0..=9).map(|d| b(g, K::Digit(d), Short, A::Digit(d))));
         Keymap {
@@ -171,7 +176,7 @@ impl Keymap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use Context::{Controls, Groups, Guide, Player};
+    use Context::{Controls, Groups, Guide, Menu, Player};
 
     #[test]
     fn context_defaults_win_over_global_ones() {
@@ -213,6 +218,21 @@ mod tests {
             !k.has_long(Controls, RemoteKey::Ok),
             "OK presses the button at once"
         );
+    }
+
+    #[test]
+    fn menus_move_vertically_and_left_closes() {
+        let k = Keymap::defaults();
+        assert_eq!(
+            k.resolve(Menu, RemoteKey::Down, Press::Short),
+            Some(Action::MoveDown)
+        );
+        assert_eq!(
+            k.resolve(Menu, RemoteKey::Left, Press::Short),
+            Some(Action::Back)
+        );
+        assert_eq!(k.resolve(Menu, RemoteKey::Right, Press::Short), None);
+        assert!(!k.has_long(Menu, RemoteKey::Ok));
     }
 
     #[test]
