@@ -187,6 +187,11 @@ above applies, with macOS's keys and places:
   Control); mute Ctrl+M.
 - `IPTV_RS_AUDIO=null`, `IPTV_RS_HWDEC` (default `auto-copy-safe`:
   VideoToolbox) and `RUST_LOG=info` as on Linux.
+- Fonts: the bundled Roboto, Roboto Medium and Roboto Condensed register
+  with CoreText at startup; NSH may log ``font family `Roboto` is not
+  available`` once before they do, and lays that text out again after.
+  Scripts Roboto lacks (Arabic, Hebrew, CJK, Thai, Devanagari, emoji)
+  come from the system's fallback fonts.
 - `nsh test <file>.test.tsx --target macos` drives the real app in the
   background (synthetic keys and clicks, window screenshots that include
   the video). Window full screen needs `--foreground`; while the screen
