@@ -1,0 +1,9 @@
+[package]
+name = "iptv-settings"
+description = "The settings layer of iptv-rs: one declarative schema (keys, types, defaults, scopes, dependencies) and a validated, scoped, versioned settings store. No NSH, no I/O; wasm-safe."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde_json.workspace = true
