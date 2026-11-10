@@ -10,9 +10,10 @@
 //!   README). Stream URLs and headers in the catalog are provider data and
 //!   may embed credentials too (Xtream-shaped M3U), so the whole file is
 //!   sensitive: never log rows, and `Debug` of the row types redacts them.
-//!   What the user chose per source (its guide address) is in
-//!   `source_settings`, and the source the app shows in `store_meta`
-//!   ([`Store::active_source`]).
+//!   What the user chose per source: its guide sources in
+//!   `guide_sources` ([`Store::guide_sources`]), channels' manual guide
+//!   choices in `channel_overlays`; the source the app shows in
+//!   `store_meta` ([`Store::active_source`]).
 //! - **Migrations** are forward-only and numbered, applied at open, and safe
 //!   to run repeatedly ([`migrate`]).
 //!
@@ -29,7 +30,9 @@ mod catalog;
 mod channels;
 mod codec;
 mod epg;
+mod epg_assign;
 mod error;
+mod guide_sources;
 mod history;
 pub mod migrate;
 mod order;
@@ -46,13 +49,14 @@ use rusqlite::{Connection, OpenFlags};
 
 pub use channels::{ChannelOrder, ChannelQuery, ChannelRow, ChannelScope};
 pub use epg::{EpgCounts, EpgFeedMeta, EpgWindow, StoredEpgFeed, StoredGuide};
+pub use epg_assign::{FeedResult, GuideChannel};
 pub use error::{Result, StoreError};
+pub use guide_sources::GuideSource;
 pub use history::{HISTORY_LIMIT, HistoryEntry, PRUNE_SLACK};
 pub use migrate::SCHEMA_VERSION;
 pub use organise::{CustomGroup, CustomGroupId, OrderScope};
 pub use overlay::{EpgOverride, OrphanedOverlay};
 pub use search::SearchBackend;
-pub use source_settings::SourceSettings;
 pub use sources::{CatalogCounts, ImportErrorKind, ImportStatus, SourceSummary, StoredSource};
 
 /// Row id of a source. Overlay keys are `(SourceId, ContentId)`.

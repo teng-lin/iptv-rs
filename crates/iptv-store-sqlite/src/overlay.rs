@@ -34,6 +34,35 @@ pub enum EpgOverride {
 }
 
 impl EpgOverride {
+    /// Channel `epg_channel` of the playlist source's guide feed `feed`
+    /// (the feed id is the opaque key).
+    pub fn for_feed(feed: iptv_epg::SourceId, epg_channel: impl Into<String>) -> Self {
+        Self::Xmltv {
+            epg_source: feed.0.to_string(),
+            epg_channel: epg_channel.into(),
+        }
+    }
+
+    /// The feed of [`EpgOverride::for_feed`]; `None` for another key.
+    pub fn feed(&self) -> Option<iptv_epg::SourceId> {
+        match self {
+            Self::Xmltv { epg_source, .. } => epg_source.parse().ok().map(iptv_epg::SourceId),
+            Self::Disabled => None,
+        }
+    }
+
+    /// What EPG matching applies: a key that names no feed matches the
+    /// channel id in every feed.
+    pub fn to_override(&self) -> iptv_epg::Override {
+        match self {
+            Self::Disabled => iptv_epg::Override::NoEpg,
+            Self::Xmltv { epg_channel, .. } => iptv_epg::Override::Epg {
+                source: self.feed(),
+                epg_id: epg_channel.clone(),
+            },
+        }
+    }
+
     pub(crate) fn from_columns(
         mode: Option<String>,
         source: Option<String>,

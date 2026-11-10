@@ -67,6 +67,7 @@ fn imports_a_streamed_playlist_with_headers_and_progress() {
         epg[0].url.expose(),
         "http://127.0.0.1:8089/iptv/guide.xml.gz"
     );
+    assert_eq!(catalog.guide_urls(), [epg[0].url.clone()]);
 
     let reqs = fetch.requests();
     assert_eq!(reqs.len(), 1);

@@ -21,8 +21,8 @@ use iptv_providers::model::{ContentKind, SourceConfig, SourceKind};
 use iptv_providers::{ContentId, GroupId};
 use iptv_store_sqlite::migrate::schema_dump;
 use iptv_store_sqlite::{
-    ChannelOrder, ChannelQuery, ChannelScope, EpgFeedMeta, EpgOverride, EpgWindow, ImportErrorKind,
-    SCHEMA_VERSION, SourceId, SourceSettings, Store,
+    ChannelOrder, ChannelQuery, ChannelScope, EpgFeedMeta, EpgOverride, EpgWindow, FeedResult,
+    GuideChannel, GuideSource, ImportErrorKind, SCHEMA_VERSION, SourceId, Store,
 };
 
 #[test]
@@ -71,6 +71,17 @@ const HISTORY: &[Version] = &[
             "data_v3.sql",
             "data_v4.sql",
             "data_v5.sql",
+        ],
+    },
+    Version {
+        version: 6,
+        data: &[
+            "data_v1.sql",
+            "data_v2.sql",
+            "data_v3.sql",
+            "data_v4.sql",
+            "data_v5.sql",
+            "data_v6.sql",
         ],
     },
 ];
@@ -305,6 +316,7 @@ fn every_historical_version_migrates_with_its_data() {
         }
         check_guide(&store, v.version);
         check_settings(&store, v.version);
+        check_feed_results(&store, v.version);
         drop(store);
 
         // Opening again (every app start) changes nothing.
@@ -318,23 +330,115 @@ fn every_historical_version_migrates_with_its_data() {
         }
         check_guide(&again, v.version);
         check_settings(&again, v.version);
+        check_feed_results(&again, v.version);
     }
 }
 
-/// Per-source settings and the shown source, written by v5 builds; none
-/// before (older builds kept a typed guide address only with the guide).
+/// The shown source (v5 builds on), and each source's guide sources: a v5
+/// build's guide address, or the typed feed a build before v5 kept with
+/// the stored guide, becomes the first; the provider's stored feeds follow
+/// (v6 builds wrote them so).
 fn check_settings(store: &Store, version: u32) {
-    let typed = store.source_settings(SRC).unwrap();
-    let removed = store.source_settings(SourceId(2)).unwrap();
-    if version < 5 {
-        assert_eq!((typed, removed), (None, None));
-        assert_eq!(store.active_source().unwrap(), None);
+    let expected_active = (version >= 5).then_some(SourceId(2));
+    assert_eq!(store.active_source().unwrap(), expected_active);
+    let sources = store.guide_sources(SRC).unwrap();
+    let other = store.guide_sources(SourceId(2)).unwrap();
+    if version < 4 {
+        assert_eq!((sources, other), (vec![], vec![]));
         return;
     }
-    let url = typed.unwrap().epg_url.unwrap();
-    assert_eq!(url.expose(), "http://epg.example.com/typed.xml");
-    assert_eq!(removed, Some(SourceSettings { epg_url: None }));
-    assert_eq!(store.active_source().unwrap(), Some(SourceId(2)));
+    let typed = if version == 4 {
+        "http://panel.example.com:8080/xmltv.php?username=fixture-user&password=fixture-pass"
+    } else {
+        "http://epg.example.com/typed.xml"
+    };
+    assert_eq!(
+        sources,
+        [
+            GuideSource {
+                feed: iptv_epg::SourceId(1),
+                provider_index: None,
+                url: SecretUrl::new(typed),
+                name: None,
+                enabled: true,
+                shift_minutes: 0,
+            },
+            GuideSource {
+                feed: iptv_epg::SourceId(2),
+                provider_index: Some(0),
+                url: SecretUrl::new("http://epg.example.com/extra.xml.gz"),
+                name: None,
+                enabled: true,
+                shift_minutes: -30,
+            },
+        ],
+        "v{version}"
+    );
+    if version >= 6 {
+        assert_eq!(
+            other,
+            [GuideSource {
+                feed: iptv_epg::SourceId(1001),
+                provider_index: None,
+                url: SecretUrl::new("http://alt.example.com/guide.xml"),
+                name: Some("Fixture Alt".into()),
+                enabled: false,
+                shift_minutes: -60,
+            }]
+        );
+    } else {
+        assert_eq!(other, []);
+    }
+}
+
+/// How each stored feed's last download went (from the stored feeds for
+/// files before v6), and the channels the feeds list.
+fn check_feed_results(store: &Store, version: u32) {
+    let results = store.epg_feed_results(SRC).unwrap();
+    let other = store.epg_feed_results(SourceId(2)).unwrap();
+    if version < 4 {
+        assert_eq!((results, other), (vec![], vec![]));
+        return;
+    }
+    let loaded = |feed, channels, programmes, listed| FeedResult {
+        feed: iptv_epg::SourceId(feed),
+        attempted_at: 1_700_001_000,
+        error: None,
+        channel_count: channels,
+        programme_count: programmes,
+        listed_count: listed,
+    };
+    let listed = if version >= 6 { 2 } else { 0 };
+    assert_eq!(results, [loaded(1, 1, 3, 0), loaded(2, 1, 1, listed)]);
+    if version >= 6 {
+        assert_eq!(
+            other,
+            [FeedResult {
+                feed: iptv_epg::SourceId(1001),
+                attempted_at: 1_700_001_100,
+                error: Some(ImportErrorKind::Timeout),
+                channel_count: 0,
+                programme_count: 0,
+                listed_count: 0,
+            }]
+        );
+    } else {
+        assert_eq!(other, []);
+    }
+    let channel = |feed, id: &str, name: Option<&str>, assigned| GuideChannel {
+        feed: iptv_epg::SourceId(feed),
+        epg_channel: id.into(),
+        name: name.map(Into::into),
+        assigned,
+    };
+    let mut expected = vec![channel(1, "news.example", None, true)];
+    if version >= 6 {
+        expected.push(channel(2, "spare.example", Some("Fixture Spare"), false));
+        expected.push(channel(2, "sport.example", Some("Fixture Sport"), true));
+    } else {
+        expected.push(channel(2, "sport.example", None, true));
+    }
+    assert_eq!(store.guide_channels(SRC).unwrap(), expected, "v{version}");
 }
 
 /// Guide data written by v4 builds; none before.
@@ -578,8 +682,9 @@ fn check_overlays_after_return(store: &Store) {
     );
 }
 
-/// After upgrading from any version, the playlists screen can save a guide
-/// address and the shown source, and deleting a source takes them along.
+/// After upgrading from any version, the guide sources screen can save a
+/// source list and the shown source, and deleting a source takes them
+/// along.
 #[test]
 fn playlist_settings_after_upgrading() {
     for v in HISTORY {
@@ -587,22 +692,29 @@ fn playlist_settings_after_upgrading() {
         let path = dir.path().join("old.db");
         build_old_file(&path, v);
         let mut store = Store::open(&path).unwrap();
-        let url = SecretUrl::new("http://epg.example.com/changed.xml");
-        store.set_source_epg_url(SRC, Some(&url)).unwrap();
+        let mut sources = store.guide_sources(SRC).unwrap();
+        sources.insert(
+            0,
+            GuideSource {
+                feed: iptv_epg::SourceId(1002),
+                provider_index: None,
+                url: SecretUrl::new("http://epg.example.com/changed.xml"),
+                name: Some("Changed".into()),
+                enabled: true,
+                shift_minutes: 120,
+            },
+        );
+        store.set_guide_sources(SRC, &sources).unwrap();
         store.set_active_source(SRC).unwrap();
         drop(store);
         let mut store = Store::open(&path).unwrap();
-        assert_eq!(
-            store.source_settings(SRC).unwrap().unwrap().epg_url,
-            Some(url),
-            "v{}",
-            v.version
-        );
+        assert_eq!(store.guide_sources(SRC).unwrap(), sources, "v{}", v.version);
         assert_eq!(store.active_source().unwrap(), Some(SRC));
         // The other source still has what it had.
         check_guide(&store, v.version);
         assert!(store.delete_source(SRC).unwrap());
         assert_eq!(store.active_source().unwrap(), None);
+        assert!(store.guide_sources(SRC).is_err());
         assert_eq!(store.sources().unwrap().len(), 1);
         assert!(store.source(SourceId(2)).unwrap().is_some());
     }

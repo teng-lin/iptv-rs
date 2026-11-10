@@ -22,6 +22,7 @@ fn implemented(item: MenuItem) -> bool {
             | MenuItem::ToggleFavorite
             | MenuItem::StartFromBeginning
             | MenuItem::ManageFavorites
+            | MenuItem::AssignEpg
     )
 }
 
@@ -135,6 +136,11 @@ pub fn perform(ui: Ui, item: MenuItem) {
         MenuItem::ToggleFavorite => {
             close(ui);
             crate::favorites::toggle(ui, origin.channel);
+        }
+        // The chooser opens over the guide; the guide's focus stays.
+        MenuItem::AssignEpg => {
+            close(ui);
+            crate::guide_assign_view::open(ui, origin.channel);
         }
         other => {
             log::info!("iptv menu {other:?} not implemented yet");

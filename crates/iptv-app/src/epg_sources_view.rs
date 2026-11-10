@@ -1,0 +1,701 @@
+//! The guide sources screen of one playlist (playlists screen → a
+//! playlist → "Guide sources", or Settings → TV guide data → "Guide
+//! sources" / "Add a guide source" for the playlist on screen): its
+//! sources in priority order (the first one that has a channel wins), each
+//! with where it comes from, whether it is on, its time shift and how its
+//! last download went; "Add a guide source" (a link, then an optional
+//! name; a duplicate is refused) and "Update the guide now".
+//!
+//! OK (or a tap) on a source opens its actions: switch it on or off, move
+//! it up or down, shift its times (Left/Right, or − and +), name it, and
+//! for a source the user added change its link or remove it (after a
+//! confirmation saying its programmes go at the next update; the
+//! provider's own guides are switched off instead). Every change is saved
+//! at once (`data::edit_guides`); the guide on screen is checked again a
+//! moment later and downloads what changed.
+//!
+//! Remote: Up/Down move, OK acts, Left/Right shift, Back closes the open
+//! sheet, then the screen. Touch and mouse: every row and action is
+//! tappable; a tap beside a sheet closes it. Links are shown with their
+//! accounts hidden. State: `state.rs`; wording: `words.rs`.
+
+mod state;
+mod words;
+
+use iptv_nav::Action;
+use iptv_store_sqlite::SourceId;
+use nsh_core::element::input;
+use nsh_core::prelude::*;
+
+pub use state::Screen as Open;
+use state::{Act, Effect, Item, Key, Layer, Screen};
+
+use crate::data::stored::{self, GuideStatus};
+use crate::theme::{FOCUS_ALPHA, RADIUS, RADIUS_LARGE, RESTING_ALPHA, TEXT_SECONDARY_ALPHA};
+use crate::{Ui, tint};
+
+const WHITE: u32 = 0xFFFFFF;
+/// Placeholder error tone (light red of the placeholder palette).
+const ERROR: u32 = 0xEF9A9A;
+const ROW_H: f32 = 76.0;
+const CARD_W: f32 = 600.0;
+
+// --- Actions -------------------------------------------------------------------
+
+/// Opens the screen for `playlist`.
+pub fn open(ui: Ui, playlist: SourceId) {
+    let screen = Screen::new(playlist, stored::source_lines(playlist));
+    ui.guide_sources.set(Some(screen));
+}
+
+/// Opens it on entering a new source's link.
+pub fn open_add(ui: Ui, playlist: SourceId) {
+    let mut screen = Screen::new(playlist, stored::source_lines(playlist));
+    screen.start_add();
+    ui.guide_sources.set(Some(screen));
+}
+
+pub fn close(ui: Ui) {
+    if ui.guide_sources.with_untracked(Option::is_some) {
+        ui.guide_sources.set(None);
+        dismiss_keyboard();
+    }
+}
+
+pub fn is_open(ui: Ui) -> bool {
+    ui.guide_sources.with(Option::is_some)
+}
+
+fn state<R>(ui: Ui, f: impl FnOnce(&Screen) -> R) -> Option<R> {
+    ui.guide_sources.with(|s| s.as_ref().map(f))
+}
+
+fn update(ui: Ui, f: impl FnOnce(&mut Screen) -> Option<Effect>) {
+    let mut effect = None;
+    ui.guide_sources.update(|s| {
+        if let Some(s) = s {
+            effect = f(s);
+        }
+    });
+    if let Some(effect) = effect {
+        perform(ui, effect);
+    }
+}
+
+fn editing(ui: Ui) -> bool {
+    state(ui, |s| s.editing().is_some()).unwrap_or(false)
+}
+
+/// A remote action while the screen is open.
+pub fn key(ui: Ui, action: Action) {
+    let key = match action {
+        Action::MoveUp => Key::Up,
+        Action::MoveDown => Key::Down,
+        Action::MoveLeft => Key::Left,
+        Action::MoveRight => Key::Right,
+        Action::Select => Key::Ok,
+        Action::Back => Key::Back,
+        Action::ShowMenu => Key::Menu,
+        _ => return,
+    };
+    let typing = editing(ui);
+    update(ui, |s| s.key(key));
+    if typing && !editing(ui) {
+        dismiss_keyboard();
+    }
+}
+
+/// The platform's Back: ends text entry, closes a sheet, then the screen.
+pub fn back(ui: Ui) -> bool {
+    key(ui, Action::Back);
+    true
+}
+
+fn commit(ui: Ui) {
+    update(ui, |s| s.key(Key::Ok));
+    if !editing(ui) {
+        dismiss_keyboard();
+    }
+}
+
+fn cancel(ui: Ui) {
+    dismiss_keyboard();
+    update(ui, |s| {
+        s.cancel_edit();
+        None
+    });
+}
+
+fn perform(ui: Ui, effect: Effect) {
+    let Some(playlist) = state(ui, Screen::playlist) else {
+        return;
+    };
+    match effect {
+        Effect::Edit(edit) => {
+            log::info!("iptv guide sources of {}: {}", playlist.0, edit_name(&edit));
+            if let Err(e) = crate::data::edit_guides(ui, playlist, &edit) {
+                log::warn!("iptv guide sources: the store refused it: {e}");
+            }
+        }
+        Effect::Update => {
+            let started = stored::update_source(ui, playlist, move || {
+                crate::settings_view::notify("Guide updated");
+            });
+            if started {
+                // Shows "Updating…".
+                ui.library.version.update(|v| *v += 1);
+            } else {
+                crate::settings_view::notify("No guide source is switched on");
+            }
+        }
+        Effect::Close => close(ui),
+    }
+}
+
+/// For the log: the edit without names or links.
+fn edit_name(edit: &crate::data::guides::Edit) -> String {
+    use crate::data::guides::Edit;
+    match edit {
+        Edit::Add { name, .. } => format!("add (named {})", name.is_some()),
+        Edit::Remove(f) => format!("remove {}", f.0),
+        Edit::SetEnabled(f, on) => format!("switch {} {}", f.0, if *on { "on" } else { "off" }),
+        Edit::Move(f, step) => format!("move {} by {step}", f.0),
+        Edit::Shift(f, m) => format!("shift {} to {m} min", f.0),
+        Edit::Rename(f, _) => format!("rename {}", f.0),
+        Edit::Relink(f, _) => format!("new link for {}", f.0),
+    }
+}
+
+/// A guide source's title (its name, else where it comes from).
+pub fn source_title(s: &iptv_store_sqlite::GuideSource) -> String {
+    words::title(s)
+}
+
+// --- View ----------------------------------------------------------------------
+
+fn secondary() -> Rgba {
+    tint(WHITE, TEXT_SECONDARY_ALPHA)
+}
+
+fn focus_bg(ui: Ui, focused: bool) -> Rgba {
+    if focused && ui.keys_shown() {
+        tint(ui.theme.with(|t| t.accent.main), FOCUS_ALPHA)
+    } else {
+        tint(WHITE, 0)
+    }
+}
+
+fn time_label(at: i64) -> String {
+    iptv_core::clock::label(at, crate::time::wall_unix(), crate::time::offset_minutes)
+}
+
+pub fn layer(ui: Ui) -> impl IntoElement {
+    // What is stored changed (an edit, an update, a guide download): reload.
+    effect(move || {
+        ui.library.version.get();
+        ui.data_version.get();
+        let playlist = ui
+            .guide_sources
+            .with_untracked(|s| s.as_ref().map(Screen::playlist));
+        if let Some(playlist) = playlist {
+            let lines = stored::source_lines(playlist);
+            ui.guide_sources.update(|s| {
+                if let Some(s) = s {
+                    s.set_lines(lines);
+                }
+            });
+        }
+    });
+    let editing = computed(move || editing(ui));
+    when(
+        move || is_open(ui),
+        move || {
+            view()
+                .absolute()
+                .inset_0()
+                .pt_safe_area()
+                .px(px(48.0))
+                .py(px(24.0))
+                .gap(px(12.0))
+                .bg(move || rgb(ui.theme.with(|t| t.background.window)))
+                .child(header(ui))
+                .child(
+                    text(move || hint(ui))
+                        .text_size(px(13.0))
+                        .text_color(secondary()),
+                )
+                .child(when(
+                    move || state(ui, |s| s.notice().is_some()).unwrap_or(false),
+                    move || {
+                        text(move || {
+                            state(ui, |s| s.notice().map(words::notice))
+                                .flatten()
+                                .unwrap_or_default()
+                        })
+                        .text_size(px(14.0))
+                        .text_color(rgb(ERROR))
+                    },
+                ))
+                .child(list(ui))
+                .child(sheet(ui))
+                .child(when(move || editing.get(), move || edit_sheet(ui)))
+        },
+    )
+}
+
+fn hint(ui: Ui) -> &'static str {
+    let layer = state(ui, Screen::layer).unwrap_or(Layer::List);
+    match (ui.keys_shown(), layer) {
+        (true, Layer::List) => {
+            "▲▼ choose   OK actions   Back close   The first source with a channel wins"
+        }
+        (true, Layer::Actions { .. }) => {
+            "▲▼ choose   OK do it   ◀▶ shift times   Back close the sheet"
+        }
+        (true, Layer::Confirm { .. }) => "▲▼ choose   OK confirm   Back keep it",
+        (false, _) => {
+            "Tap a source for what you can do with it. The first source with a channel wins"
+        }
+    }
+}
+
+fn header(ui: Ui) -> impl IntoElement {
+    let name = move || {
+        let playlist = state(ui, Screen::playlist);
+        ui.library.version.get();
+        let name = playlist.and_then(|id| {
+            crate::data::playlists()
+                .ok()?
+                .into_iter()
+                .find(|p| p.id == id)
+                .map(|p| p.name)
+        });
+        name.map_or_else(
+            || "Guide sources".to_owned(),
+            |n| format!("Guide sources · {n}"),
+        )
+    };
+    view()
+        .flex_row()
+        .items_center()
+        .gap(px(12.0))
+        .child(
+            text(name)
+                .flex_1()
+                .number_of_lines(1)
+                .text_size(px(22.0))
+                .text_color(rgb(WHITE)),
+        )
+        .child(
+            text("Close")
+                .px(px(16.0))
+                .py(px(8.0))
+                .rounded(px(RADIUS))
+                .text_size(px(14.0))
+                .text_color(rgb(WHITE))
+                .bg(tint(WHITE, RESTING_ALPHA * 2))
+                .on_press(move || {
+                    ui.touched();
+                    close(ui);
+                }),
+        )
+}
+
+fn list(ui: Ui) -> impl IntoElement {
+    let rows = element_ref();
+    let count = move || state(ui, |s| s.items().len()).unwrap_or(0);
+    let focused_index =
+        computed(move || state(ui, |s| s.items().iter().position(|i| *i == s.focus())).flatten());
+    effect(move || {
+        if let Some(i) = focused_index.get()
+            && ui.keys_shown()
+        {
+            rows.scroll_to_index(i as u32, percentage(0.5), px(0.0), false);
+        }
+    });
+    virtual_list(count, move |at| row(ui, at.index(), focused_index))
+        .estimated_item_size(px(ROW_H))
+        .element_ref(&rows)
+        .flex_1()
+}
+
+/// The "Update the guide now" row's status.
+fn update_status(playlist: SourceId) -> (String, bool) {
+    if stored::updating(playlist) {
+        return ("Updating…".to_owned(), false);
+    }
+    let state = stored::guide_state(playlist);
+    match stored::status_of(state.as_ref()) {
+        GuideStatus::Updated { at, channels } => (
+            format!(
+                "Last update {} · {channels} channels with a guide",
+                time_label(at)
+            ),
+            false,
+        ),
+        GuideStatus::Failed { at, .. } => (
+            format!(
+                "The last update {} did not load every source",
+                time_label(at)
+            ),
+            true,
+        ),
+        _ => ("Not downloaded yet".to_owned(), false),
+    }
+}
+
+fn row(ui: Ui, index: usize, focused_index: Memo<Option<usize>>) -> impl IntoElement {
+    let item = move || state(ui, |s| s.items().get(index).copied()).flatten();
+    let line = move || {
+        state(ui, |s| match s.items().get(index) {
+            Some(Item::Source(feed)) => s.line(*feed).cloned(),
+            _ => None,
+        })
+        .flatten()
+    };
+    let playlist = move || state(ui, Screen::playlist);
+    let title = move || match (line(), item()) {
+        (Some(l), _) => format!("{}.  {}", index + 1, words::title(&l.source)),
+        (None, Some(Item::Add)) => "+ Add a guide source".to_owned(),
+        (None, Some(Item::Update)) => "Update the guide now".to_owned(),
+        _ => String::new(),
+    };
+    let summary = move || match (line(), item()) {
+        (Some(l), _) => words::origin(&l.source),
+        (None, Some(Item::Add)) => "An XMLTV link (.xml or .xml.gz)".to_owned(),
+        (None, Some(Item::Update)) => "Downloads every source switched on".to_owned(),
+        _ => String::new(),
+    };
+    let status = move || match (line(), item(), playlist()) {
+        (Some(l), _, _) => words::status(&l, time_label),
+        (None, Some(Item::Update), Some(p)) => update_status(p),
+        _ => (String::new(), false),
+    };
+    let switched = move || match line() {
+        Some(l) if l.source.enabled => "On".to_owned(),
+        Some(_) => "Off".to_owned(),
+        None => String::new(),
+    };
+    let enabled = move || line().is_none_or(|l| l.source.enabled);
+    view()
+        .h(px(ROW_H))
+        .px(px(16.0))
+        .flex_row()
+        .items_center()
+        .gap(px(14.0))
+        .rounded(px(RADIUS))
+        .bg(move || focus_bg(ui, focused_index.get() == Some(index)))
+        .on_press(move || {
+            ui.touched();
+            if let Some(tapped) = item() {
+                update(ui, |s| s.tap(tapped));
+            }
+        })
+        .child(
+            view()
+                .flex_1()
+                .gap(px(2.0))
+                .child(
+                    text(title)
+                        .number_of_lines(1)
+                        .text_size(px(17.0))
+                        .text_color(move || {
+                            if enabled() {
+                                rgb(WHITE)
+                            } else {
+                                tint(WHITE, 0x80)
+                            }
+                        }),
+                )
+                .child(
+                    text(summary)
+                        .number_of_lines(1)
+                        .text_size(px(13.0))
+                        .text_color(secondary()),
+                )
+                .child(
+                    text(move || status().0)
+                        .number_of_lines(1)
+                        .text_size(px(13.0))
+                        .text_color(move || if status().1 { rgb(ERROR) } else { secondary() }),
+                ),
+        )
+        .child(text(switched).text_size(px(14.0)).text_color(move || {
+            if enabled() {
+                rgb(ui.theme.with(|t| t.accent.light))
+            } else {
+                secondary()
+            }
+        }))
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Sheet2 {
+    Actions,
+    Confirm,
+}
+
+/// The open sheet over the list; rebuilt only when another one opens.
+fn sheet(ui: Ui) -> impl IntoElement {
+    let open = computed(move || match state(ui, Screen::layer) {
+        Some(Layer::Actions { feed, .. }) => Some((Sheet2::Actions, feed)),
+        Some(Layer::Confirm { feed, .. }) => Some((Sheet2::Confirm, feed)),
+        Some(Layer::List) | None => None,
+    });
+    dynamic(move || {
+        let shown = open.get();
+        untracked(move || match shown {
+            Some((Sheet2::Actions, feed)) => backdrop(ui, actions_card(ui, feed).into_element()),
+            Some((Sheet2::Confirm, feed)) => backdrop(ui, confirm_card(ui, feed).into_element()),
+            None => view(),
+        })
+    })
+}
+
+fn backdrop(ui: Ui, card: AnyElement) -> View {
+    view()
+        .absolute()
+        .inset_0()
+        .items_center()
+        .justify_center()
+        .child(
+            view()
+                .absolute()
+                .inset_0()
+                .bg(tint(0x000000, 0xA0))
+                .on_press(move || {
+                    ui.touched();
+                    update(ui, Screen::dismiss);
+                }),
+        )
+        .child(card)
+}
+
+fn card(ui: Ui) -> View {
+    view()
+        .w(px(CARD_W))
+        .px(px(28.0))
+        .py(px(24.0))
+        .gap(px(6.0))
+        .rounded(px(RADIUS_LARGE))
+        .bg(move || rgb(ui.theme.with(|t| t.background.panel)))
+        // Taps on the card stay on it.
+        .on_press(|| {})
+}
+
+fn button(
+    ui: Ui,
+    label: impl IntoReactive<SharedString>,
+    focused: impl Fn() -> bool + 'static,
+    color: u32,
+    on_press: impl Fn() + 'static,
+) -> View {
+    view().flex_row().child(
+        text(label)
+            .flex_1()
+            .px(px(16.0))
+            .py(px(10.0))
+            .rounded(px(RADIUS))
+            .text_size(px(16.0))
+            .text_color(rgb(color))
+            .bg(move || focus_bg(ui, focused()))
+            .on_press(move || {
+                ui.touched();
+                on_press();
+            }),
+    )
+}
+
+/// A small − or + beside the time shift (touch and mouse).
+fn step(ui: Ui, label: &'static str, feed: iptv_epg::SourceId, dir: i32) -> impl IntoElement {
+    view()
+        .w(px(48.0))
+        .h(px(40.0))
+        .items_center()
+        .justify_center()
+        .rounded(px(RADIUS))
+        .bg(tint(WHITE, RESTING_ALPHA * 2))
+        .on_press(move || {
+            ui.touched();
+            update(ui, |s| s.shift(feed, dir));
+        })
+        .child(text(label).text_size(px(18.0)).text_color(rgb(WHITE)))
+}
+
+fn actions_card(ui: Ui, feed: iptv_epg::SourceId) -> impl IntoElement {
+    let line = move || state(ui, |s| s.line(feed).cloned()).flatten();
+    let acts = state(ui, |s| s.acts(feed)).unwrap_or_default();
+    let act_row = move |act: Act| {
+        let focused = move || {
+            state(ui, |s| s.layer() == Layer::Actions { feed, focus: act }).unwrap_or(false)
+        };
+        let label = move || {
+            line()
+                .map(|l| words::act(act, &l.source))
+                .unwrap_or_default()
+        };
+        let color = if act == Act::Remove { ERROR } else { WHITE };
+        let row = button(ui, label, focused, color, move || {
+            update(ui, |s| s.act(feed, act));
+        });
+        if act == Act::Shift {
+            row.gap(px(8.0))
+                .items_center()
+                .child(step(ui, "−", feed, -1))
+                .child(step(ui, "+", feed, 1))
+        } else {
+            row
+        }
+    };
+    card(ui)
+        .child(
+            text(move || line().map(|l| words::title(&l.source)).unwrap_or_default())
+                .number_of_lines(1)
+                .text_size(px(22.0))
+                .text_color(rgb(WHITE)),
+        )
+        .child(
+            text(move || line().map(|l| words::origin(&l.source)).unwrap_or_default())
+                .number_of_lines(1)
+                .text_size(px(14.0))
+                .text_color(secondary()),
+        )
+        .child(
+            text(move || {
+                line()
+                    .map(|l| words::status(&l, time_label).0)
+                    .unwrap_or_default()
+            })
+            .number_of_lines(1)
+            .text_size(px(14.0))
+            .text_color(secondary()),
+        )
+        .child(view().h(px(6.0)))
+        .children(acts.into_iter().map(act_row))
+}
+
+fn confirm_card(ui: Ui, feed: iptv_epg::SourceId) -> impl IntoElement {
+    let (title, body) = state(ui, |s| {
+        s.line(feed).map(|l| {
+            (
+                format!("Remove “{}”?", words::title(&l.source)),
+                words::remove_consequences(&l.source),
+            )
+        })
+    })
+    .flatten()
+    .unwrap_or_default();
+    let focused = move |remove: bool| {
+        move || state(ui, |s| s.layer() == Layer::Confirm { feed, remove }).unwrap_or(false)
+    };
+    card(ui)
+        .child(text(title).text_size(px(22.0)).text_color(rgb(WHITE)))
+        .child(text(body).text_size(px(15.0)).text_color(secondary()))
+        .child(view().h(px(8.0)))
+        .child(button(ui, "Keep it", focused(false), WHITE, move || {
+            update(ui, |s| s.confirm(feed, false));
+        }))
+        .child(button(ui, "Remove", focused(true), ERROR, move || {
+            update(ui, |s| s.confirm(feed, true));
+        }))
+}
+
+/// The text sheet for a new source's link, then its name, a name, or a
+/// new link. One field for every step: it takes the keys again whenever
+/// the step changes (Return lets them go).
+fn edit_sheet(ui: Ui) -> impl IntoElement {
+    let field = element_ref();
+    let kind = computed(move || state(ui, |s| s.editing().map(|e| e.kind.clone())).flatten());
+    effect(move || {
+        if kind.get().is_some() {
+            field.focus();
+        }
+    });
+    let words = move || kind.get().map(|k| words::sheet(&k)).unwrap_or(("", ""));
+    let url = move || {
+        !matches!(
+            kind.get(),
+            Some(state::EditKind::AddName { .. } | state::EditKind::Rename(_))
+        )
+    };
+    let current = move || {
+        state(ui, |s| s.editing().map(|e| e.text.clone()))
+            .flatten()
+            .unwrap_or_default()
+    };
+    view()
+        .absolute()
+        .inset_0()
+        .pt_safe_area()
+        .items_center()
+        // Near the top: the keyboard takes the lower half.
+        .pt(px(40.0))
+        .bg(tint(0x000000, 0xA0))
+        .child(
+            view()
+                .w(px(640.0))
+                .p(px(24.0))
+                .gap(px(14.0))
+                .rounded(px(RADIUS_LARGE))
+                .bg(move || rgb(ui.theme.with(|t| t.background.panel)))
+                .child(
+                    text(move || words().0.to_owned())
+                        .text_size(px(14.0))
+                        .text_color(secondary()),
+                )
+                .child(
+                    input()
+                        .element_ref(&field)
+                        .value(current)
+                        .on_change(move |t: &str| {
+                            ui.guide_sources.update(|s| {
+                                if let Some(s) = s {
+                                    s.set_text(t);
+                                }
+                            });
+                        })
+                        .on_submit(move |_: &str| commit(ui))
+                        .auto_focus(true)
+                        .keyboard_type(move || {
+                            if url() {
+                                KeyboardType::Url
+                            } else {
+                                KeyboardType::Default
+                            }
+                        })
+                        .auto_capitalize(AutoCapitalize::None)
+                        .auto_correct(false)
+                        .placeholder(move || words().1.to_owned())
+                        .text_size(px(18.0))
+                        .text_color(rgb(WHITE))
+                        .px(px(14.0))
+                        .py(px(10.0))
+                        .rounded(px(RADIUS))
+                        .border_1()
+                        .border_color(move || rgb(ui.theme.with(|t| t.accent.main)))
+                        .bg(move || rgb(ui.theme.with(|t| t.background.window))),
+                )
+                .child(
+                    view()
+                        .flex_row()
+                        .gap(px(12.0))
+                        .justify_end()
+                        .child(sheet_button(ui, "Cancel", cancel))
+                        .child(sheet_button(ui, "Done", commit)),
+                ),
+        )
+}
+
+fn sheet_button(ui: Ui, label: &'static str, act: fn(Ui)) -> impl IntoElement {
+    text(label)
+        .px(px(20.0))
+        .py(px(10.0))
+        .rounded(px(RADIUS))
+        .text_size(px(15.0))
+        .text_color(rgb(WHITE))
+        .bg(tint(WHITE, RESTING_ALPHA * 2))
+        .on_press(move || {
+            ui.touched();
+            act(ui);
+        })
+}

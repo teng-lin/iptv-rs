@@ -1,12 +1,10 @@
 //! The playlists screen's state: the stored playlists, "Refresh all" and
 //! "Add playlist" rows, a sheet of actions for one playlist, its provider
 //! details form (`details.rs`), a delete confirmation, and text entry
-//! (rename, User-Agent, guide link, a detail). Focus is kept by identity (a
+//! (rename, User-Agent, a detail). Focus is kept by identity (a
 //! playlist's id), never by list position. Pure: the view feeds it remote
 //! keys and taps and carries out the [`Effect`]s it returns.
 
-use iptv_core::wizard::{Field, FieldError, validate_field};
-use iptv_providers::SecretUrl;
 use iptv_providers::model::{Source, SourceKind};
 use iptv_store_sqlite::SourceId;
 
@@ -31,9 +29,8 @@ pub enum Act {
     /// Link, server and login, or portal and MAC address.
     Details,
     UserAgent,
-    GuideLink,
-    /// Remove the guide link: only the provider's guides load.
-    ProviderGuide,
+    /// Its guide sources (the guide sources screen).
+    Guides,
     Delete,
 }
 
@@ -59,7 +56,6 @@ pub enum Layer {
 pub enum EditKind {
     Rename,
     UserAgent,
-    GuideLink,
     Param(Param),
 }
 
@@ -69,7 +65,7 @@ pub struct Editing {
     pub id: SourceId,
     pub kind: EditKind,
     pub text: String,
-    /// The text started as the current value. A guide link carrying
+    /// The text started as the current value. A detail carrying
     /// credentials starts empty instead (it is never shown).
     pub prefilled: bool,
 }
@@ -78,7 +74,6 @@ pub struct Editing {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Notice {
     NameEmpty,
-    Link(FieldError),
     /// "Check and save" with nothing edited.
     Unchanged,
 }
@@ -100,7 +95,8 @@ pub enum Effect {
     Show(SourceId),
     Refresh(SourceId),
     Rename(SourceId, String),
-    SetGuide(SourceId, Option<SecretUrl>),
+    /// Open the guide sources screen of `id`.
+    Guides(SourceId),
     Delete(SourceId),
     RefreshAll,
     /// Load the stored details of `id` for [`Screen::open_details`].
@@ -198,10 +194,7 @@ impl Screen {
         if row.kind != SourceKind::Stalker {
             acts.push(Act::UserAgent);
         }
-        acts.push(Act::GuideLink);
-        if row.guide_link.is_some() {
-            acts.push(Act::ProviderGuide);
-        }
+        acts.push(Act::Guides);
         acts.push(Act::Delete);
         acts
     }
@@ -313,26 +306,14 @@ impl Screen {
         match act {
             Act::Show => to_list(self, Effect::Show(id)),
             Act::Refresh => to_list(self, Effect::Refresh(id)),
-            Act::ProviderGuide => to_list(self, Effect::SetGuide(id, None)),
+            // The guide sources screen opens over the actions.
+            Act::Guides => Some(Effect::Guides(id)),
             Act::Rename => {
                 self.editing = Some(Editing {
                     id,
                     kind: EditKind::Rename,
                     text: row.name,
                     prefilled: true,
-                });
-                None
-            }
-            Act::GuideLink => {
-                let shown = row
-                    .guide_link
-                    .map(|l| l.expose().to_owned())
-                    .filter(|l| plain_link(l));
-                self.editing = Some(Editing {
-                    id,
-                    kind: EditKind::GuideLink,
-                    prefilled: shown.is_some(),
-                    text: shown.unwrap_or_default(),
                 });
                 None
             }
@@ -502,19 +483,6 @@ impl Screen {
             }
             EditKind::Rename if text == row.name => None,
             EditKind::Rename => Some(Effect::Rename(id, text.to_owned())),
-            // Emptied a shown link: remove it; an empty start: no change.
-            EditKind::GuideLink if text.is_empty() => editing
-                .prefilled
-                .then_some(Effect::SetGuide(id, None))
-                .filter(|_| row.guide_link.is_some()),
-            EditKind::GuideLink => match validate_field(Field::EpgUrl, text) {
-                Err(e) => {
-                    self.notice = Some(Notice::Link(e));
-                    None
-                }
-                Ok(()) if row.guide_link.as_ref().is_some_and(|l| l.expose() == text) => None,
-                Ok(()) => Some(Effect::SetGuide(id, Some(SecretUrl::new(text)))),
-            },
         };
         if effect.is_some() {
             self.layer = Layer::List;
@@ -542,7 +510,7 @@ mod tests {
             channels: 10,
             updated_at: Some(1_800_000_000),
             failed: None,
-            guide_link: None,
+            guides: Vec::new(),
             guide_failed: false,
             user_agent: None,
             from_file: false,
@@ -551,12 +519,6 @@ mod tests {
 
     fn rows() -> Vec<Playlist> {
         vec![row(A, "First"), row(B, "Second"), row(C, "Third")]
-    }
-
-    fn linked(link: &str) -> Vec<Playlist> {
-        let mut rows = rows();
-        rows[1].guide_link = Some(SecretUrl::new(link));
-        rows
     }
 
     #[test]
@@ -622,7 +584,7 @@ mod tests {
                 Act::Rename,
                 Act::Details,
                 Act::UserAgent,
-                Act::GuideLink,
+                Act::Guides,
                 Act::Delete
             ]
         );
@@ -693,54 +655,18 @@ mod tests {
     }
 
     #[test]
-    fn a_guide_link_is_validated_and_can_be_removed() {
-        let mut s = Screen::new(rows(), Some(A));
-        s.act(A, Act::GuideLink);
-        assert_eq!(s.editing().map(|e| e.prefilled), Some(false));
-        assert_eq!(s.commit(), None, "nothing typed, nothing set");
-        s.act(A, Act::GuideLink);
-        s.set_text("guide.example.test/epg.xml");
-        assert_eq!(s.commit(), None);
-        assert_eq!(s.notice(), Some(Notice::Link(FieldError::MissingScheme)));
-        s.act(A, Act::GuideLink);
-        s.set_text("http://guide.example.test/epg.xml");
+    fn guide_sources_open_their_screen() {
+        let mut s = Screen::new(rows(), Some(B));
+        s.key(Key::Ok);
+        assert_eq!(s.act(B, Act::Guides), Some(Effect::Guides(B)));
+        // The actions stay under the screen: Back returns to them.
         assert_eq!(
-            s.commit(),
-            Some(Effect::SetGuide(
-                A,
-                Some(SecretUrl::new("http://guide.example.test/epg.xml"))
-            ))
+            s.layer(),
+            Layer::Actions {
+                id: B,
+                focus: Act::Guides
+            }
         );
-        // A plain link is shown for editing; emptying it removes it.
-        let mut s = Screen::new(linked("http://guide.example.test/epg.xml"), Some(B));
-        assert!(s.acts(B).contains(&Act::ProviderGuide));
-        s.act(B, Act::GuideLink);
-        let e = s.editing().unwrap();
-        assert_eq!(
-            (e.text.as_str(), e.prefilled),
-            ("http://guide.example.test/epg.xml", true)
-        );
-        assert_eq!(s.commit(), None, "unchanged");
-        s.act(B, Act::GuideLink);
-        s.set_text("");
-        assert_eq!(s.commit(), Some(Effect::SetGuide(B, None)));
-        assert_eq!(
-            s.act(B, Act::ProviderGuide),
-            Some(Effect::SetGuide(B, None))
-        );
-    }
-
-    #[test]
-    fn a_link_with_credentials_is_never_put_in_the_field() {
-        let mut s = Screen::new(
-            linked("http://guide.example.test/xmltv.php?username=u&password=p"),
-            Some(B),
-        );
-        s.act(B, Act::GuideLink);
-        let e = s.editing().unwrap();
-        assert_eq!((e.text.as_str(), e.prefilled), ("", false));
-        // Left empty, the link stays.
-        assert_eq!(s.commit(), None);
         assert!(plain_link("https://guide.example.test/a.xml.gz"));
         assert!(!plain_link("http://user:pass@guide.example.test/a.xml"));
         assert!(!plain_link("http://guide.example.test/a?token=x"));

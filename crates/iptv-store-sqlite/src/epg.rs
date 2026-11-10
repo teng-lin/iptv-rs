@@ -223,7 +223,7 @@ impl From<FailureKind> for ImportErrorKind {
     }
 }
 
-fn kind_slug(kind: MatchKind) -> &'static str {
+pub(crate) fn kind_slug(kind: MatchKind) -> &'static str {
     match kind {
         MatchKind::Override => "override",
         MatchKind::TvgId => "tvg_id",
@@ -231,7 +231,7 @@ fn kind_slug(kind: MatchKind) -> &'static str {
     }
 }
 
-fn kind_from(slug: &str) -> MatchKind {
+pub(crate) fn kind_from(slug: &str) -> MatchKind {
     match slug {
         "override" => MatchKind::Override,
         "name" => MatchKind::Name,
@@ -239,11 +239,13 @@ fn kind_from(slug: &str) -> MatchKind {
     }
 }
 
-fn to_u64(n: i64) -> u64 {
+pub(crate) fn to_u64(n: i64) -> u64 {
     u64::try_from(n).unwrap_or(0)
 }
 
 const DELETE_GUIDE: &[&str] = &[
+    "DELETE FROM epg_feed_results WHERE source_id = ?1",
+    "DELETE FROM epg_feed_channels WHERE source_id = ?1",
     "DELETE FROM epg_descriptions WHERE channel_id IN
          (SELECT id FROM epg_channels WHERE source_id = ?1)",
     "DELETE FROM epg_programmes WHERE channel_id IN
@@ -283,6 +285,27 @@ fn insert_feed(conn: &Connection, source: SourceId, f: &EpgFeedMeta) -> Result<(
         f.last_modified,
         i64::try_from(f.bytes).unwrap_or(i64::MAX),
     ])?;
+    Ok(())
+}
+
+/// Lists every channel feed `feed` of `guide` has (id and first display
+/// name), for choosing a channel's guide by hand.
+fn insert_feed_channels(
+    conn: &Connection,
+    source: SourceId,
+    feed: iptv_epg::SourceId,
+    guide: &GuideStore,
+) -> Result<()> {
+    let Some(src) = guide.source(feed) else {
+        return Ok(());
+    };
+    let mut insert = conn.prepare_cached(
+        "INSERT OR IGNORE INTO epg_feed_channels (source_id, feed_id, epg_channel, name)
+         VALUES (?1, ?2, ?3, ?4)",
+    )?;
+    for c in src.channels() {
+        insert.execute(params![source.0, feed.0, c.id, c.display_names.first()])?;
+    }
     Ok(())
 }
 
@@ -407,6 +430,7 @@ impl Store {
         let mut counts = EpgCounts::default();
         for f in feeds {
             insert_feed(&tx, source, f)?;
+            insert_feed_channels(&tx, source, f.config.id, guide)?;
             counts.feeds += 1;
         }
         let known: HashSet<u32> = feeds.iter().map(|f| f.config.id.0).collect();

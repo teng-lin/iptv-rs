@@ -1,0 +1,410 @@
+//! "Choose guide data…" (Long OK menu on a channel): which guide channel a
+//! playlist channel shows, from the guide channels the stored guides list,
+//! or "Automatic" (matched by id and name) or "No guide data". A search
+//! field narrows the list as one types; the filter shows every guide
+//! channel or only those no channel uses. The choice is saved by channel
+//! key (`data::assign`) and shows at once when the stored guide has the
+//! programmes, else after the guide download it starts.
+//!
+//! Remote: Up/Down (Page Up/Down) move, OK chooses (on the field: type,
+//! with the keyboard), Back ends typing, then closes. Touch and mouse:
+//! tap a row, tap the field to type; a tap beside the panel closes it.
+//! State: `state.rs`.
+
+mod state;
+
+use iptv_nav::Action;
+use iptv_store_sqlite::GuideChannel;
+use nsh_core::element::input;
+use nsh_core::prelude::*;
+
+pub use state::Picker as Open;
+use state::{Effect, Key, Picker, Row, Subject};
+
+use crate::data::assign::{self, Applied};
+use crate::theme::{FOCUS_ALPHA, RADIUS, RESTING_ALPHA, TEXT_SECONDARY_ALPHA};
+use crate::{Ui, tint};
+
+const WHITE: u32 = 0xFFFFFF;
+const PANEL_W: f32 = 600.0;
+const ROW_H: f32 = 58.0;
+
+/// Opens the chooser for catalog channel `channel` of the playlist on
+/// screen; a notice when there is none or it has no guide at all.
+pub fn open(ui: Ui, channel: usize) {
+    let schedule = crate::schedule();
+    let (Some(playlist), Some(key)) = (
+        ui.library.shown.get_untracked(),
+        schedule.channel_key(channel),
+    ) else {
+        crate::settings_view::notify("No playlist on screen");
+        return;
+    };
+    let mut channels = assign::guide_channels(playlist);
+    if channels.is_empty() {
+        crate::settings_view::notify("No guide data is stored yet: update the guide first");
+        return;
+    }
+    let feeds: Vec<_> = crate::data::stored::guide_sources(playlist)
+        .iter()
+        .map(|s| (s.feed, crate::epg_sources_view::source_title(s)))
+        .collect();
+    // The sources in the user's order (the first one wins), each by name.
+    channels.sort_by_key(|c| {
+        feeds
+            .iter()
+            .position(|(f, _)| *f == c.feed)
+            .unwrap_or(usize::MAX)
+    });
+    let subject = Subject {
+        playlist,
+        current: assign::current(playlist, &key),
+        name: schedule.channel_name(channel),
+        key,
+        channels,
+        feeds,
+    };
+    ui.guide_assign.set(Some(Picker::new(subject)));
+}
+
+pub fn close(ui: Ui) {
+    if ui.guide_assign.with_untracked(Option::is_some) {
+        ui.guide_assign.set(None);
+        dismiss_keyboard();
+    }
+}
+
+pub fn is_open(ui: Ui) -> bool {
+    ui.guide_assign.with(Option::is_some)
+}
+
+fn state<R>(ui: Ui, f: impl FnOnce(&Picker) -> R) -> Option<R> {
+    ui.guide_assign.with(|s| s.as_ref().map(f))
+}
+
+fn update(ui: Ui, f: impl FnOnce(&mut Picker) -> Option<Effect>) {
+    let mut effect = None;
+    ui.guide_assign.update(|s| {
+        if let Some(s) = s {
+            effect = f(s);
+        }
+    });
+    if let Some(effect) = effect {
+        perform(ui, effect);
+    }
+}
+
+/// A remote action while the chooser is open.
+pub fn key(ui: Ui, action: Action) {
+    let key = match action {
+        Action::MoveUp => Key::Up,
+        Action::MoveDown => Key::Down,
+        Action::PageUp | Action::ChannelUp => Key::PageUp,
+        Action::PageDown | Action::ChannelDown => Key::PageDown,
+        Action::Select => Key::Ok,
+        Action::Back | Action::ShowMenu => Key::Back,
+        _ => return,
+    };
+    update(ui, |s| s.key(key));
+}
+
+/// The platform's Back: ends typing, then closes.
+pub fn back(ui: Ui) -> bool {
+    key(ui, Action::Back);
+    true
+}
+
+fn perform(ui: Ui, effect: Effect) {
+    match effect {
+        Effect::Type => {}
+        Effect::Close => close(ui),
+        Effect::Choose(choice) => {
+            let Some((playlist, key)) =
+                state(ui, |s| (s.subject().playlist, s.subject().key.clone()))
+            else {
+                return;
+            };
+            log::info!("iptv guide choice: {}", choice_name(&choice));
+            assign::choose(ui, playlist, key, choice, move |applied| {
+                crate::settings_view::notify(applied_words(applied));
+                close(ui);
+            });
+        }
+    }
+}
+
+/// For the log: the kind of choice, no ids.
+fn choice_name(choice: &assign::Choice) -> &'static str {
+    match choice {
+        assign::Choice::Automatic => "automatic",
+        assign::Choice::NoGuide => "no guide",
+        assign::Choice::Channel { .. } => "a guide channel",
+    }
+}
+
+fn applied_words(applied: Applied) -> &'static str {
+    match applied {
+        Applied::Now => "Guide data changed",
+        Applied::Downloading => "Saved; the guide is downloading to show it",
+        Applied::Later => "Saved; it shows after the next guide update",
+        Applied::Failed => "The choice could not be saved",
+    }
+}
+
+// --- View ----------------------------------------------------------------------
+
+fn secondary() -> Rgba {
+    tint(WHITE, TEXT_SECONDARY_ALPHA)
+}
+
+fn focus_bg(ui: Ui, focused: bool) -> Rgba {
+    if focused && ui.keys_shown() {
+        tint(ui.theme.with(|t| t.accent.main), FOCUS_ALPHA)
+    } else {
+        tint(WHITE, 0)
+    }
+}
+
+pub fn layer(ui: Ui) -> impl IntoElement {
+    when(move || is_open(ui), move || panel(ui))
+}
+
+fn panel(ui: Ui) -> impl IntoElement {
+    view()
+        .absolute()
+        .inset_0()
+        .flex_row()
+        // The guide stays visible, dimmed; a tap there closes.
+        .child(view().flex_1().bg(tint(0x000000, 0x90)).on_press(move || {
+            ui.touched();
+            close(ui);
+        }))
+        .child(
+            view()
+                .w(px(PANEL_W))
+                .pt_safe_area()
+                .px(px(20.0))
+                .py(px(16.0))
+                .gap(px(8.0))
+                .bg(move || rgb(ui.theme.with(|t| t.background.panel)))
+                .child(header(ui))
+                .child(list(ui)),
+        )
+}
+
+/// What the channel's guide is now.
+fn now_line(p: &Picker) -> String {
+    let s = p.subject();
+    let bound = s.current.bound.as_ref().map(|(feed, id, kind)| {
+        let name = s
+            .channels
+            .iter()
+            .find(|c| c.feed == *feed && c.epg_channel == *id)
+            .and_then(|c| c.name.clone())
+            .unwrap_or_else(|| id.clone());
+        let how = match kind {
+            iptv_epg::MatchKind::Override => "chosen by you",
+            _ => "matched automatically",
+        };
+        format!("{name} ({}, {how})", p.feed_name(*feed))
+    });
+    match (&s.current.choice, bound) {
+        (Some(assign::Choice::NoGuide), _) => "Now: no guide data (chosen by you)".to_owned(),
+        (_, Some(b)) => format!("Now: {b}"),
+        (Some(assign::Choice::Channel { .. }), None) => {
+            "Now: chosen by you; shows after the next guide update".to_owned()
+        }
+        _ => "Now: no guide channel matches it".to_owned(),
+    }
+}
+
+fn header(ui: Ui) -> impl IntoElement {
+    view()
+        .gap(px(4.0))
+        .child(
+            text(move || {
+                state(ui, |p| format!("Guide data for {}", p.subject().name)).unwrap_or_default()
+            })
+            .number_of_lines(1)
+            .text_size(px(20.0))
+            .text_color(rgb(WHITE)),
+        )
+        .child(
+            text(move || state(ui, now_line).unwrap_or_default())
+                .number_of_lines(1)
+                .text_size(px(13.0))
+                .text_color(secondary()),
+        )
+        .child(
+            text(move || {
+                let busy = state(ui, Picker::busy).unwrap_or(false);
+                match (busy, ui.keys_shown()) {
+                    (true, _) => "Applying…",
+                    (false, true) => "▲▼ move   OK choose   Back close",
+                    (false, false) => "Tap the field to search, a row to choose it",
+                }
+            })
+            .text_size(px(13.0))
+            .text_color(secondary()),
+        )
+}
+
+fn list(ui: Ui) -> impl IntoElement {
+    let rows = element_ref();
+    let count = move || state(ui, Picker::len).unwrap_or(0);
+    let focused = computed(move || state(ui, Picker::focus_index));
+    effect(move || {
+        if let Some(i) = focused.get()
+            && ui.keys_shown()
+        {
+            rows.scroll_to_index(i as u32, percentage(0.5), px(0.0), false);
+        }
+    });
+    virtual_list(count, move |at| row(ui, at.index(), focused))
+        .estimated_item_size(px(ROW_H))
+        .element_ref(&rows)
+        .flex_1()
+}
+
+fn row(ui: Ui, index: usize, focused: Memo<Option<usize>>) -> AnyElement {
+    if index == 0 {
+        return search_field(ui, focused).into_element();
+    }
+    let item = move || state(ui, |p| p.row(index)).flatten();
+    let channel = move || state(ui, |p| p.channel(index).cloned()).flatten();
+    let current = move || state(ui, |p| item().is_some_and(|r| p.is_current(&r))).unwrap_or(false);
+    let title = move || match item() {
+        Some(Row::Filter) => {
+            if state(ui, Picker::all).unwrap_or(true) {
+                "Showing every guide channel".to_owned()
+            } else {
+                "Showing only guide channels no channel uses".to_owned()
+            }
+        }
+        Some(Row::Automatic) => "Automatic".to_owned(),
+        Some(Row::NoGuide) => "No guide data".to_owned(),
+        Some(Row::Channel(..)) => channel()
+            .map(|c| c.name.clone().unwrap_or_else(|| c.epg_channel.clone()))
+            .unwrap_or_default(),
+        _ => String::new(),
+    };
+    let detail = move || match item() {
+        Some(Row::Filter) => {
+            state(ui, |p| format!("{} shown · OK to switch", p.matches())).unwrap_or_default()
+        }
+        Some(Row::Automatic) => "Matched by its guide id and name".to_owned(),
+        Some(Row::NoGuide) => "The guide shows no programmes for it".to_owned(),
+        Some(Row::Channel(..)) => channel()
+            .map(|c| channel_detail(ui, &c))
+            .unwrap_or_default(),
+        _ => String::new(),
+    };
+    view()
+        .h(px(ROW_H))
+        .px(px(14.0))
+        .flex_row()
+        .items_center()
+        .gap(px(12.0))
+        .rounded(px(RADIUS))
+        .bg(move || focus_bg(ui, focused.get() == Some(index)))
+        .on_press(move || {
+            ui.touched();
+            update(ui, |p| p.tap(index));
+        })
+        .child(
+            view()
+                .flex_1()
+                .gap(px(2.0))
+                .child(
+                    text(title)
+                        .number_of_lines(1)
+                        .text_size(px(16.0))
+                        .text_color(rgb(WHITE)),
+                )
+                .child(
+                    text(detail)
+                        .number_of_lines(1)
+                        .text_size(px(12.0))
+                        .text_color(secondary()),
+                ),
+        )
+        .child(
+            text(move || if current() { "Current" } else { "" }.to_owned())
+                .text_size(px(13.0))
+                .text_color(move || rgb(ui.theme.with(|t| t.accent.light))),
+        )
+        .into_element()
+}
+
+fn channel_detail(ui: Ui, c: &GuideChannel) -> String {
+    let feed = state(ui, |p| p.feed_name(c.feed).to_owned()).unwrap_or_default();
+    let used = if c.assigned { " · in use" } else { "" };
+    format!("{} · {feed}{used}", c.epg_channel)
+}
+
+/// The first row: the search field. OK on it (or a tap) types; Return
+/// goes to the first match.
+fn search_field(ui: Ui, focused: Memo<Option<usize>>) -> impl IntoElement {
+    let field = element_ref();
+    let typing = computed(move || state(ui, Picker::typing).unwrap_or(false));
+    effect(move || {
+        if typing.get() {
+            field.focus();
+        } else {
+            field.blur();
+        }
+    });
+    view().h(px(ROW_H)).justify_center().child(
+        input()
+            .element_ref(&field)
+            .value(move || state(ui, |p| p.query().to_owned()).unwrap_or_default())
+            .placeholder("Search guide channels by name or id")
+            .auto_capitalize(AutoCapitalize::None)
+            .auto_correct(false)
+            .return_key_type(ReturnKeyType::Search)
+            .text_size(px(16.0))
+            .text_color(rgb(WHITE))
+            .placeholder_color(secondary())
+            .px(px(14.0))
+            .py(px(10.0))
+            .rounded(px(RADIUS))
+            .bg(move || {
+                if focused.get() == Some(0) && ui.keys_shown() {
+                    tint(ui.theme.with(|t| t.accent.main), FOCUS_ALPHA)
+                } else {
+                    tint(WHITE, RESTING_ALPHA)
+                }
+            })
+            .on_change(move |text: &str| {
+                if state(ui, |p| p.query() != text).unwrap_or(false) {
+                    update(ui, |p| {
+                        p.set_query(text);
+                        None
+                    });
+                }
+            })
+            .on_submit(move |_: &str| {
+                update(ui, |p| {
+                    p.submit();
+                    None
+                });
+                dismiss_keyboard();
+            })
+            .on_focus(move || {
+                if !state(ui, Picker::typing).unwrap_or(true) {
+                    update(ui, |p| {
+                        p.set_typing(true);
+                        None
+                    });
+                }
+            })
+            .on_blur(move || {
+                if state(ui, Picker::typing).unwrap_or(false) {
+                    update(ui, |p| {
+                        p.set_typing(false);
+                        None
+                    });
+                }
+            }),
+    )
+}

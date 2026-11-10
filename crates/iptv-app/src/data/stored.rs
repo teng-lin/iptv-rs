@@ -12,41 +12,50 @@
 //! travel with each guide's config, so changing them downloads the guide
 //! again at the next check (the stored feeds no longer match).
 //!
+//! The guides to download are the playlist's guide sources (`guides.rs`,
+//! kept in the store); the channels whose guide the user chose by hand
+//! (`assign.rs`) are matched with those choices ([`overrides`]).
+//!
 //! The settings screen's guide commands act on the source on screen
-//! ([`note_shown`]): [`update_now`] downloads its guide, [`clear`] deletes
-//! the stored one, [`guide_status`] says how the last update went.
+//! ([`note_shown`]): [`update_now`] downloads its guide (every source
+//! switched on), [`clear`] deletes the stored one, [`guide_status`] says
+//! how the last update went and [`source_lines`] how each source did.
 
 use std::cell::{Cell, RefCell};
 use std::sync::mpsc::{self, Sender, TryRecvError};
 
 use iptv_epg::{ChannelKey, DAY, GuideStore, Overrides, UnixTime};
 use iptv_import::{
-    CancelToken, Catalog, Decision, EpgImport, EpgSourceConfig, ImportError, NoProgress,
-    RefreshPolicy, Trigger, decide, matching_fingerprint, store_options,
+    CancelToken, Decision, EpgImport, EpgSourceConfig, ImportError, NoProgress, RefreshPolicy,
+    Trigger, decide, matching_fingerprint, store_options,
 };
 use iptv_net::NetClient;
 use iptv_providers::SecretUrl;
 use iptv_providers::model::{Channel, ContentKind, Group};
 use iptv_settings::{Settings, Target};
 use iptv_store_sqlite::{
-    ChannelOrder, ChannelQuery, EpgCounts, EpgFeedMeta, EpgWindow, ImportErrorKind, SourceId,
-    SourceSettings, StoreError, StoredGuide,
+    ChannelOrder, ChannelQuery, EpgCounts, EpgFeedMeta, EpgWindow, FeedResult, GuideSource,
+    ImportErrorKind, SourceId, StoreError, StoredGuide,
 };
 
 use nsh_core::prelude::timer;
 
-use super::{CUSTOM_EPG, GENERATION, Imported, Msg, POLL, Streams, open_store};
+use super::{GENERATION, Imported, Msg, POLL, Streams, guides, open_store};
 use crate::Ui;
 
 thread_local! {
     /// The source whose guide is on screen.
     static SHOWN: Cell<Option<SourceId>> = const { Cell::new(None) };
-    /// An update asked for by hand is running.
-    static UPDATING: Cell<bool> = const { Cell::new(false) };
-    /// The guides of sources whose stored guide was cleared, for an update
-    /// asked for before the next refresh of the source.
-    static CLEARED: RefCell<Vec<(SourceId, Vec<EpgSourceConfig>)>> = const { RefCell::new(Vec::new()) };
+    /// The sources whose update asked for by hand is running.
+    static UPDATING: RefCell<Vec<SourceId>> = const { RefCell::new(Vec::new()) };
+    /// Edits of guide sources since the app started: a check waits for
+    /// the last one.
+    static EDITS: Cell<u64> = const { Cell::new(0) };
 }
+
+/// How long a guide check waits after the guide sources changed (more
+/// edits may follow).
+const SETTLE: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Days of finished programmes kept and loaded, for browsing back and
 /// catch-up (`epg.keep_past`, whole days rounded up).
@@ -108,78 +117,55 @@ pub fn load_guide(source: SourceId, now: UnixTime) -> Option<GuideStore> {
     }
 }
 
-/// The source's own guides (from its catalog).
-pub fn own_guides(catalog: &Catalog) -> Vec<EpgSourceConfig> {
-    with_storage(
-        catalog.epg_sources(CUSTOM_EPG.0 + 1),
-        &crate::settings::get(),
-    )
+/// `source`'s guide sources in the user's order (empty when unreadable).
+pub fn guide_sources(source: SourceId) -> Vec<GuideSource> {
+    open_store()
+        .and_then(|s| s.guide_sources(source))
+        .unwrap_or_else(|e| {
+            log::warn!("iptv data: guide sources: {e}");
+            Vec::new()
+        })
 }
 
-/// What the user chose for `source` (`None` when nothing was saved).
-pub fn settings(source: SourceId) -> Option<SourceSettings> {
-    match open_store().and_then(|s| s.source_settings(source)) {
-        Ok(settings) => settings,
+/// The download configs of `sources` (those switched on), with the storage
+/// settings of now (a stored config has those it was fetched with).
+pub fn configs(sources: &[GuideSource]) -> Vec<EpgSourceConfig> {
+    let template = EpgSourceConfig::new(iptv_epg::SourceId(0), SecretUrl::new(""));
+    let template = with_storage(vec![template], &crate::settings::get()).remove(0);
+    guides::configs_of(sources, &template)
+}
+
+/// A stored source's guides without its playlist: its guide sources; for a
+/// source whose guides were never arranged, the feeds stored with its
+/// guide.
+pub fn current_configs(source: SourceId, state: Option<&StoredGuide>) -> Vec<EpgSourceConfig> {
+    let sources = guide_sources(source);
+    if sources.is_empty() {
+        let stored = state.map(StoredGuide::configs).unwrap_or_default();
+        return with_storage(stored, &crate::settings::get());
+    }
+    configs(&sources)
+}
+
+/// The channels of `source` whose guide the user chose by hand.
+pub fn overrides(source: SourceId) -> Overrides {
+    match open_store().and_then(|s| s.epg_overrides(source)) {
+        Ok(rows) => rows
+            .into_iter()
+            .map(|(id, epg)| (ChannelKey::new(id.as_str()), epg.to_override()))
+            .collect(),
         Err(e) => {
-            log::warn!("iptv data: source settings: {e}");
-            None
+            log::warn!("iptv data: guide choices: {e}");
+            Overrides::default()
         }
     }
-}
-
-/// The guide link the user gave a stored source: what its settings say;
-/// for a source added before they existed (no settings), the typed guide
-/// kept with its stored guide.
-pub fn typed_guide(
-    settings: Option<SourceSettings>,
-    stored: Option<&StoredGuide>,
-) -> Option<SecretUrl> {
-    match settings {
-        Some(settings) => settings.epg_url,
-        None => stored
-            .into_iter()
-            .flat_map(StoredGuide::configs)
-            .find(|c| c.id == CUSTOM_EPG)
-            .map(|c| c.url),
-    }
-}
-
-/// The guides to load: the `typed` one first, then the source's `own`.
-pub fn configs(
-    mut configs: Vec<EpgSourceConfig>,
-    typed: Option<SecretUrl>,
-) -> Vec<EpgSourceConfig> {
-    if let Some(url) = typed {
-        configs.insert(0, custom(url));
-    }
-    // With the storage settings of now (a stored config has those it was
-    // fetched with).
-    with_storage(configs, &crate::settings::get())
-}
-
-/// A stored source's guides without its playlist: the source's own feeds
-/// as stored with its guide, and the guide link it has now (which may have
-/// changed since the guide was stored).
-pub fn current_configs(source: SourceId, state: &StoredGuide) -> Vec<EpgSourceConfig> {
-    let own = state
-        .configs()
-        .into_iter()
-        .filter(|c| c.id != CUSTOM_EPG)
-        .collect();
-    configs(own, typed_guide(settings(source), Some(state)))
-}
-
-/// The config of a guide the user typed: before the source's own.
-pub fn custom(url: SecretUrl) -> EpgSourceConfig {
-    let config = EpgSourceConfig::new(CUSTOM_EPG, url).with_priority(1000);
-    with_storage(vec![config], &crate::settings::get()).remove(0)
 }
 
 /// Whether to download the guide again (the `epg.update_*` settings).
 pub fn plan(
     trigger: Trigger,
     configs: &[EpgSourceConfig],
-    channels: &[Channel],
+    matching: Matching<'_>,
     stored: Option<&StoredGuide>,
     now: UnixTime,
 ) -> Decision {
@@ -187,22 +173,36 @@ pub fn plan(
         &crate::settings::get(),
         trigger,
         configs,
-        channels,
+        matching,
         stored,
         now,
     )
+}
+
+/// What EPG matching reads: the playlist's channels and the user's guide
+/// choices.
+#[derive(Clone, Copy)]
+pub struct Matching<'a> {
+    pub channels: &'a [Channel],
+    pub overrides: &'a Overrides,
+}
+
+impl Matching<'_> {
+    pub fn fingerprint(&self) -> u64 {
+        matching_fingerprint(self.channels, self.overrides)
+    }
 }
 
 fn plan_with(
     settings: &Settings,
     trigger: Trigger,
     configs: &[EpgSourceConfig],
-    channels: &[Channel],
+    matching: Matching<'_>,
     stored: Option<&StoredGuide>,
     now: UnixTime,
 ) -> Decision {
     let state = stored.map(StoredGuide::refresh_state);
-    let fingerprint = matching_fingerprint(channels, &Overrides::default());
+    let fingerprint = matching.fingerprint();
     decide(
         &RefreshPolicy::from_settings(settings, &Target::Global),
         trigger,
@@ -219,12 +219,12 @@ fn plan_with(
 pub fn next_check(
     source: SourceId,
     configs: &[EpgSourceConfig],
-    channels: &[Channel],
+    matching: Matching<'_>,
     now: UnixTime,
 ) -> Option<UnixTime> {
     let stored = guide_state(source);
     check_at(
-        plan(Trigger::Timer, configs, channels, stored.as_ref(), now),
+        plan(Trigger::Timer, configs, matching, stored.as_ref(), now),
         now,
     )
 }
@@ -245,18 +245,24 @@ const RETRY_DUE: i64 = 3600;
 
 /// Replaces `source`'s stored guide with `import` (the feeds that loaded)
 /// and drops programmes older than [`keep_past_days`]. A feed that failed
-/// is recorded, so automatic refreshes back off.
+/// is recorded, so automatic refreshes back off; each feed's result is
+/// kept for the guide sources screen.
 pub fn replace(
     source: SourceId,
     import: &EpgImport,
     configs: &[EpgSourceConfig],
-    channels: &[Channel],
+    matching: Matching<'_>,
     now: UnixTime,
 ) -> Result<EpgCounts, StoreError> {
     let mut store = open_store()?;
     let feeds = EpgFeedMeta::from_import(import, configs, now);
-    let fingerprint = matching_fingerprint(channels, &Overrides::default());
-    let counts = store.replace_epg(source, &import.guide, &feeds, fingerprint)?;
+    let counts = store.replace_epg(source, &import.guide, &feeds, matching.fingerprint())?;
+    let results: Vec<_> = import
+        .sources
+        .iter()
+        .map(|o| (o.id, o.result.as_ref().err().map(error_kind)))
+        .collect();
+    store.record_epg_feed_results(source, &results)?;
     let keep = keep_past_days(&crate::settings::get());
     let pruned = store.prune_epg(now.saturating_sub(i64::from(keep).saturating_mul(DAY)))?;
     if let Some(Err(e)) = import
@@ -276,9 +282,16 @@ pub fn replace(
     Ok(counts)
 }
 
-/// Notes a failed guide download; the stored guide stays.
-pub fn record_failure(source: SourceId, error: &ImportError) {
-    if let Err(e) = open_store().and_then(|mut s| s.record_epg_failure(source, error_kind(error))) {
+/// Notes a failed guide download (every source in `configs` failed); the
+/// stored guide stays.
+pub fn record_failure(source: SourceId, error: &ImportError, configs: &[EpgSourceConfig]) {
+    let kind = error_kind(error);
+    let results: Vec<_> = configs.iter().map(|c| (c.id, Some(kind))).collect();
+    let recorded = open_store().and_then(|mut s| {
+        s.record_epg_failure(source, kind)?;
+        s.record_epg_feed_results(source, &results)
+    });
+    if let Err(e) = recorded {
         log::warn!("iptv data: could not record the guide failure: {e}");
     }
 }
@@ -339,16 +352,48 @@ pub enum GuideStatus {
 
 /// The status of the guide on screen (one indexed read of the store).
 pub fn guide_status() -> GuideStatus {
-    if UPDATING.with(Cell::get) {
-        return GuideStatus::Updating;
-    }
     let Some(source) = SHOWN.with(Cell::get) else {
         return GuideStatus::NoSource;
     };
+    if updating(source) {
+        return GuideStatus::Updating;
+    }
     status_of(guide_state(source).as_ref())
 }
 
-fn status_of(stored: Option<&StoredGuide>) -> GuideStatus {
+/// The source whose guide is on screen.
+pub fn shown() -> Option<SourceId> {
+    SHOWN.with(Cell::get)
+}
+
+/// An update of `source`'s guide asked for by hand is running.
+pub fn updating(source: SourceId) -> bool {
+    UPDATING.with(|u| u.borrow().contains(&source))
+}
+
+/// One guide source with how its last download went.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceLine {
+    pub source: GuideSource,
+    pub result: Option<FeedResult>,
+}
+
+/// `source`'s guide sources in order, each with its last result (one
+/// short read of the store).
+pub fn source_lines(source: SourceId) -> Vec<SourceLine> {
+    let results = open_store()
+        .and_then(|s| s.epg_feed_results(source))
+        .unwrap_or_default();
+    guide_sources(source)
+        .into_iter()
+        .map(|s| SourceLine {
+            result: results.iter().find(|r| r.feed == s.feed).cloned(),
+            source: s,
+        })
+        .collect()
+}
+
+pub fn status_of(stored: Option<&StoredGuide>) -> GuideStatus {
     let Some(g) = stored else {
         return GuideStatus::Empty;
     };
@@ -362,33 +407,30 @@ fn status_of(stored: Option<&StoredGuide>) -> GuideStatus {
     }
 }
 
-/// "Update the guide now": downloads the guide of the source on screen
-/// (its stored feeds, with the storage settings of now) and shows it;
-/// `done` runs on the UI thread when it finished. False when there is no
-/// guide to download.
+/// "Update the guide now" of the source on screen: see [`update_source`].
 pub fn update_now(ui: Ui, done: impl FnOnce() + 'static) -> bool {
-    let Some(source) = SHOWN.with(Cell::get) else {
-        return false;
-    };
-    if UPDATING.with(Cell::get) {
+    match SHOWN.with(Cell::get) {
+        Some(source) => update_source(ui, source, done),
+        None => false,
+    }
+}
+
+/// Downloads `source`'s guide now (every guide source switched on, with
+/// the storage settings and guide choices of now); the guide on screen
+/// changes when it is `source`'s. `done` runs on the UI thread when it
+/// finished. False when there is no guide to download.
+pub fn update_source(ui: Ui, source: SourceId, done: impl FnOnce() + 'static) -> bool {
+    if updating(source) {
         return true;
     }
     let stored = guide_state(source);
-    let configs = stored.as_ref().map(StoredGuide::configs).or_else(|| {
-        CLEARED.with(|c| {
-            c.borrow()
-                .iter()
-                .find(|(id, _)| *id == source)
-                .map(|(_, configs)| configs.clone())
-        })
-    });
-    let Some(configs) = configs.filter(|c| !c.is_empty()) else {
+    let guides = current_configs(source, stored.as_ref());
+    if guides.is_empty() {
         return false;
-    };
-    let guides = with_storage(configs, &crate::settings::get());
+    }
     // Without a stored guide the periodic checks stopped: start them again.
     let restart_checks = stored.is_none();
-    UPDATING.with(|u| u.set(true));
+    UPDATING.with(|u| u.borrow_mut().push(source));
     let generation = GENERATION.with(Cell::get);
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -397,8 +439,10 @@ pub fn update_now(ui: Ui, done: impl FnOnce() + 'static) -> bool {
     super::spawn_in_app(async move {
         loop {
             match rx.try_recv() {
-                Ok(Msg::Guide(imported)) => super::show(ui, imported, generation, false),
-                Ok(Msg::NextCheck { source, at }) => {
+                Ok(Msg::Guide(imported)) if SHOWN.with(Cell::get) == Some(source) => {
+                    super::show(ui, imported, generation, false)
+                }
+                Ok(Msg::NextCheck { source, at }) if SHOWN.with(Cell::get) == Some(source) => {
                     super::schedule_check(ui, source, at, generation);
                 }
                 Ok(_) => {}
@@ -406,13 +450,14 @@ pub fn update_now(ui: Ui, done: impl FnOnce() + 'static) -> bool {
                 Err(TryRecvError::Disconnected) => break,
             }
         }
-        UPDATING.with(|u| u.set(false));
+        UPDATING.with(|u| u.borrow_mut().retain(|id| *id != source));
+        ui.library.version.update(|v| *v += 1);
         done();
     });
     true
 }
 
-/// The download of [`update_now`], on its own thread.
+/// The download of [`update_source`], on its own thread.
 async fn download_now(
     source: SourceId,
     guides: Vec<EpgSourceConfig>,
@@ -427,24 +472,21 @@ async fn download_now(
             return;
         }
     };
+    let overrides = overrides(source);
+    let matching = Matching {
+        channels: &channels,
+        overrides: &overrides,
+    };
     log::info!("iptv data: downloading the guide (asked for)");
     match NetClient::new(crate::settings::net_config()) {
         Ok(net) => {
             let cancel = CancelToken::new();
-            let result = super::download_guide(
-                &net,
-                &guides,
-                &channels,
-                now,
-                &mut NoProgress,
-                &cancel,
-                false,
-            )
-            .await;
+            let result =
+                super::download_guide(&net, &guides, matching, now, &mut NoProgress, &cancel, None)
+                    .await;
             match result {
                 Ok(import) => {
-                    let guide = super::keep_guide(source, import, &guides, &channels, now);
-                    CLEARED.with(|c| c.borrow_mut().retain(|(id, _)| *id != source));
+                    let guide = super::keep_guide(source, import, &guides, matching, now);
                     let _ = tx.send(Msg::Guide(Box::new(Imported {
                         groups,
                         channels: channels.clone(),
@@ -457,15 +499,37 @@ async fn download_now(
                 }
                 Err(e) => {
                     log::warn!("iptv data: guide: {e}");
-                    record_failure(source, &e);
+                    record_failure(source, &e, &guides);
                 }
             }
         }
         Err(e) => log::warn!("iptv data: network client setup failed: {e}"),
     }
     if restart_checks {
-        super::send_next_check(tx, source, &guides, &channels);
+        super::send_next_check(tx, source, &guides, matching);
     }
+}
+
+/// `source`'s guide sources changed: its guide is checked once the edits
+/// settle (the refresh policy downloads changed feeds). Only for the
+/// source on screen; another one is checked when it is shown.
+pub fn guides_changed(ui: Ui, source: SourceId) {
+    if SHOWN.with(Cell::get) != Some(source) {
+        return;
+    }
+    let edit = EDITS.with(|e| {
+        e.set(e.get() + 1);
+        e.get()
+    });
+    let generation = GENERATION.with(Cell::get);
+    super::spawn_in_app(async move {
+        timer(SETTLE).await;
+        let current = GENERATION.with(Cell::get) == generation && EDITS.with(Cell::get) == edit;
+        if current && !updating(source) {
+            log::info!("iptv data: guide sources changed; checking the guide");
+            super::check_guide(ui, source, generation);
+        }
+    });
 }
 
 /// "Delete stored guide data": the source on screen keeps its channels
@@ -480,7 +544,6 @@ pub fn clear(ui: Ui, done: impl FnOnce(bool) + 'static) -> bool {
     let generation = GENERATION.with(Cell::get);
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let configs = guide_state(source).map(|g| g.configs());
         let deleted = match open_store().and_then(|mut s| s.delete_epg(source)) {
             Ok(_) => true,
             Err(e) => {
@@ -489,23 +552,18 @@ pub fn clear(ui: Ui, done: impl FnOnce(bool) + 'static) -> bool {
             }
         };
         let catalog = catalog(source).inspect_err(|e| log::warn!("iptv data: stored catalog: {e}"));
-        let _ = tx.send((configs, deleted, catalog.ok()));
+        let _ = tx.send((deleted, catalog.ok()));
     });
     super::spawn_in_app(async move {
-        let (configs, deleted, catalog) = loop {
+        let (deleted, catalog) = loop {
             match rx.try_recv() {
                 Ok(result) => break result,
                 Err(TryRecvError::Empty) => timer(POLL).await,
                 Err(TryRecvError::Disconnected) => return done(false),
             }
         };
-        if let Some(configs) = configs.filter(|_| deleted) {
+        if deleted {
             log::info!("iptv data: deleted the stored guide");
-            CLEARED.with(|c| {
-                let mut c = c.borrow_mut();
-                c.retain(|(id, _)| *id != source);
-                c.push((source, configs));
-            });
         }
         if let (true, Some((groups, channels))) = (deleted, catalog) {
             let imported = Box::new(Imported {
@@ -548,15 +606,31 @@ mod tests {
 
     const NOW: UnixTime = 1_800_000_000;
 
-    fn own() -> Vec<EpgSourceConfig> {
-        vec![EpgSourceConfig::new(
-            iptv_epg::SourceId(CUSTOM_EPG.0 + 1),
-            SecretUrl::new("http://guide.example.test/xmltv.php".to_owned()),
-        )]
+    /// A playlist's guide sources: the provider's own `xmltv.php`, after a
+    /// guide the user typed when there is one.
+    fn sources(typed: bool) -> Vec<GuideSource> {
+        let user = typed.then(|| {
+            guides::user_source(
+                guides::FIRST_USER_FEED,
+                SecretUrl::new("http://typed.example.test/guide.xml".to_owned()),
+                None,
+            )
+        });
+        let provider = [SecretUrl::new(
+            "http://guide.example.test/xmltv.php".to_owned(),
+        )];
+        guides::sync_provider(&user.into_iter().collect::<Vec<_>>(), &provider)
     }
 
-    fn typed() -> SecretUrl {
-        SecretUrl::new("http://typed.example.test/guide.xml".to_owned())
+    fn none() -> Overrides {
+        Overrides::default()
+    }
+
+    fn nothing(overrides: &Overrides) -> Matching<'_> {
+        Matching {
+            channels: &[],
+            overrides,
+        }
     }
 
     /// What the store holds after a refresh of `feeds` an hour ago.
@@ -585,72 +659,120 @@ mod tests {
         }
     }
 
-    fn saved(url: Option<SecretUrl>) -> Option<SourceSettings> {
-        Some(SourceSettings { epg_url: url })
-    }
-
     #[test]
     fn a_fresh_stored_guide_is_kept_at_startup() {
-        let guides = configs(own(), None);
-        let stored = stored(&guides);
-        let again = configs(own(), typed_guide(saved(None), Some(&stored)));
-        assert_eq!(again, guides);
-        assert!(matches!(
-            plan(Trigger::Startup, &again, &[], Some(&stored), NOW),
-            Decision::Keep { .. }
-        ));
-    }
-
-    #[test]
-    fn a_typed_guide_is_kept_with_the_source() {
-        let guides = configs(own(), Some(typed()));
-        assert_eq!(guides[0], custom(typed()));
-        assert_eq!(guides.len(), 2);
-        let stored = stored(&guides);
-        let again = configs(own(), typed_guide(saved(Some(typed())), Some(&stored)));
-        assert_eq!(again, guides);
-        assert!(matches!(
-            plan(Trigger::Startup, &again, &[], Some(&stored), NOW),
-            Decision::Keep { .. }
-        ));
-    }
-
-    #[test]
-    fn a_source_added_before_settings_keeps_the_guide_it_was_typed_with() {
-        let stored = stored(&configs(own(), Some(typed())));
-        assert_eq!(typed_guide(None, Some(&stored)), Some(typed()));
-        assert_eq!(typed_guide(None, None), None);
-        // Removed by the user: the stored guide's typed feed is not used.
-        assert_eq!(typed_guide(saved(None), Some(&stored)), None);
-    }
-
-    #[test]
-    fn a_changed_or_removed_guide_link_downloads_the_guide_again() {
-        let stored = stored(&configs(own(), Some(typed())));
-        let other = SecretUrl::new("http://other.example.test/guide.xml".to_owned());
-        for link in [Some(other), None] {
-            let now = configs(own(), typed_guide(saved(link), Some(&stored)));
-            assert_eq!(
-                plan(Trigger::Startup, &now, &[], Some(&stored), NOW),
-                Decision::Refresh(RefreshReason::FeedsChanged)
-            );
+        for typed in [false, true] {
+            let guides = configs(&sources(typed));
+            let stored = stored(&guides);
+            let o = none();
+            assert!(matches!(
+                plan(
+                    Trigger::Startup,
+                    &configs(&sources(typed)),
+                    nothing(&o),
+                    Some(&stored),
+                    NOW
+                ),
+                Decision::Keep { .. }
+            ));
         }
     }
 
     #[test]
-    fn a_new_source_downloads_its_guide() {
+    fn a_v5_arrangement_keeps_its_stored_feeds() {
+        // As a v5 build stored a typed guide (feed 1, priority 1000) and an
+        // Xtream source's own (feed 2, priority 0).
+        let c = configs(&sources(true));
         assert_eq!(
-            plan(Trigger::PlaylistChanged, &own(), &[], None, NOW),
+            c.iter().map(|c| (c.id.0, c.priority)).collect::<Vec<_>>(),
+            [(1, 1000), (2, 0)]
+        );
+    }
+
+    #[test]
+    fn changed_guide_sources_download_the_guide_again() {
+        let stored = stored(&configs(&sources(true)));
+        let o = none();
+        let edits = [
+            guides::Edit::SetEnabled(guides::FIRST_USER_FEED, false),
+            guides::Edit::Remove(guides::FIRST_USER_FEED),
+            guides::Edit::Move(iptv_epg::SourceId(2), -1),
+            guides::Edit::Shift(iptv_epg::SourceId(2), 60),
+            guides::Edit::Add {
+                url: SecretUrl::new("http://more.example.test/g.xml".to_owned()),
+                name: None,
+            },
+        ];
+        for edit in edits {
+            let edited = guides::apply(&sources(true), &edit).unwrap();
+            assert_eq!(
+                plan(
+                    Trigger::Timer,
+                    &configs(&edited),
+                    nothing(&o),
+                    Some(&stored),
+                    NOW
+                ),
+                Decision::Refresh(RefreshReason::FeedsChanged),
+                "{edit:?}"
+            );
+        }
+        // A new name changes no download.
+        let renamed = guides::apply(
+            &sources(true),
+            &guides::Edit::Rename(guides::FIRST_USER_FEED, Some("Mine".into())),
+        )
+        .unwrap();
+        assert!(matches!(
+            plan(
+                Trigger::Timer,
+                &configs(&renamed),
+                nothing(&o),
+                Some(&stored),
+                NOW
+            ),
+            Decision::Keep { .. }
+        ));
+    }
+
+    #[test]
+    fn a_guide_chosen_by_hand_is_matched_again() {
+        let guides = configs(&sources(false));
+        let stored = stored(&guides);
+        let mut o = none();
+        o.insert(ChannelKey::new("c1"), iptv_epg::Override::NoEpg);
+        assert_eq!(
+            plan(Trigger::Timer, &guides, nothing(&o), Some(&stored), NOW),
+            Decision::Refresh(RefreshReason::ChannelsChanged)
+        );
+    }
+
+    #[test]
+    fn a_new_source_downloads_its_guide() {
+        let o = none();
+        assert_eq!(
+            plan(
+                Trigger::PlaylistChanged,
+                &configs(&sources(false)),
+                nothing(&o),
+                None,
+                NOW
+            ),
             Decision::Refresh(RefreshReason::NeverFetched)
         );
     }
 
     #[test]
     fn the_next_check_is_when_the_guide_gets_stale_or_runs_short() {
-        let guides = configs(own(), None);
+        let guides = configs(&sources(false));
         let mut stored = stored(&guides);
-        let next =
-            |s: &StoredGuide| check_at(plan(Trigger::Timer, &guides, &[], Some(s), NOW), NOW);
+        let o = none();
+        let next = |s: &StoredGuide| {
+            check_at(
+                plan(Trigger::Timer, &guides, nothing(&o), Some(s), NOW),
+                NOW,
+            )
+        };
         // Fetched an hour ago, programmes for 3 days: stale in 23 h.
         assert_eq!(next(&stored), Some(NOW - 3600 + DAY));
         // Programmes end in 20 h: 12 h before they run out.
@@ -662,19 +784,23 @@ mod tests {
         assert_eq!(next(&stored), Some(NOW + 3000));
         // No guide configured any more: no checks.
         assert_eq!(
-            check_at(plan(Trigger::Timer, &[], &[], Some(&stored), NOW), NOW),
+            check_at(
+                plan(Trigger::Timer, &[], nothing(&o), Some(&stored), NOW),
+                NOW
+            ),
             None
         );
     }
 
     #[test]
     fn the_refresh_follows_the_update_settings() {
-        let guides = configs(own(), None);
+        let guides = configs(&sources(false));
         let mut old = stored(&guides);
         old.replaced_at = Some(NOW - DAY);
         let fresh = stored(&guides);
+        let o = none();
         let decide = |s: &Settings, trigger, stored: &StoredGuide| {
-            plan_with(s, trigger, &guides, &[], Some(stored), NOW)
+            plan_with(s, trigger, &guides, nothing(&o), Some(stored), NOW)
         };
         let mut s = Settings::new();
         assert!(matches!(
@@ -724,7 +850,7 @@ mod tests {
             .unwrap();
         s.set("epg.store_descriptions", Value::Bool(false)).unwrap();
         assert_eq!(keep_past_days(&s), 3);
-        let guides = with_storage(own(), &s);
+        let guides = with_storage(configs(&sources(false)), &s);
         assert_eq!(
             guides[0].store,
             StoreOptions {
@@ -733,16 +859,24 @@ mod tests {
             }
         );
         // A guide fetched with other storage settings is downloaded again.
-        let fetched = stored(&configs(own(), None));
+        let fetched = stored(&configs(&sources(false)));
+        let o = none();
         assert_eq!(
-            plan_with(&s, Trigger::Startup, &guides, &[], Some(&fetched), NOW),
+            plan_with(
+                &s,
+                Trigger::Startup,
+                &guides,
+                nothing(&o),
+                Some(&fetched),
+                NOW
+            ),
             Decision::Refresh(RefreshReason::FeedsChanged)
         );
     }
 
     #[test]
     fn the_status_says_how_the_last_update_went() {
-        let guides = configs(own(), None);
+        let guides = configs(&sources(false));
         assert_eq!(status_of(None), GuideStatus::Empty);
         let mut g = stored(&guides);
         assert_eq!(
@@ -765,11 +899,12 @@ mod tests {
 
     #[test]
     fn a_day_old_guide_is_downloaded_again() {
-        let guides = configs(own(), None);
+        let guides = configs(&sources(false));
         let mut stored = stored(&guides);
         stored.replaced_at = Some(NOW - DAY);
+        let o = none();
         assert!(matches!(
-            plan(Trigger::Startup, &guides, &[], Some(&stored), NOW),
+            plan(Trigger::Startup, &guides, nothing(&o), Some(&stored), NOW),
             Decision::Refresh(RefreshReason::Stale { .. })
         ));
     }

@@ -4,16 +4,14 @@
 //! playlist opens its actions: show it, refresh it now, rename it, change
 //! its provider details (link, server and login, portal and MAC address:
 //! checked by importing them, kept only if that works), its User-Agent,
-//! its guide link (or use only the provider's guide), delete it after a
-//! confirmation that states what goes. `state.rs` and `details.rs` own
+//! its guide sources (`epg_sources_view`), delete it after a confirmation
+//! that states what goes. `state.rs` and `details.rs` own
 //! focus and flow; `data::library` does the work.
 //!
 //! Remote: Up/Down move, OK acts, Menu opens a playlist's actions, Back
 //! closes the open sheet, then the screen. Touch and mouse: every row and
 //! action is tappable; a tap beside a sheet closes it. Text entry uses the
-//! wizard's sheet (`wizard_view::entry`). Guide links are shown with their
-//! user info and query values hidden, and a link carrying them is never
-//! put into the text field. Wording is iptv-rs's own.
+//! wizard's sheet (`wizard_view::entry`). Wording is iptv-rs's own.
 
 mod details;
 mod details_card;
@@ -25,7 +23,9 @@ use iptv_store_sqlite::SourceId;
 use nsh_core::prelude::*;
 
 pub use state::Screen as Open;
+pub(crate) use state::plain_link;
 use state::{Act, EditKind, Effect, Item, Key, Layer, Screen};
+pub(crate) use words::masked_link;
 
 use crate::data::{self, Activity, Playlist};
 use crate::theme::{FOCUS_ALPHA, RADIUS, RADIUS_LARGE, RESTING_ALPHA, TEXT_SECONDARY_ALPHA};
@@ -147,7 +147,10 @@ fn perform(ui: Ui, effect: Effect) {
             Ok(())
         }
         Effect::Rename(id, name) => data::rename(ui, id, &name),
-        Effect::SetGuide(id, link) => data::set_guide_link(ui, id, link),
+        Effect::Guides(id) => {
+            crate::epg_sources_view::open(ui, id);
+            Ok(())
+        }
         Effect::Delete(id) => data::delete(ui, id),
         Effect::RefreshAll => {
             data::refresh_all(ui);
@@ -187,7 +190,7 @@ fn effect_name(effect: &Effect) -> String {
         Effect::Show(id) => format!("show {}", id.0),
         Effect::Refresh(id) => format!("refresh {}", id.0),
         Effect::Rename(id, _) => format!("rename {}", id.0),
-        Effect::SetGuide(id, link) => format!("guide link of {}: set {}", id.0, link.is_some()),
+        Effect::Guides(id) => format!("guide sources of {}", id.0),
         Effect::Delete(id) => format!("delete {}", id.0),
         Effect::RefreshAll => "refresh all".to_owned(),
         Effect::OpenDetails(id) => format!("details of {}", id.0),
@@ -590,14 +593,12 @@ fn set_edit_text(ui: Ui, text: &str) {
     });
 }
 
-/// The text sheet for a rename, a User-Agent, a guide link or a provider
-/// detail; made when entry starts.
+/// The text sheet for a rename, a User-Agent or a provider detail; made
+/// when entry starts.
 fn edit_sheet(ui: Ui) -> impl IntoElement {
-    let Some((kind, prefilled, has_link)) = ui.playlists.with_untracked(|s| {
-        let s = s.as_ref()?;
-        let e = s.editing()?;
-        let has_link = s.row(e.id).is_some_and(|r| r.guide_link.is_some());
-        Some((e.kind, e.prefilled, has_link))
+    let Some((kind, prefilled)) = ui.playlists.with_untracked(|s| {
+        let e = s.as_ref()?.editing()?;
+        Some((e.kind, e.prefilled))
     }) else {
         return view();
     };
@@ -617,17 +618,6 @@ fn edit_sheet(ui: Ui) -> impl IntoElement {
                 p.is_link(),
             )
         }
-        // A link with an account in it is not shown: typing replaces it.
-        EditKind::GuideLink if has_link && !prefilled => (
-            "Guide link (XMLTV)",
-            "A new link; left empty, the current one stays",
-            true,
-        ),
-        EditKind::GuideLink => (
-            "Guide link (XMLTV)",
-            "http://…/guide.xml; empty: only the provider's guide",
-            true,
-        ),
     };
     entry::text_sheet(
         ui,
@@ -646,15 +636,12 @@ fn edit_sheet(ui: Ui) -> impl IntoElement {
 
 #[cfg(test)]
 mod tests {
-    use iptv_providers::SecretUrl;
-
     use super::*;
 
     #[test]
     fn the_log_never_names_playlists_or_links() {
-        let link = SecretUrl::new("http://guide.example.test/x.xml?password=p");
-        let text = effect_name(&Effect::SetGuide(SourceId(3), Some(link)));
-        assert_eq!(text, "guide link of 3: set true");
+        let text = effect_name(&Effect::Guides(SourceId(3)));
+        assert_eq!(text, "guide sources of 3");
         let text = effect_name(&Effect::Rename(SourceId(3), "Private name".into()));
         assert!(!text.contains("Private"));
     }

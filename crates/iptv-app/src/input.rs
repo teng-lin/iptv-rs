@@ -74,11 +74,17 @@ struct Nav {
 
 /// The surface that owns input now.
 pub fn context(ui: &Ui) -> Context {
+    if crate::epg_sources_view::is_open(*ui) {
+        return Context::Editor; // Up/Down/Left/Right, OK, Back
+    }
     if crate::wizard_view::is_open(*ui) || crate::playlists_view::is_open(*ui) {
         return Context::Menu;
     }
     if crate::settings_view::is_open(*ui) {
         return Context::Editor; // Up/Down/Left/Right, OK, Back
+    }
+    if crate::guide_assign_view::is_open(*ui) {
+        return Context::Menu;
     }
     if ui.editor.with(Option::is_some) {
         return Context::Editor;
@@ -327,13 +333,22 @@ fn apply(ui: Ui, key: RemoteKey, action: Action) {
         crate::wizard_view::key(ui, action);
         return;
     }
-    // Top-most first: the playlists screen opens over settings.
+    // Top-most first: a guide sources screen opens over the playlists
+    // screen, which opens over settings.
+    if crate::epg_sources_view::is_open(ui) {
+        crate::epg_sources_view::key(ui, action);
+        return;
+    }
     if crate::playlists_view::is_open(ui) {
         crate::playlists_view::key(ui, action);
         return;
     }
     if crate::settings_view::is_open(ui) {
         crate::settings_view::key(ui, action);
+        return;
+    }
+    if crate::guide_assign_view::is_open(ui) {
+        crate::guide_assign_view::key(ui, action);
         return;
     }
     if ui.editor.with(Option::is_some) {
