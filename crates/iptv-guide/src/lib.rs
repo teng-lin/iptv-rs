@@ -10,8 +10,16 @@
 //! Where a channel has no programme, the
 //! gap is filled with hour-aligned placeholder slots clipped to the
 //! neighbouring programmes, so navigation always has a cell to land on.
+//!
+//! A stored guide can be held in part: the store passed in covers a recent
+//! window, and older days are paged in on demand ([`pages`],
+//! [`EpgSchedule::with_pages`]). Until a day arrives its cells are
+//! hour slots titled [`LOADING`].
 
+pub mod pages;
 pub mod playback;
+
+use pages::{PageLoader, PageRequest, PagedWindow, Pages};
 
 use iptv_core::guide::{Program, Schedule};
 use iptv_epg::{ChannelKey, GuideStore, UnixTime};
@@ -21,6 +29,8 @@ use iptv_providers::model::{Channel, Group};
 const SLOT: i64 = 3600;
 /// Title of a gap slot.
 pub const NO_INFORMATION: &str = "No information";
+/// Title of a slot whose day is still being read from the store.
+pub const LOADING: &str = "Loading…";
 
 /// A channel as the guide needs it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -47,6 +57,8 @@ pub struct EpgSchedule {
     epoch: UnixTime,
     /// Reads a description the in-memory store left out.
     describe: Option<DescriptionLookup>,
+    /// Older days than `store` holds, read in on demand.
+    pages: Pages,
     /// The source's account or session, for streams that need one.
     /// Shared with the next schedule of the same source (a refreshed guide),
     /// so a Stalker session renewed by one is the other's too.
@@ -78,7 +90,66 @@ impl EpgSchedule {
             store,
             epoch: now - now.rem_euclid(SLOT),
             describe: None,
+            pages: Pages::default(),
             playback: None,
+        }
+    }
+
+    /// `store` holds the guide from `window.loaded_from` on; earlier days
+    /// are read in when first needed: `loader` reads one off the UI thread
+    /// and hands it to [`Self::insert_page`].
+    pub fn with_pages(
+        mut self,
+        window: PagedWindow,
+        loader: impl Fn(PageRequest) + 'static,
+    ) -> Self {
+        let loader: PageLoader = Box::new(loader);
+        self.pages = Pages::new(window, loader);
+        self
+    }
+
+    /// Where `store` starts holding the guide (`None`: it holds all of it).
+    pub fn loaded_from(&self) -> Option<UnixTime> {
+        let from = self.pages.loaded_from();
+        (from != UnixTime::MIN).then_some(from)
+    }
+
+    /// A page read for `request`; false when it is no longer wanted (the
+    /// user went back to now) or is not this schedule's.
+    pub fn insert_page(&self, request: PageRequest, store: GuideStore) -> bool {
+        self.pages.insert(request, store)
+    }
+
+    /// Whether the programmes around `t` are in memory; asks for their day
+    /// when they are not.
+    pub fn ensure_loaded(&self, t: UnixTime) -> bool {
+        self.with_store(t, |_| ()).is_some()
+    }
+
+    /// Drops the older days read in (except one pinned with
+    /// [`Self::pin_page`]); returns how many went.
+    pub fn evict_pages(&self) -> usize {
+        self.pages.evict()
+    }
+
+    /// Keeps the day holding `t` in memory (the programme playing from the
+    /// archive); `None` keeps none.
+    pub fn pin_page(&self, t: Option<UnixTime>) {
+        self.pages.pin(t);
+    }
+
+    /// Older days held in memory.
+    pub fn paged_days(&self) -> usize {
+        self.pages.loaded()
+    }
+
+    /// `f` on the store holding the programmes around `t`; `None` while
+    /// its day is being read.
+    fn with_store<R>(&self, t: UnixTime, f: impl FnOnce(&GuideStore) -> R) -> Option<R> {
+        if self.pages.in_window(t) {
+            Some(f(&self.store))
+        } else {
+            self.pages.with(t, f)
         }
     }
 
@@ -221,6 +292,7 @@ impl EpgSchedule {
         self.epoch
     }
 
+    /// The guide held with the schedule (from [`Self::loaded_from`] on).
     pub fn store(&self) -> &GuideStore {
         &self.store
     }
@@ -247,27 +319,37 @@ impl EpgSchedule {
     /// else from the description lookup.
     pub fn description(&self, channel: usize, program: Program) -> Option<String> {
         let key = self.key(channel)?;
-        let p = self.store.programme_at(key, self.probe(program))?;
-        match p.desc() {
-            Some(d) => Some(d.to_owned()),
-            None => self.describe.as_ref()?(key, p.start()),
+        let t = self.probe(program);
+        let (desc, start) = self
+            .with_store(t, |s| {
+                let p = s.programme_at(key, t)?;
+                Some((p.desc().map(str::to_owned), p.start()))
+            })
+            .flatten()?;
+        match desc {
+            Some(d) => Some(d),
+            None => self.describe.as_ref()?(key, start),
         }
     }
 
     /// A time inside `program` (its first second, or its middle if short).
+    /// One reaching into the window held with the schedule is read there
+    /// (it is held whole), not from the older day it started in.
     fn probe(&self, program: Program) -> UnixTime {
         let (a, b) = (self.unix(program.start), self.unix(program.end));
-        (a + 59).min((a + b) / 2).max(a)
+        let t = (a + 59).min((a + b) / 2).max(a);
+        let from = self.pages.loaded_from();
+        if b > from { t.max(from) } else { t }
     }
 
-    /// The placeholder slot around `t` for a channel with no programme then.
-    fn gap(&self, key: Option<&ChannelKey>, t: UnixTime) -> (UnixTime, UnixTime) {
+    /// The placeholder slot around `t` for a channel with no programme then
+    /// (in `store`, which holds `t`).
+    fn gap(store: &GuideStore, key: Option<&ChannelKey>, t: UnixTime) -> (UnixTime, UnixTime) {
         let slot_start = t - t.rem_euclid(SLOT);
         let mut start = slot_start;
         let mut end = slot_start + SLOT;
         if let Some(key) = key {
-            if let Some(prev_end) = self
-                .store
+            if let Some(prev_end) = store
                 .programmes(key, slot_start, t + 1)
                 .map(|p| p.stop())
                 .filter(|&s| s <= t)
@@ -275,7 +357,7 @@ impl EpgSchedule {
             {
                 start = start.max(prev_end);
             }
-            if let Some(next) = self.store.next_after(key, t) {
+            if let Some(next) = store.next_after(key, t) {
                 if next.start() > t {
                     end = end.min(next.start());
                 }
@@ -313,10 +395,15 @@ impl Schedule for EpgSchedule {
         // before it, and cells never overlap.
         let t = self.unix(minute) + 59;
         let key = self.key(channel);
-        let (start, end) = match key.and_then(|k| self.store.programme_at(k, t)) {
+        let found = self.with_store(t, |s| match key.and_then(|k| s.programme_at(k, t)) {
             Some(p) => (p.start(), p.stop()),
-            None => self.gap(key, t),
-        };
+            None => Self::gap(s, key, t),
+        });
+        // Its day is loading: the hour slot.
+        let (start, end) = found.unwrap_or_else(|| {
+            let slot = t - t.rem_euclid(SLOT);
+            (slot, slot + SLOT)
+        });
         let (start, end) = (self.minute(start), self.minute(end));
         // Sub-minute programmes still get a one-minute cell.
         Program {
@@ -395,13 +482,23 @@ impl Schedule for EpgSchedule {
     }
 
     fn title(&self, channel: usize, program: Program) -> String {
-        let found = self
-            .key(channel)
-            .and_then(|k| self.store.programme_at(k, self.probe(program)))
-            .filter(|p| self.minute(p.start()) == program.start);
-        found.map_or_else(|| NO_INFORMATION.to_owned(), |p| p.title().to_owned())
+        let Some(key) = self.key(channel) else {
+            return NO_INFORMATION.to_owned();
+        };
+        let t = self.probe(program);
+        let found = self.with_store(t, |s| {
+            s.programme_at(key, t)
+                .filter(|p| self.minute(p.start()) == program.start)
+                .map(|p| p.title().to_owned())
+        });
+        match found {
+            None => LOADING.to_owned(),
+            Some(title) => title.unwrap_or_else(|| NO_INFORMATION.to_owned()),
+        }
     }
 }
 
+#[cfg(test)]
+mod pages_tests;
 #[cfg(test)]
 mod tests;

@@ -1,0 +1,258 @@
+//! Older days paged in on demand (`pages.rs`).
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use iptv_core::guide::{Focus, Program, Schedule};
+use iptv_epg::{
+    ChannelKey, DAY, EpgRef, GuideStore, MatchKind, ProgrammeData, SourceBuilder, SourceId,
+    StoreOptions,
+};
+
+use super::pages::{MAX_PAGES, PageRequest, PagedWindow};
+use super::{EpgSchedule, GuideChannel, LOADING, NO_INFORMATION};
+
+/// Hour-aligned "now".
+const NOW: i64 = 1_800_000_000;
+/// Programmes of 45 minutes: never on the hour slots a loading day shows.
+const LEN: i64 = 45 * 60;
+const FIRST: i64 = NOW - 6 * DAY + 600;
+
+/// Channel `a`'s programmes overlapping `[from, to)`, as the store reads a
+/// window back: `P<n>` from [`FIRST`] on, every [`LEN`], until a day ahead.
+fn store_between(from: i64, to: i64) -> GuideStore {
+    let mut b = SourceBuilder::new(SourceId(1), 0, StoreOptions::default(), NOW);
+    let titles: Vec<String> = (0..(7 * DAY / LEN)).map(|n| format!("P{n}")).collect();
+    for (n, title) in titles.iter().enumerate() {
+        let start = FIRST + n as i64 * LEN;
+        if start < to && start + LEN > from {
+            b.push_data(
+                "a.test",
+                &ProgrammeData {
+                    start,
+                    stop: Some(start + LEN),
+                    title,
+                    ..Default::default()
+                },
+            );
+        }
+    }
+    let mut store = GuideStore::new();
+    store.replace_source(b.finish());
+    let cand = EpgRef {
+        source: SourceId(1),
+        epg_id: "a.test".into(),
+        kind: MatchKind::TvgId,
+    };
+    store.set_matches([(ChannelKey::new("a"), vec![cand])].into_iter().collect());
+    store
+}
+
+/// The title airing at unix time `t` in the full guide.
+fn title_at(t: i64) -> String {
+    format!("P{}", (t - FIRST) / LEN)
+}
+
+type Requests = Rc<RefCell<Vec<PageRequest>>>;
+
+/// Holds now − 1 day on; pages back to `oldest`. Requests are recorded.
+fn paged(oldest: i64) -> (EpgSchedule, Requests) {
+    let loaded_from = NOW - DAY;
+    let channel = GuideChannel {
+        key: ChannelKey::new("a"),
+        name: "Alpha".to_owned(),
+        number: 1,
+        catchup_days: 7,
+    };
+    let requests = Requests::default();
+    let seen = requests.clone();
+    let s = EpgSchedule::new(
+        vec![("All".to_owned(), vec![channel])],
+        store_between(loaded_from, i64::MAX),
+        NOW,
+    )
+    .with_pages(
+        PagedWindow {
+            loaded_from,
+            oldest,
+        },
+        move |r| seen.borrow_mut().push(r),
+    );
+    (s, requests)
+}
+
+/// Delivers every page asked for so far, as the app's loader would.
+fn deliver(s: &EpgSchedule, requests: &Requests) {
+    for r in requests.borrow_mut().drain(..) {
+        assert!(s.insert_page(r, store_between(r.from, r.to)), "{r:?}");
+    }
+}
+
+fn minute_of(s: &EpgSchedule, t: i64) -> i32 {
+    s.minute(t)
+}
+
+#[test]
+fn the_recent_window_needs_no_page() {
+    let (s, requests) = paged(NOW - 7 * DAY);
+    for t in [NOW, NOW - 3600, NOW - DAY + 60, NOW + DAY / 2] {
+        let p = s.program_at(0, minute_of(&s, t));
+        assert_eq!(s.title(0, p), title_at(t));
+    }
+    assert!(requests.borrow().is_empty());
+    assert_eq!(s.loaded_from(), Some(NOW - DAY));
+}
+
+#[test]
+fn an_older_day_loads_on_demand_and_then_shows() {
+    let (s, requests) = paged(NOW - 7 * DAY);
+    let t = NOW - DAY - 5 * 3600 - 600;
+    let m = minute_of(&s, t);
+    let loading = s.program_at(0, m);
+    assert_eq!(s.title(0, loading), LOADING);
+    let slot = t - t.rem_euclid(3600);
+    assert_eq!(
+        loading,
+        Program {
+            start: minute_of(&s, slot),
+            end: minute_of(&s, slot + 3600)
+        },
+        "an hour slot while loading"
+    );
+    // Asked for once, however often it is read meanwhile.
+    s.program_at(0, m - 30);
+    assert!(!s.ensure_loaded(t));
+    assert_eq!(
+        *requests.borrow(),
+        [PageRequest {
+            page: 0,
+            from: NOW - 2 * DAY,
+            to: NOW - DAY
+        }]
+    );
+    deliver(&s, &requests);
+    assert!(s.ensure_loaded(t));
+    let p = s.program_at(0, m);
+    assert_eq!(s.title(0, p), title_at(t));
+    assert_eq!(
+        s.unix(p.start),
+        FIRST + (t - FIRST) / LEN * LEN,
+        "its real start"
+    );
+    assert_eq!(s.paged_days(), 1);
+}
+
+#[test]
+fn programmes_across_the_window_edge_read_the_same_from_both_sides() {
+    let (s, requests) = paged(NOW - 7 * DAY);
+    let edge = NOW - DAY;
+    // The programme airing at the edge started before it.
+    let straddling = s.program_at(0, minute_of(&s, edge));
+    assert!(s.unix(straddling.start) < edge);
+    assert_eq!(s.title(0, straddling), title_at(edge));
+    s.program_at(0, minute_of(&s, edge) - 1);
+    deliver(&s, &requests);
+    let before = s.program_at(0, minute_of(&s, edge) - 1);
+    assert_eq!(before, straddling);
+    assert_eq!(s.title(0, before), title_at(edge));
+}
+
+#[test]
+fn browsing_back_in_the_guide_pages_in_the_previous_day() {
+    let (s, requests) = paged(NOW - 7 * DAY);
+    let now = minute_of(&s, NOW);
+    let mut f = Focus::at(now);
+    f.enter_past(&s);
+    // Step back until the focus leaves the recent window.
+    let edge = minute_of(&s, NOW - DAY);
+    for _ in 0..200 {
+        if f.cursor < edge {
+            break;
+        }
+        f.apply(iptv_core::guide::Move::Left, &s);
+    }
+    assert!(f.cursor < edge);
+    assert_eq!(s.title(0, f.program(&s)), LOADING);
+    assert_eq!(requests.borrow().len(), 1);
+    deliver(&s, &requests);
+    let shown = f.program(&s);
+    assert_eq!(s.title(0, shown), title_at(s.unix(f.cursor)));
+    // The cells across the window are real programmes again.
+    for p in s.programs_between(0, f.window, iptv_core::guide::VISIBLE) {
+        assert_ne!(s.title(0, p), LOADING);
+        assert_ne!(s.title(0, p), NO_INFORMATION);
+    }
+}
+
+#[test]
+fn days_before_what_the_store_keeps_are_empty_without_a_read() {
+    let (s, requests) = paged(NOW - 3 * DAY);
+    let t = NOW - 4 * DAY - 7200;
+    let p = s.program_at(0, minute_of(&s, t));
+    assert_eq!(s.title(0, p), NO_INFORMATION);
+    assert!(s.ensure_loaded(t));
+    assert!(requests.borrow().is_empty());
+}
+
+#[test]
+fn pages_are_capped_and_dropped_back_at_now() {
+    let (s, requests) = paged(NOW - 7 * DAY);
+    let day = |k: i64| NOW - DAY - k * DAY - 3600;
+    for k in 0..5 {
+        s.ensure_loaded(day(k));
+        deliver(&s, &requests);
+        assert!(s.paged_days() <= MAX_PAGES);
+    }
+    assert_eq!(s.paged_days(), MAX_PAGES);
+    // The least recently used went: day 4, 3 and 2 are held.
+    assert!(!s.ensure_loaded(day(0)));
+    requests.borrow_mut().clear();
+    for k in 2..5 {
+        assert!(s.ensure_loaded(day(k)), "day {k}");
+    }
+    // The archive playing keeps its day; the rest go back at now.
+    s.pin_page(Some(day(3)));
+    assert_eq!(s.evict_pages(), 2);
+    assert_eq!(s.paged_days(), 1);
+    assert!(s.ensure_loaded(day(3)));
+    s.pin_page(None);
+    assert_eq!(s.evict_pages(), 1);
+    assert_eq!(s.paged_days(), 0);
+}
+
+#[test]
+fn a_page_arriving_after_it_was_dropped_or_for_another_window_is_refused() {
+    let (s, requests) = paged(NOW - 7 * DAY);
+    s.ensure_loaded(NOW - 2 * DAY);
+    let r = requests.borrow()[0];
+    s.evict_pages();
+    assert!(!s.insert_page(r, store_between(r.from, r.to)));
+    assert_eq!(s.paged_days(), 0);
+    // Another schedule's window (an hour later): not this one's page.
+    s.ensure_loaded(NOW - 2 * DAY);
+    let shifted = PageRequest {
+        from: r.from + 3600,
+        to: r.to + 3600,
+        ..r
+    };
+    assert!(!s.insert_page(shifted, store_between(shifted.from, shifted.to)));
+    assert!(s.insert_page(r, store_between(r.from, r.to)));
+}
+
+#[test]
+fn without_pages_the_store_is_the_whole_guide() {
+    let channel = GuideChannel {
+        key: ChannelKey::new("a"),
+        name: "Alpha".to_owned(),
+        number: 1,
+        catchup_days: 0,
+    };
+    let s = EpgSchedule::new(
+        vec![("All".to_owned(), vec![channel])],
+        store_between(i64::MIN, i64::MAX),
+        NOW,
+    );
+    let t = NOW - 5 * DAY;
+    assert_eq!(s.title(0, s.program_at(0, minute_of(&s, t))), title_at(t));
+    assert_eq!(s.loaded_from(), None);
+}

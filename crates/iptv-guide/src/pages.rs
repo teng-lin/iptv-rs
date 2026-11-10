@@ -1,0 +1,202 @@
+//! Older days of a stored guide, read in on demand.
+//!
+//! A schedule keeps only a recent window of its stored guide in memory
+//! (from [`PagedWindow::loaded_from`] on); the days before it are pages of
+//! one day each, counted back from there (page 0 ends where the window
+//! starts). A page is asked for (`PageLoader`, which reads it off the UI
+//! thread) the first time something needs a time in it, shows as loading
+//! until [`crate::EpgSchedule::insert_page`] brings it, and is dropped
+//! again by [`crate::EpgSchedule::evict_pages`] (the user is back at now)
+//! or when more than [`MAX_PAGES`] are held (the least recently used one).
+//! The page of the programme playing from the archive can be pinned, so
+//! neither drops it.
+//!
+//! Days before [`PagedWindow::oldest`] (what the store keeps) are empty
+//! without being read.
+
+use std::cell::{Cell, RefCell};
+
+use iptv_epg::{DAY, GuideStore, UnixTime};
+
+/// Older days held at once (two for a guide window across a day's edge,
+/// one for the archive playing).
+pub const MAX_PAGES: usize = 3;
+
+/// Which part of a stored guide a schedule holds in memory.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PagedWindow {
+    /// The schedule's store holds every programme airing at or after this
+    /// (rounded down to the hour); older ones are paged in.
+    pub loaded_from: UnixTime,
+    /// The store keeps nothing that ended before this.
+    pub oldest: UnixTime,
+}
+
+/// One older day to read: programmes overlapping `[from, to)`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PageRequest {
+    pub page: u32,
+    pub from: UnixTime,
+    pub to: UnixTime,
+}
+
+/// Reads a page (off the UI thread) and hands it to
+/// [`crate::EpgSchedule::insert_page`] later. Called from guide queries:
+/// it must not call back into the schedule before it returns.
+pub type PageLoader = Box<dyn Fn(PageRequest)>;
+
+struct Page {
+    index: u32,
+    /// `None` while it loads.
+    store: Option<GuideStore>,
+    used: Cell<u64>,
+}
+
+pub(crate) struct Pages {
+    /// `UnixTime::MIN`: everything is in the schedule's own store.
+    loaded_from: UnixTime,
+    oldest: UnixTime,
+    loader: Option<PageLoader>,
+    pages: RefCell<Vec<Page>>,
+    clock: Cell<u64>,
+    pinned: Cell<Option<u32>>,
+    empty: GuideStore,
+}
+
+impl Default for Pages {
+    fn default() -> Self {
+        Pages {
+            loaded_from: UnixTime::MIN,
+            oldest: UnixTime::MIN,
+            loader: None,
+            pages: RefCell::new(Vec::new()),
+            clock: Cell::new(0),
+            pinned: Cell::new(None),
+            empty: GuideStore::new(),
+        }
+    }
+}
+
+impl Pages {
+    pub(crate) fn new(window: PagedWindow, loader: PageLoader) -> Self {
+        Pages {
+            loaded_from: window.loaded_from - window.loaded_from.rem_euclid(3600),
+            oldest: window.oldest,
+            loader: Some(loader),
+            ..Pages::default()
+        }
+    }
+
+    /// Whether `t` is in the schedule's own store.
+    pub(crate) fn in_window(&self, t: UnixTime) -> bool {
+        t >= self.loaded_from
+    }
+
+    pub(crate) fn loaded_from(&self) -> UnixTime {
+        self.loaded_from
+    }
+
+    fn index_of(&self, t: UnixTime) -> u32 {
+        u32::try_from((self.loaded_from - 1 - t).div_euclid(DAY)).unwrap_or(u32::MAX)
+    }
+
+    fn range(&self, index: u32) -> (UnixTime, UnixTime) {
+        let to = self.loaded_from - i64::from(index) * DAY;
+        (to - DAY, to)
+    }
+
+    fn tick(&self) -> u64 {
+        self.clock.set(self.clock.get() + 1);
+        self.clock.get()
+    }
+
+    /// `f` on the page holding `t` (before the window); `None` while it
+    /// loads (asked for now if it was not).
+    pub(crate) fn with<R>(&self, t: UnixTime, f: impl FnOnce(&GuideStore) -> R) -> Option<R> {
+        let index = self.index_of(t);
+        if self.range(index).1 <= self.oldest {
+            return Some(f(&self.empty));
+        }
+        {
+            let pages = self.pages.borrow();
+            if let Some(page) = pages.iter().find(|p| p.index == index) {
+                page.used.set(self.tick());
+                return page.store.as_ref().map(f);
+            }
+        }
+        self.request(index);
+        None
+    }
+
+    fn request(&self, index: u32) {
+        let Some(loader) = &self.loader else {
+            return;
+        };
+        self.pages.borrow_mut().push(Page {
+            index,
+            store: None,
+            used: Cell::new(self.tick()),
+        });
+        let (from, to) = self.range(index);
+        loader(PageRequest {
+            page: index,
+            from,
+            to,
+        });
+    }
+
+    /// A page read for `request`; false (and dropped) when it is no longer
+    /// wanted or belongs to another window.
+    pub(crate) fn insert(&self, request: PageRequest, store: GuideStore) -> bool {
+        if self.loader.is_none() || self.range(request.page) != (request.from, request.to) {
+            return false;
+        }
+        let mut pages = self.pages.borrow_mut();
+        let Some(page) = pages
+            .iter_mut()
+            .find(|p| p.index == request.page && p.store.is_none())
+        else {
+            return false;
+        };
+        page.store = Some(store);
+        page.used.set(self.tick());
+        while pages.iter().filter(|p| p.store.is_some()).count() > MAX_PAGES {
+            let victim = pages
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| p.store.is_some() && p.index != request.page)
+                .filter(|(_, p)| Some(p.index) != self.pinned.get())
+                .min_by_key(|(_, p)| p.used.get())
+                .map(|(i, _)| i);
+            match victim {
+                Some(i) => drop(pages.remove(i)),
+                None => break,
+            }
+        }
+        true
+    }
+
+    /// Drops every page (loaded or loading) but the pinned one; returns
+    /// how many loaded ones went.
+    pub(crate) fn evict(&self) -> usize {
+        let mut pages = self.pages.borrow_mut();
+        let loaded = pages.iter().filter(|p| p.store.is_some()).count();
+        pages.retain(|p| Some(p.index) == self.pinned.get());
+        loaded - pages.iter().filter(|p| p.store.is_some()).count()
+    }
+
+    /// Keeps the page holding `t` (none: no page is kept).
+    pub(crate) fn pin(&self, t: Option<UnixTime>) {
+        let page = t.filter(|&t| !self.in_window(t)).map(|t| self.index_of(t));
+        self.pinned.set(page);
+    }
+
+    /// Pages in memory (not counting those loading).
+    pub(crate) fn loaded(&self) -> usize {
+        self.pages
+            .borrow()
+            .iter()
+            .filter(|p| p.store.is_some())
+            .count()
+    }
+}
