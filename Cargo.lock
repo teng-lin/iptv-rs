@@ -1787,10 +1787,12 @@ dependencies = [
  "iptv-epg",
  "iptv-guide",
  "iptv-import",
+ "iptv-net",
  "iptv-providers",
  "rusqlite",
  "serde_json",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]
