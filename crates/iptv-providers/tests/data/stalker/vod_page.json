@@ -1,0 +1,6 @@
+{"js":{"total_items":"4","max_page_items":"14","data":[
+  {"id":"9001","name":"Synthetic Film","o_name":"Synthetic Film (Original)","description":"A synthetic description.","screenshot_uri":"http://img.example.com/9001.jpg","year":"2016-01-01","rating_imdb":"6.9","time":"95","added":"2023-11-14 22:13:20","category_id":"30","cmd":"/media/file_9001.mpg","is_series":"0"},
+  {"id":"9002","name":"Synthetic Show","cmd":"/media/9002.mpg","is_series":1,"rating_imdb":"N/A","rating_kinopoisk":"7.2"},
+  {"id":"9003","name":"Bool series","cmd":"c","is_series":true},
+  {"id":"9004","name":"Not a closed-set flag","cmd":"c","is_series":"yes"}
+]}}

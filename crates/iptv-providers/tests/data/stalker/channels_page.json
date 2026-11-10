@@ -1,0 +1,7 @@
+{"js":{"total_items":"5","max_page_items":"2","selected_item":0,"cur_page":0,"data":[
+  {"id":"501","name":"Portal News","number":"1","cmd":"ffrt http://localhost/ch/501_","tv_genre_id":"10","logo":"http://img.example.com/501.png","xmltv_id":"pnews.example","tv_archive":"1","tv_archive_duration":"72","use_http_tmp_link":"1","use_load_balancing":"0"},
+  {"id":502,"name":"CDN Channel","number":2,"cmd":"ffmpeg http://cdn.example.net/live/502.m3u8","tv_genre_id":10,"use_http_tmp_link":0,"use_load_balancing":0,"tv_archive":0},
+  {"name":"no id","cmd":"x"},
+  {"id":"504","name":"Cmds only","cmds":[{"id":"1","url":"ffmpeg http://cdn.example.net/504.ts"}],"tv_genre_id":"11"},
+  {"id":"505","name":"No command"}
+]}}

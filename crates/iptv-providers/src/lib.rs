@@ -33,6 +33,7 @@ mod lenient;
 pub mod m3u;
 pub mod model;
 pub mod secret;
+pub mod stalker;
 pub mod time;
 mod urlenc;
 pub mod xtream;
