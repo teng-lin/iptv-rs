@@ -1,13 +1,18 @@
 //! The desktop's window and mouse around the player: window full screen
-//! (F11 is the platform's own shortcut; the panels' button, a double click
-//! on the video and Escape are ours) and mouse movement over full-screen
-//! video, which shows the player panels. Off desktops the window has no
-//! state, so these read "not full screen" and do nothing.
+//! (F11 on Linux and Ctrl+Cmd+F on macOS are the platform's own
+//! shortcuts; the panels' button, a double click on the video and Escape
+//! are ours) and mouse movement over full-screen video, which shows the
+//! player panels. Off desktops the window has no state, so these read "not
+//! full screen" and do nothing.
 
 use std::cell::{Cell, RefCell};
 
 use nsh_core::desktop::WindowMode;
 use nsh_core::element::desktop::{WindowRef, current_window};
+
+/// The desktop backends, where the app owns the window and the sound:
+/// Linux and macOS.
+pub const DESKTOP: bool = cfg!(any(target_os = "linux", target_os = "macos"));
 
 thread_local! {
     static WINDOW: RefCell<Option<WindowRef>> = const { RefCell::new(None) };

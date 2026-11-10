@@ -21,7 +21,7 @@ mod input;
 mod lists;
 mod media;
 mod menu_view;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod mpv;
 mod multiview;
 mod multiview_view;
@@ -66,6 +66,14 @@ fn native_module(registry: &mut Registry) {
 #[cfg(target_os = "linux")]
 #[native_components(linux)]
 pub fn components(components: &nsh_platform_linux::Components) {
+    mpv::register(components);
+}
+
+/// The macOS desktop's native components: `tv.player` on libmpv, as on
+/// Linux.
+#[cfg(target_os = "macos")]
+#[native_components(macos)]
+pub fn components(components: &nsh_platform_macos::Components) {
     mpv::register(components);
 }
 
@@ -477,6 +485,7 @@ pub fn App() -> impl IntoElement {
             // Full screen: a tap toggles the play bar (the panels where
             // there is no pointer).
             view()
+                .test_id("video")
                 .absolute()
                 .inset_0()
                 .pointer_events(move || {
@@ -492,7 +501,7 @@ pub fn App() -> impl IntoElement {
                     toggle_panels(ui);
                     // A double click on the desktop: window full screen (the
                     // first click's panels go again).
-                    if e.clicks == 2 && cfg!(target_os = "linux") {
+                    if e.clicks == 2 && desktop::DESKTOP {
                         desktop::toggle_fullscreen();
                     }
                 }),

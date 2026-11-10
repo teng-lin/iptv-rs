@@ -1,23 +1,31 @@
 //! OpenGL entry points for mpv's renderer and the few calls the player
-//! makes itself, resolved in GTK's GL context: through EGL when GTK uses it
-//! (Wayland, and X11 by default), else GLX, else the process's symbols.
+//! makes itself. On Linux they are resolved in GTK's GL context: through
+//! EGL when GTK uses it (Wayland, and X11 by default), else GLX, else the
+//! process's symbols. On macOS they are OpenGL.framework's.
 
 use std::ffi::{CStr, c_char, c_void};
+#[cfg(target_os = "linux")]
 use std::sync::OnceLock;
 
 const GL_FRAMEBUFFER_BINDING: u32 = 0x8CA6;
+#[cfg(target_os = "macos")]
+const GL_VIEWPORT: u32 = 0x0BA2;
 const GL_COLOR_BUFFER_BIT: u32 = 0x4000;
 
+#[cfg(target_os = "linux")]
 type EglGetProcAddress = unsafe extern "C" fn(*const c_char) -> *mut c_void;
+#[cfg(target_os = "linux")]
 type EglGetCurrentContext = unsafe extern "C" fn() -> *mut c_void;
 
 /// The loaders found in the process (libEGL, libGL's GLX).
+#[cfg(target_os = "linux")]
 struct Loaders {
     egl_proc: Option<EglGetProcAddress>,
     egl_current: Option<EglGetCurrentContext>,
     glx_proc: Option<EglGetProcAddress>,
 }
 
+#[cfg(target_os = "linux")]
 fn sym(lib: &CStr, name: &CStr) -> *mut c_void {
     // SAFETY: dlopen/dlsym with NUL-terminated names; a library GTK already
     // loaded is only referenced again (never closed).
@@ -30,6 +38,7 @@ fn sym(lib: &CStr, name: &CStr) -> *mut c_void {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn loaders() -> &'static Loaders {
     static LOADERS: OnceLock<Loaders> = OnceLock::new();
     LOADERS.get_or_init(|| {
@@ -51,6 +60,7 @@ fn loaders() -> &'static Loaders {
 }
 
 /// `name`'s address in the current GL context (null if unknown).
+#[cfg(target_os = "linux")]
 fn address(name: &CStr) -> *mut c_void {
     let l = loaders();
     // SAFETY: loader functions called with a NUL-terminated name.
@@ -70,6 +80,27 @@ fn address(name: &CStr) -> *mut c_void {
         }
         libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr())
     }
+}
+
+/// `name`'s address in OpenGL.framework (null if unknown): macOS has one
+/// OpenGL implementation, whatever the context.
+#[cfg(target_os = "macos")]
+fn address(name: &CStr) -> *mut c_void {
+    static FRAMEWORK: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let handle = *FRAMEWORK.get_or_init(|| {
+        // SAFETY: dlopen with a NUL-terminated path; never closed.
+        unsafe {
+            libc::dlopen(
+                c"/System/Library/Frameworks/OpenGL.framework/OpenGL".as_ptr(),
+                libc::RTLD_LAZY | libc::RTLD_LOCAL,
+            ) as usize
+        }
+    });
+    if handle == 0 {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: a live handle and a NUL-terminated name.
+    unsafe { libc::dlsym(handle as *mut c_void, name.as_ptr()) }
 }
 
 /// mpv's `get_proc_address`.
@@ -115,12 +146,23 @@ impl Gl {
         }
     }
 
-    /// The framebuffer GTK bound for the area's render.
+    /// The framebuffer bound for drawing (GTK's for the area's render,
+    /// CA's for the layer's).
     pub fn framebuffer(&self) -> i32 {
         let mut fbo = 0;
         // SAFETY: called with GTK's context current, into a valid i32.
         unsafe { (self.get_integerv)(GL_FRAMEBUFFER_BINDING, &mut fbo) };
         fbo
+    }
+
+    /// The viewport's size in pixels: the size of the framebuffer a
+    /// `CAOpenGLLayer` draws into.
+    #[cfg(target_os = "macos")]
+    pub fn viewport(&self) -> (i32, i32) {
+        let mut v = [0_i32; 4];
+        // SAFETY: called with a context current, into room for 4 values.
+        unsafe { (self.get_integerv)(GL_VIEWPORT, v.as_mut_ptr()) };
+        (v[2], v[3])
     }
 
     /// Fills the bound framebuffer with black.

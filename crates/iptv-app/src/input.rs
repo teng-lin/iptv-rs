@@ -149,10 +149,15 @@ pub fn bind(ui: Ui) {
         }
     });
     // Desktop sound keys (remotes and tablets use the system volume). F11
-    // (window full screen) is the platform's.
+    // (window full screen; Ctrl+Cmd+F on macOS) is the platform's.
     on_key("ctrl+m", move |_| crate::media::toggle_mute(ui));
     on_key("ctrl+up", move |_| crate::media::step_volume(ui, true));
     on_key("ctrl+down", move |_| crate::media::step_volume(ui, false));
+    // macOS keeps Ctrl+Up/Down for Mission Control: Cmd+Up/Down there.
+    if cfg!(target_os = "macos") {
+        on_key("cmd+up", move |_| crate::media::step_volume(ui, true));
+        on_key("cmd+down", move |_| crate::media::step_volume(ui, false));
+    }
     // Spike shortcuts for the view modes.
     on_key("o", move |_| ui.toggle(ViewMode::Overlay));
     on_key("f", move |_| ui.toggle(ViewMode::Fullscreen));

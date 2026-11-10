@@ -23,7 +23,7 @@ Android video/input research: [`docs/research/android-video-and-input.md`](docs/
 | `crates/iptv-net` | Native HTTP adapter (reqwest + rustls) implementing `Fetch`; strips identity headers on cross-host redirects |
 | `crates/iptv-store-sqlite` | SQLite store: provider catalog and guide data replaced per refresh (the guide from a download staged in its own file; with each feed's result and channel list), guide sources per playlist, user overlays (favourites, order, hidden, history, a channel's guide choice) kept by stable id, FTS5 search, tested migrations |
 | `crates/iptv-search` | Channel and programme search (folded, ranked, favourites first), history, search-screen state. Wasm-safe |
-| `crates/iptv-app` | NSH shell: screens, placeholder theme, video layer; on Linux the `tv.player` component on libmpv (`src/mpv/`) |
+| `crates/iptv-app` | NSH shell: screens, placeholder theme, video layer; on Linux and macOS the `tv.player` component on libmpv (`src/mpv/`: the player, with `gtk.rs` and `mac.rs` for each desktop's view) |
 | `hosts/android` | Kotlin host: `NshView`, Media3 `tv.player` component, TV launcher manifest |
 | `tools/` | `sync-host.sh`, `make-hls-fixtures.sh`, `make-track-fixtures.sh`, `make-iptv-fixtures.py`, `mock-server.py`, `mock-xtream.py`, `burst.sh` |
 
@@ -37,13 +37,16 @@ Android video/input research: [`docs/research/android-video-and-input.md`](docs/
 - `ffmpeg` and `python3` for synthetic test streams.
 - Linux desktop: GTK 4 and libmpv 2 (client API 2.x, `pkg-config mpv`;
   Arch `mpv`, Debian/Ubuntu `libmpv-dev`). The player links `libmpv.so.2`.
+- macOS desktop: Xcode's command line tools and Homebrew's `mpv`
+  (`brew install mpv`: libmpv 2, found through `pkg-config` or Homebrew's
+  prefix by `crates/iptv-app/build.rs`). The player links `libmpv.2.dylib`.
 
 ## Run
 
 ```sh
 cargo test -p iptv-core                                   # focus/guide model
 cargo build -p iptv-core --target wasm32-unknown-unknown  # portability check
-cargo run -p iptv-app                                     # Linux desktop (see below)
+cargo run -p iptv-app                                     # Linux or macOS desktop (see below)
 
 tools/make-hls-fixtures.sh --serve &                      # synthetic HLS on :8089
 tools/make-track-fixtures.sh --serve &                    # several video/audio/subtitle tracks on :8097
@@ -122,6 +125,35 @@ system dependency):
 
 ```sh
 (cd crates/iptv-app && ../../../nsh/target/release/nsh package --target linux -o ../../target/package .)
+```
+
+### macOS desktop
+
+`cargo run -p iptv-app` opens the same 960×540 window through NSH's AppKit
+backend (`nsh run --target macos` and `nsh package --target macos` build
+NSH's own runner around the crate, at NSH's default window size). Video
+plays through libmpv rendering into a `CAOpenGLLayer` under the UI (mpv's
+render API has no Metal backend). Everything above applies, with macOS's
+keys and places:
+
+- Data lives in `~/Library/Application Support/iptv-rs`; a `HOME`
+  override moves it (and NSH's own data) for test runs.
+- Window full screen: Ctrl+Cmd+F (the Window menu's), the panels' button,
+  a double click on the video; Escape leaves it first.
+- Volume: Cmd+Up / Cmd+Down (macOS keeps Ctrl+Up/Down for Mission
+  Control); mute Ctrl+M.
+- `IPTV_RS_AUDIO=null`, `IPTV_RS_HWDEC` (default `auto-copy-safe`:
+  VideoToolbox) and `RUST_LOG=info` as on Linux.
+- `nsh test <file>.test.tsx --target macos` drives the real app in the
+  background (synthetic keys and clicks, window screenshots that include
+  the video); its app is never active, so window full screen cannot be
+  tried there.
+
+Package (an ad hoc signed `.app`; libmpv stays a Homebrew dependency, not
+yet bundled or notarized):
+
+```sh
+(cd crates/iptv-app && ../../../nsh/target/release/nsh package --target macos -o ../../target/package .)
 ```
 
 ## Before any public release
