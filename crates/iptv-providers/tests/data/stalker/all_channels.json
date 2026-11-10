@@ -1,0 +1,5 @@
+{"js":{"total_items":3,"data":[
+  {"id":"501","name":"Portal News","cmd":"ffrt http://localhost/ch/501_","use_http_tmp_link":"1","use_load_balancing":"0"},
+  {"id":"502","name":"CDN Channel","cmd":"ffmpeg http://cdn.example.net/live/502.m3u8","use_http_tmp_link":"0","use_load_balancing":"0"},
+  {"id":"501","name":"Portal News duplicate","cmd":"ffrt http://localhost/ch/501_"}
+]}}

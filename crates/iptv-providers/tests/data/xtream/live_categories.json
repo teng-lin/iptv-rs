@@ -1,0 +1,7 @@
+[
+  {"category_id": "1", "category_name": "Synthetic News", "parent_id": 0},
+  {"category_id": 2, "category_name": "", "parent_id": "0"},
+  {"category_name": "No id"},
+  "garbage",
+  {"category_id": "3", "category_name": "Late Night", "is_adult": "1"}
+]

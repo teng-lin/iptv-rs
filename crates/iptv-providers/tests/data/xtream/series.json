@@ -1,0 +1,5 @@
+[
+  {"num": 1, "series_id": "301", "name": "Series Alpha", "cover": "http://img.example.com/301.jpg", "plot": "A synthetic plot.", "releaseDate": "2018-04-01", "rating": "8", "last_modified": "1695000000", "category_id": "20", "backdrop_path": ["http://img.example.com/301b.jpg"]},
+  {"series_id": 0, "name": "Zero id"},
+  {"series_id": "302", "name": "Series Beta", "release_date": "N/A", "rating": "N/A", "last_modified": null}
+]

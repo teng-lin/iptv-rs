@@ -1,0 +1,14 @@
+{
+  "seasons": [{"season_number": 1, "name": "Season 1", "episode_count": "2", "cover": "http://img.example.com/s1.jpg"}],
+  "info": {"name": "Series Alpha", "cover": "http://img.example.com/301.jpg", "plot": "P", "releaseDate": "2018", "rating": "8.1", "category_id": "20"},
+  "episodes": {
+    "1": [
+      {"id": "4001", "episode_num": "2", "title": "Alpha S1E2", "container_extension": "mp4", "info": {"duration_secs": "1500", "plot": "N/A", "movie_image": "http://img.example.com/e2.jpg"}, "season": 1},
+      {"id": "4000", "episode_num": 1, "title": "Alpha S1E1", "container_extension": "mkv", "info": [], "season": "1"}
+    ],
+    "2": [
+      {"id": "4100", "episode_num": 1, "title": "Alpha S2E1", "container_extension": "mp4", "info": {"duration": "00:42:10"}},
+      {"episode_num": 2, "title": "No id"}
+    ]
+  }
+}

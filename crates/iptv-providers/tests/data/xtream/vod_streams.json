@@ -1,0 +1,5 @@
+{
+  "201": {"num": 1, "stream_id": "201", "name": "Movie Alpha", "stream_icon": "http://img.example.com/201.jpg", "rating": "7.5", "rating_5based": 3.75, "added": "1690000000", "category_id": "10", "container_extension": "mkv", "direct_source": ""},
+  "202": {"stream_id": 202, "name": "Movie Beta", "rating": "", "rating_5based": "4", "container_extension": null, "direct_source": "http://cdn.example.net/movies/beta.mp4", "category_id": 10},
+  "203": {"stream_id": 203, "name": "Movie Gamma", "rating": 0, "year": "2019", "direct_source": "ftp://files.example.net/gamma.mkv"}
+}
