@@ -1,4 +1,4 @@
-use iptv_core::guide::{Focus, Move, Program, Schedule};
+use iptv_core::guide::{Airing, Focus, Move, Program, Schedule, now_minute};
 use iptv_epg::{
     ChannelKey, GuideStore, MatchIndex, Overrides, ParseOptions, PlaylistChannel, SourceBuilder,
     SourceId, StoreOptions, format_xmltv_time, parse_xmltv,
@@ -71,6 +71,7 @@ fn schedule() -> EpgSchedule {
     let ch = |key: ChannelKey, name: &str, days| GuideChannel {
         key,
         name: name.to_owned(),
+        number: 0,
         catchup_days: days,
     };
     EpgSchedule::new(
@@ -200,4 +201,81 @@ fn the_concrete_schedule_is_reachable_behind_the_trait() {
     assert!(epg.is_some_and(|e| e.channel(0).is_some()));
     let synthetic: &dyn Schedule = &iptv_core::guide::SyntheticSchedule;
     assert!(synthetic.as_any().is_none());
+}
+
+#[test]
+fn the_epoch_is_the_import_hour_and_now_follows_the_wall_clock() {
+    let (a, b) = (ChannelKey::new("a"), ChannelKey::new("b"));
+    let store = store_for(&[(&a, Some("a.test"), "Alpha"), (&b, None, "Beta")]);
+    let ch = |key, number| GuideChannel {
+        key,
+        name: String::new(),
+        number,
+        catchup_days: 0,
+    };
+    // Imported 25 minutes and 13 seconds past the hour.
+    let s = EpgSchedule::new(
+        vec![("News".to_owned(), vec![ch(a, 7), ch(b, 8)])],
+        store,
+        NOW + 25 * 60 + 13,
+    );
+    assert_eq!((s.epoch(), s.epoch_unix()), (NOW, NOW));
+    assert!(s.follows_wall_clock());
+    assert_eq!((s.minute(NOW + 90), s.unix(-30)), (1, NOW - 1800));
+    // Programmes keep their minutes from the epoch, whatever the time now.
+    let news = Program {
+        start: -30,
+        end: 30,
+    };
+    assert_eq!(s.program_at(0, 0), news);
+    let now = now_minute(&s, NOW + 25 * 60 + 13, 0);
+    assert_eq!(now, 25);
+    assert_eq!(news.airing(now), Airing::Live);
+    // Five minutes later the next programme is live without a rebuild.
+    let later = now_minute(&s, NOW + 30 * 60, 0);
+    assert_eq!(news.airing(later), Airing::Ended);
+    let mut f = Focus::at(now);
+    assert!(f.tick(later, &s));
+    assert_eq!(f.program(&s), Program { start: 30, end: 60 });
+    assert_eq!(s.title(0, f.program(&s)), "Alpha Talk");
+    assert_eq!((s.channel_number(0), s.channel_number(1)), (7, 8));
+}
+
+#[test]
+fn catchup_urls_carry_epoch_times_and_numbers_come_from_the_playlist() {
+    let m3u = parse_m3u(
+        "#EXTM3U\n\
+         #EXTINF:-1 group-title=\"Kids\",Kappa\n\
+         http://live.example.com/k.m3u8\n\
+         #EXTINF:-1 tvg-chno=\"42\" group-title=\"News\" catchup=\"default\" catchup-days=\"2\" catchup-source=\"http://archive.example.com/a?utc={utc}&end={utcend}&now={lutc}\",Alpha\n\
+         http://live.example.com/a.m3u8\n\
+         #EXTINF:-1 group-title=\"News\",Beta\n\
+         http://live.example.com/b.m3u8\n",
+    );
+    let s = EpgSchedule::from_catalog(
+        &m3u.groups,
+        &m3u.channels.items,
+        GuideStore::new(),
+        NOW + 600,
+    );
+    let names: Vec<String> = (0..s.channel_count()).map(|c| s.channel_name(c)).collect();
+    assert_eq!(names, ["Kappa", "Alpha", "Beta"]);
+    let numbers: Vec<u32> = (0..s.channel_count())
+        .map(|c| s.channel_number(c))
+        .collect();
+    assert_eq!(numbers, [1, 42, 3], "tvg-chno, else the playlist position");
+    let past = Program {
+        start: -120,
+        end: -60,
+    };
+    let url = s.catchup_url(1, past, 15).expect("archived programme");
+    assert_eq!(
+        url,
+        format!(
+            "http://archive.example.com/a?utc={}&end={}&now={}",
+            NOW - 7200,
+            NOW - 3600,
+            NOW + 900
+        )
+    );
 }

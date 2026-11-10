@@ -135,7 +135,7 @@ impl Menu {
 pub fn program_actions(program: Program, catchup_days: u8, now: i32) -> Vec<MenuItem> {
     use MenuItem::*;
     let in_archive = catchup_days > 0 && program.start >= now - i32::from(catchup_days) * 24 * 60;
-    let mut items = match program.airing() {
+    let mut items = match program.airing(now) {
         Airing::Live if catchup_days > 0 => vec![StartFromBeginning, ExternalPlayer, Record],
         Airing::Live => vec![ExternalPlayer, Record],
         Airing::Ended if in_archive => vec![StartFromBeginning, ExternalPlayer],
@@ -252,6 +252,19 @@ mod tests {
         assert_eq!(
             program_actions(FUTURE, 3, 0),
             [Reminder, Record, CustomRecording, SaveToList, Description]
+        );
+    }
+
+    #[test]
+    fn actions_follow_the_guide_now() {
+        let p = Program { start: 30, end: 60 };
+        assert_eq!(program_actions(p, 3, 0)[0], Reminder);
+        assert_eq!(program_actions(p, 3, 45)[0], StartFromBeginning);
+        assert!(program_actions(p, 0, 45).contains(&Record));
+        assert_eq!(
+            program_actions(p, 0, 90),
+            [CustomRecording, SaveToList, Description],
+            "ended, no archive"
         );
     }
 

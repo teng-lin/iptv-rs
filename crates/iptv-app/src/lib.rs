@@ -15,7 +15,10 @@ mod menu_view;
 mod panels;
 mod player_panels;
 mod search_view;
+pub mod time;
 mod video;
+
+pub use time::clock;
 
 use std::time::{Duration, Instant};
 
@@ -64,10 +67,6 @@ pub enum Playback {
         start: i32,
     },
 }
-
-/// Unix time of guide minute 0 on the synthetic clock (catch-up URLs carry
-/// absolute times).
-pub const GUIDE_EPOCH_UNIX: i64 = 1_794_333_600;
 
 /// Keys handled and handler time, for the status line and logcat.
 #[derive(Clone, Copy, PartialEq, Default)]
@@ -120,10 +119,10 @@ impl Ui {
     /// channel already playing goes full screen); ended and upcoming ones
     /// only show their details (no catch-up or reminders yet).
     pub fn watch(&self) {
-        let (channel, program) = self
+        let (channel, program, now) = self
             .focus
-            .with(|f| (f.channel, f.program(&*crate::schedule())));
-        match program.airing() {
+            .with(|f| (f.channel, f.program(&*crate::schedule()), f.now));
+        match program.airing(now) {
             Airing::Live => {
                 let live = self.playback.get() == Playback::Live;
                 if self.playing.get() == Some(channel) && live {
@@ -135,7 +134,7 @@ impl Ui {
             }
             // A past programme plays from the archive when the channel has
             // one that reaches it; otherwise OK leaves the guide as it is.
-            Airing::Ended if in_archive(channel, program) => {
+            Airing::Ended if in_archive(channel, program, now) => {
                 self.play(
                     channel,
                     Playback::CatchUp {
@@ -220,35 +219,42 @@ pub fn schedule() -> Rc<dyn Schedule> {
 }
 
 /// Swaps the guide data (after an import) and tells the views to re-read.
+/// The focus opens at the new schedule's now; channel indices into the old
+/// data (playing, favourites, open menus) that no longer exist are dropped.
 pub fn set_schedule(ui: &Ui, schedule: Rc<dyn Schedule>) {
-    SCHEDULE.with(|s| *s.borrow_mut() = schedule);
+    SCHEDULE.with(|s| *s.borrow_mut() = schedule.clone());
+    time::mark_shown();
+    let n = schedule.channel_count();
+    let mut focus = Focus::at(time::now_minute());
+    focus.clamp_to(&*schedule);
+    ui.focus.set(focus);
+    if ui.playing.get_untracked().is_some_and(|ch| ch >= n) {
+        ui.playing.set(None);
+    }
+    if ui.favorites.with_untracked(|f| f.iter().any(|&ch| ch >= n)) {
+        ui.favorites.update(|f| f.retain(|&ch| ch < n));
+    }
+    let rows = ui.visible_rows.get_untracked();
+    let clamped = rows.and_then(|(a, b)| (n > 0).then(|| (a.min(n - 1), b.min(n - 1))));
+    if clamped != rows {
+        ui.visible_rows.set(clamped);
+    }
+    ui.menu.set(None);
+    ui.description.set(None);
+    ui.editor.set(None);
     ui.data_version.update(|v| *v += 1);
-    ui.focus.update(|f| *f = Focus::default());
 }
 
-/// Whether `program` on `channel` is inside the channel's catch-up window.
-pub fn in_archive(channel: usize, program: Program) -> bool {
+/// Whether `program` on `channel` is inside the channel's catch-up window
+/// at guide minute `now`.
+pub fn in_archive(channel: usize, program: Program, now: i32) -> bool {
     let days = i32::from(schedule().catchup_days(channel));
-    days > 0 && program.end <= 0 && program.start >= -days * 24 * 60
+    days > 0 && program.end <= now && program.start >= now - days * 24 * 60
 }
 
 /// `0xRRGGBB` with alpha, as an NSH colour.
 pub fn tint(rgb_hex: u32, alpha: u8) -> Rgba {
     rgba(theme::with_alpha(rgb_hex, alpha))
-}
-
-/// Guide minute 0 is 18:00 on Monday 9 November on the synthetic clock;
-/// other days show their date, as the guide does when browsing the past.
-pub fn clock(minute: i32) -> String {
-    const DAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-    let total = 18 * 60 + minute;
-    let (day, m) = (total.div_euclid(24 * 60), total.rem_euclid(24 * 60));
-    let time = format!("{:02}:{:02}", m / 60, m % 60);
-    if day == 0 {
-        time
-    } else {
-        format!("{} {} · {time}", DAYS[day.rem_euclid(7) as usize], 9 + day)
-    }
 }
 
 pub fn channel_name(ch: usize) -> String {
@@ -290,6 +296,7 @@ pub fn App() -> impl IntoElement {
     });
     input::bind(ui);
     data::start(ui);
+    time::start(ui);
     bind_back(ui);
 
     let rows = element_ref();

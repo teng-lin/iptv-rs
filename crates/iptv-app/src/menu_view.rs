@@ -60,15 +60,16 @@ fn title(channel: usize, p: crate::guide::Program) -> String {
 /// Long OK / Menu: the menu for the focused programme (in full screen, the
 /// playing channel's current programme).
 pub fn open(ui: Ui) {
+    let now = ui.focus.with(|f| f.now);
     let (channel, minute) = match (ui.mode.get(), ui.playing.get()) {
-        (ViewMode::Fullscreen, Some(ch)) => (ch, 0),
+        (ViewMode::Fullscreen, Some(ch)) => (ch, now),
         _ => ui.focus.with(|f| (f.channel, f.cursor)),
     };
     let program = crate::schedule().program_at(channel, minute);
     let rows = program_menu(
         program,
         crate::schedule().catchup_days(channel),
-        0,
+        now,
         implemented,
     );
     let origin = Origin {

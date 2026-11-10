@@ -10,7 +10,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use iptv_core::guide::{Airing, Schedule};
 use iptv_core::menu::Origin;
@@ -124,15 +124,15 @@ fn key_action(state: &SearchState, action: Action) -> Option<SearchAction> {
     })
 }
 
-/// The guide minute (relative to `now`) inside a programme starting at
-/// `start`: rounded up, so it never falls in the programme before.
-fn guide_minute(start: UnixTime, now: UnixTime) -> i32 {
-    (start - now + 59).div_euclid(60) as i32
+/// The guide minute (from the schedule's `epoch`) inside a programme
+/// starting at `start`: rounded up, so it never falls in the programme before.
+fn guide_minute(start: UnixTime, epoch: UnixTime) -> i32 {
+    (start - epoch + 59).div_euclid(60) as i32
 }
 
 /// The guide minute a time is displayed at (as the guide rounds).
-fn display_minute(t: UnixTime, now: UnixTime) -> i32 {
-    (t - now).div_euclid(60) as i32
+fn display_minute(t: UnixTime, epoch: UnixTime) -> i32 {
+    (t - epoch).div_euclid(60) as i32
 }
 
 /// The airing and replay marker of a programme result.
@@ -164,15 +164,10 @@ fn epg(schedule: &dyn Schedule) -> Option<&EpgSchedule> {
     schedule.as_any()?.downcast_ref::<EpgSchedule>()
 }
 
-fn now_unix() -> UnixTime {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64)
-}
-
-/// The guide's "now" (guide minute 0) for converting result times.
-fn guide_now() -> UnixTime {
-    epg(&*crate::schedule()).map_or_else(now_unix, EpgSchedule::now)
+/// Unix time of guide minute 0, for converting result times to guide
+/// minutes (the same epoch the guide and its clock labels use).
+fn guide_epoch() -> UnixTime {
+    crate::schedule().epoch_unix()
 }
 
 fn load_history() -> SearchHistory {
@@ -284,10 +279,9 @@ fn run_search(ui: Ui, query: &str) {
             limit: LIMIT,
             ..Default::default()
         };
-        let programmes = i
-            .programmes
-            .as_ref()
-            .map_or_else(Vec::new, |p| p.search_programmes(query, now_unix(), opts));
+        let programmes = i.programmes.as_ref().map_or_else(Vec::new, |p| {
+            p.search_programmes(query, crate::time::wall_unix(), opts)
+        });
         (channels, programmes)
     });
     ui.search.update(|s| {
@@ -414,12 +408,12 @@ fn choose(ui: Ui, id: ResultId) {
     match outcome(id, hit.as_ref()) {
         Outcome::Live(channel) => watch(ui, channel, Playback::Live),
         Outcome::CatchUp { channel, start } => {
-            let start = guide_minute(start, guide_now());
+            let start = guide_minute(start, guide_epoch());
             watch(ui, channel, Playback::CatchUp { start });
         }
         Outcome::Details { channel, start } => ui.description.set(Some(Origin {
             channel,
-            program_start: guide_minute(start, guide_now()),
+            program_start: guide_minute(start, guide_epoch()),
         })),
         Outcome::Nothing => {}
     }
@@ -428,7 +422,10 @@ fn choose(ui: Ui, id: ResultId) {
 /// Plays full screen; the screen waits until playback leaves full screen.
 fn watch(ui: Ui, channel: usize, playback: Playback) {
     save_history(ui);
-    ui.focus.update(|f| f.tap(channel, 0, &*crate::schedule()));
+    ui.focus.update(|f| {
+        let now = f.now;
+        f.tap(channel, now, &*crate::schedule())
+    });
     ui.play(channel, playback);
     // Full screen first: the resume effect ignores a suspended screen in full screen.
     ui.mode.set(ViewMode::Fullscreen);
@@ -771,12 +768,12 @@ fn result_row(ui: Ui, at: Position, focused_index: Memo<Option<usize>>) -> impl 
     let line2 = move || match item() {
         Some((ResultId::Channel(c), _)) if ui.playing.get() == Some(c) => "Playing".to_owned(),
         Some((_, Some(h))) => {
-            let now = guide_now();
+            let epoch = guide_epoch();
             format!(
                 "{} · {}–{}",
                 channel_name(h.channel),
-                clock(display_minute(h.start, now)),
-                clock(display_minute(h.end, now))
+                clock(display_minute(h.start, epoch)),
+                clock(display_minute(h.end, epoch))
             )
         }
         _ => String::new(),
@@ -909,13 +906,13 @@ mod tests {
 
     #[test]
     fn times_convert_to_guide_minutes() {
-        let now = 1_800_000_000;
-        assert_eq!(guide_minute(now, now), 0);
-        assert_eq!(guide_minute(now + 90, now), 2, "inside the programme");
-        assert_eq!(guide_minute(now - 3_600, now), -60);
-        assert_eq!(guide_minute(now - 3_590, now), -59);
-        assert_eq!(display_minute(now + 90, now), 1);
-        assert_eq!(display_minute(now - 30, now), -1);
+        let epoch = 1_800_000_000;
+        assert_eq!(guide_minute(epoch, epoch), 0);
+        assert_eq!(guide_minute(epoch + 90, epoch), 2, "inside the programme");
+        assert_eq!(guide_minute(epoch - 3_600, epoch), -60);
+        assert_eq!(guide_minute(epoch - 3_590, epoch), -59);
+        assert_eq!(display_minute(epoch + 90, epoch), 1);
+        assert_eq!(display_minute(epoch - 30, epoch), -1);
     }
 
     #[test]

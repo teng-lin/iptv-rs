@@ -23,5 +23,9 @@ env_logger.workspace = true
 log.workspace = true
 serde_json.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+# localtime_r for the device's UTC offset (time.rs).
+libc = "0.2"
+
 [target.'cfg(target_os = "linux")'.dependencies]
 nsh-platform-linux.workspace = true

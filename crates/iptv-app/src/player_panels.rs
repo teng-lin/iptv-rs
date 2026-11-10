@@ -144,7 +144,14 @@ fn status_chip(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> impl IntoEl
             .text_size(px(13.0))
             .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA)),
         )
-        .child(text(clock(0)).text_size(px(16.0)).text_color(rgb(WHITE)))
+        .child(
+            text(move || {
+                ui.data_version.get();
+                clock(ui.focus.with(|f| f.now))
+            })
+            .text_size(px(16.0))
+            .text_color(rgb(WHITE)),
+        )
 }
 
 fn info_card(
@@ -153,8 +160,9 @@ fn info_card(
     with_controls: impl Fn() -> bool + Copy + 'static,
 ) -> impl IntoElement {
     let channel = move || ui.playing.get().unwrap_or(0);
+    let live_now = move || ui.focus.with(|f| f.now);
     let minute = move || match ui.playback.get() {
-        crate::Playback::Live => 0,
+        crate::Playback::Live => live_now(),
         crate::Playback::CatchUp { start } => start,
     };
     let now = move || crate::schedule().program_at(channel(), minute());
@@ -211,8 +219,9 @@ fn info_card(
                                         .rounded(px(2.0))
                                         .w(move || {
                                             let p = now();
-                                            let done = if p.airing() == Airing::Live {
-                                                p.progress()
+                                            let at = live_now();
+                                            let done = if p.airing(at) == Airing::Live {
+                                                p.progress(at)
                                             } else {
                                                 0.0
                                             };

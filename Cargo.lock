@@ -1753,6 +1753,7 @@ dependencies = [
  "iptv-providers",
  "iptv-search",
  "iptv-store-sqlite",
+ "libc",
  "log",
  "nsh-base",
  "nsh-core",

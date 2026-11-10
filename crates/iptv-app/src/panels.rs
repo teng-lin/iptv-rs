@@ -74,7 +74,14 @@ pub fn top_bar(ui: Ui) -> impl IntoElement {
                     .text_size(px(12.0))
                     .text_color(secondary()),
                 )
-                .child(text(clock(0)).text_size(px(16.0)).text_color(rgb(WHITE))),
+                .child(
+                    text(move || {
+                        ui.data_version.get();
+                        clock(ui.focus.with(|f| f.now))
+                    })
+                    .text_size(px(16.0))
+                    .text_color(rgb(WHITE)),
+                ),
         )
 }
 
@@ -127,9 +134,12 @@ pub fn group_column(ui: Ui, groups: ElementRef) -> impl IntoElement {
 }
 
 pub fn info_panel(ui: Ui) -> impl IntoElement {
+    // The data version is part of the value, so a schedule swap re-renders
+    // even when the focused channel and programme minutes are unchanged.
     let program = computed(move || {
+        let version = ui.data_version.get();
         ui.focus
-            .with(|f| (f.channel, f.program(&*crate::schedule())))
+            .with(|f| (version, f.now, f.channel, f.program(&*crate::schedule())))
     });
     // Transparent: the video layer sits under this rectangle in guide mode.
     // A tap opens full screen.
@@ -162,14 +172,14 @@ pub fn info_panel(ui: Ui) -> impl IntoElement {
         .flex_1()
         .gap(px(6.0))
         .child(
-            text(move || program.with(|(ch, p)| crate::schedule().title(*ch, *p)))
+            text(move || program.with(|(_, _, ch, p)| crate::schedule().title(*ch, *p)))
                 .text_size(px(20.0))
                 .text_color(rgb(WHITE)),
         )
         .child(
             text(move || {
-                program.with(|(ch, p)| {
-                    let state = match p.airing() {
+                program.with(|(_, now, ch, p)| {
+                    let state = match p.airing(*now) {
                         Airing::Live => "Live",
                         Airing::Upcoming => "Upcoming",
                         Airing::Ended => "Ended",
@@ -194,7 +204,7 @@ pub fn info_panel(ui: Ui) -> impl IntoElement {
                 .rounded(px(2.0))
                 .bg(tint(WHITE, RESTING_ALPHA * 2))
                 .opacity(move || {
-                    if program.with(|(_, p)| p.airing() == Airing::Live) {
+                    if program.with(|(_, now, _, p)| p.airing(*now) == Airing::Live) {
                         1.0_f32
                     } else {
                         0.0
@@ -204,7 +214,7 @@ pub fn info_panel(ui: Ui) -> impl IntoElement {
                     view()
                         .h_full()
                         .rounded(px(2.0))
-                        .w(move || px(260.0 * program.with(|(_, p)| p.progress())))
+                        .w(move || px(260.0 * program.with(|(_, now, _, p)| p.progress(*now))))
                         .bg(move || rgb(ui.theme.with(|t| t.accent.main))),
                 ),
         )

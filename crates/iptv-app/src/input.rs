@@ -283,7 +283,7 @@ fn zap(ui: Ui, step: isize) {
     ui.focus.update(|f| {
         f.pane = Pane::Guide;
         f.channel = to;
-        f.cursor = 0;
+        f.cursor = f.now;
     });
     ui.play(to, crate::Playback::Live);
     // Channel-change feedback over full-screen video.
@@ -318,7 +318,7 @@ fn page(ui: Ui, dir: isize) {
     let rows = ui.visible_rows.get().map_or(8, |(a, b)| (b - a).max(1));
     ui.focus.update(|f| {
         let to = (f.channel as isize + dir * rows as isize)
-            .clamp(0, crate::schedule().channel_count() as isize - 1);
+            .clamp(0, (crate::schedule().channel_count() as isize - 1).max(0));
         f.channel = to as usize;
     });
 }

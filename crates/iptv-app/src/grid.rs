@@ -18,6 +18,7 @@ pub fn guide(ui: Ui, rows: ElementRef) -> impl IntoElement {
     let width = signal(0.0_f32);
     let scale = computed(move || width.get() / VISIBLE as f32);
     let window = computed(move || ui.focus.with(|f| f.window));
+    let now = computed(move || ui.focus.with(|f| f.now));
     let focused = computed(move || {
         ui.focus.with(|f| {
             (f.pane == Pane::Guide).then(|| (f.channel, f.program(&*crate::schedule()).start))
@@ -26,7 +27,7 @@ pub fn guide(ui: Ui, rows: ElementRef) -> impl IntoElement {
     view()
         .flex_1()
         .bg(move || ui.surface(ui.theme.with(|t| t.background.window)))
-        .child(time_bar(ui, window, scale, width))
+        .child(time_bar(ui, window, now, scale, width))
         .child(
             view()
                 .flex_1()
@@ -37,7 +38,7 @@ pub fn guide(ui: Ui, rows: ElementRef) -> impl IntoElement {
                             ui.data_version.get();
                             crate::schedule().channel_count()
                         },
-                        move |at| row(ui, at, window, scale, focused),
+                        move |at| row(ui, at, window, now, scale, focused),
                     )
                     .estimated_item_size(px(ROW_H))
                     .element_ref(&rows)
@@ -47,20 +48,34 @@ pub fn guide(ui: Ui, rows: ElementRef) -> impl IntoElement {
                     .flex_1(),
                 )
                 .child(
-                    // Now: minute 0.
+                    // Now, hidden while the window does not show it.
                     view()
                         .absolute()
                         .top(px(0.0))
                         .h_full()
                         .w(px(2.0))
-                        .left(move || px(NAME_W + (0 - window.get()) as f32 * scale.get()))
+                        .opacity(move || {
+                            let at = now.get() - window.get();
+                            if (0..=VISIBLE).contains(&at) {
+                                1.0_f32
+                            } else {
+                                0.0
+                            }
+                        })
+                        .left(move || px(NAME_W + (now.get() - window.get()) as f32 * scale.get()))
                         .bg(move || rgb(ui.theme.with(|t| t.accent.main)))
                         .pointer_events(PointerEvents::None),
                 ),
         )
 }
 
-fn time_bar(ui: Ui, window: Memo<i32>, scale: Memo<f32>, width: Signal<f32>) -> impl IntoElement {
+fn time_bar(
+    ui: Ui,
+    window: Memo<i32>,
+    now: Memo<i32>,
+    scale: Memo<f32>,
+    width: Signal<f32>,
+) -> impl IntoElement {
     let shift = move |label: &'static str, minutes: i32| {
         text(label)
             .px(px(10.0))
@@ -75,11 +90,16 @@ fn time_bar(ui: Ui, window: Memo<i32>, scale: Memo<f32>, width: Signal<f32>) -> 
             })
     };
     let tick = move |i: i32| {
-        text(move || clock(window.get() + i * STEP))
-            .absolute()
-            .left(move || px(i as f32 * STEP as f32 * scale.get() + 6.0))
-            .text_size(px(12.0))
-            .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA))
+        // The epoch comes with the data; now decides which day is "today".
+        text(move || {
+            ui.data_version.get();
+            now.get();
+            clock(window.get() + i * STEP)
+        })
+        .absolute()
+        .left(move || px(i as f32 * STEP as f32 * scale.get() + 6.0))
+        .text_size(px(12.0))
+        .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA))
     };
     view()
         .h(px(36.0))
@@ -108,6 +128,7 @@ fn row(
     ui: Ui,
     at: Position,
     window: Memo<i32>,
+    now: Memo<i32>,
     scale: Memo<f32>,
     focused: Memo<Option<(usize, i32)>>,
 ) -> impl IntoElement {
@@ -131,7 +152,7 @@ fn row(
             program().is_some_and(|p| focused.get() == Some((at.index(), p.start)))
                 && ui.keys_shown()
         };
-        let airing = move || program().map(|p| p.airing());
+        let airing = move || program().map(|p| p.airing(now.get()));
         view()
             .absolute()
             .top(px(3.0))

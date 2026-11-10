@@ -3,8 +3,11 @@
 //! `iptv_core::guide::Schedule` so the focus model and the UI work on it
 //! exactly as on the synthetic schedule.
 //!
-//! Guide minutes are relative to `now` (minute 0), fixed when the schedule
-//! is built; rebuild it to move "now". Where a channel has no programme, the
+//! Guide minutes count from the schedule's epoch: the import's `now`
+//! floored to the hour (UTC), fixed for the schedule's lifetime. "Now" is
+//! the wall clock ([`Schedule::follows_wall_clock`]), so the app advances it
+//! with [`iptv_core::guide::now_minute`] without rebuilding the schedule.
+//! Where a channel has no programme, the
 //! gap is filled with hour-aligned placeholder slots clipped to the
 //! neighbouring programmes, so navigation always has a cell to land on.
 
@@ -12,7 +15,7 @@ use iptv_core::guide::{Program, Schedule};
 use iptv_epg::{ChannelKey, GuideStore, UnixTime};
 use iptv_providers::model::{Channel, Group};
 
-/// Gap slots are aligned to the hour.
+/// Gap slots, and the epoch, are aligned to the hour.
 const SLOT: i64 = 3600;
 /// Title of a gap slot.
 pub const NO_INFORMATION: &str = "No information";
@@ -23,6 +26,8 @@ pub struct GuideChannel {
     /// The key the EPG store matched the channel under (its stable id).
     pub key: ChannelKey,
     pub name: String,
+    /// The number shown before the name (`tvg-chno`, or the playlist position).
+    pub number: u32,
     pub catchup_days: u8,
 }
 
@@ -34,12 +39,13 @@ pub struct EpgSchedule {
     /// The index of each group's first channel; channels are stored grouped.
     group_starts: Vec<usize>,
     store: GuideStore,
-    now: UnixTime,
+    /// Unix time of guide minute 0.
+    epoch: UnixTime,
 }
 
 impl EpgSchedule {
-    /// `groups`: names with their channels, in display order. `now` is
-    /// rounded down to the minute.
+    /// `groups`: names with their channels, in display order. The epoch is
+    /// `now` rounded down to the hour.
     pub fn new(groups: Vec<(String, Vec<GuideChannel>)>, store: GuideStore, now: UnixTime) -> Self {
         let mut channels = Vec::new();
         let mut group_names = Vec::new();
@@ -55,7 +61,7 @@ impl EpgSchedule {
             group_names,
             group_starts,
             store,
-            now: now - now.rem_euclid(60),
+            epoch: now - now.rem_euclid(SLOT),
         }
     }
 
@@ -67,13 +73,15 @@ impl EpgSchedule {
         store: GuideStore,
         now: UnixTime,
     ) -> Self {
-        let mut buckets: Vec<Vec<&Channel>> = vec![Vec::new(); groups.len() + 1];
-        for c in channels {
+        // With their playlist positions (1-based), for channels without a
+        // provider number.
+        let mut buckets: Vec<Vec<(u32, &Channel)>> = vec![Vec::new(); groups.len() + 1];
+        for (i, c) in channels.iter().enumerate() {
             let slot = c
                 .groups
                 .first()
                 .and_then(|gid| groups.iter().position(|g| &g.id == gid));
-            buckets[slot.unwrap_or(groups.len())].push(c);
+            buckets[slot.unwrap_or(groups.len())].push((i as u32 + 1, c));
         }
         let names = groups
             .iter()
@@ -85,16 +93,17 @@ impl EpgSchedule {
             .map(|(name, members)| {
                 let guide = members
                     .iter()
-                    .map(|c| GuideChannel {
+                    .map(|&(position, c)| GuideChannel {
                         key: ChannelKey::new(c.id.as_str()),
                         name: c.name.clone(),
+                        number: c.number.unwrap_or(position),
                         catchup_days: c.catch_up.as_ref().map_or(0, |cu| {
                             cu.window_days(iptv_providers::m3u::DEFAULT_CATCHUP_WINDOW_DAYS)
                                 .min(u32::from(u8::MAX)) as u8
                         }),
                     })
                     .collect::<Vec<_>>();
-                ordered.extend(members.into_iter().cloned());
+                ordered.extend(members.into_iter().map(|(_, c)| c.clone()));
                 (name, guide)
             })
             .collect();
@@ -103,8 +112,9 @@ impl EpgSchedule {
         schedule
     }
 
-    pub fn now(&self) -> UnixTime {
-        self.now
+    /// Unix time of guide minute 0.
+    pub fn epoch(&self) -> UnixTime {
+        self.epoch
     }
 
     pub fn store(&self) -> &GuideStore {
@@ -115,12 +125,14 @@ impl EpgSchedule {
         self.channels.get(channel)
     }
 
-    fn minute(&self, t: UnixTime) -> i32 {
-        (t - self.now).div_euclid(60) as i32
+    /// The guide minute `t` falls in.
+    pub fn minute(&self, t: UnixTime) -> i32 {
+        (t - self.epoch).div_euclid(60) as i32
     }
 
-    fn unix(&self, minute: i32) -> UnixTime {
-        self.now + i64::from(minute) * 60
+    /// Unix time of guide `minute`.
+    pub fn unix(&self, minute: i32) -> UnixTime {
+        self.epoch + i64::from(minute) * 60
     }
 
     fn key(&self, channel: usize) -> Option<&ChannelKey> {
@@ -166,6 +178,14 @@ impl EpgSchedule {
 }
 
 impl Schedule for EpgSchedule {
+    fn epoch_unix(&self) -> i64 {
+        self.epoch
+    }
+
+    fn follows_wall_clock(&self) -> bool {
+        true
+    }
+
     fn channel_count(&self) -> usize {
         self.channels.len()
     }
@@ -215,6 +235,12 @@ impl Schedule for EpgSchedule {
             .map_or_else(String::new, |c| c.name.clone())
     }
 
+    fn channel_number(&self, channel: usize) -> u32 {
+        self.channels
+            .get(channel)
+            .map_or(channel as u32 + 1, |c| c.number)
+    }
+
     fn group_name(&self, group: usize) -> String {
         self.group_names.get(group).cloned().unwrap_or_default()
     }
@@ -227,12 +253,12 @@ impl Schedule for EpgSchedule {
         }
     }
 
-    fn catchup_url(&self, channel: usize, program: Program) -> Option<String> {
+    fn catchup_url(&self, channel: usize, program: Program, now: i32) -> Option<String> {
         let c = self.sources.get(channel)?.as_ref()?;
         let req = iptv_providers::m3u::CatchupRequest::new(
             self.unix(program.start),
             self.unix(program.end),
-            self.now,
+            self.unix(now),
         );
         iptv_providers::m3u::build_catchup_url(c, req).ok()
     }

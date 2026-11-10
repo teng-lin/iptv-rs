@@ -4,12 +4,20 @@
 //! Focus is owned by the app: NSH's Android backend gives ordinary views no
 //! D-pad focus, so the keymap feeds [`Focus::apply`] and the UI draws the
 //! focused cell from it. Focus and playback are separate states.
+//!
+//! Time: guide minutes count from the schedule's epoch
+//! ([`Schedule::epoch_unix`], minute 0), and "now" is a guide minute that
+//! advances ([`Focus::now`], set by [`Focus::tick`] from [`now_minute`]).
+//! Every "live", "past" and window rule is relative to that now.
 
 /// Synthetic channels in the guide.
 pub const CHANNELS: usize = 5000;
 /// Synthetic groups in the side column.
 pub const GROUPS: usize = 24;
-/// Minutes of guide data, from "now" (minute 0).
+/// Unix time of the synthetic schedule's minute 0 (Tuesday 10 November
+/// 2026, 18:00 UTC).
+pub const SYNTHETIC_EPOCH_UNIX: i64 = 1_794_333_600;
+/// Minutes of guide data ahead of now.
 pub const HORIZON: i32 = 12 * 60;
 /// Minutes visible across the guide at once.
 pub const VISIBLE: i32 = 150;
@@ -21,7 +29,7 @@ pub const PAST: i32 = 30;
 /// to catch-up: past programmes without an archive are shown too.
 pub const HISTORY: i32 = 7 * 24 * 60;
 
-/// Where a programme sits relative to now (minute 0).
+/// Where a programme sits relative to now.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Airing {
     Ended,
@@ -30,26 +38,27 @@ pub enum Airing {
 }
 
 impl Program {
-    pub fn airing(&self) -> Airing {
-        if self.end <= 0 {
+    /// Where the programme sits at guide minute `now`.
+    pub fn airing(&self, now: i32) -> Airing {
+        if self.end <= now {
             Airing::Ended
-        } else if self.start <= 0 {
+        } else if self.start <= now {
             Airing::Live
         } else {
             Airing::Upcoming
         }
     }
 
-    /// Played fraction of a live programme (0 otherwise).
-    pub fn progress(&self) -> f32 {
-        match self.airing() {
-            Airing::Live => -self.start as f32 / (self.end - self.start) as f32,
+    /// Played fraction of a live programme at `now` (0 otherwise).
+    pub fn progress(&self, now: i32) -> f32 {
+        match self.airing(now) {
+            Airing::Live => (now - self.start) as f32 / (self.end - self.start) as f32,
             _ => 0.0,
         }
     }
 }
 
-/// A programme: `[start, end)` in minutes from now (`start` can be < 0).
+/// A programme: `[start, end)` in guide minutes from the schedule's epoch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Program {
     pub start: i32,
@@ -57,10 +66,21 @@ pub struct Program {
 }
 
 /// Guide data the focus model and the UI read: channels, groups and
-/// programmes by guide minute (minute 0 is now). Implemented by
+/// programmes by guide minute (minute 0 is [`Schedule::epoch_unix`]). Implemented by
 /// [`SyntheticSchedule`] (tests, demos) and by the store + EPG backed
 /// schedule in the app.
 pub trait Schedule {
+    /// Unix time of guide minute 0. Fixed for the schedule's lifetime, so
+    /// programmes keep their minutes while now advances.
+    fn epoch_unix(&self) -> i64 {
+        SYNTHETIC_EPOCH_UNIX
+    }
+    /// Whether now follows the wall clock (real data). When false, now
+    /// starts at minute 0 when the schedule is shown and advances from
+    /// there (synthetic data, which only covers the days around its epoch).
+    fn follows_wall_clock(&self) -> bool {
+        false
+    }
     fn channel_count(&self) -> usize;
     fn group_count(&self) -> usize;
     /// The first channel of `group`.
@@ -73,15 +93,20 @@ pub trait Schedule {
     /// The channel's archive window in days (0: no catch-up).
     fn catchup_days(&self, channel: usize) -> u8;
     fn channel_name(&self, channel: usize) -> String;
+    /// The number shown before the name: the provider's channel number when
+    /// it has one, else the 1-based position.
+    fn channel_number(&self, channel: usize) -> u32 {
+        channel as u32 + 1
+    }
     fn group_name(&self, group: usize) -> String;
     fn title(&self, channel: usize, program: Program) -> String;
     /// The channel's live stream URL, when the schedule knows it.
     fn stream_url(&self, _channel: usize) -> Option<String> {
         None
     }
-    /// The archive URL that plays `program` from its start, when the
-    /// channel has catch-up and the schedule can build it.
-    fn catchup_url(&self, _channel: usize, _program: Program) -> Option<String> {
+    /// The archive URL that plays `program` from its start at guide minute
+    /// `now`, when the channel has catch-up and the schedule can build it.
+    fn catchup_url(&self, _channel: usize, _program: Program, _now: i32) -> Option<String> {
         None
     }
     /// The concrete schedule, for features that need more than this trait
@@ -89,6 +114,32 @@ pub trait Schedule {
     fn as_any(&self) -> Option<&dyn core::any::Any> {
         None
     }
+}
+
+/// Guide minute `wall_unix` falls in on `s`: from the wall clock for real
+/// data, or `shown_secs` (time since the schedule was shown) for a schedule
+/// that does not follow it.
+pub fn now_minute(s: &dyn Schedule, wall_unix: i64, shown_secs: u64) -> i32 {
+    if s.follows_wall_clock() {
+        (wall_unix - s.epoch_unix()).div_euclid(60) as i32
+    } else {
+        (shown_secs / 60).min(i32::MAX as u64) as i32
+    }
+}
+
+/// Unix time of guide `minute` on `s`.
+pub fn unix_of(s: &dyn Schedule, minute: i32) -> i64 {
+    s.epoch_unix() + i64::from(minute) * 60
+}
+
+/// Seconds until `now_minute` next changes (at least one).
+pub fn secs_to_next_minute(s: &dyn Schedule, wall_unix: i64, shown_secs: u64) -> u64 {
+    let into = if s.follows_wall_clock() {
+        (wall_unix - s.epoch_unix()).rem_euclid(60) as u64
+    } else {
+        shown_secs % 60
+    };
+    60 - into
 }
 
 /// Deterministic synthetic guide data: [`CHANNELS`] channels in [`GROUPS`]
@@ -161,9 +212,13 @@ pub fn catchup_days(channel: usize) -> u8 {
     if channel.is_multiple_of(2) { 3 } else { 0 }
 }
 
+/// How far past its epoch the synthetic schedule has data (now advances
+/// while the app runs, so this exceeds [`HORIZON`]).
+const SYNTHETIC_AHEAD: i32 = 2 * 24 * 60;
+
 /// The programme of `channel` airing at `minute` (clamped to the guide's data).
 pub fn program_at(channel: usize, minute: i32) -> Program {
-    let minute = minute.clamp(-HISTORY, HORIZON - 1);
+    let minute = minute.clamp(-HISTORY, SYNTHETIC_AHEAD - 1);
     program_seq(channel)
         .find(|p| p.end > minute)
         .expect("endless")
@@ -204,19 +259,21 @@ pub struct Focus {
     pub cursor: i32,
     /// The first minute shown across the guide.
     pub window: i32,
+    /// The guide minute it is now; [`Focus::tick`] advances it.
+    pub now: i32,
 }
 
 impl Default for Focus {
-    /// The guide at the first channel, now, with half an hour of the past shown.
+    /// The guide at minute 0 (a synthetic schedule just shown).
     fn default() -> Self {
-        Focus {
-            pane: Pane::Guide,
-            group: 0,
-            channel: 0,
-            cursor: 0,
-            window: -PAST,
-        }
+        Focus::at(0)
     }
+}
+
+/// The window that shows `now` with between half an hour and an hour of
+/// the past before it, aligned to the time bar's steps.
+pub fn home_window(now: i32) -> i32 {
+    (now - PAST).div_euclid(STEP) * STEP
 }
 
 /// The first channel of `group`.
@@ -225,6 +282,60 @@ pub fn group_start(group: usize) -> usize {
 }
 
 impl Focus {
+    /// The guide at the first channel and group at guide minute `now`,
+    /// with the past half hour shown.
+    pub fn at(now: i32) -> Self {
+        Focus {
+            pane: Pane::Guide,
+            group: 0,
+            channel: 0,
+            cursor: now,
+            window: home_window(now),
+            now,
+        }
+    }
+
+    /// The earliest and latest minute the cursor can reach.
+    fn bounds(&self) -> (i32, i32) {
+        (self.now - HISTORY, self.now + HORIZON - 1)
+    }
+
+    /// Now moved to `now`. A focus on the live programme follows the
+    /// clock (onto the next programme when it ends) and a window at its
+    /// default position moves with now; a focus browsing the past or the
+    /// future stays where it is. Returns false when `now` is unchanged.
+    pub fn tick(&mut self, now: i32, s: &dyn Schedule) -> bool {
+        if now == self.now {
+            return false;
+        }
+        let following =
+            self.pane == Pane::Guide && self.program(s).airing(self.now) == Airing::Live;
+        let home = self.window == home_window(self.now);
+        let old = self.now;
+        self.now = now;
+        if following || self.cursor == old {
+            self.cursor = now;
+        }
+        if home {
+            self.window = home_window(now);
+        }
+        let (lo, hi) = self.bounds();
+        self.cursor = self.cursor.clamp(lo, hi);
+        if following {
+            self.keep_cursor_visible(s);
+        } else {
+            self.window = self.window.clamp(lo, (hi + 1 - VISIBLE).max(lo));
+        }
+        true
+    }
+
+    /// Keeps the group and channel inside `s` (after the guide data
+    /// changed, or on an empty schedule: 0).
+    pub fn clamp_to(&mut self, s: &dyn Schedule) {
+        self.channel = self.channel.min(s.channel_count().saturating_sub(1));
+        self.group = self.group.min(s.group_count().saturating_sub(1));
+    }
+
     pub fn apply(&mut self, m: Move, s: &dyn Schedule) {
         match (self.pane, m) {
             (Pane::Groups, Move::Up) => self.group = self.group.saturating_sub(1),
@@ -240,7 +351,7 @@ impl Focus {
             // Left on the live programme shows the groups; anywhere else it
             // steps to the previous programme (the past is entered by Long Left).
             (Pane::Guide, Move::Left) => {
-                if self.program(s).airing() == Airing::Live {
+                if self.program(s).airing(self.now) == Airing::Live {
                     self.pane = Pane::Groups;
                 } else {
                     self.step_back(s);
@@ -248,7 +359,7 @@ impl Focus {
             }
             (Pane::Guide, Move::Right) => {
                 let current = s.program_at(self.channel, self.cursor);
-                if current.end < HORIZON {
+                if current.end <= self.bounds().1 {
                     self.cursor = current.end;
                 }
             }
@@ -268,21 +379,19 @@ impl Focus {
     /// Back on a past or future programme: the channel's live programme and
     /// the default window. Returns false when already there.
     pub fn return_to_now(&mut self, s: &dyn Schedule) -> bool {
-        if self.pane != Pane::Guide || self.program(s).airing() == Airing::Live {
+        if self.pane != Pane::Guide || self.program(s).airing(self.now) == Airing::Live {
             return false;
         }
-        self.cursor = 0;
-        self.window = -PAST;
+        self.cursor = self.now;
+        self.window = home_window(self.now);
         true
     }
 
     fn step_back(&mut self, s: &dyn Schedule) {
         let current = self.program(s);
-        if current.start > -HISTORY {
-            self.cursor = s
-                .program_at(self.channel, current.start - 1)
-                .start
-                .max(-HISTORY);
+        let lo = self.bounds().0;
+        if current.start > lo {
+            self.cursor = s.program_at(self.channel, current.start - 1).start.max(lo);
         }
     }
 
@@ -292,8 +401,8 @@ impl Focus {
         self.channel = s
             .group_start(self.group)
             .min(s.channel_count().saturating_sub(1));
-        self.cursor = 0;
-        self.window = -PAST;
+        self.cursor = self.now;
+        self.window = home_window(self.now);
     }
 
     /// A tap on a group: the same as focusing it and pressing OK.
@@ -307,12 +416,14 @@ impl Focus {
     pub fn tap(&mut self, channel: usize, minute: i32, s: &dyn Schedule) {
         self.pane = Pane::Guide;
         self.channel = channel.min(s.channel_count().saturating_sub(1));
-        self.cursor = minute.clamp(-HISTORY, HORIZON - 1);
+        let (lo, hi) = self.bounds();
+        self.cursor = minute.clamp(lo, hi);
     }
 
     /// The time window moved by touch: the cursor follows into it.
     pub fn shift_window(&mut self, minutes: i32) {
-        self.window = (self.window + minutes).clamp(-HISTORY, HORIZON - VISIBLE);
+        let (lo, hi) = self.bounds();
+        self.window = (self.window + minutes).clamp(lo, hi + 1 - VISIBLE);
         let lo = self.window;
         self.cursor = self.cursor.clamp(lo, (self.window + VISIBLE - 1).max(lo));
     }
@@ -334,8 +445,8 @@ impl Focus {
         // The focused programme's start (now, for a live one) stays on
         // screen; the window moves in steps.
         let p = self.program(s);
-        let anchor = if p.airing() == Airing::Live {
-            0
+        let anchor = if p.airing(self.now) == Airing::Live {
+            self.now
         } else {
             p.start
         };
@@ -347,7 +458,8 @@ impl Focus {
         while anchor >= self.window + VISIBLE - STEP {
             self.window += STEP;
         }
-        self.window = self.window.clamp(-HISTORY, HORIZON - VISIBLE);
+        let (lo, hi) = self.bounds();
+        self.window = self.window.clamp(lo, hi + 1 - VISIBLE);
     }
 }
 
@@ -420,7 +532,7 @@ mod tests {
     fn the_guide_opens_with_the_past_half_hour_shown() {
         let f = Focus::default();
         assert_eq!((f.window, f.cursor), (-PAST, 0));
-        assert_eq!(f.program(&S).airing(), Airing::Live);
+        assert_eq!(f.program(&S).airing(0), Airing::Live);
     }
 
     #[test]
@@ -429,10 +541,10 @@ mod tests {
             start: -15,
             end: 45,
         };
-        assert_eq!(live.airing(), Airing::Live);
-        assert!((live.progress() - 0.25).abs() < 1e-6);
-        assert_eq!(Program { start: -60, end: 0 }.airing(), Airing::Ended);
-        assert_eq!(Program { start: 10, end: 40 }.airing(), Airing::Upcoming);
+        assert_eq!(live.airing(0), Airing::Live);
+        assert!((live.progress(0) - 0.25).abs() < 1e-6);
+        assert_eq!(Program { start: -60, end: 0 }.airing(0), Airing::Ended);
+        assert_eq!(Program { start: 10, end: 40 }.airing(0), Airing::Upcoming);
     }
 
     #[test]
@@ -548,10 +660,10 @@ mod tests {
         assert!(cursor < 0);
         f.apply(Move::Down, &S);
         assert_eq!(f.cursor, cursor);
-        assert_eq!(f.program(&S).airing(), Airing::Ended);
+        assert_eq!(f.program(&S).airing(0), Airing::Ended);
         assert!(f.return_to_now(&S));
         assert_eq!(
-            (f.cursor, f.window, f.program(&S).airing()),
+            (f.cursor, f.window, f.program(&S).airing(0)),
             (0, -PAST, Airing::Live)
         );
         assert!(!f.return_to_now(&S), "already at now");
@@ -573,6 +685,165 @@ mod tests {
             f.program(&S)
         );
         assert!(f.window >= -HISTORY);
+    }
+
+    /// A small schedule with real-data time: the synthetic programmes, a
+    /// wall-clock epoch, and `channels`/`groups` rows.
+    struct Small {
+        channels: usize,
+        groups: usize,
+    }
+
+    const WALL_EPOCH: i64 = 1_800_000_000;
+
+    impl Schedule for Small {
+        fn epoch_unix(&self) -> i64 {
+            WALL_EPOCH
+        }
+        fn follows_wall_clock(&self) -> bool {
+            true
+        }
+        fn channel_count(&self) -> usize {
+            self.channels
+        }
+        fn group_count(&self) -> usize {
+            self.groups
+        }
+        fn group_start(&self, group: usize) -> usize {
+            group
+        }
+        fn program_at(&self, channel: usize, minute: i32) -> Program {
+            S.program_at(channel, minute)
+        }
+        fn programs_between(&self, channel: usize, from: i32, minutes: i32) -> Vec<Program> {
+            S.programs_between(channel, from, minutes)
+        }
+        fn catchup_days(&self, _channel: usize) -> u8 {
+            0
+        }
+        fn channel_name(&self, channel: usize) -> String {
+            format!("Small {channel}")
+        }
+        fn group_name(&self, group: usize) -> String {
+            format!("Small group {group}")
+        }
+        fn title(&self, _channel: usize, _program: Program) -> String {
+            String::new()
+        }
+    }
+
+    #[test]
+    fn now_comes_from_the_wall_clock_or_from_when_the_schedule_was_shown() {
+        let real = Small {
+            channels: 3,
+            groups: 1,
+        };
+        assert_eq!(now_minute(&real, WALL_EPOCH + 25 * 60 + 59, 9_999), 25);
+        assert_eq!(now_minute(&real, WALL_EPOCH - 1, 0), -1);
+        assert_eq!(secs_to_next_minute(&real, WALL_EPOCH + 25 * 60 + 59, 0), 1);
+        assert_eq!(secs_to_next_minute(&real, WALL_EPOCH, 0), 60);
+        assert_eq!(unix_of(&real, 25), WALL_EPOCH + 25 * 60);
+        // The synthetic schedule keeps its epoch; its now is time since shown.
+        assert_eq!(S.epoch_unix(), SYNTHETIC_EPOCH_UNIX);
+        assert_eq!(now_minute(&S, WALL_EPOCH, 125), 2);
+        assert_eq!(secs_to_next_minute(&S, WALL_EPOCH, 125), 55);
+    }
+
+    #[test]
+    fn airing_and_progress_follow_now() {
+        let p = Program { start: 30, end: 90 };
+        assert_eq!(p.airing(0), Airing::Upcoming);
+        assert_eq!(p.airing(30), Airing::Live);
+        assert!((p.progress(45) - 0.25).abs() < 1e-6);
+        assert_eq!(p.airing(90), Airing::Ended);
+        assert_eq!(p.progress(90), 0.0);
+    }
+
+    #[test]
+    fn the_guide_opens_at_now_with_an_aligned_window() {
+        for now in [0, 29, 47, 600, -31] {
+            let f = Focus::at(now);
+            assert_eq!((f.cursor, f.now), (now, now));
+            assert_eq!(f.window.rem_euclid(STEP), 0, "now {now}");
+            assert!(f.window <= now - PAST && now - f.window < PAST + STEP);
+            assert_eq!(f.program(&S).airing(now), Airing::Live);
+        }
+    }
+
+    #[test]
+    fn a_tick_moves_a_focus_on_now_onto_the_next_live_programme() {
+        let mut f = Focus::at(0);
+        let live = f.program(&S);
+        assert!(!f.tick(0, &S), "same minute");
+        assert!(f.tick(live.end, &S));
+        assert_eq!(f.cursor, live.end);
+        assert_eq!(f.program(&S).start, live.end, "the next programme");
+        assert_eq!(f.program(&S).airing(f.now), Airing::Live);
+        assert_eq!(f.window, home_window(live.end), "the default window moves");
+        // Back and the groups return to the new now.
+        f.enter_past(&S);
+        assert!(f.return_to_now(&S));
+        assert_eq!((f.cursor, f.window), (f.now, home_window(f.now)));
+    }
+
+    #[test]
+    fn a_tick_leaves_a_focus_browsing_the_past_or_future() {
+        let mut f = Focus {
+            channel: 4,
+            ..Focus::at(0)
+        };
+        for _ in 0..3 {
+            f.enter_past(&S);
+        }
+        let (cursor, window) = (f.cursor, f.window);
+        assert!(f.tick(5, &S));
+        assert_eq!((f.cursor, f.window, f.now), (cursor, window, 5));
+        let mut f = Focus::at(0);
+        for _ in 0..6 {
+            f.apply(Move::Right, &S);
+        }
+        let (cursor, window) = (f.cursor, f.window);
+        f.tick(3, &S);
+        assert_eq!((f.cursor, f.window), (cursor, window));
+    }
+
+    #[test]
+    fn bounds_move_with_now() {
+        let mut f = Focus::at(10 * 60);
+        f.shift_window(-HISTORY * 2);
+        assert_eq!(f.window, 10 * 60 - HISTORY);
+        f.shift_window(HISTORY * 3);
+        assert_eq!(f.window, 10 * 60 + HORIZON - VISIBLE);
+        f.tap(0, i32::MAX, &S);
+        assert_eq!(f.cursor, 10 * 60 + HORIZON - 1);
+    }
+
+    #[test]
+    fn swapping_the_schedule_clamps_the_focus() {
+        let mut f = Focus {
+            group: GROUPS - 1,
+            channel: CHANNELS - 1,
+            ..Focus::at(0)
+        };
+        let small = Small {
+            channels: 3,
+            groups: 2,
+        };
+        f.clamp_to(&small);
+        assert_eq!((f.channel, f.group), (2, 1));
+        f.apply(Move::Down, &small);
+        assert_eq!(f.channel, 2);
+        let empty = Small {
+            channels: 0,
+            groups: 0,
+        };
+        f.clamp_to(&empty);
+        assert_eq!((f.channel, f.group), (0, 0));
+        f.apply(Move::Down, &empty);
+        f.pane = Pane::Groups;
+        f.apply(Move::Down, &empty);
+        f.apply(Move::Right, &empty);
+        assert_eq!((f.channel, f.group), (0, 0));
     }
 
     #[test]
