@@ -1,0 +1,304 @@
+//! What the guide lists. The groups column holds fixed entries first
+//! (Favourites, Recently watched, All channels) and then the playlist's
+//! groups; the selected entry is the list the guide shows, as catalog
+//! channel indices in display order ([`ChannelList`]).
+//!
+//! The catalog (the full [`Schedule`]) stays the reference for playback,
+//! search and history: the guide works on rows of the list through
+//! [`ListView`], a [`Schedule`] whose channel `i` is the list's row `i`.
+//! Rows are numbered by their place in the list (1..n), so every list
+//! starts at 1.
+//!
+//! Lists are rebuilt when the selection, the catalog or the favourites
+//! change; focus is put back by content identity ([`ListId`], channel
+//! keys), never by index.
+
+use std::rc::Rc;
+
+use crate::guide::{Program, Schedule};
+
+/// The groups column's fixed entries, before the playlist's groups.
+pub const FAVORITES: usize = 0;
+pub const RECENT: usize = 1;
+/// The default selection.
+pub const ALL: usize = 2;
+pub const FIRST_GROUP: usize = 3;
+
+/// An entry of the groups column.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Entry {
+    Favorites,
+    Recent,
+    All,
+    /// A playlist group, by its index in the catalog.
+    Group(usize),
+}
+
+impl Entry {
+    pub fn at(index: usize) -> Entry {
+        match index {
+            FAVORITES => Entry::Favorites,
+            RECENT => Entry::Recent,
+            ALL => Entry::All,
+            g => Entry::Group(g - FIRST_GROUP),
+        }
+    }
+
+    pub fn index(self) -> usize {
+        match self {
+            Entry::Favorites => FAVORITES,
+            Entry::Recent => RECENT,
+            Entry::All => ALL,
+            Entry::Group(g) => FIRST_GROUP + g,
+        }
+    }
+}
+
+/// How many entries the groups column has for `catalog`.
+pub fn entry_count(catalog: &dyn Schedule) -> usize {
+    FIRST_GROUP + catalog.group_count()
+}
+
+/// The entry's name in the groups column (iptv-rs's own wording).
+pub fn entry_name(entry: usize, catalog: &dyn Schedule) -> String {
+    match Entry::at(entry) {
+        Entry::Favorites => "Favourites".to_owned(),
+        Entry::Recent => "Recently watched".to_owned(),
+        Entry::All => "All channels".to_owned(),
+        Entry::Group(g) => catalog.group_name(g),
+    }
+}
+
+/// An entry by content: survives a catalog swap that reorders, adds or
+/// drops groups.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ListId {
+    Favorites,
+    Recent,
+    All,
+    Group(String),
+}
+
+impl ListId {
+    pub fn of(entry: usize, catalog: &dyn Schedule) -> ListId {
+        match Entry::at(entry) {
+            Entry::Favorites => ListId::Favorites,
+            Entry::Recent => ListId::Recent,
+            Entry::All => ListId::All,
+            Entry::Group(g) => ListId::Group(catalog.group_name(g)),
+        }
+    }
+
+    /// The entry with this identity in `catalog`: "All channels" when its
+    /// group is gone.
+    pub fn find(&self, catalog: &dyn Schedule) -> usize {
+        match self {
+            ListId::Favorites => FAVORITES,
+            ListId::Recent => RECENT,
+            ListId::All => ALL,
+            ListId::Group(name) => (0..catalog.group_count())
+                .find(|&g| catalog.group_name(g) == *name)
+                .map_or(ALL, |g| Entry::Group(g).index()),
+        }
+    }
+}
+
+/// The catalog group holding `channel` (channels are stored grouped).
+pub fn group_of(catalog: &dyn Schedule, channel: usize) -> Option<usize> {
+    if channel >= catalog.channel_count() || catalog.group_count() == 0 {
+        return None;
+    }
+    // Group starts ascend: the last start at or before the channel.
+    let (mut lo, mut hi) = (0, catalog.group_count());
+    while hi - lo > 1 {
+        let mid = (lo + hi) / 2;
+        if catalog.group_start(mid) <= channel {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    (catalog.group_start(lo) <= channel).then_some(lo)
+}
+
+/// The channels a list shows: catalog indices in display order.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ChannelList {
+    entry: usize,
+    channels: Vec<usize>,
+}
+
+impl ChannelList {
+    pub fn new(entry: usize, channels: Vec<usize>) -> Self {
+        ChannelList { entry, channels }
+    }
+
+    /// The list of `entry` on `catalog`. `favorites` and `recent` are the
+    /// catalog channels of those lists, in their order.
+    pub fn build(
+        entry: usize,
+        catalog: &dyn Schedule,
+        favorites: &[usize],
+        recent: &[usize],
+    ) -> Self {
+        let n = catalog.channel_count();
+        let channels = match Entry::at(entry) {
+            Entry::Favorites => favorites.iter().copied().filter(|&c| c < n).collect(),
+            Entry::Recent => recent.iter().copied().filter(|&c| c < n).collect(),
+            Entry::All => catalog.playlist_order(),
+            Entry::Group(g) if g < catalog.group_count() => {
+                let start = catalog.group_start(g).min(n);
+                let end = if g + 1 < catalog.group_count() {
+                    catalog.group_start(g + 1).clamp(start, n)
+                } else {
+                    n
+                };
+                (start..end).collect()
+            }
+            Entry::Group(_) => Vec::new(),
+        };
+        ChannelList { entry, channels }
+    }
+
+    /// The groups column entry this list belongs to.
+    pub fn entry(&self) -> usize {
+        self.entry
+    }
+
+    pub fn len(&self) -> usize {
+        self.channels.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.channels.is_empty()
+    }
+
+    pub fn channels(&self) -> &[usize] {
+        &self.channels
+    }
+
+    /// The catalog channel on `row`.
+    pub fn channel(&self, row: usize) -> Option<usize> {
+        self.channels.get(row).copied()
+    }
+
+    /// The row showing catalog `channel`.
+    pub fn row_of(&self, channel: usize) -> Option<usize> {
+        self.channels.iter().position(|&c| c == channel)
+    }
+
+    /// The number shown before a row's name: its place in the list.
+    pub fn number(row: usize) -> u32 {
+        row as u32 + 1
+    }
+
+    /// Channel up/down from `row` by `step`, wrapping within the list.
+    pub fn zap(&self, row: usize, step: isize) -> Option<usize> {
+        let len = self.len();
+        (len > 0).then(|| (row.min(len - 1) as isize + step).rem_euclid(len as isize) as usize)
+    }
+}
+
+/// A list as a [`Schedule`]: channel `i` is the list's row `i`, numbered by
+/// position; programmes, names, keys and streams are the catalog channel's.
+/// The focus model and the grid run on it.
+#[derive(Clone)]
+pub struct ListView {
+    catalog: Rc<dyn Schedule>,
+    list: Rc<ChannelList>,
+}
+
+impl ListView {
+    pub fn new(catalog: Rc<dyn Schedule>, list: Rc<ChannelList>) -> Self {
+        ListView { catalog, list }
+    }
+
+    pub fn catalog(&self) -> &Rc<dyn Schedule> {
+        &self.catalog
+    }
+
+    pub fn list(&self) -> &ChannelList {
+        &self.list
+    }
+
+    /// The catalog channel on `row`.
+    pub fn channel(&self, row: usize) -> Option<usize> {
+        self.list.channel(row)
+    }
+}
+
+/// An hour-long placeholder around `minute`, for rows a list does not have
+/// (an empty list still has a cursor).
+fn placeholder(minute: i32) -> Program {
+    let start = minute - minute.rem_euclid(60);
+    Program {
+        start,
+        end: start + 60,
+    }
+}
+
+impl Schedule for ListView {
+    fn epoch_unix(&self) -> i64 {
+        self.catalog.epoch_unix()
+    }
+    fn follows_wall_clock(&self) -> bool {
+        self.catalog.follows_wall_clock()
+    }
+    fn channel_count(&self) -> usize {
+        self.list.len()
+    }
+    /// A list is one group.
+    fn group_count(&self) -> usize {
+        1
+    }
+    fn group_start(&self, _group: usize) -> usize {
+        0
+    }
+    fn program_at(&self, row: usize, minute: i32) -> Program {
+        match self.channel(row) {
+            Some(c) => self.catalog.program_at(c, minute),
+            None => placeholder(minute),
+        }
+    }
+    fn programs_between(&self, row: usize, from: i32, minutes: i32) -> Vec<Program> {
+        self.channel(row).map_or_else(Vec::new, |c| {
+            self.catalog.programs_between(c, from, minutes)
+        })
+    }
+    fn catchup_days(&self, row: usize) -> u8 {
+        self.channel(row)
+            .map_or(0, |c| self.catalog.catchup_days(c))
+    }
+    fn channel_name(&self, row: usize) -> String {
+        self.channel(row)
+            .map_or_else(String::new, |c| self.catalog.channel_name(c))
+    }
+    fn channel_number(&self, row: usize) -> u32 {
+        ChannelList::number(row)
+    }
+    fn channel_logo(&self, row: usize) -> Option<String> {
+        self.catalog.channel_logo(self.channel(row)?)
+    }
+    fn group_name(&self, _group: usize) -> String {
+        entry_name(self.list.entry(), &*self.catalog)
+    }
+    fn title(&self, row: usize, program: Program) -> String {
+        self.channel(row)
+            .map_or_else(String::new, |c| self.catalog.title(c, program))
+    }
+    fn stream_url(&self, row: usize) -> Option<String> {
+        self.catalog.stream_url(self.channel(row)?)
+    }
+    fn catchup_url(&self, row: usize, program: Program, now: i32) -> Option<String> {
+        self.catalog.catchup_url(self.channel(row)?, program, now)
+    }
+    fn channel_key(&self, row: usize) -> Option<String> {
+        self.catalog.channel_key(self.channel(row)?)
+    }
+    fn find_channel(&self, key: &str) -> Option<usize> {
+        self.list.row_of(self.catalog.find_channel(key)?)
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests;

@@ -2,13 +2,17 @@
 //! no platform APIs, no blocking I/O, and it must build for
 //! `wasm32-unknown-unknown` (see README).
 //!
-//! Today: the guide's synthetic schedule and the remote/touch focus model.
+//! Today: the guide's synthetic schedule, the remote/touch focus model and
+//! its columns (rail, groups, lists), favourites, menus, panels, playback.
 //! Planned (see `.plans/`): domain, providers, epg, nav, player-ctl,
 //! settings and view models as separate crates.
 
+pub mod browse;
 pub mod clock;
 pub mod editor;
+pub mod favorites;
 pub mod guide;
+pub mod lists;
 pub mod menu;
 pub mod panels;
 pub mod playback;

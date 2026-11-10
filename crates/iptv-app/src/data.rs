@@ -151,7 +151,7 @@ pub fn data_dir() -> PathBuf {
     }
 }
 
-fn open_store() -> Result<Store, StoreError> {
+pub(crate) fn open_store() -> Result<Store, StoreError> {
     let dir = data_dir();
     let _ = std::fs::create_dir_all(&dir);
     Store::open(dir.join("iptv.sqlite"))
@@ -295,6 +295,7 @@ fn show(ui: Ui, imported: Box<Imported>, generation: u64, refresh: bool) {
         schedule = schedule.with_description_lookup(lookup);
     }
     log::info!("iptv data: guide switched to {channels} imported channels");
+    crate::favorites::set_source(imported.source);
     crate::set_schedule(&ui, Rc::new(schedule));
     crate::player::source_ready(ui, refresh && imported.resume);
 }

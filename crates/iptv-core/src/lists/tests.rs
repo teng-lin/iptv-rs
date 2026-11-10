@@ -1,0 +1,217 @@
+use std::rc::Rc;
+
+use super::*;
+use crate::guide::{Airing, SyntheticSchedule};
+
+/// A small catalog: channels stored grouped (News 0..3, Sports 3..5, Kids
+/// 5..9) while the playlist interleaves them.
+pub(crate) struct Catalog {
+    pub groups: Vec<(&'static str, usize)>,
+    pub order: Vec<usize>,
+    /// Channel keys by index (default `k<index>`).
+    pub keys: Vec<String>,
+}
+
+impl Catalog {
+    pub fn small() -> Self {
+        Catalog::new(
+            vec![("News", 3), ("Sports", 2), ("Kids", 4)],
+            vec![0, 3, 5, 1, 4, 6, 2, 7, 8],
+        )
+    }
+
+    pub fn new(groups: Vec<(&'static str, usize)>, order: Vec<usize>) -> Self {
+        let n = groups.iter().map(|g| g.1).sum();
+        Catalog {
+            groups,
+            order,
+            keys: (0..n).map(|c| format!("k{c}")).collect(),
+        }
+    }
+}
+
+impl Schedule for Catalog {
+    fn channel_count(&self) -> usize {
+        self.groups.iter().map(|g| g.1).sum()
+    }
+    fn group_count(&self) -> usize {
+        self.groups.len()
+    }
+    fn group_start(&self, group: usize) -> usize {
+        self.groups[..group].iter().map(|g| g.1).sum()
+    }
+    fn program_at(&self, channel: usize, minute: i32) -> Program {
+        SyntheticSchedule.program_at(channel, minute)
+    }
+    fn programs_between(&self, channel: usize, from: i32, minutes: i32) -> Vec<Program> {
+        SyntheticSchedule.programs_between(channel, from, minutes)
+    }
+    fn catchup_days(&self, channel: usize) -> u8 {
+        (channel % 2) as u8
+    }
+    fn channel_name(&self, channel: usize) -> String {
+        format!("C{channel}")
+    }
+    fn channel_number(&self, channel: usize) -> u32 {
+        100 + channel as u32
+    }
+    fn channel_logo(&self, channel: usize) -> Option<String> {
+        (channel != 4).then(|| format!("logo{channel}"))
+    }
+    fn group_name(&self, group: usize) -> String {
+        self.groups[group].0.to_owned()
+    }
+    fn title(&self, channel: usize, _program: Program) -> String {
+        format!("T{channel}")
+    }
+    fn channel_key(&self, channel: usize) -> Option<String> {
+        self.keys.get(channel).cloned()
+    }
+    fn playlist_order(&self) -> Vec<usize> {
+        self.order.clone()
+    }
+}
+
+fn view(catalog: &Rc<dyn Schedule>, list: ChannelList) -> ListView {
+    ListView::new(catalog.clone(), Rc::new(list))
+}
+
+#[test]
+fn the_groups_column_starts_with_favourites_recent_and_all() {
+    let c = Catalog::small();
+    assert_eq!(entry_count(&c), 6);
+    let names: Vec<String> = (0..entry_count(&c)).map(|e| entry_name(e, &c)).collect();
+    assert_eq!(
+        names,
+        [
+            "Favourites",
+            "Recently watched",
+            "All channels",
+            "News",
+            "Sports",
+            "Kids"
+        ]
+    );
+    for e in 0..entry_count(&c) {
+        assert_eq!(Entry::at(e).index(), e);
+    }
+    assert_eq!(Entry::at(ALL), Entry::All);
+    assert_eq!(Entry::at(FIRST_GROUP + 1), Entry::Group(1));
+}
+
+#[test]
+fn a_group_lists_only_its_channels_and_all_follows_the_playlist() {
+    let c = Catalog::small();
+    let sports = ChannelList::build(Entry::Group(1).index(), &c, &[], &[]);
+    assert_eq!(sports.channels(), &[3, 4]);
+    let kids = ChannelList::build(Entry::Group(2).index(), &c, &[], &[]);
+    assert_eq!(
+        kids.channels(),
+        &[5, 6, 7, 8],
+        "the last group runs to the end"
+    );
+    let all = ChannelList::build(ALL, &c, &[], &[]);
+    assert_eq!(all.channels(), &[0, 3, 5, 1, 4, 6, 2, 7, 8]);
+    let gone = ChannelList::build(Entry::Group(9).index(), &c, &[], &[]);
+    assert!(gone.is_empty());
+}
+
+#[test]
+fn favourites_and_recent_lists_keep_their_order() {
+    let c = Catalog::small();
+    let fav = ChannelList::build(FAVORITES, &c, &[7, 1, 99], &[]);
+    assert_eq!(fav.channels(), &[7, 1], "out-of-range channels are dropped");
+    let recent = ChannelList::build(RECENT, &c, &[], &[4, 0]);
+    assert_eq!(recent.channels(), &[4, 0]);
+    assert!(ChannelList::build(FAVORITES, &c, &[], &[]).is_empty());
+}
+
+#[test]
+fn rows_are_numbered_by_their_place_in_the_list() {
+    let catalog: Rc<dyn Schedule> = Rc::new(Catalog::small());
+    let kids = view(&catalog, ChannelList::build(5, &*catalog, &[], &[]));
+    let numbers: Vec<u32> = (0..kids.channel_count())
+        .map(|r| kids.channel_number(r))
+        .collect();
+    assert_eq!(numbers, [1, 2, 3, 4], "each list starts at 1");
+    let all = view(&catalog, ChannelList::build(ALL, &*catalog, &[], &[]));
+    assert_eq!(all.channel_number(8), 9);
+    assert_eq!(catalog.channel_number(8), 108, "the catalog keeps its own");
+}
+
+#[test]
+fn a_list_view_reads_the_catalog_channel_behind_each_row() {
+    let catalog: Rc<dyn Schedule> = Rc::new(Catalog::small());
+    let fav = view(
+        &catalog,
+        ChannelList::build(FAVORITES, &*catalog, &[7, 4], &[]),
+    );
+    assert_eq!(fav.channel_count(), 2);
+    assert_eq!(fav.channel(0), Some(7));
+    assert_eq!(fav.channel_name(0), "C7");
+    assert_eq!(fav.channel_key(1).as_deref(), Some("k4"));
+    assert_eq!(fav.channel_logo(0).as_deref(), Some("logo7"));
+    assert_eq!(fav.channel_logo(1), None, "a channel without a logo");
+    assert_eq!(fav.catchup_days(0), 1);
+    assert_eq!(fav.program_at(0, 0), catalog.program_at(7, 0));
+    assert_eq!(
+        fav.programs_between(1, 0, 90),
+        catalog.programs_between(4, 0, 90)
+    );
+    assert_eq!(fav.title(0, fav.program_at(0, 0)), "T7");
+    assert_eq!(fav.find_channel("k4"), Some(1));
+    assert_eq!(fav.find_channel("k0"), None, "not in this list");
+    assert_eq!(fav.group_name(0), "Favourites");
+    // Rows the list does not have still answer (an empty list's cursor).
+    assert_eq!(fav.channel_name(5), "");
+    assert_eq!(fav.program_at(5, 75).airing(75), Airing::Live);
+}
+
+#[test]
+fn lists_are_found_again_by_content_in_a_new_catalog() {
+    let old = Catalog::small();
+    let sports = ListId::of(Entry::Group(1).index(), &old);
+    assert_eq!(sports, ListId::Group("Sports".into()));
+    // A refresh reordered the groups and dropped News.
+    let new = Catalog::new(vec![("Kids", 4), ("Sports", 2)], (0..6).collect());
+    assert_eq!(sports.find(&new), Entry::Group(1).index());
+    let news = ListId::of(Entry::Group(0).index(), &old);
+    assert_eq!(
+        news.find(&new),
+        ALL,
+        "a gone group falls back to all channels"
+    );
+    assert_eq!(ListId::of(FAVORITES, &old).find(&new), FAVORITES);
+    assert_eq!(ListId::of(RECENT, &old).find(&new), RECENT);
+}
+
+#[test]
+fn group_of_finds_the_catalog_group() {
+    let c = Catalog::small();
+    let groups: Vec<Option<usize>> = (0..10).map(|ch| group_of(&c, ch)).collect();
+    assert_eq!(
+        groups,
+        [
+            Some(0),
+            Some(0),
+            Some(0),
+            Some(1),
+            Some(1),
+            Some(2),
+            Some(2),
+            Some(2),
+            Some(2),
+            None
+        ]
+    );
+}
+
+#[test]
+fn zapping_wraps_within_the_list() {
+    let c = Catalog::small();
+    let fav = ChannelList::build(FAVORITES, &c, &[7, 1, 4], &[]);
+    assert_eq!(fav.zap(2, 1), Some(0));
+    assert_eq!(fav.zap(0, -1), Some(2));
+    assert_eq!(fav.zap(1, 1), Some(2));
+    assert_eq!(ChannelList::default().zap(0, 1), None);
+}
