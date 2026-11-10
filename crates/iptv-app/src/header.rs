@@ -194,7 +194,8 @@ fn details(ui: Ui, program: Memo<Focused>) -> impl IntoElement {
         )
 }
 
-/// The list on screen (a tap opens the groups), Add playlist, key stats.
+/// The list on screen (a tap opens the groups), Add playlist, and in
+/// development the key stats ([`debug_overlay`]).
 fn side(ui: Ui) -> impl IntoElement {
     view()
         .items_end()
@@ -215,14 +216,45 @@ fn side(ui: Ui) -> impl IntoElement {
         )
         .child(crate::wizard_view::add_button(ui))
         .child(view().flex_1())
-        .child(
+        .children(debug_overlay().then(|| {
             text(move || {
                 ui.stats
                     .with(|s| format!("keys {} · {} µs (max {})", s.keys, s.last_us, s.max_us))
             })
             .text_size(px(11.0))
-            .text_color(tint(WHITE, 0x60)),
+            .text_color(tint(WHITE, 0x60))
+        }))
+}
+
+/// The key-timing line in the header is for development: debug builds, or
+/// `IPTV_RS_DEBUG_OVERLAY` set (not empty, not `0`). The log line in
+/// `input.rs` stays in every build (`tools/perf-android.sh` reads it).
+pub fn debug_overlay() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        overlay_wanted(
+            cfg!(debug_assertions),
+            std::env::var("IPTV_RS_DEBUG_OVERLAY").ok().as_deref(),
         )
+    })
+}
+
+fn overlay_wanted(debug_build: bool, env: Option<&str>) -> bool {
+    debug_build || env.is_some_and(|v| !v.is_empty() && v != "0")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::overlay_wanted;
+
+    #[test]
+    fn the_key_timing_line_is_for_development_only() {
+        assert!(!overlay_wanted(false, None), "release builds hide it");
+        assert!(!overlay_wanted(false, Some("")));
+        assert!(!overlay_wanted(false, Some("0")));
+        assert!(overlay_wanted(false, Some("1")), "unless asked for");
+        assert!(overlay_wanted(true, None), "debug builds show it");
+    }
 }
 
 pub fn header(ui: Ui) -> impl IntoElement {
