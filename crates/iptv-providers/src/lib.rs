@@ -38,7 +38,7 @@ pub mod time;
 mod urlenc;
 pub mod xtream;
 
-pub use error::{ProviderError, StalkerError, StalkerErrorKind};
+pub use error::{CatchupError, ProviderError, StalkerError, StalkerErrorKind};
 pub use http::{HttpRequest, HttpResponse, Method};
 pub use id::{ContentId, GroupId};
 pub use secret::{Secret, SecretUrl};

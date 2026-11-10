@@ -20,7 +20,7 @@ mod extinf;
 
 use std::collections::HashMap;
 
-pub use catchup::{CatchupRequest, build_catchup_url};
+pub use catchup::{CatchupError, CatchupRequest, DEFAULT_CATCHUP_WINDOW_DAYS, build_catchup_url};
 
 use crate::id::{ContentId, GroupId, IdDeduper};
 use crate::model::{
