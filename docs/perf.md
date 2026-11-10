@@ -86,6 +86,48 @@ Next: the stored window itself (≈ 370 MB RSS with 7 days × 10 000 channels
 loaded) dominates on Android; load a narrower window (e.g. now − 1 day …
 end) and page older days in on demand when browsing back.
 
+## 2026-11-10, desktop, live streams the server cuts (branch `seamless-reconnect`)
+
+Providers cut live connections every 40–90 s (live HLS: the playlist reload
+at the redirect's tokenized address answers 403; MPEG-TS: the server
+closes the connection). Before, each cut was `ended` → the app's retry →
+a new load behind the black shutter. Now mpv plays on with a spare entry
+of the same address that it opened while the buffered rest played
+(`crates/iptv-app/src/mpv/worker.rs`), and a reconnect the app still has
+to make keeps the last frame, with "Reconnecting…" only after 1 s.
+
+Measured with `tools/mock-live-cuts.py` (HLS token 40 s, TS closed after
+70 s; `--open-delay-ms 1500` for a slow provider) on the Linux release
+build, `IPTV_RS_AUDIO=null`, on a headless Hyprland output captured with
+`grim` every ~0.25 s (1/8 scale): a frame is black below mean luma 12,
+frozen when it equals the one before; times are bounded by the captures
+around them. The picture carries a wall clock, read off the captures
+for content jumps. Audio gaps are from mpv 0.41 itself (`--ao=null`
+log: the old entry's audio running out to the spare's restart) with the
+same prefetch.
+
+| Cut | Before (`0f19b82`) | After |
+| --- | --- | --- |
+| HLS, local mock (2 cuts) | black ≤ 0.65 s and ≤ 0.45 s | no black, no frozen capture; content jumps back ≈ 2 s |
+| HLS, 1.5 s per new connection (1 cut before, 3 after) | black ≤ 3.6 s | no black; ≤ 1 s skipped forward or frozen (≤ 0.8 s) |
+| TS, local mock (2 cuts) | black ≤ 1.2 s and ≤ 1.4 s | no black, no frozen capture; content jumps back ≈ 1 s |
+| TS, 1.5 s per new connection | black ≤ 2.7 s | no black; frozen ≤ 1.3 s |
+| Audio at a bridge (mpv CLI, local mock) | stops until the reopen plays | ≈ 0.2 s (HLS), ≈ 0.25 s (TS) |
+| App reconnect without bridging (`IPTV_RS_LIVE_BRIDGE=0`), HLS, 1.5 s | black ≤ 3.6 s | last frame held ≈ 3 s, "Reconnecting… (1 of 5)" from 1 s |
+
+No `ended`, retry or reopen reaches the app at a bridged cut; latency
+stays where the stream started (HLS ≈ 7 s behind the clock on the
+picture, TS ≈ 4 s). The spare of an HLS stream starts two segments back
+(`live_start_index=-2`): three (ffmpeg's default) replayed ≈ 3.5 s at each
+cut; one replayed nothing on the local mock but left a single segment
+buffered, so the slow provider then froze ≈ 2 s at the next cut and
+rebuffered between cuts. A TS bridge has only what the server sent ahead
+(≈ 1 s here), so a provider slower than that to open freezes for the
+difference. Android (Media3) was compiled, not run: it reloads HLS
+playlists from the original address (no 403 to bridge) and plays TS as
+two items of the same address (`PlayerComponent.kt`).
+
+## Findings
 ## Findings
 
 1. **Guide import peak memory** (≈ 570 MB for 2.45 M programmes on the
