@@ -12,7 +12,8 @@
 //! - Left from the groups focuses the rail (it expands with labels).
 //!   Items without a screen in this build are dimmed and skipped.
 //! - Back: hint card → guide (a past or future programme returns to now
-//!   first) → groups → rail → leave the app.
+//!   first, unless [`Columns::back_to_now`] is off) → groups → rail →
+//!   leave the app.
 //!
 //! An empty list (no favourites yet) cannot be entered: the focus stays in
 //! the groups column while the guide explains how to add some.
@@ -77,6 +78,9 @@ pub struct Columns<'a> {
     /// Entries in the groups column ([`crate::lists::entry_count`]).
     pub entries: usize,
     pub rail: &'a [RailItem],
+    /// Back on a past or future programme returns to now before it goes
+    /// to the groups (`guide.back_returns_to_now`).
+    pub back_to_now: bool,
 }
 
 /// What a key did, for the shell to follow up.
@@ -176,7 +180,7 @@ impl Focus {
         }
         match self.pane {
             Pane::Guide => {
-                if !self.return_to_now(list) {
+                if !(cols.back_to_now && self.return_to_now(list)) {
                     self.pane = Pane::Groups;
                 }
                 Outcome::Moved
@@ -209,6 +213,13 @@ impl Focus {
             Outcome::None => Outcome::Moved,
             o => o,
         }
+    }
+
+    /// Selects groups column `entry` from elsewhere (the player's channel
+    /// list): the guide shows its list from the first row, at now, with
+    /// the columns as they were. Whether the selection changed.
+    pub fn preview_list(&mut self, entry: usize, cols: &Columns) -> bool {
+        entry < cols.entries && self.select(entry) == Outcome::Preview
     }
 
     /// A tap on a rail item.

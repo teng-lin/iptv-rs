@@ -25,14 +25,14 @@ navigation rail          groups list            guide (or channel list)     play
 | A group shows only its channels | Moving focus over groups filters the guide live; OK commits and focuses the group's first channel | Same (`iptv_core::browse`, `lists`); an empty list cannot be entered | done | P0 |
 | "All channels" | First real group, the default selection | Same, in the playlist's order | done | P0 |
 | "Favorites" | Group above All channels, the user's favourite channels | Favourites group (order added), kept by channel key per source in the store; menu, player control and editor update it live; empty state with a hint | done | P0 |
-| Recent channels / History | Player panel button; recent channels list | "Recently watched" group after Favourites (store watch history, newest first); player History panel is workstream 2 | partial | P1 |
+| Recent channels / History | Player panel button; recent channels list | "Recently watched" group after Favourites (store watch history, newest first); the player's History lists the same channels, the playing one marked | done | – |
 | Tapping or clicking a group | Same as focusing it: filters | Same; a tap on the list name opens the groups | done | P0 |
 | Navigation rail | Left of the groups: Search, TV, Recordings, My list, Settings (+ Movies, Shows when the playlist has VOD); collapsed to icons, expands with labels when focused | Same, plus Playlists; items without a screen are dimmed and skipped; Playlists and Settings open nothing yet | done | P0 |
 | Playlists | In Settings | none (newest source only) | missing | P0 (ours: a rail entry, see §5) |
-| Back chain | hint → guide → groups → rail → leave | Same | done | P0 |
+| Back chain | hint → guide → groups → rail → leave | Same; a past or future programme returns to now first (`guide.back_returns_to_now`; off: straight to the groups) | done | P0 |
 | Left from the guide's live programme | Opens groups + rail together (the guide shifts right) | Same | done | P1 |
 | Hint card after entering a group | Long OK menu / Left groups / Long Left past | Same keys in our words; any key or Back dismisses it, else 6 s | done | P3 |
-| Channel numbers | Position in the current list (1..n) | Same in the guide and its header; the player card still shows the provider number | partial | P1 (setting later) |
+| Channel numbers | Position in the current list (1..n) | Same in the guide, its header, the player card, the channel list and History (a channel outside the list on screen shows its playlist number) | done | P1 (setting later) |
 | Channel logos | In rows, the info area and the player card | Rows and the guide header; not yet the player card | partial | P1 |
 | Playing marker | ▶ after the playing channel's name | Same (name also tinted) | done | P2 |
 
@@ -52,11 +52,11 @@ navigation rail          groups list            guide (or channel list)     play
 | Behaviour | Reference | Us | Status | P |
 | --- | --- | --- | --- | --- |
 | OK / tap shows the info card | Logo, title, times, progress, minutes left, number + name, stream badges (resolution, frame rate, audio), next programme, full-width time bar; top bar with group name and date/time | same (logo from the playlist; the group is the playlist's) | done | – |
-| Quick actions under the card | TV guide, History | same; History lists the channels played this session | done | – |
+| Quick actions under the card | TV guide, History | same; History lists the recently watched channels (the store's history, newest first; survives restarts) | done | – |
 | Down: full control row | Search, Channels list, Recordings, Multiview, Picture-in-picture, Video track, Audio track, Audio delay, Subtitles, Picture size, Sleep timer, Favourite, … | same order, current values shown; Recordings, Multiview, Picture-in-picture, Channel options, Settings disabled | partial | P1 |
 | Track selection (video, audio, subtitles) | Choosers | Choosers on both hosts (`tv.player` `tracks` event, `videoTrack`/`audioTrack`/`textTrack`); verified on Linux, Android compiled only | done | – |
 | Audio delay | Chooser (ms) | ±1 s in 50 ms steps; mpv `audio-delay`, Media3 through a delayed audio sink (Android unverified) | done | – |
-| Player remote defaults | OK panels, Long OK menu, Left channels list, Long Left list beside a preview, Right most recent channel, Long Back stop, Up/Down zap | same (keymap); Long Back needs Back key events from NSH (desktop: Stop key) | partial | P0 |
+| Player remote defaults | OK panels, Long OK menu, Left channels list, Long Left list beside a preview, Right most recent channel, Long Back stop, Up/Down zap | same (keymap); Left's list is the guide's list (same numbers, Left in it: the guide's groups column, moving previews, OK enters). Long Back from NSH's Back key (Android; its release takes no step back), not yet verified on a device; desktop: Stop key | done | P0 |
 | Back in full screen | Panels → guide with preview still playing | same | done | – |
 | Tap preview → full screen; tap video → panels | yes | yes | done | – |
 | Desktop: play/pause, volume/mute, window full screen, mouse-visible controls | (TV app: n/a) | mouse shows the panels (hidden 3 s after it rests); play/pause, mute, volume bar and steps, full screen buttons; F11, double click, Escape; Ctrl+M, Ctrl+Up/Down. Keys and mouse movement verified; clicks not yet (synthetic clicks did not reach NSH's presses) | done | – |
@@ -80,7 +80,7 @@ navigation rail          groups list            guide (or channel list)     play
 | --- | --- | --- |
 | Several playlists; choose the one shown; refresh, rename, change EPG URL, delete with consequences stated; add (wizard) | done: playlists screen (`playlists_view.rs`) with show (remembered; startup opens it), refresh now / refresh all, rename, provider details and User-Agent (checked by importing, kept only if they work), one guide link per playlist, delete with consequences; per-playlist last channel. Not yet: several guide sources per playlist, enable/disable, logo priority, catch-up type, update interval, manage groups | P0 |
 | Settings screen over the `iptv-settings` catalogue (pages in the reference's order: General, Playlists, TV guide data, Appearance, Playback, Remote control, Parental control, Other, About; switches, choice lists, steppers, text; persisted in `settings.json`) | done: rows the app does not act on are dimmed ("not available yet", "in a later version"); device-level TV-box features are not offered | – |
-| Settings that change behaviour: guide data (update interval, on start, on playlist change, past days kept, descriptions, update now, delete, last update status), catch-up seek keys and steps, panel timeouts, channel-change info, last channel on start, Back twice to leave, User-Agent, search (favourites first, history, past without replay, stay on search), accent and background colours, overlay transparency| done (Back returns to now: always on; its switch is not wired since the Back chain moved to `browse.rs`) | – |
+| Settings that change behaviour: guide data (update interval, on start, on playlist change, past days kept, descriptions, update now, delete, last update status), catch-up seek keys and steps, panel timeouts, channel-change info, last channel on start, Back twice to leave, User-Agent, search (favourites first, history, past without replay, stay on search), accent and background colours, overlay transparency| done (including Back returns to now) | – |
 | Black picture while tuning | missing (needs a `tv.player` prop on both hosts; the Linux player always blanks) | P2 |
 | Channel numbering, stay on guide/list, clock, remote key remapping | missing (keys are listed read-only) | P2 |
 

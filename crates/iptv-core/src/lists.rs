@@ -192,6 +192,14 @@ impl ChannelList {
         row as u32 + 1
     }
 
+    /// The number catalog `channel` shows wherever it appears (the player
+    /// card, its lists): its place in this list, else (a channel the list
+    /// does not have) the catalog's own number.
+    pub fn number_of(&self, channel: usize, catalog: &dyn Schedule) -> u32 {
+        self.row_of(channel)
+            .map_or_else(|| catalog.channel_number(channel), ChannelList::number)
+    }
+
     /// Channel up/down from `row` by `step`, wrapping within the list.
     pub fn zap(&self, row: usize, step: isize) -> Option<usize> {
         let len = self.len();

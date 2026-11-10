@@ -1,19 +1,25 @@
 //! The player's channel list (Left over full-screen video; Long Left
 //! beside the video shrunk to a preview; the control row's Channels): the
-//! playing group's channels with what is on now, or the groups. State is
-//! `iptv_core::channel_list`; this draws it, takes its keys and plays what
-//! it picks. The video stays the one persistent layer: preview mode only
-//! changes its rectangle ([`preview_rect`]).
+//! list the guide shows (`Ui::list`: a group, All channels, Favourites,
+//! Recently watched) numbered as in the guide, with what is on now. Left
+//! opens the guide's groups column beside it; moving over its entries
+//! changes the guide's list as the guide's own column does
+//! (`lists::preview`). State is `iptv_core::channel_list`; this draws it,
+//! takes its keys and plays what it picks. The video stays the one
+//! persistent layer: preview mode only changes its rectangle
+//! ([`preview_rect`]).
 
 use iptv_core::channel_list::{ChannelList, ListMode, ListPane, Outcome};
+use iptv_core::lists::{ChannelList as Rows, FAVORITES, entry_count, entry_name};
 use iptv_nav::Action;
 use nsh_core::prelude::*;
 
-use crate::theme::{FOCUS_ALPHA, RADIUS, TEXT_SECONDARY_ALPHA};
+use crate::theme::{FOCUS_ALPHA, RADIUS, RESTING_ALPHA, TEXT_SECONDARY_ALPHA};
 use crate::{Playback, Ui, ViewMode, clock, tint};
 
 const WHITE: u32 = 0xFFFFFF;
 const LIST_W: f32 = 420.0;
+const GROUPS_W: f32 = 260.0;
 const ROW_H: f32 = 58.0;
 const GROUP_H: f32 = 46.0;
 /// Page Up/Down moves this many rows.
@@ -29,13 +35,23 @@ pub fn open(ui: Ui, mode: ListMode) {
         return;
     }
     ui.panels.update(|p| p.hide());
-    let s = crate::schedule();
-    let list = ChannelList::open(mode, ui.playing.get_untracked(), &*s);
-    ui.channels.set(Some(list));
+    let list = ui.list.get_untracked();
+    let state = ChannelList::open(mode, ui.playing.get_untracked(), &list);
+    ui.channels.set(Some(state));
 }
 
 pub fn close(ui: Ui) {
     ui.channels.set(None);
+}
+
+fn groups_shown(ui: Ui) -> bool {
+    ui.channels
+        .with(|c| c.is_some_and(|c| c.pane == ListPane::Groups))
+}
+
+/// The width the list takes at the left.
+fn panel_width(ui: Ui) -> f32 {
+    LIST_W + if groups_shown(ui) { GROUPS_W } else { 0.0 }
 }
 
 /// The video's rectangle while the list shows beside it: right of the
@@ -45,18 +61,21 @@ pub fn preview_rect(ui: Ui, width: f32, _height: f32) -> Option<(f32, f32, f32, 
         .channels
         .with(|c| c.is_some_and(|c| c.mode == ListMode::Preview));
     preview.then(|| {
-        let x = LIST_W + 40.0;
+        let x = panel_width(ui) + 40.0;
         let w = (width - x - 40.0).max(160.0);
         (x, 40.0, w, w * 9.0 / 16.0)
     })
 }
 
-fn update(ui: Ui, f: impl FnOnce(&mut ChannelList, &dyn crate::guide::Schedule) -> Outcome) {
-    let s = crate::schedule();
+/// Runs a step on the list's state with the guide's list and the groups
+/// column's length, then does what it asks.
+fn update(ui: Ui, f: impl FnOnce(&mut ChannelList, &Rows, usize) -> Outcome) {
+    let list = ui.list.get_untracked();
+    let entries = entry_count(&*crate::schedule());
     let mut outcome = Outcome::Stay;
     ui.channels.update(|c| {
         if let Some(c) = c.as_mut() {
-            outcome = f(c, &*s);
+            outcome = f(c, &list, entries);
         }
     });
     match outcome {
@@ -67,32 +86,39 @@ fn update(ui: Ui, f: impl FnOnce(&mut ChannelList, &dyn crate::guide::Schedule) 
             crate::lists::show_channel(ui, channel);
             ui.play(channel, Playback::Live);
         }
+        Outcome::Preview(entry) => {
+            crate::lists::preview(ui, entry);
+            let list = ui.list.get_untracked();
+            ui.channels
+                .update(|c| c.iter_mut().for_each(|c| c.shown(&list)));
+        }
     }
 }
 
 /// The remote while the list shows.
 pub fn key(ui: Ui, action: Action) {
     let playing = ui.playing.get_untracked();
+    let step = |by: isize| update(ui, move |c, l, n| c.move_focus(by, l, n));
     match action {
-        Action::MoveUp => update(ui, |c, s| step(c, -1, s)),
-        Action::MoveDown => update(ui, |c, s| step(c, 1, s)),
-        Action::PageUp => update(ui, |c, s| step(c, -PAGE, s)),
-        Action::PageDown => update(ui, |c, s| step(c, PAGE, s)),
-        Action::MoveLeft => update(ui, |c, _| {
-            c.left();
+        Action::MoveUp => step(-1),
+        Action::MoveDown => step(1),
+        Action::PageUp => step(-PAGE),
+        Action::PageDown => step(PAGE),
+        Action::MoveLeft => update(ui, |c, l, _| {
+            c.left(l);
             Outcome::Stay
         }),
-        Action::MoveRight => update(ui, |c, s| {
-            c.right(s);
+        Action::MoveRight => update(ui, |c, l, _| {
+            c.right(l);
             Outcome::Stay
         }),
-        Action::Select => update(ui, |c, s| c.select(playing, s)),
-        Action::Back => update(ui, |c, _| c.back()),
+        Action::Select => update(ui, |c, l, _| c.select(playing, l)),
+        Action::Back => update(ui, |c, _, _| c.back()),
         Action::ChannelUp | Action::ChannelDown => {
             crate::input::zap(ui, if action == Action::ChannelUp { -1 } else { 1 });
             if let Some(ch) = ui.playing.get_untracked() {
-                update(ui, |c, s| {
-                    c.follow(ch, s);
+                update(ui, |c, l, _| {
+                    c.follow(ch, l);
                     Outcome::Stay
                 });
             }
@@ -102,25 +128,13 @@ pub fn key(ui: Ui, action: Action) {
     }
 }
 
-fn step(c: &mut ChannelList, by: isize, s: &dyn crate::guide::Schedule) -> Outcome {
-    c.move_focus(by, s);
-    Outcome::Stay
-}
-
-/// A tap on row `index` of the open pane: focus it and pick it.
-fn tap(ui: Ui, index: usize) {
-    ui.touched();
-    let playing = ui.playing.get_untracked();
-    update(ui, |c, s| match c.pane {
-        ListPane::Channels => {
-            c.channel = c.channels(s).start + index;
-            c.select(playing, s)
-        }
-        ListPane::Groups => {
-            c.enter_group(index, s);
-            Outcome::Stay
-        }
-    });
+/// What an empty list says.
+fn empty_text(ui: Ui) -> String {
+    match ui.list.with(|l| (l.is_empty(), l.entry())) {
+        (false, _) => String::new(),
+        (true, FAVORITES) => "No favourites yet".to_owned(),
+        (true, _) => "No channels here".to_owned(),
+    }
 }
 
 pub fn layer(ui: Ui) -> impl IntoElement {
@@ -140,31 +154,90 @@ pub fn layer(ui: Ui) -> impl IntoElement {
     let open = move || is_open(ui);
     let state = move || ui.channels.get();
     let overlay = move || state().is_some_and(|c| c.mode == ListMode::Overlay);
-    let groups = move || state().is_some_and(|c| c.pane == ListPane::Groups);
-    let count = move || {
-        let s = crate::schedule();
-        state().map_or(0, |c| match c.pane {
-            ListPane::Channels => c.channels(&*s).len(),
-            ListPane::Groups => s.group_count(),
-        })
-    };
-    let focus_row = computed(move || {
-        let s = crate::schedule();
-        state().map(|c| match c.pane {
-            ListPane::Channels => c.channel.saturating_sub(c.channels(&*s).start),
-            ListPane::Groups => c.group_focus,
-        })
-    });
-    let list = element_ref();
+    let groups = move || groups_shown(ui);
+    let row_focus = computed(move || state().map(|c| (c.row, c.pane == ListPane::Channels)));
+    let entry_focus = computed(move || state().map(|c| (c.entry, c.pane == ListPane::Groups)));
+    let rows = element_ref();
+    let entries = element_ref();
     effect(move || {
-        if let Some(i) = focus_row.get() {
-            list.scroll_to_index(i as u32, percentage(0.5), px(0.0), false);
+        if let Some((i, _)) = row_focus.get() {
+            rows.scroll_to_index(i as u32, percentage(0.5), px(0.0), false);
+        }
+    });
+    effect(move || {
+        if let Some((i, _)) = entry_focus.get() {
+            entries.scroll_to_index(i as u32, percentage(0.5), px(0.0), false);
         }
     });
     let panel = move || {
         let alpha = if overlay() { 0xE0 } else { 0xFF };
         tint(ui.theme.with(|t| t.background.panel), alpha)
     };
+    let heading = |s: Box<dyn Fn() -> String>| {
+        text(s)
+            .px(px(14.0))
+            .py(px(10.0))
+            .number_of_lines(1)
+            .text_size(px(15.0))
+            .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA))
+    };
+    let groups_column = view()
+        .w(move || px(if groups() { GROUPS_W } else { 0.0 }))
+        .opacity(move || if groups() { 1.0_f32 } else { 0.0 })
+        .overflow_hidden()
+        .pt_safe_area()
+        .py(px(16.0))
+        .bg(panel)
+        .pointer_events(PointerEvents::Auto)
+        .child(heading(Box::new(|| "Groups".to_owned())).px(px(22.0)))
+        .child(
+            virtual_list(
+                move || {
+                    ui.data_version.get();
+                    entry_count(&*crate::schedule())
+                },
+                move |at| entry_row(ui, at, entry_focus),
+            )
+            .estimated_item_size(px(GROUP_H))
+            .element_ref(&entries)
+            .flex_1(),
+        );
+    let channels_column = view()
+        .w(px(LIST_W))
+        .pt_safe_area()
+        .px(px(12.0))
+        .py(px(16.0))
+        .bg(panel)
+        .pointer_events(PointerEvents::Auto)
+        .child(
+            heading(Box::new(move || {
+                if groups() {
+                    crate::lists::list_name(ui)
+                } else {
+                    format!("◂  {}", crate::lists::list_name(ui))
+                }
+            }))
+            .on_press(move || {
+                ui.touched();
+                update(ui, |c, l, _| {
+                    c.left(l);
+                    Outcome::Stay
+                });
+            }),
+        )
+        .child(when(
+            move || ui.list.with(|l| l.is_empty()),
+            move || heading(Box::new(move || empty_text(ui))),
+        ))
+        .child(
+            virtual_list(
+                move || ui.list.with(|l| l.len()),
+                move |at| channel_row(ui, at, row_focus),
+            )
+            .estimated_item_size(px(ROW_H))
+            .element_ref(&rows)
+            .flex_1(),
+        );
     view()
         .absolute()
         .inset_0()
@@ -177,44 +250,8 @@ pub fn layer(ui: Ui) -> impl IntoElement {
                 PointerEvents::None
             }
         })
-        .child(
-            view()
-                .w(px(LIST_W))
-                .pt_safe_area()
-                .px(px(12.0))
-                .py(px(16.0))
-                .bg(panel)
-                .pointer_events(PointerEvents::Auto)
-                .child(
-                    text(move || {
-                        let s = crate::schedule();
-                        match state() {
-                            Some(c) if c.pane == ListPane::Groups => "Groups".to_owned(),
-                            Some(c) if s.group_count() > 0 => {
-                                format!("◂  {}", s.group_name(c.group))
-                            }
-                            _ => String::new(),
-                        }
-                    })
-                    .px(px(14.0))
-                    .py(px(10.0))
-                    .text_size(px(15.0))
-                    .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA))
-                    .on_press(move || {
-                        ui.touched();
-                        update(ui, |c, _| {
-                            c.left();
-                            Outcome::Stay
-                        });
-                    }),
-                )
-                .child(
-                    virtual_list(count, move |at| row(ui, at.index(), groups, focus_row))
-                        .estimated_item_size(px(ROW_H))
-                        .element_ref(&list)
-                        .flex_1(),
-                ),
-        )
+        .child(groups_column)
+        .child(channels_column)
         .child(
             // Over the video: a tap closes the list. Beside the preview:
             // the focused channel's programme; a tap on the preview goes
@@ -230,24 +267,50 @@ pub fn layer(ui: Ui) -> impl IntoElement {
         )
 }
 
-fn row(
-    ui: Ui,
-    index: usize,
-    groups: impl Fn() -> bool + Copy + 'static,
-    focus_row: Memo<Option<usize>>,
-) -> impl IntoElement {
+fn focus_bg(ui: Ui, focused: bool, current: bool) -> Rgba {
+    if focused {
+        tint(ui.theme.with(|t| t.accent.main), FOCUS_ALPHA)
+    } else if current {
+        tint(WHITE, RESTING_ALPHA)
+    } else {
+        tint(WHITE, 0)
+    }
+}
+
+/// An entry of the groups column; the list shown is marked. Cells are
+/// recycled: `at` is read where it is used.
+fn entry_row(ui: Ui, at: Position, focus: Memo<Option<(usize, bool)>>) -> impl IntoElement {
+    let current = move || ui.list.with(|l| l.entry()) == at.index();
+    let focused = move || ui.keys_shown() && focus.get() == Some((at.index(), true));
+    view()
+        .h(px(GROUP_H))
+        .mx(px(8.0))
+        .px(px(14.0))
+        .justify_center()
+        .rounded(px(RADIUS))
+        .bg(move || focus_bg(ui, focused(), current()))
+        .on_press(move || {
+            ui.touched();
+            update(ui, |c, l, _| c.tap_entry(at.index(), l));
+        })
+        .child(
+            text(move || {
+                ui.data_version.get();
+                entry_name(at.index(), &*crate::schedule())
+            })
+            .number_of_lines(1)
+            .text_size(px(16.0))
+            .text_color(rgb(WHITE)),
+        )
+}
+
+/// A row of the list: its number (row + 1, as in the guide), name, the
+/// playing marker, and what is on now.
+fn channel_row(ui: Ui, at: Position, focus: Memo<Option<(usize, bool)>>) -> impl IntoElement {
     let entry = move || {
         ui.data_version.get();
+        let ch = ui.list.with(|l| l.channel(at.index()))?;
         let s = crate::schedule();
-        let c = ui.channels.get()?;
-        if groups() {
-            let marker = if c.group == index { "•  " } else { "    " };
-            return Some((format!("{marker}{}", s.group_name(index)), String::new()));
-        }
-        let ch = c.channels(&*s).start + index;
-        if ch >= s.channel_count() {
-            return None;
-        }
         let now = ui.focus.with(|f| f.now);
         let playing = if ui.playing.get() == Some(ch) {
             "  ▶"
@@ -256,57 +319,56 @@ fn row(
         };
         let p = s.program_at(ch, now);
         Some((
-            format!("{}  {}{playing}", s.channel_number(ch), s.channel_name(ch)),
+            format!(
+                "{}  {}{playing}",
+                Rows::number(at.index()),
+                s.channel_name(ch)
+            ),
             format!("{}  {}", clock(p.start), s.title(ch, p)),
         ))
     };
-    let focused = move || ui.keys_shown() && focus_row.get() == Some(index);
+    let focus = move || focus.get().filter(|f| f.0 == at.index());
+    let focused = move || ui.keys_shown() && focus().is_some_and(|f| f.1);
+    // While the groups have the focus, the row it returns to stays marked.
+    let resting = move || focus().is_some_and(|f| !f.1);
     view()
-        .h(move || px(if groups() { GROUP_H } else { ROW_H }))
+        .h(px(ROW_H))
         .px(px(14.0))
         .justify_center()
         .gap(px(2.0))
         .rounded(px(RADIUS))
-        .bg(move || {
-            if focused() {
-                tint(ui.theme.with(|t| t.accent.main), FOCUS_ALPHA)
-            } else {
-                tint(WHITE, 0)
-            }
+        .bg(move || focus_bg(ui, focused(), resting()))
+        .on_press(move || {
+            ui.touched();
+            let playing = ui.playing.get_untracked();
+            update(ui, |c, l, _| c.tap_row(at.index(), playing, l));
         })
-        .on_press(move || tap(ui, index))
         .child(
             text(move || entry().map_or(String::new(), |e| e.0))
                 .number_of_lines(1)
                 .text_size(px(16.0))
                 .text_color(rgb(WHITE)),
         )
-        .child(when(
-            move || !groups(),
-            move || {
-                text(move || entry().map_or(String::new(), |e| e.1))
-                    .number_of_lines(1)
-                    .text_size(px(13.0))
-                    .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA))
-            },
-        ))
+        .child(
+            text(move || entry().map_or(String::new(), |e| e.1))
+                .number_of_lines(1)
+                .text_size(px(13.0))
+                .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA)),
+        )
 }
 
 /// Under the preview: the focused channel and its programme now.
 fn preview_info(ui: Ui) -> impl IntoElement {
     let info = move || {
         ui.data_version.get();
+        let row = ui.channels.get()?.row;
+        let ch = ui.list.with(|l| l.channel(row))?;
         let s = crate::schedule();
-        let c = ui.channels.get()?;
         let now = ui.focus.with(|f| f.now);
-        let p = s.program_at(c.channel, now);
+        let p = s.program_at(ch, now);
         Some((
-            format!(
-                "{}  {}",
-                s.channel_number(c.channel),
-                s.channel_name(c.channel)
-            ),
-            s.title(c.channel, p),
+            format!("{}  {}", Rows::number(row), s.channel_name(ch)),
+            s.title(ch, p),
             format!("{}–{}", clock(p.start), clock(p.end)),
         ))
     };

@@ -103,7 +103,7 @@ impl Keymap {
     /// iptv-rs's default remote map.
     pub fn defaults() -> Keymap {
         use Action as A;
-        use Context::{Controls, Guide, Menu, Player};
+        use Context::{Controls, Groups, Guide, Menu, Player};
         use Press::{Long, Short};
         use RemoteKey as K;
         let g = None;
@@ -137,6 +137,7 @@ impl Keymap {
             b(Some(Guide), K::Ok, Long, A::ShowMenu),
             b(Some(Guide), K::Left, Long, A::PastPrograms),
             b(Some(Guide), K::Back, Long, A::ReturnToPlayer),
+            b(Some(Groups), K::Back, Long, A::ReturnToPlayer),
             // Ch+/Ch- page the guide's channel list (observed); over video they zap.
             b(Some(Guide), K::ChannelUp, Short, A::PageUp),
             b(Some(Guide), K::ChannelDown, Short, A::PageDown),
@@ -152,6 +153,8 @@ impl Keymap {
             b(Some(Player), K::Left, Long, A::ShowChannelsPreview),
             b(Some(Player), K::Right, Short, A::PreviousChannel),
             b(Some(Player), K::Back, Long, A::Stop),
+            // With the panels up too.
+            b(Some(Controls), K::Back, Long, A::Stop),
             // Menu opens the control row (observed).
             b(Some(Player), K::Menu, Short, A::ShowPanels),
             // Remotes without media keys: hold 0 for the last channel.
@@ -241,6 +244,42 @@ mod tests {
             !k.has_long(Player, RemoteKey::Right),
             "the most recent channel comes at once"
         );
+    }
+
+    #[test]
+    fn long_back_returns_to_the_player_or_stops_and_short_back_stays_back() {
+        let k = Keymap::defaults();
+        for ctx in [Guide, Groups] {
+            assert_eq!(
+                k.resolve(ctx, RemoteKey::Back, Press::Long),
+                Some(Action::ReturnToPlayer)
+            );
+        }
+        for ctx in [Player, Controls] {
+            assert_eq!(
+                k.resolve(ctx, RemoteKey::Back, Press::Long),
+                Some(Action::Stop)
+            );
+        }
+        // Short Back is Back everywhere (the platform's Back handler acts on
+        // it); where nothing is bound long it comes at once.
+        for ctx in [
+            Guide,
+            Groups,
+            Player,
+            Controls,
+            ChannelList,
+            Context::Editor,
+            Menu,
+        ] {
+            assert_eq!(
+                k.resolve(ctx, RemoteKey::Back, Press::Short),
+                Some(Action::Back)
+            );
+        }
+        for ctx in [ChannelList, Context::Editor, Menu] {
+            assert!(!k.has_long(ctx, RemoteKey::Back));
+        }
     }
 
     #[test]

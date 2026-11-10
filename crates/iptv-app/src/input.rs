@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use iptv_core::channel_list::ListMode;
 use iptv_core::panels::{Control, QuickAction, Shown};
 use iptv_core::tracks::Kind as Track;
-use iptv_nav::{Action, Context, Keymap, Phase, PressDetector, RemoteKey};
+use iptv_nav::{Action, BackGuard, Context, Keymap, Phase, Press, PressDetector, RemoteKey};
 use nsh_core::keymap::KeyPhase;
 use nsh_core::prelude::*;
 
@@ -50,6 +50,9 @@ const KEYS: &[(&str, RemoteKey)] = &[
     ("green", RemoteKey::Green),
     ("yellow", RemoteKey::Yellow),
     ("blue", RemoteKey::Blue),
+    // Back as a key (Android): heard for Long Back only; its short press
+    // is the platform's (`on_back_press`, see [`route`]).
+    ("back", RemoteKey::Back),
     // Keyboard stand-ins.
     ("m", RemoteKey::Menu),
     ("g", RemoteKey::Guide),
@@ -163,7 +166,7 @@ fn key_event(ui: Ui, nav: &Rc<RefCell<Nav>>, key: RemoteKey, phase: Phase) {
             .detector
             .feed(key, phase, now, has_long)
             .and_then(|(k, press)| {
-                catch_up_keys(&ui, ctx, k, nav.keymap.resolve(ctx, k, press)).map(|a| (k, a))
+                catch_up_keys(&ui, ctx, k, nav.keymap.resolve(ctx, k, press)).map(|a| (k, press, a))
             });
         let deadline = (phase == Phase::Down)
             .then(|| nav.detector.long_deadline_ms())
@@ -171,8 +174,11 @@ fn key_event(ui: Ui, nav: &Rc<RefCell<Nav>>, key: RemoteKey, phase: Phase) {
             .map(|at| at.saturating_sub(now));
         (action, deadline)
     };
-    if let Some((key, action)) = action {
-        apply(ui, key, action);
+    if key == RemoteKey::Back && phase == Phase::Down {
+        ui.back_guard.update(BackGuard::pressed);
+    }
+    if let Some((key, press, action)) = action {
+        act(ui, key, press, action);
     }
     // IR remotes never auto-repeat: decide long press on a timer too. If the
     // key was released (or a repeat already fired it), the poll finds nothing.
@@ -184,11 +190,11 @@ fn key_event(ui: Ui, nav: &Rc<RefCell<Nav>>, key: RemoteKey, phase: Phase) {
                 let now = nav.start.elapsed().as_millis() as u64;
                 nav.detector
                     .poll(now)
-                    .and_then(|(k, press)| nav.keymap.resolve(ctx, k, press).map(|a| (k, a)))
+                    .and_then(|(k, press)| nav.keymap.resolve(ctx, k, press).map(|a| (k, press, a)))
             };
-            if let Some((key, action)) = action {
+            if let Some((key, press, action)) = action {
                 log::info!("iptv long press by timer: {action:?}");
-                apply(ui, key, action);
+                act(ui, key, press, action);
             }
         });
     }
@@ -201,7 +207,7 @@ fn key_event(ui: Ui, nav: &Rc<RefCell<Nav>>, key: RemoteKey, phase: Phase) {
         s.last_us = us;
         s.max_us = s.max_us.max(us);
     });
-    let action = action.map(|(_, a)| a);
+    let action = action.map(|(_, _, a)| a);
     log::info!(
         "iptv key={} phase={phase:?} ctx={ctx:?} action={action:?} n={} handler_us={us} mode={:?} panels={:?}",
         key.name(),
@@ -209,6 +215,71 @@ fn key_event(ui: Ui, nav: &Rc<RefCell<Nav>>, key: RemoteKey, phase: Phase) {
         ui.mode.get(),
         ui.panels.with(|p| p.shown)
     );
+}
+
+/// Where a resolved key goes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Route {
+    /// The app applies it.
+    Apply,
+    /// A short Back: the platform's Back handler (`on_back_press` →
+    /// `go_back`) takes that step; applying it too would go back twice.
+    Platform,
+    /// A Long Back: the app applies it, and the platform's Back that
+    /// follows on release is swallowed.
+    ApplyAndSwallow,
+}
+
+fn route(key: RemoteKey, press: Press) -> Route {
+    match (key, press) {
+        (RemoteKey::Back, Press::Short) => Route::Platform,
+        (RemoteKey::Back, Press::Long) => Route::ApplyAndSwallow,
+        _ => Route::Apply,
+    }
+}
+
+fn act(ui: Ui, key: RemoteKey, press: Press, action: Action) {
+    match route(key, press) {
+        Route::Platform => {}
+        Route::Apply => apply(ui, key, action),
+        Route::ApplyAndSwallow => {
+            arm_back_guard(ui);
+            apply(ui, key, action);
+        }
+    }
+}
+
+/// A Long Back acted: its release must not also go back (`lib.rs`
+/// `bind_back`), unless no release comes in time.
+fn arm_back_guard(ui: Ui) {
+    let now = ui.now_ms();
+    ui.back_guard.update(|g| g.long_back(now));
+    let wait = Duration::from_millis(BackGuard::TIMEOUT_MS);
+    let _ = set_timeout(wait, move || {
+        if ui.back_guard.with_untracked(BackGuard::armed) {
+            let now = ui.now_ms();
+            let mut expired = false;
+            ui.back_guard.update(|g| expired = g.expire(now));
+            if expired {
+                log::info!("iptv long back: no release came");
+            }
+        }
+    });
+}
+
+/// The platform's Back (`on_back_press`): `true` when it is the release of
+/// a Long Back that acted, which takes no step back.
+pub(crate) fn swallow_back(ui: Ui) -> bool {
+    if !ui.back_guard.with_untracked(BackGuard::armed) {
+        return false;
+    }
+    let now = ui.now_ms();
+    let mut swallow = false;
+    ui.back_guard.update(|g| swallow = g.take(now));
+    if swallow {
+        log::info!("iptv back: released after a long back; no step back");
+    }
+    swallow
 }
 
 /// While a programme plays from the archive, the keys `catchup.seek_keys`
@@ -495,6 +566,14 @@ fn page(ui: Ui, dir: isize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn back_as_a_key_acts_only_when_long() {
+        assert_eq!(route(RemoteKey::Back, Press::Short), Route::Platform);
+        assert_eq!(route(RemoteKey::Back, Press::Long), Route::ApplyAndSwallow);
+        assert_eq!(route(RemoteKey::Left, Press::Long), Route::Apply);
+        assert_eq!(route(RemoteKey::Ok, Press::Short), Route::Apply);
+    }
 
     #[test]
     fn seek_keys_choose_the_time_bar_keys() {
