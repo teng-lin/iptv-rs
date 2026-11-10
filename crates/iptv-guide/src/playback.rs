@@ -48,7 +48,7 @@ enum Inner {
     },
     Stalker {
         /// Updated after a re-authentication so the next link reuses it.
-        session: RefCell<StalkerSession>,
+        session: RefCell<Box<StalkerSession>>,
     },
 }
 
@@ -95,7 +95,7 @@ impl PlaybackContext {
     pub fn stalker(session: StalkerSession) -> Self {
         Self {
             inner: Inner::Stalker {
-                session: RefCell::new(session),
+                session: RefCell::new(Box::new(session)),
             },
         }
     }
@@ -111,7 +111,7 @@ impl PlaybackContext {
     /// Keeps a session that re-authenticated while resolving a link.
     pub fn update_stalker_session(&self, updated: StalkerSession) {
         if let Inner::Stalker { session } = &self.inner {
-            *session.borrow_mut() = updated;
+            **session.borrow_mut() = updated;
         }
     }
 
@@ -170,7 +170,7 @@ pub enum Resolution {
     /// The portal must issue a temporary link first (`create_link`, valid
     /// for seconds: resolve right before playing, never store it). Send it
     /// with `session`, then build the source with [`StalkerLink::source`].
-    StalkerLink(StalkerLink),
+    StalkerLink(Box<StalkerLink>),
     Unavailable(Unavailable),
 }
 
@@ -265,11 +265,13 @@ fn live(context: Option<&PlaybackContext>, channel: &Channel, clock: Clock) -> R
         },
         StreamLocator::Stalker { cmd, link } => match (static_playback_url(cmd, *link), inner) {
             (Some(url), _) => Resolution::Play(source(context, url, channel)),
-            (None, Some(Inner::Stalker { session })) => Resolution::StalkerLink(StalkerLink {
-                session: session.borrow().clone(),
-                cmd: cmd.clone(),
-                channel_headers: Vec::new(),
-            }),
+            (None, Some(Inner::Stalker { session })) => {
+                Resolution::StalkerLink(Box::new(StalkerLink {
+                    session: (**session.borrow()).clone(),
+                    cmd: cmd.clone(),
+                    channel_headers: Vec::new(),
+                }))
+            }
             (None, _) => Resolution::Unavailable(Unavailable::NeedsAccount),
         },
     }

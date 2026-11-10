@@ -308,3 +308,21 @@ fn zapping_handles_uneven_and_single_channel_groups() {
     let empty = Groups(vec![], 0);
     assert_eq!(zap_target(&empty, 0, 1), 0);
 }
+
+#[test]
+fn the_previous_stream_reports_nothing_while_resolving() {
+    let mut h = Health::new(policy());
+    h.start(true, 0);
+    assert_eq!(h.on_state(PlayerState::Ready, 5), None);
+    assert_eq!(h.on_state(PlayerState::Ended, 6), None);
+    assert_eq!(
+        h.phase(),
+        &Phase::Resolving,
+        "still waiting for the address"
+    );
+    // A resolver failure is an error like any other.
+    assert!(
+        h.on_error(ErrorKind::Resolve, "Network".into(), 7)
+            .is_some()
+    );
+}

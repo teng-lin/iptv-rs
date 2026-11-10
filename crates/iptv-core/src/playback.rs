@@ -340,7 +340,8 @@ impl Health {
     /// The host reported a state change.
     pub fn on_state(&mut self, state: PlayerState, now: u64) -> Option<Retry> {
         match (state, &self.phase) {
-            (_, Phase::Idle | Phase::Failed(_) | Phase::Retrying { .. }) => None,
+            // The player still shows the previous stream until resolved.
+            (_, Phase::Idle | Phase::Resolving | Phase::Failed(_) | Phase::Retrying { .. }) => None,
             (PlayerState::Ready, _) => {
                 if self.phase != Phase::Playing {
                     // A rebuffer keeps the stability clock running.
@@ -351,10 +352,6 @@ impl Health {
             }
             (PlayerState::Buffering, Phase::Playing) => {
                 self.enter(Phase::Buffering, now);
-                None
-            }
-            (PlayerState::Buffering, Phase::Resolving) => {
-                self.enter(Phase::Loading, now);
                 None
             }
             (PlayerState::Ended, _) if self.live => {
