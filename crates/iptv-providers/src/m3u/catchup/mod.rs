@@ -1,17 +1,23 @@
 //! Catch-up (archive) URLs for M3U channels.
 //!
-//! Precedence (IPTVnator's, extended with templates and Flussonic/XC):
+//! Rules per [`CatchUpKind`] (Kodi pvr.iptvsimple's modes; IPTVnator's
+//! `shift` fallback for archive days without a type):
 //!
-//! 1. `Unsupported` type → none.
-//! 2. `append`: live URL + expanded `catchup-source`.
-//! 3. `catchup-source` is an absolute HTTP(S) URL (any type): expanded; if it
-//!    has no placeholders, `utc`/`lutc` query parameters are set on it.
-//! 4. `flussonic`: `…/index.m3u8` → `…/index-{start}-{duration}.m3u8`,
-//!    `…/mpegts` → `…/timeshift_abs-{start}.ts`.
-//! 5. `xc`: Xtream-shaped live URL → `/timeshift/U/P/{minutes}/{Y-m-d:H-M}/{id}.EXT`,
-//!    EXT `m3u8` for an `.m3u8` live URL, else `ts`.
-//! 6. `shift` (also archive days without a type): `utc`/`lutc` on the live URL.
-//! 7. `default` without a usable source → none.
+//! - `default`: the expanded `catchup-source` is the replay URL. A source
+//!   without placeholders is used **verbatim** (Kodi). IPTVnator instead sets
+//!   `utc`/`lutc` on such a source; we follow Kodi so a fixed archive URL is
+//!   never altered. A source without `scheme://` is appended to the live URL.
+//! - `append`: live URL + expanded `catchup-source`.
+//! - `shift`, `flussonic`, `xc`: an absolute HTTP(S) `catchup-source`, when
+//!   declared, wins and is expanded as for `default`; otherwise the URL is
+//!   derived from the live URL:
+//!   - `shift`: `utc`/`lutc` query parameters on the live URL; other query
+//!     bytes are kept exactly as written.
+//!   - `flussonic`: `…/NAME.m3u8` → `…/NAME-{start}-{duration}.m3u8`,
+//!     `…/mpegts` → `…/timeshift_abs-{start}.ts`.
+//!   - `xc`: Xtream-shaped live URL → `/timeshift/U/P/{minutes}/{Y-m-d:H-M}/{id}.EXT`,
+//!     EXT `m3u8` for an `.m3u8` live URL, else `ts`.
+//! - Unknown types and Stalker channels: [`CatchupError::Unsupported`].
 //!
 //! Template placeholders, in `{x}` or `${x}` form: `utc`/`start` (programme
 //! start), `utcend`/`end`, `lutc`/`now`/`timestamp`, `duration` (seconds),
@@ -105,24 +111,39 @@ pub fn build_catchup_url(channel: &Channel, req: CatchupRequest) -> Result<Strin
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty());
-    if catch_up.kind == CatchUpKind::Append {
-        let source = source.ok_or(CatchupError::MissingTemplate)?;
-        return Ok(format!("{live}{}", expand(source, &vars)));
-    }
-    if let Some(src) = source.filter(|s| is_http(s)) {
-        let expanded = expand(src, &vars);
-        return if expanded == src {
-            set_utc_params(src, &vars)
-        } else {
-            Ok(expanded)
-        };
-    }
+    let appended = |src: &str| checked(format!("{live}{}", expand(src, &vars)));
     match &catch_up.kind {
-        CatchUpKind::Flussonic => flussonic(live, &vars),
-        CatchUpKind::Xtream => xtream(live, &vars, req.server_offset_minutes),
-        CatchUpKind::Shift if is_http(live) => set_utc_params(live, &vars),
-        CatchUpKind::Shift => Err(CatchupError::MalformedUrl),
-        _ => Err(CatchupError::MissingTemplate),
+        CatchUpKind::Append => appended(source.ok_or(CatchupError::MissingTemplate)?),
+        CatchUpKind::Default => match source.ok_or(CatchupError::MissingTemplate)? {
+            src if has_scheme(src) => checked(expand(src, &vars)),
+            src => appended(src),
+        },
+        _ => match source.filter(|s| is_http(s)) {
+            Some(src) => checked(expand(src, &vars)),
+            None => match &catch_up.kind {
+                CatchUpKind::Flussonic => flussonic(live, &vars),
+                CatchUpKind::Xtream => xtream(live, &vars, req.server_offset_minutes),
+                _ => set_utc_params(live, &vars),
+            },
+        },
+    }
+}
+
+/// `scheme://…`: a complete URL rather than a suffix for the live URL.
+fn has_scheme(s: &str) -> bool {
+    s.split_once("://").is_some_and(|(scheme, _)| {
+        !scheme.is_empty()
+            && scheme
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.'))
+    })
+}
+
+/// The finished URL must parse; it is returned as built, not re-serialised.
+fn checked(url: String) -> Result<String, CatchupError> {
+    match url::Url::parse(&url) {
+        Ok(_) => Ok(url),
+        Err(_) => Err(CatchupError::MalformedUrl),
     }
 }
 

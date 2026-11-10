@@ -62,15 +62,6 @@ fn default_source_templates() {
         build_catchup_url(&ch, REQ).as_deref(),
         Ok("http://arc.example.com/2023-11-14_22/{unknown}")
     );
-    // A plain HTTP source gets utc/lutc (IPTVnator).
-    let ch = channel(
-        r#"catchup-days="2" catchup-source="http://arc.example.com/ch/5""#,
-        "http://l.example.com/x",
-    );
-    assert_eq!(
-        build_catchup_url(&ch, REQ).as_deref(),
-        Ok("http://arc.example.com/ch/5?utc=1700000000&lutc=1700010000")
-    );
     // Default without a source: nothing to replay.
     let ch = channel(
         r#"catchup="default" catchup-days="2""#,
@@ -316,5 +307,34 @@ fn shift_keeps_query_bytes() {
     assert_eq!(
         build_catchup_url(&ch, REQ).as_deref(),
         Ok("http://live.example.com/ch/2.ts?utc=1700000000&lutc=1700010000")
+    );
+}
+
+#[test]
+fn source_without_placeholders_is_used_verbatim() {
+    // Kodi: the source is the full URL. IPTVnator would add utc/lutc here.
+    for attrs in [
+        r#"catchup="default" catchup-days="2" catchup-source="http://arc.example.com/ch/5?t=a~b""#,
+        r#"catchup-days="2" catchup-source="http://arc.example.com/ch/5?t=a~b""#,
+        r#"catchup="shift" catchup-days="2" catchup-source="http://arc.example.com/ch/5?t=a~b""#,
+    ] {
+        let ch = channel(attrs, "http://l.example.com/x");
+        assert_eq!(
+            build_catchup_url(&ch, REQ).as_deref(),
+            Ok("http://arc.example.com/ch/5?t=a~b"),
+            "{attrs}"
+        );
+    }
+}
+
+#[test]
+fn default_with_a_relative_source_appends_it() {
+    let ch = channel(
+        r#"catchup="default" catchup-days="2" catchup-source="?archive={utc}""#,
+        "http://l.example.com/x.m3u8",
+    );
+    assert_eq!(
+        build_catchup_url(&ch, REQ).as_deref(),
+        Ok("http://l.example.com/x.m3u8?archive=1700000000")
     );
 }
