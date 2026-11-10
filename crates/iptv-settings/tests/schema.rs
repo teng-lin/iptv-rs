@@ -2,10 +2,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use iptv_settings::backup::{MIGRATIONS, VERSION};
 use iptv_settings::catalogue::{self, choices};
 use iptv_settings::schema::{Effect, Test, ValueType};
 use iptv_settings::validate::{check, is_token};
-use iptv_settings::{Scope, Section};
+use iptv_settings::{Scope, Section, Settings, Target, Value, keys};
 
 fn all() -> Vec<&'static iptv_settings::Setting> {
     catalogue::settings().collect()
@@ -242,6 +243,45 @@ fn commands_reset_existing_settings() {
     }
 }
 
+#[test]
+fn typed_keys_match_the_schema() {
+    for (key, ty) in keys::ALL {
+        let s = catalogue::setting(key).unwrap_or_else(|| panic!("typed key {key} missing"));
+        assert_eq!(s.ty.type_name(), *ty, "{key}");
+    }
+    // Every typed getter works on defaults.
+    let st = Settings::new();
+    let g = &Target::Global;
+    st.duration_ms(keys::LONG_PRESS, g);
+    st.duration_ms(keys::DIGIT_TIMEOUT, g);
+    st.key_bindings(keys::KEY_OVERRIDES, g);
+    st.duration_ms(keys::INFO_PANEL_TIMEOUT, g);
+    st.duration_ms(keys::CONTROLS_PANEL_TIMEOUT, g);
+    st.duration_ms(keys::SWITCH_DELAY, g);
+    st.duration_ms(keys::FULLSCREEN_TIMEOUT, g);
+    st.bool(keys::AUTOPLAY, g);
+    st.choice(keys::BROWSE_MODE, g);
+    st.colour(keys::ACCENT, g);
+    st.colour(keys::BACKGROUND, g);
+    st.choice(keys::FONT_SIZE, g);
+    st.choice(keys::CHANNEL_SORT, g);
+    st.choice(keys::GROUP_SORT, g);
+    st.int(keys::RECENT_COUNT, g);
+    st.text(keys::USER_AGENT, g);
+}
+
+#[test]
+fn input_and_appearance_defaults_match_the_other_crates() {
+    let st = Settings::new();
+    let g = &Target::Global;
+    assert_eq!(st.duration_ms(keys::LONG_PRESS, g), 400); // iptv-nav DEFAULT_LONG_PRESS_MS
+    assert_eq!(st.duration_ms(keys::INFO_PANEL_TIMEOUT, g), 4_000); // iptv-core Timeouts
+    assert_eq!(st.duration_ms(keys::CONTROLS_PANEL_TIMEOUT, g), 7_000);
+    assert_eq!(st.colour(keys::ACCENT, g), "blue"); // theme.rs default: Blue on Dark
+    assert_eq!(st.colour(keys::BACKGROUND, g), "dark");
+    assert_eq!(st.get("general.user_agent"), Ok(Value::text("")));
+}
+
 /// The palette keys mirror the bundle names in iptv-app's placeholder
 /// theme (read at compile time; no dependency on the NSH crate).
 #[test]
@@ -257,6 +297,13 @@ fn palettes_mirror_the_theme_names() {
     };
     assert_eq!(names("a(\""), choices::ACCENT.variants, "accents");
     assert_eq!(names("b(\""), choices::BACKGROUND.variants, "backgrounds");
+}
+
+#[test]
+fn migrations_are_contiguous_up_to_the_current_version() {
+    let froms: Vec<u32> = MIGRATIONS.iter().map(|m| m.from).collect();
+    let expected: Vec<u32> = (1..VERSION).collect();
+    assert_eq!(froms, expected);
 }
 
 #[test]
