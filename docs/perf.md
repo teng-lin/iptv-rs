@@ -289,9 +289,9 @@ Guide scrolling: the large synthetic playlist above (10 000 channels,
 1280×720, keys from the test agent (Down and Up 120 times with 50 ms
 pauses, about 4 a second; Down 60 times without; Right 40 times), the
 NSH performance monitor's readings (`nsh test --fps -v`) once a second;
-two runs, and three shorter ones for the long frame below. The screen
-was locked, which paces the display link at ≈ 48 Hz, so the frame rate
-is not a result; the costs are:
+two runs with the screen locked (it paces the display link at ≈ 48 Hz,
+so their frame rate is not a result), three shorter ones locked and one
+unlocked for the long frame below. The costs:
 
 | Moves | Main thread per frame | JS per commit | Core per commit | Dropped frames |
 | --- | --- | --- | --- | --- |
@@ -299,14 +299,16 @@ is not a result; the costs are:
 | Down 60 times without pauses | p95 ≈ 8 ms (max 9.5 ms) | ≈ 2 ms | p95 ≈ 4 ms | 0 % |
 | Right (the time window moves, not animated) | ≤ 9.5 ms | ≈ 2 ms | p95 9–10 ms (max 12–16 ms) | – |
 
-The monitor's physical footprint went from 105 MB (guide idle, nothing
-playing) to 125 MB after the scrolling. One frame stood out: the first
-animated scroll after the time window moved sideways took 130–240 ms on
-the main thread (all five runs; the frames after it were normal), and two
-runs had one core commit of 107 and 114 ms there. A `sample` profile over
-it shows neither the main thread nor the engine thread busy for that
-long, so it looks like the locked session's scheduling rather than work;
-it is to be measured again with the screen unlocked (finding 4).
+With the screen unlocked the list scrolls at 60 fps (the display's
+rate), the main thread at most 11.5 ms per frame, no dropped frames. The
+monitor's physical footprint went from 105 MB (guide idle, nothing
+playing) to 125 MB after the scrolling. With the screen locked, the
+first animated scroll after the time window moved sideways took one
+130–240 ms frame (all five locked runs; two also had one core commit of
+107 and 114 ms there), and a `sample` profile over it showed neither the
+main thread nor the engine thread busy that long; unlocked, the same
+steps gave no long frame (at most 11.5 ms): the locked session's
+scheduling, not the guide's work.
 
 ## Findings
 
@@ -321,7 +323,3 @@ it is to be measured again with the screen unlocked (finding 4).
    handling itself is sub-millisecond, so the cost is layout/draw of the grid.
    Needs a real-device run (gfxinfo) before optimising.
 3. Cold start and zap are within budget on the emulator.
-4. **macOS: one long frame on the first scroll after the guide moves
-   sideways** (130–240 ms, measured with the screen locked; above).
-   Re-measure with the screen unlocked; if it stays, profile that frame
-   (Instruments' Time Profiler) before changing the guide.
