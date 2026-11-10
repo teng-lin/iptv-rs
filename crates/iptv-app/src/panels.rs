@@ -5,17 +5,18 @@
 use iptv_core::lists::{entry_count, entry_name};
 use nsh_core::prelude::*;
 
+use crate::Ui;
 use crate::guide::Pane;
-use crate::theme::{FOCUS_ALPHA, RADIUS, RESTING_ALPHA, TEXT_SECONDARY_ALPHA, TEXT_SIZE};
-use crate::{Ui, tint};
+use crate::list_rows::{self, Mark, ROW};
+use crate::scale::Scale;
 
-const WHITE: u32 = 0xFFFFFF;
-pub const GROUPS_W: f32 = 220.0;
+/// The groups column's width at full size (scaled with the guide).
+pub const GROUPS_W: f32 = 260.0;
 
 /// The groups column's width now (0 while the guide has the focus).
 pub fn groups_width(ui: Ui) -> f32 {
     if crate::lists::columns_shown(ui) {
-        GROUPS_W
+        (GROUPS_W * crate::scale::now()).round()
     } else {
         0.0
     }
@@ -52,19 +53,14 @@ pub fn preview_rect() -> (f32, f32, f32, f32) {
     (PREVIEW_MARGIN, top + PREVIEW_MARGIN, w, h)
 }
 
-fn secondary() -> Rgba {
-    tint(WHITE, TEXT_SECONDARY_ALPHA)
-}
-
 /// The opaque colours of the regions, drawn under the video layer with the
-/// same geometry as the foreground: the window colour under the header and
-/// the guide, the rail's and the groups column's own.
+/// same geometry as the foreground: the window colour under the header,
+/// the groups column and the guide; the panel colour under the rail.
 /// The foreground stays clear in guide mode, so the video shows wherever it is
 /// laid out: today the preview rectangle.
 pub fn backdrop(ui: Ui) -> impl IntoElement {
     let panel = move || rgb(ui.theme.with(|t| t.background.panel));
     let window = move || rgb(ui.theme.with(|t| t.background.window));
-    let alt = move || rgb(ui.theme.with(|t| t.background.alt));
     view()
         .absolute()
         .inset_0()
@@ -79,13 +75,13 @@ pub fn backdrop(ui: Ui) -> impl IntoElement {
             view()
                 .flex_1()
                 .flex_row()
-                .child(view().w(move || px(crate::rail::width(ui))).bg(alt))
-                .child(view().w(move || px(groups_width(ui))).bg(panel)),
+                .child(view().w(move || px(crate::rail::width(ui))).bg(panel)),
         )
 }
 
 /// The groups column: Favourites, Recently watched, All channels, then the
-/// playlist's groups. Moving over (or tapping) one shows its list.
+/// playlist's groups, in the guide's type on the window colour; the focus
+/// is the guide's light pill. Moving over (or tapping) one shows its list.
 pub fn group_column(ui: Ui, groups: ElementRef) -> impl IntoElement {
     // New data: the selected group stays in view.
     effect(move || {
@@ -93,6 +89,7 @@ pub fn group_column(ui: Ui, groups: ElementRef) -> impl IntoElement {
         let group = ui.focus.with_untracked(|f| f.group);
         groups.scroll_to_index(group as u32, percentage(0.5), px(0.0), false);
     });
+    let size = Scale::new();
     virtual_list(
         move || {
             ui.guide_data();
@@ -102,51 +99,31 @@ pub fn group_column(ui: Ui, groups: ElementRef) -> impl IntoElement {
             let current = move || ui.focus.with(|f| f.group) == at.index();
             let focused =
                 move || current() && ui.focus.with(|f| f.pane) == Pane::Groups && ui.keys_shown();
-            view()
-                .h(px(44.0))
+            let mark = move || Mark::of(focused(), current());
+            list_rows::row(size, ROW, mark)
                 .mx(px(8.0))
-                .my(px(2.0))
-                .px(px(12.0))
-                .rounded(px(RADIUS))
-                .justify_center()
-                .bg(move || {
-                    if focused() {
-                        tint(ui.theme.with(|t| t.accent.main), FOCUS_ALPHA)
-                    } else if current() {
-                        tint(WHITE, RESTING_ALPHA)
-                    } else {
-                        tint(WHITE, 0)
-                    }
-                })
                 .on_press(move || {
                     ui.touched();
                     crate::lists::tap_entry(ui, at.index());
                 })
                 .child(
                     // Re-read on new data: the recycled cell keeps its index.
-                    text(move || {
+                    list_rows::name(size, move || {
                         ui.guide_data();
                         entry_name(at.index(), &*crate::schedule())
                     })
-                    .number_of_lines(1)
-                    .text_size(px(TEXT_SIZE))
-                    .text_color(move || {
-                        if focused() {
-                            rgb(WHITE)
-                        } else if current() {
-                            rgb(ui.theme.with(|t| t.accent.light))
-                        } else {
-                            secondary()
-                        }
+                    .text_color(move || match mark() {
+                        Mark::Current => rgb(ui.theme.with(|t| t.accent.light)),
+                        m => m.text(),
                     }),
                 )
         },
     )
-    .estimated_item_size(px(48.0))
+    .estimated_item_size(list_rows::pitch(size, ROW))
     .element_ref(&groups)
     .w(move || px(groups_width(ui)))
     .py(px(6.0))
-    .bg(move || ui.surface(ui.theme.with(|t| t.background.panel)))
+    .bg(move || ui.surface(ui.theme.with(|t| t.background.window)))
 }
 
 #[cfg(test)]

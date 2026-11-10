@@ -3,8 +3,10 @@
 //! default family), every list falling back to the system's sans-serif;
 //! the sizes are the TiviMate-like ones in a full-screen window and
 //! smaller in a 1280 × 720 one (`scale.rs`), following a resize; a name
-//! too long for the channel column ends in two dots; rows are 53 dp apart
-//! at full size.
+//! too long for the channel column ends in two dots; rows are 50 dp apart
+//! at full size. The lists (the groups column, the player's channel list)
+//! name groups and channels in the same type as the guide's channel
+//! column, and programmes in its programme type.
 //!
 //! Synthetic data only: a playlist picked from a file, with a local XMLTV
 //! guide.
@@ -85,15 +87,15 @@ fn the_guide_uses_the_bundled_fonts_and_proportions() {
     let roboto = Some("Roboto, sans-serif".to_owned());
     // Full screen: the full sizes.
     check_sizes(&mut app, 1.0);
-    assert_eq!(row_pitch(&mut app), 53.0);
+    assert_eq!(row_pitch(&mut app), 50.0);
     // A 1280 × 720 window: 7/8 of them, the rows in whole px.
     step(app.set_viewport(Size::new(px(1280.0), px(720.0))));
     check_sizes(&mut app, 0.875);
-    assert_eq!(row_pitch(&mut app), 46.0);
+    assert_eq!(row_pitch(&mut app), 44.0);
     // Full screen again.
     step(app.set_viewport(Size::new(px(1920.0), px(1080.0))));
     check_sizes(&mut app, 1.0);
-    assert_eq!(row_pitch(&mut app), 53.0);
+    assert_eq!(row_pitch(&mut app), 50.0);
 
     // Text without a family of its own takes the app's default (font-sans).
     let default = styles(&mut app, "+ Add playlist");
@@ -117,10 +119,10 @@ fn the_guide_uses_the_bundled_fonts_and_proportions() {
     // and keys keep it there: the list's row math is the rows' pitch.
     let mut focus = 1;
     for (w, h, pitch) in [
-        (1920.0, 1080.0, 53.0),
-        (1280.0, 720.0, 46.0),
-        (1920.0, 1080.0, 53.0),
-        (1280.0, 720.0, 46.0),
+        (1920.0, 1080.0, 50.0),
+        (1280.0, 720.0, 44.0),
+        (1920.0, 1080.0, 50.0),
+        (1280.0, 720.0, 44.0),
     ] {
         step(app.set_viewport(Size::new(px(w), px(h))));
         for _ in 0..17 {
@@ -135,6 +137,43 @@ fn the_guide_uses_the_bundled_fonts_and_proportions() {
         assert_eq!((at.unwrap() - above.unwrap()).round(), pitch, "{w}x{h}");
     }
     assert!(focus < FILLERS);
+
+    // The lists: the groups column (opened from the list's name) and the
+    // player's channel list (mounted while hidden) in the guide's type,
+    // full screen and in a smaller window.
+    step(app.press("text:☰  All channels"));
+    step(app.wait_for("text:News"));
+    for (w, h, scale) in [(1920.0, 1080.0, 1.0), (1280.0, 720.0, 0.875)] {
+        step(app.set_viewport(Size::new(px(w), px(h))));
+        let guide = styles(&mut app, "Test Channel One");
+        let name = (roboto.clone(), 20.0 * scale, 400);
+        assert!(close_to(&guide, &name), "guide names: {guide:?}");
+        // (The header's group line reads "News" too, in its own type.)
+        let group = styles(&mut app, "News");
+        assert!(close_to(&group, &name), "group rows: {group:?}");
+        let row = styles(&mut app, "1  Test Channel One");
+        assert!(close_to(&row, &name), "channel list row: {row:?}");
+        // What is on, in the list: the programmes' family.
+        let on = app
+            .screen()
+            .texts()
+            .into_iter()
+            .find(|t| t.ends_with("  Quiet Harbour"))
+            .map(str::to_owned)
+            .expect("the list's programme line");
+        let condensed = Some("'Roboto Condensed', Roboto, sans-serif".to_owned());
+        assert!(close_to(
+            &styles(&mut app, &on),
+            &(condensed, 16.0 * scale, 400)
+        ));
+    }
+}
+
+/// Whether one of `found` is `want` (the size to a hundredth).
+fn close_to(found: &[(Option<String>, f32, u16)], want: &(Option<String>, f32, u16)) -> bool {
+    found
+        .iter()
+        .any(|(f, s, w)| *f == want.0 && (s - want.1).abs() < 0.01 && *w == want.2)
 }
 
 /// The family, size and weight of every span reading `text` (hidden
@@ -168,14 +207,14 @@ fn has(app: &mut Headless, text: &str, family: &str, size: f32, weight: u16) -> 
 fn check_sizes(app: &mut Headless, scale: f32) {
     const ROBOTO: &str = "Roboto, sans-serif";
     const CONDENSED: &str = "'Roboto Condensed', Roboto, sans-serif";
-    // Programme titles: Roboto Condensed 22.
-    assert!(has(app, "Golden Engine", CONDENSED, 22.0 * scale, 400));
-    // Channel names: Roboto 22.
-    assert!(has(app, "Test Channel One", ROBOTO, 22.0 * scale, 400));
+    // Programme titles: Roboto Condensed 20.
+    assert!(has(app, "Golden Engine", CONDENSED, 20.0 * scale, 400));
+    // Channel names: Roboto 20.
+    assert!(has(app, "Test Channel One", ROBOTO, 20.0 * scale, 400));
     // The focused programme's title: in its cell, and in the header in
-    // Roboto Medium 24.
-    assert!(has(app, "Quiet Harbour", CONDENSED, 22.0 * scale, 400));
-    assert!(has(app, "Quiet Harbour", ROBOTO, 24.0 * scale, 500));
+    // Roboto Medium 22.
+    assert!(has(app, "Quiet Harbour", CONDENSED, 20.0 * scale, 400));
+    assert!(has(app, "Quiet Harbour", ROBOTO, 22.0 * scale, 500));
 }
 
 /// Where row `row`'s channel number is (y), if it is mounted.

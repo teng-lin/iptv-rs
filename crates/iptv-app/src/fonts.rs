@@ -16,16 +16,32 @@ pub const CONDENSED: &str = "'Roboto Condensed', Roboto, sans-serif";
 pub const MEDIUM: FontWeight = FontWeight::MEDIUM;
 
 /// Programme titles in the grid's cells.
-pub const CELL_TITLE: f32 = 22.0;
+pub const CELL_TITLE: f32 = 20.0;
 /// Channel numbers and names.
-pub const CHANNEL: f32 = 22.0;
+pub const CHANNEL: f32 = 20.0;
 /// The ruler's date and slot times.
-pub const RULER: f32 = 20.0;
+pub const RULER: f32 = 18.0;
 /// The header: the focused programme's title, its times line, and its
 /// episode line and description.
-pub const HEADER_TITLE: f32 = 24.0;
-pub const HEADER_TIMES: f32 = 18.0;
-pub const HEADER_BODY: f32 = 17.0;
+pub const HEADER_TITLE: f32 = 22.0;
+pub const HEADER_TIMES: f32 = 17.0;
+pub const HEADER_BODY: f32 = 16.0;
+
+/// The lists' type (the groups columns, the player's channel list, search,
+/// the favourites editor, the menu): the guide's, so a name reads the same
+/// in a list as in the guide's channel column (rows: `list_rows.rs`).
+/// A list item's name: the guide's channel names.
+pub const LIST_ITEM: f32 = CHANNEL;
+/// An item's second line (what is on, a result's channel and times): the
+/// header's description.
+pub const LIST_SECONDARY: f32 = HEADER_BODY;
+/// A list's heading ("Groups", the list's name, the menu's headings): the
+/// header's times line.
+pub const SECTION: f32 = HEADER_TIMES;
+/// Hints, status lines and badges.
+pub const CAPTION: f32 = 15.0;
+/// A screen's title (Search, the favourites editor): the header's title.
+pub const TITLE: f32 = HEADER_TITLE;
 
 /// The font files, WOFF2 (NSH unpacks them when it registers them).
 pub const FILES: [(&str, &[u8]); 3] = [

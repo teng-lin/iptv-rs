@@ -25,8 +25,8 @@ use crate::{Ui, ViewMode, tint};
 /// Row pitch; a programme's height (the rest is the gap between rows), the
 /// gap between programmes, their corner radius and text inset (full size:
 /// [`Scale`] scales them, the pitch and height in whole px).
-pub const ROW_H: f32 = 53.0;
-const CELL_H: f32 = 49.0;
+pub const ROW_H: f32 = 50.0;
+const CELL_H: f32 = 46.0;
 const CELL_GAP: f32 = 3.0;
 const CELL_RADIUS: f32 = 4.0;
 const CELL_INSET: f32 = 14.0;

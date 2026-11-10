@@ -263,6 +263,53 @@ with sound at 20 % (its audio gaps were not measured); its login was read
 at run time from outside the repository, and the test profile, traces
 and pictures were deleted afterwards.
 
+## 2026-11-10, macOS, multiview and the restyled guide (branch `macos-4`)
+
+Apple M4, macOS 26.6, the app run by `nsh test --target macos` with its
+development host built at `opt-level = 3` without debug assertions or
+debug info (`CARGO_PROFILE_DEV_*`; close to a release build, which the
+test agent cannot drive), `IPTV_RS_AUDIO=null`, mock server on :8089.
+
+Multiview: the synthetic playlist's three local HLS streams (1280×720),
+a 960×540 window, display kept awake (`caffeinate -d`) with every tile
+drawing; process CPU (100 % is one core) and RSS from `ps` once a
+second over 15–30 s:
+
+| Case | CPU | RSS | Threads |
+| --- | --- | --- | --- |
+| One channel full screen | 18 % | ≈ 310 MB | 43 |
+| Four tiles | 54 % (43–59 %) | ≈ 520 MB | ≈ 100 |
+
+A debug build gives about the same CPU with four tiles (≈ 55 %, RSS
+≈ 580 MB): the cost is mpv's decoding and drawing, four VideoToolbox
+decodes and four `CAOpenGLLayer`s.
+
+Guide scrolling: the large synthetic playlist above (10 000 channels,
+2.45 M programmes) added through the wizard, the restyled guide at
+1280×720, keys from the test agent (Down and Up 120 times with 50 ms
+pauses, about 4 a second; Down 60 times without; Right 40 times), the
+NSH performance monitor's readings (`nsh test --fps -v`) once a second;
+two runs with the screen locked (it paces the display link at ≈ 48 Hz,
+so their frame rate is not a result), three shorter ones locked and one
+unlocked for the long frame below. The costs:
+
+| Moves | Main thread per frame | JS per commit | Core per commit | Dropped frames |
+| --- | --- | --- | --- | --- |
+| Down / Up (the list scrolls, animated) | p95 7–8 ms (max 14 ms) | ≈ 2 ms | p95 ≈ 4 ms (max 5 ms) | 0 % |
+| Down 60 times without pauses | p95 ≈ 8 ms (max 9.5 ms) | ≈ 2 ms | p95 ≈ 4 ms | 0 % |
+| Right (the time window moves, not animated) | ≤ 9.5 ms | ≈ 2 ms | p95 9–10 ms (max 12–16 ms) | – |
+
+With the screen unlocked the list scrolls at 60 fps (the display's
+rate), the main thread at most 11.5 ms per frame, no dropped frames. The
+monitor's physical footprint went from 105 MB (guide idle, nothing
+playing) to 125 MB after the scrolling. With the screen locked, the
+first animated scroll after the time window moved sideways took one
+130–240 ms frame (all five locked runs; two also had one core commit of
+107 and 114 ms there), and a `sample` profile over it showed neither the
+main thread nor the engine thread busy that long; unlocked, the same
+steps gave no long frame (at most 11.5 ms): the locked session's
+scheduling, not the guide's work.
+
 ## Findings
 
 1. **Guide import peak memory** (≈ 570 MB for 2.45 M programmes on the

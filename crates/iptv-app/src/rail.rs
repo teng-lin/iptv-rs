@@ -1,4 +1,4 @@
-//! The navigation rail left of the groups column: icons while the groups
+//! The navigation rail left of the groups column, on the panel colour: icons while the groups
 //! have the focus, icons with labels while it has the focus itself. Items
 //! without a screen in this build are dimmed and never take the focus
 //! (`iptv_core::browse`). The icons are our own simple line drawings.
@@ -132,7 +132,7 @@ pub fn column(ui: Ui) -> impl IntoElement {
         .w(move || px(width(ui)))
         .overflow_hidden()
         .py(px(8.0))
-        .bg(move || ui.surface(ui.theme.with(|t| t.background.alt)))
+        .bg(move || ui.surface(ui.theme.with(|t| t.background.panel)))
         .child(part(false))
         .child(view().flex_1())
         .child(part(true))
