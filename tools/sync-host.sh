@@ -6,7 +6,7 @@
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 app="$root/crates/iptv-app"
-nsh=${NSH:-/home/blackmyth/src/nsh/target/release/nsh}
+nsh=${NSH:-$root/../nsh/target/release/nsh}
 out="$root/hosts/android/app/build/nsh"
 export JAVA_HOME=${JAVA_HOME:-/usr/lib/jvm/default}
 export ANDROID_HOME=${ANDROID_HOME:-$HOME/Android/Sdk}

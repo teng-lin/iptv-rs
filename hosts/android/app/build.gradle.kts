@@ -3,7 +3,8 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-val nshJava: String = providers.gradleProperty("nsh.java").get()
+// Relative to this Gradle root (hosts/android): the nsh checkout next to iptv-rs.
+val nshJava: File = rootProject.file(providers.gradleProperty("nsh.java").get())
 // Filled by tools/sync-host.sh from the NSH build of the Rust crate.
 val nshOut = layout.buildDirectory.dir("nsh").get().asFile
 

@@ -31,7 +31,9 @@ Android video/input research: [`docs/research/android-video-and-input.md`](docs/
 
 - Rust stable with `x86_64-linux-android`, `aarch64-linux-android`, `wasm32-unknown-unknown`.
 - JDK 21, Android SDK (platform 35, build-tools 35.0.1, platform-tools, emulator), NDK 30.
-- NSH CLI built from the fork: `~/src/nsh` (branch `tv-keys`), `cargo build --release -p nsh-cli`.
+- The NSH fork checked out next to this repository (`../nsh`, branch `tv-keys`;
+  `git clone -b tv-keys https://github.com/teng-lin/nsh.git`), with its CLI built:
+  `cargo build --release -p nsh-cli`. Cargo, Gradle and `tools/sync-host.sh` find it there.
 - `ffmpeg` and `python3` for synthetic test streams.
 - Linux desktop: GTK 4 and libmpv 2 (client API 2.x, `pkg-config mpv`;
   Arch `mpv`, Debian/Ubuntu `libmpv-dev`). The player links `libmpv.so.2`.
@@ -103,7 +105,7 @@ Package (release runner, `.desktop` entry and a `.tar.gz`; libmpv stays a
 system dependency):
 
 ```sh
-(cd crates/iptv-app && ~/src/nsh/target/release/nsh package --target linux -o ../../target/package .)
+(cd crates/iptv-app && ../../../nsh/target/release/nsh package --target linux -o ../../target/package .)
 ```
 
 ## Before any public release
