@@ -17,8 +17,9 @@ const LOGO_PAD: f32 = 4.0;
 /// Before the number, between the parts, after the name.
 const PAD: f32 = 8.0;
 const GAP: f32 = 14.0;
-/// Room kept for the ▶ marker after the playing channel's name.
-const MARKER_W: f32 = 28.0;
+/// The ▶ marker after the playing channel's name (its text is empty on
+/// the other rows, but still takes a gap).
+const MARKER_W: f32 = 20.0;
 
 /// Shown where a channel has no logo (an image needs a source).
 fn no_logo() -> String {
@@ -30,7 +31,7 @@ fn no_logo() -> String {
 /// `number` wide (`numbers.rs`).
 fn name_width(column: f32, number: f32, playing: bool) -> f32 {
     let marker = if playing { MARKER_W } else { 0.0 };
-    column - 2.0 * PAD - number - LOGO_W - 2.0 * GAP - marker
+    column - 2.0 * PAD - number - LOGO_W - 3.0 * GAP - marker
 }
 
 pub(super) fn cell(
@@ -135,7 +136,7 @@ mod tests {
         // A 1280 dp window: 40 % is 512 dp; three digits take about 50.
         assert_eq!(
             name_width(512.0, 50.0, false),
-            512.0 - 16.0 - 50.0 - 66.0 - 28.0
+            512.0 - 16.0 - 50.0 - 66.0 - 3.0 * 14.0
         );
         assert_eq!(
             name_width(512.0, 50.0, true),
