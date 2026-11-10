@@ -149,6 +149,12 @@ impl Catalog {
         }
     }
 
+    /// The provider's own guide addresses, in its order (the playlist
+    /// header's, or the Xtream panel's `xmltv.php`; none for Stalker).
+    pub fn guide_urls(&self) -> Vec<SecretUrl> {
+        self.epg_sources(0).into_iter().map(|c| c.url).collect()
+    }
+
     /// Copies the request counters gathered by the driver.
     pub(crate) fn set_transport_stats(&mut self, s: &ImportStats) {
         self.stats.requests = s.requests;

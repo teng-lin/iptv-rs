@@ -1,11 +1,11 @@
 //! What the playlists screen keeps: the shown source, each source's guide
-//! address, and what deleting a source takes with it.
+//! sources, and what deleting a source takes with it.
 
 mod common;
 
 use common::*;
 use iptv_providers::SecretUrl;
-use iptv_store_sqlite::{ChannelQuery, SourceId, SourceSettings, Store, StoreError};
+use iptv_store_sqlite::{ChannelQuery, GuideSource, SourceId, Store, StoreError};
 
 fn store() -> Store {
     let mut s = Store::open_in_memory().unwrap();
@@ -43,28 +43,50 @@ fn the_shown_source_is_remembered_while_it_exists() {
     assert_eq!(s.active_source().unwrap(), Some(c));
 }
 
+fn guides() -> Vec<GuideSource> {
+    vec![
+        GuideSource {
+            feed: iptv_epg::SourceId(1),
+            provider_index: None,
+            url: typed(),
+            name: Some("Typed".into()),
+            enabled: true,
+            shift_minutes: -120,
+        },
+        GuideSource {
+            feed: iptv_epg::SourceId(2),
+            provider_index: Some(0),
+            url: SecretUrl::new("http://panel.example.test/xmltv.php?password=p"),
+            name: None,
+            enabled: false,
+            shift_minutes: 0,
+        },
+    ]
+}
+
 #[test]
-fn a_guide_address_is_unset_set_or_removed() {
+fn guide_sources_are_kept_in_order_and_replaced_whole() {
     let mut s = store();
     let a = s.add_source(&xtream_source("A")).unwrap();
-    // Never saved: the app falls back to what an older build kept.
-    assert_eq!(s.source_settings(a).unwrap(), None);
-    s.set_source_epg_url(a, Some(&typed())).unwrap();
-    let saved = s.source_settings(a).unwrap().unwrap();
-    assert_eq!(saved.epg_url, Some(typed()));
-    // Debug never shows the address's credentials.
-    assert!(!format!("{saved:?}").contains(XT_PASSWORD));
-    s.set_source_epg_url(a, None).unwrap();
-    assert_eq!(
-        s.source_settings(a).unwrap(),
-        Some(SourceSettings { epg_url: None })
-    );
+    // Never arranged: the app arranges them at the next import.
+    assert_eq!(s.guide_sources(a).unwrap(), []);
+    s.set_guide_sources(a, &guides()).unwrap();
+    assert_eq!(s.guide_sources(a).unwrap(), guides());
+    // Debug never shows the addresses' credentials.
+    assert!(!format!("{:?}", s.guide_sources(a).unwrap()).contains(XT_PASSWORD));
+    let mut reordered = guides();
+    reordered.reverse();
+    reordered[0].enabled = true;
+    s.set_guide_sources(a, &reordered).unwrap();
+    assert_eq!(s.guide_sources(a).unwrap(), reordered);
+    s.set_guide_sources(a, &[]).unwrap();
+    assert_eq!(s.guide_sources(a).unwrap(), []);
     assert!(matches!(
-        s.source_settings(SourceId(42)),
+        s.guide_sources(SourceId(42)),
         Err(StoreError::SourceNotFound(_))
     ));
     assert!(matches!(
-        s.set_source_epg_url(SourceId(42), None),
+        s.set_guide_sources(SourceId(42), &guides()),
         Err(StoreError::SourceNotFound(_))
     ));
 }
@@ -73,13 +95,10 @@ fn a_guide_address_is_unset_set_or_removed() {
 fn editing_a_source_keeps_its_settings() {
     let mut s = store();
     let a = s.add_source(&xtream_source("A")).unwrap();
-    s.set_source_epg_url(a, Some(&typed())).unwrap();
+    s.set_guide_sources(a, &guides()).unwrap();
     s.rename_source(a, "Renamed").unwrap();
     s.update_source(a, &xtream_source("Again")).unwrap();
-    assert_eq!(
-        s.source_settings(a).unwrap().unwrap().epg_url,
-        Some(typed())
-    );
+    assert_eq!(s.guide_sources(a).unwrap(), guides());
     assert_eq!(s.sources().unwrap()[0].name, "Again");
 }
 
@@ -90,7 +109,7 @@ fn deleting_a_source_takes_its_data_and_leaves_the_others() {
     let b = s.add_source(&m3u_source("B")).unwrap();
     for id in [a, b] {
         replace(&mut s, id, &catalog(4, 2, "x"));
-        s.set_source_epg_url(id, Some(&typed())).unwrap();
+        s.set_guide_sources(id, &guides()).unwrap();
         let first = s.load_channels(id, &ChannelQuery::default()).unwrap()[0]
             .channel
             .id
@@ -99,7 +118,7 @@ fn deleting_a_source_takes_its_data_and_leaves_the_others() {
     }
     assert!(s.delete_source(a).unwrap());
     assert_eq!(s.source(a).unwrap(), None);
-    assert!(s.source_settings(a).is_err());
+    assert!(s.guide_sources(a).is_err());
     assert!(
         s.load_channels(a, &ChannelQuery::default())
             .unwrap()
@@ -117,5 +136,5 @@ fn deleting_a_source_takes_its_data_and_leaves_the_others() {
         ..ChannelQuery::default()
     };
     assert_eq!(s.load_channels(b, &favourites).unwrap().len(), 1);
-    assert!(s.source_settings(b).unwrap().unwrap().epg_url.is_some());
+    assert_eq!(s.guide_sources(b).unwrap(), guides());
 }
