@@ -10,8 +10,10 @@
 //!
 //! Rules for new migrations: add `000N_name.sql`, append it to
 //! `MIGRATIONS`, snapshot the resulting schema into
-//! `tests/fixtures/schema_vN.sql` (see `tests/migrations.rs`), and add a
-//! seed-data fixture for the previous version. A migration that rebuilds a
+//! `tests/fixtures/schema_vN.sql` with
+//! `cargo test -p iptv-store-sqlite --lib -- --ignored write_missing_schema_snapshots`,
+//! and add a seed-data fixture for the previous version (see
+//! `tests/migrations.rs`). A migration that rebuilds a
 //! table must not rely on `PRAGMA foreign_keys` (it cannot change inside a
 //! transaction): copy rows explicitly and keep ids stable.
 
@@ -153,26 +155,53 @@ mod tests {
         }
     }
 
+    fn snapshot_path(version: u32) -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("tests/fixtures/schema_v{version}.sql"))
+    }
+
+    /// The schema a fresh file has after migrating to `version`.
+    fn schema_at(version: u32) -> String {
+        let mut conn = Connection::open_in_memory().unwrap();
+        assert_eq!(migrate_to(&mut conn, version, 0).unwrap(), version);
+        schema_dump(&conn).unwrap()
+    }
+
     /// A shipped migration must never change: migrating a fresh file to
-    /// version N must reproduce the historical snapshot of version N.
+    /// version N must reproduce the committed snapshot of version N.
     #[test]
     fn historical_snapshots_match_migrations() {
-        let snapshots = [
-            include_str!("../tests/fixtures/schema_v1.sql"),
-            include_str!("../tests/fixtures/schema_v2.sql"),
-            include_str!("../tests/fixtures/schema_v3.sql"),
-        ];
-        assert_eq!(snapshots.len(), MIGRATIONS.len(), "snapshot every version");
-        for (i, snapshot) in snapshots.iter().enumerate() {
-            let mut conn = Connection::open_in_memory().unwrap();
-            migrate_to(&mut conn, i as u32 + 1, 0).unwrap();
+        for version in 1..=SCHEMA_VERSION {
+            let path = snapshot_path(version);
+            let snapshot = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+                panic!(
+                    "{}: {e}; create it with `cargo test -p iptv-store-sqlite --lib \
+                     -- --ignored write_missing_schema_snapshots`",
+                    path.display()
+                )
+            });
             assert_eq!(
-                schema_dump(&conn).unwrap(),
-                *snapshot,
-                "schema v{} drifted from tests/fixtures/schema_v{}.sql",
-                i + 1,
-                i + 1
+                schema_at(version),
+                snapshot,
+                "schema v{version} drifted from {}",
+                path.display()
             );
+        }
+    }
+
+    /// Tool: writes `tests/fixtures/schema_vN.sql` for every version that
+    /// has no snapshot yet, exactly as migrating a fresh file to N produces
+    /// it. Never overwrites a snapshot: those guard shipped migrations.
+    #[test]
+    #[ignore = "tool: writes missing schema snapshots"]
+    fn write_missing_schema_snapshots() {
+        for version in 1..=SCHEMA_VERSION {
+            let path = snapshot_path(version);
+            if !path.exists() {
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(&path, schema_at(version)).unwrap();
+                println!("wrote {}", path.display());
+            }
         }
     }
 

@@ -6,7 +6,9 @@
 //! - `stream`: `{"t":"url","url":…,"headers":[[k,v]…],"properties":[[k,v]…]}`,
 //!   `{"t":"xtream","stream_id":n,"ext":s|null}` or
 //!   `{"t":"stalker","cmd":s,"tmp":b|null,"lb":b|null}`;
-//! - `catch_up`: `{"kind":slug,"other":s?,"days":n,"source":s|null}`.
+//! - `catch_up`: `{"kind":slug,"other":s?,"days":n|null,"source":s|null,
+//!   "correction_secs":n}`. Rows written before `correction_secs` existed
+//!   lack it (read as `0`); `days` was always a number there.
 
 use iptv_providers::GroupId;
 use iptv_providers::model::{
@@ -130,9 +132,15 @@ pub(crate) fn catch_up_to_json(catch_up: &CatchUp) -> String {
         CatchUpKind::Flussonic => ("flussonic", None),
         CatchUpKind::Xtream => ("xtream", None),
         CatchUpKind::Stalker => ("stalker", None),
+        CatchUpKind::Vod => ("vod", None),
         CatchUpKind::Unsupported(name) => ("unsupported", Some(name.as_str())),
     };
-    let mut v = json!({"kind": kind, "days": catch_up.days, "source": catch_up.source});
+    let mut v = json!({
+        "kind": kind,
+        "days": catch_up.days,
+        "source": catch_up.source,
+        "correction_secs": catch_up.correction_secs,
+    });
     if let Some(other) = other {
         v["other"] = Value::from(other);
     }
@@ -149,6 +157,7 @@ pub(crate) fn catch_up_from_json(text: &str) -> Result<CatchUp> {
         Some("flussonic") => CatchUpKind::Flussonic,
         Some("xtream") => CatchUpKind::Xtream,
         Some("stalker") => CatchUpKind::Stalker,
+        Some("vod") => CatchUpKind::Vod,
         Some("unsupported") => CatchUpKind::Unsupported(
             v.get("other")
                 .and_then(Value::as_str)
@@ -157,15 +166,26 @@ pub(crate) fn catch_up_from_json(text: &str) -> Result<CatchUp> {
         ),
         _ => return Err(bad()),
     };
-    let days = v
-        .get("days")
-        .and_then(Value::as_u64)
-        .and_then(|d| u32::try_from(d).ok())
-        .ok_or_else(bad)?;
+    let days = match v.get("days") {
+        None | Some(Value::Null) => None,
+        Some(d) => Some(
+            d.as_u64()
+                .and_then(|d| u32::try_from(d).ok())
+                .ok_or_else(bad)?,
+        ),
+    };
+    let correction_secs = match v.get("correction_secs") {
+        None | Some(Value::Null) => 0,
+        Some(c) => c
+            .as_i64()
+            .and_then(|c| i32::try_from(c).ok())
+            .ok_or_else(bad)?,
+    };
     Ok(CatchUp {
         kind,
         days,
         source: v.get("source").and_then(Value::as_str).map(str::to_owned),
+        correction_secs,
     })
 }
 
@@ -218,15 +238,37 @@ mod tests {
             CatchUpKind::Flussonic,
             CatchUpKind::Xtream,
             CatchUpKind::Stalker,
-            CatchUpKind::Unsupported("vod".into()),
+            CatchUpKind::Vod,
+            CatchUpKind::Unsupported("archive-x".into()),
         ] {
-            let c = CatchUp {
-                kind,
-                days: 3,
-                source: Some("?utc={utc}".into()),
-            };
-            assert_eq!(catch_up_from_json(&catch_up_to_json(&c)).unwrap(), c);
+            for (days, correction_secs) in [(Some(3), 0), (None, -5400), (Some(1), 1800)] {
+                let c = CatchUp {
+                    kind: kind.clone(),
+                    days,
+                    source: Some("?utc={utc}".into()),
+                    correction_secs,
+                };
+                assert_eq!(catch_up_from_json(&catch_up_to_json(&c)).unwrap(), c);
+            }
         }
+    }
+
+    /// Rows written before `days` became optional and `correction_secs`
+    /// existed still decode.
+    #[test]
+    fn catch_up_reads_the_earlier_encoding() {
+        let old = catch_up_from_json(r#"{"kind":"xtream","days":2,"source":null}"#).unwrap();
+        assert_eq!(
+            old,
+            CatchUp {
+                kind: CatchUpKind::Xtream,
+                days: Some(2),
+                source: None,
+                correction_secs: 0,
+            }
+        );
+        assert!(catch_up_from_json(r#"{"kind":"shift","days":"x"}"#).is_err());
+        assert!(catch_up_from_json(r#"{"kind":"shift","correction_secs":1.5}"#).is_err());
     }
 
     #[test]

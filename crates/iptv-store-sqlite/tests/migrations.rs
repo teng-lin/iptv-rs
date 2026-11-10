@@ -6,9 +6,9 @@
 //! with the current build and checks the data through the public API.
 //!
 //! Adding migration N+1: run
-//! `SCHEMA_SNAPSHOT_OUT=tests/fixtures/schema_vN+1.sql cargo test -p iptv-store-sqlite --test migrations -- --ignored write_current_schema`
-//! (relative to the crate), write `data_vN.sql` for the now historical
-//! version N, and add it to `HISTORY` below.
+//! `cargo test -p iptv-store-sqlite --lib -- --ignored write_missing_schema_snapshots`
+//! (writes `schema_vN+1.sql`, never overwrites), write `data_vN+1.sql` with
+//! synthetic data in the new shape, and add it to `HISTORY` below.
 
 mod common;
 
@@ -21,17 +21,6 @@ use iptv_store_sqlite::{
     ChannelOrder, ChannelQuery, ChannelScope, EpgOverride, ImportErrorKind, SCHEMA_VERSION,
     SourceId, Store,
 };
-
-#[test]
-#[ignore = "tool: writes the current schema snapshot to $SCHEMA_SNAPSHOT_OUT"]
-fn write_current_schema() {
-    let out = std::env::var("SCHEMA_SNAPSHOT_OUT").expect("set SCHEMA_SNAPSHOT_OUT");
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("fresh.db");
-    drop(Store::open(&path).unwrap());
-    let conn = rusqlite::Connection::open(&path).unwrap();
-    std::fs::write(out, schema_dump(&conn).unwrap()).unwrap();
-}
 
 #[test]
 fn latest_snapshot_is_the_fresh_schema() {
@@ -141,7 +130,9 @@ fn check_provider_data(store: &Store) {
             .collect::<Vec<_>>(),
         ["Fixture News", "Fixture Sport", "Fixture Radio"]
     );
-    assert_eq!(all[0].channel.catch_up.as_ref().unwrap().days, 2);
+    let catch_up = all[0].channel.catch_up.as_ref().unwrap();
+    // Written before correction_secs existed and while days was required.
+    assert_eq!((catch_up.days, catch_up.correction_secs), (Some(2), 0));
     assert_eq!(all[2].channel.epg_shift_minutes, Some(60));
     assert!(all[2].channel.radio);
     let news = GroupId::from_stored("xt:live-group:1");
