@@ -69,8 +69,8 @@ class PlayerComponent(
     private var token: Long = 0
     private var sourceHeaders: Map<String, String> = emptyMap()
     @Volatile private var headers = Headers(null, emptyMap())
-    /** Set after the one HLS fallback for the current stream. */
-    private var triedHls = false
+    /** Set after the one format fallback (HLS or progressive) for the current stream. */
+    private var triedOtherFormat = false
     private val player: ExoPlayer
 
     private fun headersFor(uri: Uri): Map<String, String> {
@@ -129,9 +129,18 @@ class PlayerComponent(
                     player.prepare()
                     return
                 }
-                !triedHls && isContainerError(error.errorCode) -> {
-                    triedHls = true
+                // The address's extension can lie (`.ts` serving HLS, `.m3u8`
+                // serving MP4): one retry per source with the other kind.
+                !triedOtherFormat && isContainerError(error.errorCode) -> {
+                    triedOtherFormat = true
                     url?.let { start(it, MimeTypes.APPLICATION_M3U8) }
+                    return
+                }
+                !triedOtherFormat &&
+                    error.errorCode == PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED -> {
+                    triedOtherFormat = true
+                    // Progressive: the extractors sniff the container.
+                    url?.let { start(it, MimeTypes.VIDEO_UNKNOWN) }
                     return
                 }
             }
@@ -173,7 +182,7 @@ class PlayerComponent(
         token = nextToken
         applyHeaders()
         if (!changed) return
-        triedHls = false
+        triedOtherFormat = false
         if (next == null) {
             player.stop()
             player.clearMediaItems()
