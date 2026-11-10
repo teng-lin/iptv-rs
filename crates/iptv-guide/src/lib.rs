@@ -46,7 +46,9 @@ pub struct EpgSchedule {
     /// Reads a description the in-memory store left out.
     describe: Option<DescriptionLookup>,
     /// The source's account or session, for streams that need one.
-    playback: Option<playback::PlaybackContext>,
+    /// Shared with the next schedule of the same source (a refreshed guide),
+    /// so a Stalker session renewed by one is the other's too.
+    playback: Option<std::rc::Rc<playback::PlaybackContext>>,
 }
 
 /// Reads the description of the programme starting at the given time on a
@@ -138,12 +140,26 @@ impl EpgSchedule {
     /// account, Stalker session, M3U playlist headers). Without one, only
     /// ready URLs play and they carry only the channel's own headers.
     pub fn with_playback(mut self, context: Option<playback::PlaybackContext>) -> Self {
+        self.playback = context.map(std::rc::Rc::new);
+        self
+    }
+
+    /// [`Self::with_playback`] with a context another schedule holds.
+    pub fn with_shared_playback(
+        mut self,
+        context: Option<std::rc::Rc<playback::PlaybackContext>>,
+    ) -> Self {
         self.playback = context;
         self
     }
 
     pub fn playback(&self) -> Option<&playback::PlaybackContext> {
-        self.playback.as_ref()
+        self.playback.as_deref()
+    }
+
+    /// The context, to share with a schedule that replaces this one.
+    pub fn shared_playback(&self) -> Option<std::rc::Rc<playback::PlaybackContext>> {
+        self.playback.clone()
     }
 
     /// The imported channel behind a guide row.
@@ -167,7 +183,7 @@ impl EpgSchedule {
             start: self.unix(p.start),
             end: self.unix(p.end),
         });
-        playback::resolve(self.playback.as_ref(), c, archive, clock)
+        playback::resolve(self.playback.as_deref(), c, archive, clock)
     }
 
     /// The clock for the trait's URL methods: guide minute `now`, UTC.

@@ -116,6 +116,36 @@ pub fn plan(
     )
 }
 
+/// When to look at `source`'s guide again: when the policy will want it
+/// (stale, running out, after a back-off), `None` when only a request or a
+/// restart would.
+pub fn next_check(
+    source: SourceId,
+    configs: &[EpgSourceConfig],
+    channels: &[Channel],
+    now: UnixTime,
+) -> Option<UnixTime> {
+    let stored = guide_state(source);
+    check_at(
+        plan(Trigger::Timer, configs, channels, stored.as_ref(), now),
+        now,
+    )
+}
+
+/// The time a guide check is due after `decision`.
+fn check_at(decision: Decision, now: UnixTime) -> Option<UnixTime> {
+    match decision {
+        Decision::Keep { next_check } => next_check,
+        Decision::Backoff { retry_at } => Some(retry_at),
+        // Still due (the download was cancelled or not recorded): later.
+        Decision::Refresh(_) => Some(now + RETRY_DUE),
+        Decision::Discard => None,
+    }
+}
+
+/// How long a check that is still due waits.
+const RETRY_DUE: i64 = 3600;
+
 /// Replaces `source`'s stored guide with `import` (the feeds that loaded)
 /// and drops programmes older than [`KEEP_PAST_DAYS`]. A feed that failed
 /// is recorded, so automatic refreshes back off.
@@ -277,6 +307,28 @@ mod tests {
         assert_eq!(
             plan(Trigger::PlaylistChanged, &own(), &[], None, NOW),
             Decision::Refresh(RefreshReason::NeverFetched)
+        );
+    }
+
+    #[test]
+    fn the_next_check_is_when_the_guide_gets_stale_or_runs_short() {
+        let guides = configs(own(), None, None);
+        let mut stored = stored(&guides);
+        let next =
+            |s: &StoredGuide| check_at(plan(Trigger::Timer, &guides, &[], Some(s), NOW), NOW);
+        // Fetched an hour ago, programmes for 3 days: stale in 23 h.
+        assert_eq!(next(&stored), Some(NOW - 3600 + DAY));
+        // Programmes end in 20 h: 12 h before they run out.
+        stored.ends_at = Some(NOW + 20 * 3600);
+        assert_eq!(next(&stored), Some(NOW + 8 * 3600));
+        // A failed attempt 10 min ago: retry an hour after it.
+        stored.last_error = Some(ImportErrorKind::Network);
+        stored.attempted_at = Some(NOW - 600);
+        assert_eq!(next(&stored), Some(NOW + 3000));
+        // No guide configured any more: no checks.
+        assert_eq!(
+            check_at(plan(Trigger::Timer, &[], &[], Some(&stored), NOW), NOW),
+            None
         );
     }
 
