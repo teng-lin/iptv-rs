@@ -268,3 +268,18 @@ fn bom_and_missing_declaration_are_fine() {
     assert_eq!(r.channels.len(), 1);
     assert_eq!(r.stats.warnings.total(), 0);
 }
+
+#[test]
+fn tiny_chunks_stay_linear() {
+    // One large element fed byte by byte must not be re-parsed per byte.
+    let desc = "word ".repeat(40_000);
+    let xml = format!(
+        r#"<tv><programme channel="a.example" start="20260301120000 +0000"><title>Big</title><desc>{desc}</desc></programme>
+<programme channel="a.example" start="20260301130000 +0000"><title>Next</title></programme></tv>"#
+    );
+    let started = std::time::Instant::now();
+    let r = parse_chunked(xml.as_bytes(), 1, ParseOptions::default());
+    assert_eq!(r.programmes.len(), 2);
+    assert_eq!(r.programmes[0].desc.as_deref(), Some(desc.trim()));
+    assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
+}

@@ -109,6 +109,17 @@ pub struct XmltvParser {
     buf: Vec<u8>,
     stats: ParseStats,
     done: bool,
+    /// Set when the last pass stopped inside unfinished markup.
+    stall: Option<Stall>,
+}
+
+/// Where a pass stopped waiting for more input. Re-running the reader
+/// before a possible closing tag arrives would only re-parse the same
+/// prefix, which is quadratic for small chunks.
+#[derive(Clone, Copy)]
+struct Stall {
+    scanned: usize,
+    in_element: bool,
 }
 
 /// Plain input is processed in slices of this size so the decoded
@@ -123,6 +134,7 @@ impl XmltvParser {
             buf: Vec::new(),
             stats: ParseStats::default(),
             done: false,
+            stall: None,
         }
     }
 
@@ -188,9 +200,30 @@ impl XmltvParser {
         self.stats.warnings.unknown_encoding = u64::from(self.decoder.unknown_charset);
     }
 
+    /// Whether bytes appended since a stall could complete the markup.
+    fn may_progress(&self, st: Stall) -> bool {
+        let new = &self.buf[st.scanned.saturating_sub(12).min(self.buf.len())..];
+        if st.in_element {
+            self.buf.len() > self.opts.max_element_bytes
+                || memchr::memmem::find(new, b"</programme").is_some()
+                || memchr::memmem::find(new, b"</channel").is_some()
+                || memchr::memmem::find(new, b"/>").is_some()
+        } else {
+            memchr::memchr(b'>', new).is_some()
+        }
+    }
+
     fn process(&mut self, at_end: bool, sink: &mut dyn FnMut(XmltvItem)) {
         self.stats.peak_buffer_bytes = self.stats.peak_buffer_bytes.max(self.buf.len());
+        if let Some(st) = self.stall.filter(|&st| !at_end && !self.may_progress(st)) {
+            self.stall = Some(Stall {
+                scanned: self.buf.len(),
+                ..st
+            });
+            return;
+        }
         let len = self.buf.len();
+        let mut stalled = None;
         let mut base = 0;
         let mut committed = 0;
         'restart: loop {
@@ -224,6 +257,7 @@ impl XmltvParser {
                     }
                     Err(err) => {
                         if !at_end && incomplete(&err, pos, len) {
+                            stalled = Some(el.is_some());
                             break; // Markup continues in the next chunk.
                         }
                         self.stats.warnings.malformed_xml += 1;
@@ -255,6 +289,8 @@ impl XmltvParser {
                         }
                         None => committed = keep_tail(&self.buf, e.start + 1),
                     }
+                } else {
+                    stalled = Some(true);
                 }
             }
             break;
@@ -263,6 +299,10 @@ impl XmltvParser {
             committed = len;
         }
         self.buf.drain(..committed);
+        self.stall = stalled.filter(|_| !at_end).map(|in_element| Stall {
+            scanned: self.buf.len(),
+            in_element,
+        });
     }
 }
 
