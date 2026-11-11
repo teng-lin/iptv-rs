@@ -78,7 +78,7 @@ pub(super) fn key_list(ui: crate::Ui) -> impl IntoElement {
             side(ui, size, KEYS_W)
                 .child(title(ui, size))
                 .child(
-                    ui_kit::caption(size, "Changing keys comes in a later version.")
+                    ui_kit::caption(size, "Use Edit remote bindings to change a key.")
                         .px(move || size.px(14.0)),
                 )
                 .child(

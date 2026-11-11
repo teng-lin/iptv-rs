@@ -350,3 +350,18 @@ fn agrees_with_a_linear_scan() {
     }
     assert!(matched >= 12, "the queries exercise real matches");
 }
+
+#[test]
+fn hidden_channels_do_not_consume_the_result_limit() {
+    let idx = index();
+    let visible = |c| c == 1;
+    let opts = ProgrammeSearchOptions {
+        visible: Some(&visible),
+        limit: 1,
+        include_past_without_catchup: true,
+        ..opts()
+    };
+    let result = run(&idx, "owl", opts);
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].0, 1);
+}

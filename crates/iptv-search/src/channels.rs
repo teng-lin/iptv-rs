@@ -52,7 +52,13 @@ fn key_words(text: &str) -> Vec<Box<str>> {
 impl ChannelIndex {
     /// Indexes the channel names of `schedule`.
     pub fn from_schedule(schedule: &dyn Schedule) -> Self {
-        Self::from_names((0..schedule.channel_count()).map(|c| schedule.channel_name(c)))
+        Self::from_names((0..schedule.channel_count()).map(|c| {
+            if schedule.channel_hidden(c) {
+                String::new()
+            } else {
+                schedule.channel_name(c)
+            }
+        }))
     }
 
     /// Indexes names in channel order. A leading country/group tag

@@ -413,3 +413,59 @@ fn titles_stored_with_superscript_badges_show_them_as_words() {
     assert_eq!(s.title(0, s.program_at(0, 0)), "Alpha News Live");
     assert_eq!(s.title(0, s.program_at(0, 45)), "Alpha Talk");
 }
+
+#[test]
+fn organization_filters_lists_but_preserves_playback_and_group_identity() {
+    use iptv_core::lists::{ALL, ChannelList, FIRST_GROUP, ListId};
+    let m = parse_m3u(
+        "#EXTM3U\n#EXTINF:-1 group-title=\"News\",A\nhttp://example.test/a\n#EXTINF:-1 group-title=\"Sport\",B\nhttp://example.test/b\n#EXTINF:-1 group-title=\"News\",C\nhttp://example.test/c\n",
+    );
+    let s = EpgSchedule::from_catalog(&m.groups, &m.channels.items, GuideStore::new(), NOW);
+    let key = s.channel_key(0).unwrap();
+    let group = ListId::of(FIRST_GROUP, &s);
+    let url = s.stream_url(0);
+    s.set_organization(super::Organization {
+        channels: [2, 1, 0]
+            .into_iter()
+            .map(|c| (s.channel_key(c).unwrap(), format!("Renamed {c}"), c == 0))
+            .collect(),
+        groups: vec![
+            (m.groups[1].id.as_str().into(), "Other label".into(), false),
+            (m.groups[0].id.as_str().into(), "Other label".into(), false),
+        ],
+    });
+    assert_eq!(s.channel_count(), 3);
+    assert_eq!(s.find_channel(&key), Some(0));
+    assert_eq!(s.stream_url(0), url);
+    assert_eq!(s.channel_name(0), "Renamed 0");
+    assert_eq!(ChannelList::build(ALL, &s, &[], &[]).channels(), [2, 1]);
+    assert_eq!(
+        group.find(&s),
+        FIRST_GROUP + 1,
+        "duplicate display names do not change identity"
+    );
+    assert_eq!(
+        ChannelList::build(FIRST_GROUP + 1, &s, &[], &[]).channels(),
+        [1]
+    );
+    assert_eq!(
+        ChannelList::build(0, &s, &[0, 1], &[]).channels(),
+        [1],
+        "favorites obey visibility without removing membership"
+    );
+    assert_eq!(
+        iptv_core::playback::zap_target(&s, 0, 1),
+        1,
+        "hidden playing channel can zap to visible neighbor"
+    );
+    let org = super::Organization {
+        channels: Vec::new(),
+        groups: vec![(m.groups[0].id.as_str().into(), "News".into(), true)],
+    };
+    s.set_organization(org);
+    assert_eq!(s.group_count(), 1);
+    assert_eq!(ChannelList::build(ALL, &s, &[], &[]).channels(), [2]);
+    s.set_organization(super::Organization::default());
+    assert_eq!(s.group_count(), 2);
+    assert_eq!(ChannelList::build(ALL, &s, &[], &[]).channels(), [0, 2, 1]);
+}

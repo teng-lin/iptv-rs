@@ -16,7 +16,7 @@
 //! the second Back that leaves (`may_leave`).
 
 mod editors;
-mod remote_keys;
+pub(crate) mod remote_keys;
 mod view;
 mod words;
 
@@ -240,14 +240,7 @@ fn run(ui: Ui, key: &'static str) {
                 notify("No playlist on screen");
             }
         }
-        "remote.customize" => {
-            let len = remote_keys::key_lines().len();
-            ui.settings_screen.update(|s| {
-                if let Some(s) = s {
-                    s.open_list(key, len);
-                }
-            });
-        }
+        "remote.customize" => crate::remote_editor::open(ui),
         // The playlists screen, over the settings screen.
         "playlists.manage" => crate::playlists_view::open(ui),
         other => log::info!("iptv settings: {other} is not implemented yet"),

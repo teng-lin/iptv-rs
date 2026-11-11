@@ -29,6 +29,8 @@ pub enum Context {
     /// The channel list over the video (Up/Down move, OK plays, Left shows
     /// the groups, Back closes).
     ChannelList,
+    /// Search results and query navigation.
+    Search,
     /// An editing mode (favourites): Up/Down move, OK toggles, Left and
     /// Right act on the whole group, Back leaves.
     Editor,

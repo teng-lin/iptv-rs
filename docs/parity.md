@@ -1,5 +1,7 @@
 # Functional parity with the reference app
 
+For the source-and-test audit at commit `12dc1a3`, including backend-only features, the four-versus-nine multiview limit and reference uncertainty, see [the 2026-11-11 parity audit](parity-audit-2026-11-11.md). The tables below retain the earlier product/workstream assessment.
+
 Date: 2026-11-10. Sources: the static specification in `~/src/tivimate/docs`
 and a side-by-side runtime pass on the tablet emulator with the same provider
 playlist in both apps (captures outside all repositories). Behaviour only:
@@ -129,3 +131,7 @@ key remapping (P1); the player's remote defaults are in (§3).
    playlist, refresh/rename/EPG URL/delete.
 4. **Settings** (§5): settings screen over the catalogue, wiring the
    hard-coded behaviours.
+
+Detailed follow-up: [Playlist, settings and organization backlog](missing-features-2026-11-11.md).
+
+On `feat/library-management`, see [implementation scope and validation](library-management-implementation.md).

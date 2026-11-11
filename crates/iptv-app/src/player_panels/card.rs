@@ -24,20 +24,7 @@ fn secondary() -> Rgba {
 /// The group the playing channel is in (groups start in ascending order).
 pub(super) fn group_of(channel: usize) -> String {
     let s = crate::schedule();
-    let n = s.group_count();
-    if n == 0 {
-        return String::new();
-    }
-    let (mut lo, mut hi) = (0, n);
-    while hi - lo > 1 {
-        let mid = (lo + hi) / 2;
-        if s.group_start(mid) <= channel {
-            lo = mid;
-        } else {
-            hi = mid;
-        }
-    }
-    s.group_name(lo)
+    iptv_core::lists::group_of(&*s, channel).map_or_else(String::new, |g| s.group_name(g))
 }
 
 /// The channel's logo address (imported channels with an http(s) logo).

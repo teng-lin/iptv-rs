@@ -272,7 +272,9 @@ fn prepare(ui: Ui) {
         let mut channels = ChannelIndex::from_schedule(&*schedule);
         for c in 0..schedule.channel_count() {
             // The number the guide shows (the provider's, else the position).
-            channels.add_key(c, &schedule.channel_number(c).to_string());
+            if !schedule.channel_hidden(c) {
+                channels.add_key(c, &schedule.channel_number(c).to_string());
+            }
         }
         INDEXES.with(|i| {
             *i.borrow_mut() = Indexes {
@@ -334,10 +336,11 @@ fn run_search(ui: Ui, query: &str) {
     let favourites = ui.favorites.get_untracked();
     let schedule = crate::schedule();
     let days = |c: usize| schedule.catchup_days(c);
+    let visible = |c: usize| !schedule.channel_hidden(c);
     let options = options(&crate::settings::get());
     let (channels, programmes) = INDEXES.with(|i| {
         let i = i.borrow();
-        let channels = i.channels.search_channels(
+        let mut channels = i.channels.search_channels(
             query,
             &favourites,
             ChannelSearchOptions {
@@ -346,6 +349,7 @@ fn run_search(ui: Ui, query: &str) {
             },
         );
         let opts = ProgrammeSearchOptions {
+            visible: Some(&visible),
             include_past_without_catchup: options.include_past_without_catchup,
             catchup_days: Some(&days),
             favourites: Some(&favourites),
@@ -353,9 +357,11 @@ fn run_search(ui: Ui, query: &str) {
             limit: LIMIT,
             ..Default::default()
         };
-        let programmes = i.programmes.as_ref().map_or_else(Vec::new, |p| {
+        let mut programmes = i.programmes.as_ref().map_or_else(Vec::new, |p| {
             p.search_programmes(query, crate::time::wall_unix(), opts)
         });
+        channels.retain(|h| !schedule.channel_hidden(h.channel));
+        programmes.retain(|h| !schedule.channel_hidden(h.channel));
         (channels, programmes)
     });
     ui.search.update(|s| {

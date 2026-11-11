@@ -19,6 +19,7 @@ pub(crate) mod assign;
 pub(crate) mod guides;
 mod library;
 mod opening;
+pub(crate) mod organization;
 pub(crate) mod pages;
 pub(crate) mod stored;
 mod wizard_map;
@@ -51,7 +52,7 @@ use nsh_core::prelude::*;
 
 pub use library::{
     Activity, Library, Playlist, delete, edit_guides, playlists, refresh, refresh_all, rename,
-    set_user_agent, source_details, switch_to, try_details,
+    set_policy, set_user_agent, source_details, switch_to, try_details,
 };
 pub use wizard_map::source_from_draft;
 
@@ -255,12 +256,20 @@ pub fn start(ui: Ui) {
             drop(store);
             library::run(ui, stored, Purpose::Startup, false);
         }
-        Ok(None) => crate::wizard_view::open_first_run(ui),
+        Ok(None) => {
+            if playlists().is_ok_and(|p| !p.is_empty()) {
+                show_nothing(ui);
+                crate::playlists_view::open(ui);
+            } else {
+                crate::wizard_view::open_first_run(ui);
+            }
+        }
         Err(e) => {
             log::warn!("iptv data: store unavailable ({e}); opening the wizard");
             crate::wizard_view::open_first_run(ui);
         }
     }
+    library::start_scheduler(ui);
 }
 
 /// A new generation owns the guide: older imports no longer show and
@@ -379,6 +388,7 @@ fn show_part(
         imported.guide,
         imported.now,
     );
+    organization::apply(&schedule, imported.source);
     let built = started.elapsed();
     let mut schedule = match imported.playback {
         Streams::New(context, allowed) => {
@@ -442,7 +452,14 @@ fn source_changed(ui: Ui, source: Option<SourceId>) {
 fn show_nothing(ui: Ui) {
     next_generation();
     source_changed(ui, None);
-    crate::set_schedule(&ui, Rc::new(iptv_core::guide::SyntheticSchedule));
+    crate::set_schedule(
+        &ui,
+        Rc::new(EpgSchedule::new(
+            Vec::new(),
+            GuideStore::default(),
+            now_unix(),
+        )),
+    );
 }
 
 /// Looks at `source`'s guide again at `at` (unix time), unless a newer
@@ -611,6 +628,95 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
         && let Some(id) = job.stored
     {
         opening::send_stored(&job, id, now, tx);
+    }
+    if let Some(id) = job
+        .stored
+        .filter(|id| !library::network_due(*id, job.purpose))
+    {
+        if let Ok((groups, channels)) = stored::catalog(id) {
+            if !channels.is_empty() {
+                let counts = ImportCounts {
+                    channels: channels.len() as u32,
+                    groups: groups.len() as u32,
+                    movies: 0,
+                    series: 0,
+                };
+                let guide = stored::load_guide(id, now).unwrap_or_default();
+                let context = crate::player::stored_context(&job.source.config);
+                let _ = tx.send(Msg::Playlist(Ok((
+                    counts,
+                    Box::new(Imported {
+                        groups: groups.clone(),
+                        channels: channels.clone(),
+                        guide,
+                        now,
+                        source: Some(id),
+                        resume: context.is_some(),
+                        playback: Streams::New(context, None),
+                    }),
+                ))));
+                let overrides = stored::overrides(id);
+                let matching = stored::Matching {
+                    channels: &channels,
+                    overrides: &overrides,
+                };
+                let guides = stored::current_configs(id, stored::guide_state(id).as_ref());
+                let state = stored::guide_state(id);
+                match stored::plan(
+                    job.purpose.trigger(),
+                    &guides,
+                    matching,
+                    state.as_ref(),
+                    now,
+                ) {
+                    Decision::Refresh(_) => {
+                        if let Ok(net) = NetClient::new(crate::settings::net_config()) {
+                            match download_guide(
+                                &net,
+                                &guides,
+                                matching,
+                                now,
+                                &mut NoProgress,
+                                cancel,
+                                None,
+                            )
+                            .await
+                            {
+                                Ok(import) => {
+                                    let guide = keep_guide(id, import, &guides, matching, now);
+                                    let _ = tx.send(Msg::Guide(Box::new(Imported {
+                                        groups,
+                                        channels: channels.clone(),
+                                        guide,
+                                        now,
+                                        source: Some(id),
+                                        resume: false,
+                                        playback: Streams::Current,
+                                    })));
+                                }
+                                Err(ImportError::Cancelled) => {}
+                                Err(e) => stored::record_failure(id, &e, &guides),
+                            }
+                        }
+                    }
+                    Decision::Discard => {
+                        stored::discard(id);
+                        let _ = tx.send(Msg::Guide(Box::new(Imported {
+                            groups,
+                            channels: channels.clone(),
+                            guide: GuideStore::default(),
+                            now,
+                            source: Some(id),
+                            resume: false,
+                            playback: Streams::Current,
+                        })));
+                    }
+                    _ => {}
+                }
+                send_next_check(tx, id, &guides, matching);
+                return;
+            }
+        }
     }
     let stored_guide = job.stored.and_then(stored::guide_state);
     let Ok(net) = NetClient::new(crate::settings::net_config()) else {

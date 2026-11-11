@@ -27,7 +27,7 @@ const CONTEXTS: [(Context, &str); 7] = [
     (Context::Multiview, "In multiview"),
 ];
 
-const KEYS: [RemoteKey; 27] = [
+pub(crate) const KEYS: [RemoteKey; 27] = [
     RemoteKey::Up,
     RemoteKey::Down,
     RemoteKey::Left,
@@ -58,7 +58,7 @@ const KEYS: [RemoteKey; 27] = [
 ];
 
 /// A desktop keyboard's own keys (`iptv_nav::Profile::Keyboard`).
-const KEYBOARD_KEYS: [RemoteKey; 7] = [
+pub(crate) const KEYBOARD_KEYS: [RemoteKey; 7] = [
     RemoteKey::Home,
     RemoteKey::Tab,
     RemoteKey::ShiftTab,
@@ -68,7 +68,7 @@ const KEYBOARD_KEYS: [RemoteKey; 7] = [
     RemoteKey::CtrlRight,
 ];
 
-fn key_name(key: RemoteKey) -> String {
+pub(crate) fn key_name(key: RemoteKey) -> String {
     let name = match key {
         RemoteKey::Up => "Up",
         RemoteKey::Down => "Down",
@@ -131,7 +131,7 @@ fn key_name(key: RemoteKey) -> String {
     }
 }
 
-fn action_name(action: Action) -> &'static str {
+pub(crate) fn action_name(action: Action) -> &'static str {
     match action {
         Action::MoveUp => "Move up",
         Action::MoveDown => "Move down",
@@ -197,7 +197,7 @@ fn binding(key: RemoteKey, press: Press) -> String {
 
 /// The app's keys now.
 pub fn key_lines() -> Vec<Line> {
-    let map = Keymap::for_profile(crate::input::PROFILE);
+    let map = crate::remote_editor::keymap();
     lines(&map, crate::input::LONG_PRESS)
 }
 
