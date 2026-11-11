@@ -6,8 +6,10 @@
 //! the app asks it to open one now ([`Pip::request`]: the control strip's
 //! button) or to open one by itself when the viewer leaves the app
 //! ([`Pip::auto_enter`]: Home while a channel plays full screen, setting
-//! [`OnLeave`]). While the window is open the app shows only the video
-//! ([`Pip::ui_shown`]).
+//! [`OnLeave`]). While Android's window is open the app shows only the
+//! video ([`Pip::ui_shown`]); the desktops' window is one of the app's own
+//! beside its main window ([`Pip::separate`], `pip_window`), whose UI
+//! stays.
 
 /// `player.pip_on_leave`: whether leaving the app while a channel plays
 /// full screen opens the picture-in-picture window.
@@ -54,6 +56,9 @@ pub struct Pip {
     pub active: bool,
     /// Requests to open one so far: a new value asks the host to.
     pub requests: u64,
+    /// The window is apart from the app's (the desktops' window of its
+    /// own): the app's UI stays while it is open.
+    pub separate: bool,
 }
 
 impl Pip {
@@ -94,9 +99,15 @@ impl Pip {
         self.supported && playing && wanted
     }
 
-    /// Whether the app's UI shows over the video: not in the window.
+    /// Whether the app's UI shows over the video: not in Android's
+    /// window (the app's own is that window), always beside the desktops'.
     pub fn ui_shown(&self) -> bool {
-        !self.active
+        !self.active || self.separate
+    }
+
+    /// Whether the player shows in a window apart from the app's now.
+    pub fn in_window(&self) -> bool {
+        self.active && self.separate
     }
 }
 
@@ -156,6 +167,22 @@ mod tests {
         assert_eq!(pip.report(true, false, true), Change::None);
         assert_eq!(pip.report(true, false, false), Change::Left);
         assert!(pip.ui_shown());
+    }
+
+    #[test]
+    fn the_desktops_window_leaves_the_ui_beside_it() {
+        let mut pip = Pip {
+            separate: true,
+            ..host(false)
+        };
+        assert!(!pip.in_window());
+        assert!(pip.request(true));
+        assert_eq!(pip.report(true, false, true), Change::Entered);
+        assert!(pip.ui_shown(), "the main window stays usable");
+        assert!(pip.in_window());
+        assert!(!pip.can_enter(true), "one window");
+        assert_eq!(pip.report(true, false, false), Change::Left);
+        assert!(!pip.in_window());
     }
 
     #[test]

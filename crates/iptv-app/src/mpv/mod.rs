@@ -17,6 +17,8 @@
 //!   `aid`), `textTrack` (`off` or an id: `sid`), each starting again from
 //!   the default with a new source;
 //!   `volume` (0–100), `muted`, `audioDelay` (ms: mpv's `audio-delay`);
+//! - prop `pip` `{window}`: the desktops' picture-in-picture window shows
+//!   this player too ([`pip`]: its picture, no second stream);
 //! - events `state` {state: idle|buffering|ready|ended}, `size` {width,
 //!   height}, `error` {code, http?} with Media3's code names
 //!   ([`map::Clues::error`]), never addresses or messages, `position`
@@ -44,14 +46,19 @@ mod ffi;
 mod gl;
 mod handle;
 mod map;
+mod pip;
 mod worker;
 
 #[cfg(target_os = "linux")]
 mod gtk;
 #[cfg(target_os = "linux")]
+mod gtk_pip;
+#[cfg(target_os = "linux")]
 use gtk as platform;
 #[cfg(target_os = "macos")]
 mod mac;
+#[cfg(target_os = "macos")]
+mod mac_pip;
 #[cfg(target_os = "macos")]
 use mac as platform;
 
@@ -315,6 +322,8 @@ impl Inner {
                 let secs = ms.clamp(-10_000.0, 10_000.0) / 1000.0;
                 self.send(Cmd::Set("audio-delay", format!("{secs:.3}")));
             }
+            // The desktops' picture-in-picture window shows this player.
+            "pip" => pip::set_prop(self.id, value),
             _ => {}
         }
     }
@@ -741,6 +750,7 @@ fn param<T>(type_: c_int, data: *mut T) -> ffi::mpv_render_param {
 impl Drop for Inner {
     fn drop(&mut self) {
         PLAYERS.with(|p| p.borrow_mut().remove(&self.id));
+        pip::forget(self.id);
         // The control thread stops first, then the render context goes, then
         // the handle (its last owner); the view and its GL context last.
         self.worker.take();

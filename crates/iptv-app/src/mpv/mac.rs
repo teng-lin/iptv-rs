@@ -37,12 +37,15 @@ use serde_json::Value;
 
 use super::{Inner, NAME, find};
 
-/// Registers `tv.player`.
+pub(super) use super::mac_pip::sync as pip_sync;
+
+/// Registers `tv.player` and the picture-in-picture window's `tv.pip`.
 pub fn register(components: &Components) {
     components.register(
         NAME,
         std::rc::Rc::new(|ctx| Box::new(Player::new(ctx)) as Box<dyn NativeComponent>),
     );
+    super::mac_pip::register(components);
 }
 
 /// Runs `f` on the main thread (GCD's main queue, which AppKit's run loop
@@ -208,6 +211,8 @@ define_class!(
             {
                 let (width, height) = gl.viewport();
                 p.draw(width, height);
+                let size = { let st = p.state.borrow(); (st.width, st.height) };
+                super::mac_pip::drew(p.id, size.0, size.1);
             } else if let Some(gl) = super::gl::Gl::load() {
                 // No player (gone, or without a render context): black,
                 // never what the framebuffer held.
@@ -303,9 +308,11 @@ impl VideoView {
     }
 }
 
-/// The view the player draws in.
+/// The view the player draws in, in the frame NSH hosts (the
+/// picture-in-picture window borrows the view: `mac_pip`).
 pub(super) struct Video {
     view: Retained<VideoView>,
+    frame: Retained<super::mac_pip::Frame>,
 }
 
 impl Video {
@@ -315,9 +322,20 @@ impl Video {
             log::error!("iptv mpv: no OpenGL context");
         }
         let layer = VideoLayer::new(player, gl);
-        Video {
-            view: VideoView::new(mtm, layer),
-        }
+        let view = VideoView::new(mtm, layer);
+        let frame = super::mac_pip::Frame::new(mtm);
+        frame.hold(&view);
+        Video { view, frame }
+    }
+
+    /// The player's view.
+    pub(super) fn view(&self) -> Retained<NSView> {
+        Retained::into_super(self.view.clone())
+    }
+
+    /// The frame NSH hosts.
+    pub(super) fn frame(&self) -> &super::mac_pip::Frame {
+        &self.frame
     }
 
     fn layer(&self) -> &VideoLayer {
@@ -361,7 +379,7 @@ impl Player {
 
 impl NativeComponent for Player {
     fn view(&self) -> Retained<NSView> {
-        Retained::into_super(self.0.video.view.clone())
+        Retained::into_super(self.0.video.frame.clone())
     }
 
     fn set_prop(&mut self, name: &str, value: Option<&Value>) {

@@ -25,6 +25,8 @@ pub enum Icon {
     ExitFullScreen,
     /// A cross (multiview's remove).
     Close,
+    /// A window with an arrow into it (picture in picture back to the app).
+    BackToApp,
 }
 
 /// Strokes and fills, as SVG markup.
@@ -86,6 +88,9 @@ fn body(icon: Icon) -> &'static str {
         Icon::FullScreen => "<path d='M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5'/>",
         Icon::ExitFullScreen => "<path d='M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5'/>",
         Icon::Close => "<path d='M6 6l12 12M18 6L6 18'/>",
+        Icon::BackToApp => {
+            "<rect x='2' y='4' width='20' height='16' rx='2'/><path d='M16 15L9 8M9 13V8h5'/>"
+        }
     }
 }
 

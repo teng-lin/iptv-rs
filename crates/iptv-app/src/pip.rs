@@ -1,31 +1,41 @@
-//! Picture in picture (Android): the playing channel in a small system
-//! window over other apps, video only. The state is `iptv_core::pip`.
+//! Picture in picture: the playing channel in a small window over other
+//! apps, video only. The state is `iptv_core::pip`.
 //!
-//! It opens from the control strip's button, or by itself when the viewer
-//! leaves the app (Home) while a channel plays full screen and
-//! `player.pip_on_leave` allows it (on phones and tablets by default, not
-//! on a TV). The window's buttons play/pause and change channel; a tap on
-//! it brings the app back full screen; closing it stops playback (the host
-//! stops its players when the activity stops, as for Home without it).
-//!
-//! The host's side is surface 0's `tv.player` (`video.rs`):
+//! **Android**: a system window. It opens from the control strip's
+//! button, or by itself when the viewer leaves the app (Home) while a
+//! channel plays full screen and `player.pip_on_leave` allows it (on
+//! phones and tablets by default, not on a TV). The window's buttons
+//! play/pause and change channel; a tap on it brings the app back full
+//! screen; closing it stops playback (the host stops its players when the
+//! activity stops, as for Home without it). The host's side is surface
+//! 0's `tv.player` (`video.rs`):
 //! - prop `pip` `{auto, enter}`: `auto`, whether leaving the app opens the
 //!   window now; a new `enter` (a count) opens it now;
 //! - event `pip` `{supported, tv, active}`: once mounted, and whenever the
 //!   window opens or closes;
 //! - event `pipAction` `{action: play|pause|next|previous}`: its buttons.
 //!
-//! On the desktops (Linux, macOS) the app's own window plays the part
-//! (`desktop/pip_window.rs`): small, borderless and above the others,
-//! video only; a double click on it, or Escape, brings the window back as
-//! it was. Leaving the app opens nothing there.
+//! In Android's window only the video shows (`lib.rs` hides every other
+//! layer, [`ui_shown`]).
 //!
-//! In the window only the video shows (`lib.rs` hides every other layer,
-//! [`ui_shown`]): the panels, the play bar, the channel list and any
-//! chooser or menu close as it opens, and multiview leaves to its active
-//! tile, which plays on in the window (its other tiles stop).
+//! **The desktops** (Linux, macOS) open a window of the app's own, as
+//! browsers do (`desktop/pip_window.rs`, `iptv_core::pip_window`), from
+//! the same buttons (leaving the app opens nothing there): the full-screen
+//! player shows in it, the same player and stream (surface 0's `pip` prop
+//! says `{window: true}`, `mpv/pip.rs`), while the main window stays
+//! usable with a placeholder where the video was. Changing the channel
+//! there changes the window's. Back to the app (the window's control, a
+//! double click on it, Escape in it, the placeholder's button) closes the
+//! window and the video plays full screen in the main window again;
+//! closing it (its ✕, the system's close) stops playback. Multiview, or
+//! nothing playing any more, closes it too.
+//!
+//! As the window opens, the panels, the play bar, the channel list and
+//! any chooser or menu close, and multiview leaves to its active tile,
+//! which plays on in the window (its other tiles stop).
 
 use iptv_core::pip::{Change, OnLeave};
+use iptv_core::pip_window::Exit;
 use iptv_settings::keys::PIP_ON_LEAVE;
 use nsh_core::prelude::*;
 use serde_json::{Value, json};
@@ -37,12 +47,19 @@ fn playing(ui: Ui) -> bool {
     ui.mode.get() == ViewMode::Fullscreen && ui.playing.get().is_some()
 }
 
-/// Whether the window is open (reading subscribes).
-pub fn active(ui: Ui) -> bool {
-    ui.pip.with(|p| p.active)
+/// Whether the player shows in the desktops' window of its own now
+/// (reading subscribes).
+pub fn in_window(ui: Ui) -> bool {
+    ui.pip.with(|p| p.in_window())
 }
 
-/// Whether the app's layers over the video show: not in the window.
+/// Whether Android's window is the app's own: it then shows only the
+/// video, filling it.
+pub fn fills_app(ui: Ui) -> bool {
+    ui.pip.with(|p| p.active && !p.separate)
+}
+
+/// Whether the app's layers over the video show: not in Android's window.
 pub fn ui_shown(ui: Ui) -> bool {
     ui.pip.with(|p| p.ui_shown())
 }
@@ -59,17 +76,31 @@ pub fn can_enter(ui: Ui) -> bool {
     ui.pip.with(|p| p.can_enter(playing))
 }
 
-/// The desktops: their window can (Android's host reports its own).
+/// The desktops: their window can (Android's host reports its own), and
+/// closes when nothing plays any more or multiview opens.
 pub fn bind(ui: Ui) {
-    if crate::desktop::DESKTOP {
-        ui.pip.update(|p| {
-            p.report(true, false, false);
-        });
+    if !crate::desktop::DESKTOP {
+        return;
     }
+    ui.pip.update(|p| {
+        p.separate = true;
+        p.report(true, false, false);
+    });
+    // On the change only: the window may open from multiview, which then
+    // leaves to its tile.
+    let was = std::cell::Cell::new(false);
+    effect(move || {
+        let gone = ui.playing.get().is_none() || crate::multiview::is_open(ui);
+        let became = !was.replace(gone) && gone;
+        if became && ui.pip.with_untracked(|p| p.in_window()) {
+            log::info!("iptv pip: nothing for the window to show");
+            untracked(|| report(ui, false));
+        }
+    });
 }
 
 /// The control strip's button: asks the host to open the window (on the
-/// desktops, makes the app's window it).
+/// desktops, opens the app's own).
 pub fn enter(ui: Ui) {
     let playing = untracked(|| playing(ui));
     let mut asked = false;
@@ -78,19 +109,26 @@ pub fn enter(ui: Ui) {
         return;
     }
     log::info!("iptv pip: asked to enter");
-    if crate::desktop::DESKTOP && crate::desktop::pip_window::enter() {
+    if crate::desktop::DESKTOP {
         report(ui, true);
     }
 }
 
-/// The desktops: a double click on the video, or Escape, in the window.
-/// False when no window is open.
-pub fn leave(ui: Ui) -> bool {
-    if !crate::desktop::DESKTOP || !ui.pip.with_untracked(|p| p.active) {
+/// The desktops' window closes: back to the app (the video full screen in
+/// the main window) or closed (playback stops). False when none is open.
+pub fn exit(ui: Ui, how: Exit) -> bool {
+    if !ui.pip.with_untracked(|p| p.in_window()) {
         return false;
     }
-    crate::desktop::pip_window::leave();
+    log::info!("iptv pip: {how:?}");
     report(ui, false);
+    match how {
+        Exit::BackToApp => {
+            ui.mode.set(ViewMode::Fullscreen);
+            crate::desktop::focus_main();
+        }
+        Exit::Close => crate::player_keys::stop_playback(ui),
+    }
     true
 }
 
@@ -102,8 +140,9 @@ fn report(ui: Ui, active: bool) {
     );
 }
 
-/// Surface `surface`'s `pip` prop: `{auto, enter}` for surface 0, null
-/// for the others (the window shows surface 0).
+/// Surface `surface`'s `pip` prop: `{auto, enter, window}` for surface 0
+/// (`window`: the desktops' window shows it), null for the others (the
+/// window shows surface 0).
 pub fn prop(ui: Ui, surface: usize) -> Value {
     if surface != 0 {
         return Value::Null;
@@ -111,10 +150,10 @@ pub fn prop(ui: Ui, surface: usize) -> Value {
     ui.settings.get();
     let on_leave = OnLeave::from_key(crate::settings::choice(PIP_ON_LEAVE));
     let playing = playing(ui);
-    let (auto, enter) = ui
+    let (auto, enter, window) = ui
         .pip
-        .with(|p| (p.auto_enter(on_leave, playing), p.requests));
-    json!({ "auto": auto, "enter": enter })
+        .with(|p| (p.auto_enter(on_leave, playing), p.requests, p.in_window()));
+    json!({ "auto": auto, "enter": enter, "window": window })
 }
 
 /// The host's `pip` event.
@@ -134,7 +173,7 @@ pub fn on_state(ui: Ui, data: &Value) {
     }
 }
 
-/// The window opened: only the video, one stream.
+/// The window opened: one stream, the full-screen player's.
 fn entered(ui: Ui) {
     log::info!("iptv pip: entered");
     ui.panels.update(|p| p.hide());

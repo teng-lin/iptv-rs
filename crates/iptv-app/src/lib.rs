@@ -50,6 +50,8 @@ mod wizard_view;
 pub use header::debug_overlay;
 pub use time::clock;
 #[doc(hidden)]
+pub use video::has_source as player_has_source;
+#[doc(hidden)]
 pub use video::opens as player_opens;
 
 use std::time::{Duration, Instant};
@@ -505,6 +507,8 @@ pub fn App() -> impl IntoElement {
             )
         }))
         .child(ui_layers(ui, groups, rows))
+        // The desktops' picture-in-picture window, while it is open.
+        .child(desktop::pip_window::window(ui))
 }
 
 /// Everything over the video: the guide, the full-screen tap catcher,
@@ -561,14 +565,6 @@ fn ui_layers(ui: Ui, groups: ElementRef, rows: ElementRef) -> View {
                 })
                 .label("Video")
                 .on_press(move |e: &PressEvent| {
-                    // The desktop's picture in picture: video only, a
-                    // double click brings the window back.
-                    if !pip::ui_shown(ui) {
-                        if e.clicks == 2 {
-                            pip::leave(ui);
-                        }
-                        return;
-                    }
                     ui.touched();
                     toggle_panels(ui);
                     // A double click on the desktop: window full screen (the
@@ -578,6 +574,9 @@ fn ui_layers(ui: Ui, groups: ElementRef, rows: ElementRef) -> View {
                     }
                 }),
         )
+        // Where the video was while the desktops' picture-in-picture
+        // window shows it.
+        .child(desktop::pip_window::placeholder(ui))
         .child(player_panels::status(ui))
         .child(player_panels::layer(ui))
         .child(multiview_view::layer(ui))
@@ -706,8 +705,6 @@ pub(crate) fn go_back(ui: Ui) -> bool {
             || ui.chooser.with(Option::is_some)
             || ui.editor.with(Option::is_some);
         match (ui.mode.get(), ui.focus.with(|f| f.pane), panels || menu) {
-            // The desktop's picture-in-picture window: back as it was.
-            _ if pip::leave(ui) => true,
             _ if ui.wizard.with(Option::is_some) => wizard_view::back(ui),
             _ if epg_sources_view::is_open(ui) => epg_sources_view::back(ui),
             _ if playlists_view::is_open(ui) => playlists_view::back(ui),

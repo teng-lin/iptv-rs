@@ -29,9 +29,9 @@
 //!   bitrate}], audio: [{id, label, language, channels, codec}], text:
 //!   [{id, label, language}], selected: {video, audio, text}} whenever they
 //!   change; `format` {fps?, channels?} for what plays.
-//! - picture in picture (Android; surface 0): prop `pip` {auto, enter},
+//! - picture in picture (surface 0): prop `pip` {auto, enter, window},
 //!   events `pip` {supported, tv, active} and `pipAction` {action}
-//!   (`pip.rs`).
+//!   (`pip.rs`; Android's host; the desktops' players read `window`).
 //!
 //! In the background (`lifecycle()` Background) Android's host stops every
 //! player, closing its connections, and reopens it when the app comes back
@@ -40,7 +40,7 @@
 //! play on in a minimised window.
 
 use std::cell::RefCell;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use nsh_core::prelude::*;
 use serde_json::{Value, json};
@@ -89,9 +89,20 @@ pub fn rect(ui: Ui) -> (f32, f32, f32, f32) {
 }
 
 /// Surface `surface`'s rectangle; empty for a surface with nothing to show.
+/// While the desktops' picture-in-picture window shows surface 0 it
+/// shrinks to nothing in the main window, where a placeholder takes its
+/// place (`desktop/pip_window.rs`).
 pub fn surface_rect(ui: Ui, surface: usize) -> (f32, f32, f32, f32) {
-    // The picture-in-picture window: surface 0 fills it (`pip.rs`).
-    if crate::pip::active(ui) {
+    if surface == 0 && crate::pip::in_window(ui) {
+        return (0.0, 0.0, 0.0, 0.0);
+    }
+    layout_rect(ui, surface)
+}
+
+/// Where the view mode puts surface `surface`.
+pub fn layout_rect(ui: Ui, surface: usize) -> (f32, f32, f32, f32) {
+    // Android's picture-in-picture window: surface 0 fills it (`pip.rs`).
+    if crate::pip::fills_app(ui) {
         let w = window();
         return match surface {
             0 => (0.0, 0.0, w.width.0, w.height.0),
@@ -124,6 +135,17 @@ pub fn opens(surface: usize) -> u64 {
     OPENS.get(surface).map_or(0, |n| n.load(Ordering::Relaxed))
 }
 
+/// Whether surface `surface`'s player has a stream to play now (for
+/// tests: stopping playback takes it away).
+pub fn has_source(surface: usize) -> bool {
+    SOURCED
+        .get(surface)
+        .is_some_and(|s| s.load(Ordering::Relaxed))
+}
+
+static SOURCED: [AtomicBool; crate::player::SURFACES] =
+    [const { AtomicBool::new(false) }; crate::player::SURFACES];
+
 /// Counts `value` as an open when its url or token differs from `last`'s.
 fn count_open(surface: usize, last: &RefCell<Option<(String, u64)>>, value: &Value) {
     let now = value["url"]
@@ -133,6 +155,7 @@ fn count_open(surface: usize, last: &RefCell<Option<(String, u64)>>, value: &Val
     if now.is_some() && *last != now {
         OPENS[surface].fetch_add(1, Ordering::Relaxed);
     }
+    SOURCED[surface].store(now.is_some(), Ordering::Relaxed);
     *last = now;
 }
 

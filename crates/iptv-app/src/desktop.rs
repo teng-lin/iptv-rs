@@ -13,6 +13,8 @@ use nsh_core::element::desktop::{MenuItem, WindowRef, current_window, set_applic
 use crate::Ui;
 
 pub mod pip_window;
+#[cfg(target_os = "linux")]
+pub mod x11;
 
 /// The desktop backends, where the app owns the window and the sound:
 /// Linux and macOS.
@@ -32,6 +34,11 @@ pub fn bind() {
 /// Runs `f` on the app's window; `None` off desktops.
 fn with_window<T>(f: impl FnOnce(&WindowRef) -> T) -> Option<T> {
     WINDOW.with(|w| w.borrow().as_ref().map(f))
+}
+
+/// Brings the app's window to the front, focused.
+pub fn focus_main() {
+    with_window(WindowRef::focus);
 }
 
 /// Whether the window is in full screen (reading subscribes).

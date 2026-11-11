@@ -12,12 +12,15 @@ use serde_json::Value;
 
 use super::{Inner, NAME, find};
 
-/// Registers `tv.player`.
+pub(super) use super::gtk_pip::sync as pip_sync;
+
+/// Registers `tv.player` and the picture-in-picture window's `tv.pip`.
 pub fn register(components: &Components) {
     components.register(
         NAME,
         Rc::new(|ctx| Box::new(Player::new(ctx)) as Box<dyn NativeComponent>),
     );
+    super::gtk_pip::register(components);
 }
 
 /// Runs `f` on GTK's main loop.
@@ -42,11 +45,11 @@ pub(super) fn every_second(id: u64, f: fn(&Inner)) {
     });
 }
 
-/// The area the player draws in.
-pub(super) struct Video(gtk::GLArea);
+/// The area player `id` draws in.
+pub(super) struct Video(gtk::GLArea, u64);
 
 impl Video {
-    fn new() -> Video {
+    fn new(id: u64) -> Video {
         let area = gtk::GLArea::new();
         area.set_auto_render(false);
         area.set_has_depth_buffer(false);
@@ -54,12 +57,19 @@ impl Video {
         // Touches go to the view.
         area.set_can_target(false);
         area.set_focusable(false);
-        Video(area)
+        Video(area, id)
     }
 
-    /// Draws again soon.
+    /// Draws again soon (in the picture-in-picture window too).
     pub(super) fn redraw(&self) {
         self.0.queue_render();
+        super::gtk_pip::redraw(self.1);
+    }
+
+    /// The area's GL context, once it is realized: mpv's render context
+    /// lives in it.
+    pub(super) fn context(&self) -> Option<gtk::gdk::GLContext> {
+        self.0.context()
     }
 
     /// Makes the area's GL context current, if it has one.
@@ -75,7 +85,7 @@ struct Player(Rc<Inner>);
 
 impl Player {
     fn new(ctx: ComponentContext) -> Self {
-        let inner = Inner::new(ctx, |_| Video::new());
+        let inner = Inner::new(ctx, Video::new);
         let area = &inner.video.0;
         let weak = Rc::downgrade(&inner);
         area.connect_realize(move |_| {
