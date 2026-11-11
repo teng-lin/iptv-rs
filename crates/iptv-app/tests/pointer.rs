@@ -153,6 +153,12 @@ fn bar_buttons(app: &mut Headless, step: impl Fn(Result<(), String>)) {
     step(app.press("label:Close the chooser"));
     step(gone(app, "text:Stretch to fill"));
     assert!(app.screen().matches("label:Mute").unwrap(), "the bar stays");
+    // Desktops have picture in picture: the bar has its button (touch
+    // cannot reach the control strip's).
+    assert!(
+        app.screen().matches("label:Picture in picture").unwrap(),
+        "the bar's picture-in-picture button"
+    );
     // The channel list replaces the bar; Back closes it.
     step(app.press("label:Channel list"));
     step(gone(app, "label:Mute"));

@@ -47,6 +47,12 @@ pub fn ui_shown(ui: Ui) -> bool {
     ui.pip.with(|p| p.ui_shown())
 }
 
+/// Whether this device has the window at all (reading subscribes): the
+/// play bar shows its button only then.
+pub fn supported(ui: Ui) -> bool {
+    ui.pip.with(|p| p.supported)
+}
+
 /// Whether the control strip's button can open the window now.
 pub fn can_enter(ui: Ui) -> bool {
     let playing = playing(ui);
