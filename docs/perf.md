@@ -373,6 +373,28 @@ fixture's local HLS, ten zaps each, the same optimized test host): median
 776 ms (679–845) before the cache options (`8ac1309`), 770 ms (695–878)
 after: unchanged.
 
+## 2026-11-10, iPad, the first build (branch `ipad-1`)
+
+The app on NSH's UIKit backend with MPVKit 1.0.0's libmpv (LGPL static
+xcframeworks), built on an Apple M4 Mac with Xcode 27.2.
+
+| | Size |
+| --- | --- |
+| Device `.app`, signed (development) | 69 MB |
+| Its executable (libmpv, FFmpeg, libass, libplacebo, MoltenVK, ... linked in) | 72.4 MB; 58.7 MB stripped |
+| Unsigned IPA (zip) | ≈ 26 MB |
+| Simulator executable | 72.6 MB |
+
+Drawing: mpv's render API into OpenGL ES 3 cost 117 ms a full-screen
+frame in the iPad simulator (iPad A16, iOS 27.2 runtime) with mpv's
+default scalers, so video crawled; `profile=fast` brought it to 44 ms.
+The simulator's GPU is emulated, so these are no device numbers; on the
+iPad (10th generation, iPadOS 26.2) the app launched and drew the
+wizard, and video playback there is still to be timed. Background and
+foreground (simulator, a live HLS channel playing full screen): the
+stream stopped when the app left, and on return reopened, its last frame
+kept under "Buffering…" until it played in real time again.
+
 ## Findings
 
 1. **Guide import peak memory** (≈ 570 MB for 2.45 M programmes on the

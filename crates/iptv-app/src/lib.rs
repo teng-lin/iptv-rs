@@ -271,6 +271,13 @@ impl Ui {
         self.input.get() == Input::Keys
     }
 
+    /// Whether the buttons that stand in for a remote's keys show (a
+    /// wizard's Back, Settings' Close): on a phone or tablet being
+    /// touched. TVs and desktops have their keys.
+    pub fn touch_controls(&self) -> bool {
+        !self.keys_shown() && !desktop::DESKTOP && play_bar::available()
+    }
+
     /// A foreground UI surface colour. In guide mode the opaque colours are
     /// drawn by the backdrop *under* the video layer (`panels::backdrop`), so
     /// the foreground is clear and the preview rectangle shows the video; in
@@ -381,7 +388,12 @@ pub fn App() -> impl IntoElement {
             &[],
         ))),
         playing: signal(None),
-        input: signal(Input::Keys),
+        // An iPad is touched first: no remote hints until a key is used.
+        input: signal(if cfg!(target_os = "ios") {
+            Input::Touch
+        } else {
+            Input::Keys
+        }),
         mode: signal(ViewMode::Guide),
         theme: signal(Theme::default()),
         stats: signal(Stats::default()),
@@ -559,6 +571,11 @@ pub fn App() -> impl IntoElement {
 /// else the card and its buttons; beside multiview's tiles, its pointer
 /// chrome (the tiles take their own taps).
 fn toggle_panels(ui: Ui) {
+    // A tablet's tap on the video beside the channel list closes it.
+    if !desktop::DESKTOP && untracked(|| channels_view::is_open(ui)) {
+        channels_view::close(ui);
+        return;
+    }
     if untracked(|| multiview::is_open(ui)) {
         if play_bar::available() {
             play_bar::tapped(ui);

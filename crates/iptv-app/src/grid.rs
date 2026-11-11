@@ -239,6 +239,18 @@ fn scroll_to_focus_on_new_list(ui: Ui, list: ElementRef) {
 /// The column's width, the panned timeline and the size scale.
 type Geometry = (fn() -> f32, Pan, Scale);
 
+/// A tap on the guide beside the open groups column (and rail) closes
+/// them, as a tap beside a side panel does on a tablet, and does nothing
+/// else (it plays nothing). Whether they were open. A desktop's click
+/// keeps acting at once.
+pub(crate) fn closed_columns(ui: Ui) -> bool {
+    if crate::desktop::DESKTOP || ui.focus.with_untracked(|f| f.pane) == Pane::Guide {
+        return false;
+    }
+    ui.focus.update(|f| f.close_columns());
+    true
+}
+
 fn row(
     ui: Ui,
     at: Position,
@@ -311,6 +323,9 @@ fn row(
             .on_press(move || {
                 let Some(p) = program() else { return };
                 ui.touched();
+                if closed_columns(ui) {
+                    return;
+                }
                 let view = crate::lists::view(ui);
                 ui.focus.update(|f| f.tap(at.index(), p.start, &view));
                 ui.watch();

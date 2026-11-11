@@ -148,7 +148,63 @@ pub(crate) fn hover(ui: Ui, over: bool) {
 
 pub fn layer(ui: Ui) -> impl IntoElement {
     let shown = computed(move || shows(ui));
-    when(move || shown.get(), move || bar(ui))
+    when(
+        move || shown.get(),
+        move || {
+            view()
+                .absolute()
+                .inset_0()
+                .pointer_events(PointerEvents::BoxNone)
+                .child(when(|| idiom() != Idiom::Desktop, move || back(ui)))
+                .child(bar(ui))
+        },
+    )
+}
+
+/// A tablet's way back from full-screen video, where an iPad's apps keep
+/// it: top left, with the bar. It leaves at once for the guide, or
+/// multiview's grid from a tile watched full screen (a remote's Back and an
+/// iPad's swipe from the left edge hide the bar first).
+fn back(ui: Ui) -> impl IntoElement {
+    let panel = move || tint(ui.theme.with(|t| t.background.panel), PANEL_ALPHA);
+    let label = move || {
+        if crate::multiview::detour(ui) {
+            "‹  Multiview"
+        } else {
+            "‹  Guide"
+        }
+    };
+    view()
+        .absolute()
+        .left(px(0.0))
+        .top(px(0.0))
+        .pl_safe_area_plus(px(24.0))
+        .pt_safe_area_plus(px(16.0))
+        // Only the chip takes presses: around it they reach the video.
+        .pointer_events(PointerEvents::BoxNone)
+        .child(
+            view()
+                .min_h(px(target()))
+                .px(px(18.0))
+                .justify_center()
+                .rounded(px(target() / 2.0))
+                .bg(panel)
+                .label(move || label().trim_start_matches(['‹', ' ']).to_owned())
+                .on_press(move || {
+                    ui.touched();
+                    log::info!("iptv play bar: back");
+                    ui.panels.update(|p| p.hide());
+                    ui.play_bar.update(iptv_core::play_bar::PlayBar::hide);
+                    crate::go_back(ui);
+                })
+                .child(
+                    text(label)
+                        .number_of_lines(1)
+                        .font_weight(crate::fonts::MEDIUM)
+                        .text_size(px(17.0))
+                        .text_color(rgb(WHITE)),
+                ),
+        )
 }
 
 fn bar(ui: Ui) -> impl IntoElement {

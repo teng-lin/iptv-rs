@@ -106,6 +106,9 @@ fn item_view(ui: Ui, item: RailItem) -> impl IntoElement {
                 tint(WHITE, 0)
             }
         })
+        // Its name even while the rail shows the icons only (VoiceOver,
+        // TalkBack, tests).
+        .label(label(item))
         .on_press(move || {
             ui.touched();
             if let Some(i) = index() {
