@@ -201,6 +201,8 @@ fn styles_when(
 ) -> Vec<(Option<String>, f32, u16)> {
     let start = std::time::Instant::now();
     loop {
+        // The screen moves only as its batches are applied.
+        app.catch_up();
         let found = styles(app, text);
         if ok(&found) || start.elapsed() > std::time::Duration::from_secs(3) {
             return found;
@@ -210,12 +212,11 @@ fn styles_when(
 }
 
 /// Whether `text` has a span in `family` at `size` (to a hundredth) and
-/// `weight`.
+/// `weight`, within 3 s (a resize reaches the views on a later frame).
 fn has(app: &mut Headless, text: &str, family: &str, size: f32, weight: u16) -> bool {
-    let found = styles(app, text);
-    let ok = found
-        .iter()
-        .any(|(f, s, w)| f.as_deref() == Some(family) && (s - size).abs() < 0.01 && *w == weight);
+    let want = (Some(family.to_owned()), size, weight);
+    let found = styles_when(app, text, |found| close_to(found, &want));
+    let ok = close_to(&found, &want);
     if !ok {
         eprintln!("{text}: wanted {family} {size} {weight}, found {found:?}");
     }
