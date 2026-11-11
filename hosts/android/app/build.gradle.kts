@@ -18,7 +18,7 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
-        ndk { abiFilters += listOf("x86_64", "arm64-v8a") }
+        ndk { abiFilters += listOf("x86_64", "arm64-v8a", "armeabi-v7a") }
     }
 
     sourceSets["main"].java.srcDirs("src/main/kotlin", "src/main/java", nshJava)
