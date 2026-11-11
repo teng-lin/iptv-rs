@@ -218,9 +218,9 @@ fn a_down_press_mounts_little_and_the_guide_draws_no_empty_cells_or_layers() {
     eprintln!("{report}");
     // Measured (2026-11-10): 31 texts laid out a press (two rows'
     // titles change colour, a row scrolls in, the header), 35 styles and
-    // 16–21 frames mounted; 1121 views drawn, none through a layer (with
-    // every cell restyled, empty slots drawn and past cells dimmed by
-    // opacity: the same mounts, 85 layers).
+    // 16–21 frames mounted; 1121 views drawn, none through a layer. Before
+    // (every cell restyled, empty slots drawn, past cells dimmed by
+    // opacity): the same mounts, 1719 views drawn, 64–85 through a layer.
     assert!(laid_out <= 40.0, "{report}");
     assert!(of("ViewStyle") <= 45.0 && of("Text") <= 40.0, "{report}");
     assert!(of("Create") < 1.0, "rows are recycled, not made: {report}");
