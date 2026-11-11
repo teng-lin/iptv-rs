@@ -117,6 +117,58 @@ mod tests {
     }
 
     #[test]
+    fn a_keyboards_replay_hints_and_the_detours_card() {
+        let k = Profile::Keyboard;
+        let info = |seek| hint(k, Shown::Info, false, Some(seek));
+        assert_eq!(info("left_right"), "◀ ▶ seek   Enter play or pause");
+        assert_eq!(info("down_up"), "▼ ▲ seek   Enter play or pause");
+        assert_eq!(info("transport"), "⏪ ⏩ seek");
+        assert_eq!(
+            hint(Profile::Remote, Shown::Info, false, Some("down_up")),
+            "▼ ▲ seek (hold: faster)   OK play or pause"
+        );
+        assert_eq!(
+            quick_label(QuickAction::Multiview, false, true),
+            "Back to multiview"
+        );
+        assert_eq!(
+            quick_label(QuickAction::Multiview, false, false),
+            "Multiview"
+        );
+    }
+
+    #[test]
+    fn every_failure_has_its_own_words_without_addresses() {
+        let replay = failure_message(&ErrorKind::Unavailable, true);
+        assert_eq!(replay, "This programme can't be replayed.");
+        let cases = [
+            (
+                ErrorKind::Unavailable,
+                "This channel has no stream address.",
+            ),
+            (ErrorKind::Account, "The provider refused this account."),
+            (
+                ErrorKind::Http(410),
+                "The provider doesn't have this stream.",
+            ),
+            (ErrorKind::Http(500), "The provider answered with an error."),
+            (ErrorKind::Format, "This stream's format isn't supported."),
+            (ErrorKind::Ended, "The stream ended."),
+            (ErrorKind::Stalled, "The stream stopped sending video."),
+            (
+                ErrorKind::Resolve,
+                "The portal didn't give a stream address.",
+            ),
+            (ErrorKind::Other, "Playback stopped with an error."),
+        ];
+        for (kind, words) in cases {
+            assert_eq!(failure_message(&kind, false), words, "{kind:?}");
+        }
+        assert_eq!(waiting_text(&Waiting::Loading), "Loading…");
+        assert_eq!(waiting_text(&Waiting::Buffering), "Buffering…");
+    }
+
+    #[test]
     fn a_refusal_names_the_accounts_streams_when_known() {
         crate::multiview::set_account_streams(None);
         let refused = failure_message(&ErrorKind::Http(509), false);
@@ -126,6 +178,12 @@ mod tests {
         assert!(
             full.starts_with("Your provider allows 2 streams at once"),
             "{full}"
+        );
+        crate::multiview::set_account_streams(Some(1));
+        let one = failure_message(&ErrorKind::Http(429), false);
+        assert!(
+            one.starts_with("Your provider allows 1 stream at once"),
+            "{one}"
         );
         assert_eq!(
             failure_message(&ErrorKind::Http(404), false),

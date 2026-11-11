@@ -143,7 +143,7 @@ struct Imported {
     guide: GuideStore,
     now: i64,
     /// The stored source, whose descriptions are read on demand.
-    source: Option<SourceId>,
+    source: SourceId,
     /// Whether the last channel may start (its stream can be resolved).
     resume: bool,
 }
@@ -367,10 +367,10 @@ fn show_part(
     if GENERATION.with(Cell::get) != generation {
         return;
     }
-    if imported.source != ui.library.shown.get_untracked() {
-        source_changed(ui, imported.source);
+    if Some(imported.source) != ui.library.shown.get_untracked() {
+        source_changed(ui, Some(imported.source));
     }
-    stored::note_shown(imported.source);
+    stored::note_shown(Some(imported.source));
     let channels = imported.channels.len();
     let started = std::time::Instant::now();
     let schedule = EpgSchedule::from_catalog(
@@ -394,23 +394,20 @@ fn show_part(
             schedule.with_shared_playback(shared)
         }
     };
-    if let Some(lookup) = imported.source.and_then(stored::description_lookup) {
+    if let Some(lookup) = stored::description_lookup(imported.source) {
         schedule = schedule.with_description_lookup(lookup);
     }
     // Its guide is the stored one's recent part (`stored::load_guide`), or
     // only its first screen until that arrives.
-    match (held, imported.source) {
-        (Some(held), _) => {
-            schedule = schedule
-                .held_only(held.from, held.to)
-                .held_channels(held.keys);
-        }
-        (None, Some(source)) => schedule = pages::paged(ui, schedule, source, imported.now),
-        (None, None) => {}
-    }
+    schedule = match held {
+        Some(held) => schedule
+            .held_only(held.from, held.to)
+            .held_channels(held.keys),
+        None => pages::paged(ui, schedule, imported.source, imported.now),
+    };
     let wrapped = started.elapsed();
     log::info!("iptv data: guide switched to {channels} imported channels");
-    crate::favorites::set_source(imported.source);
+    crate::favorites::set_source(Some(imported.source));
     let favorites = started.elapsed();
     crate::set_schedule(&ui, Rc::new(schedule));
     pages::replaced();
@@ -546,7 +543,7 @@ async fn guide_pipeline(source: SourceId, tx: &Sender<Msg>) {
                                 playback: Streams::Current,
                                 guide,
                                 now,
-                                source: Some(source),
+                                source,
                                 resume: false,
                             })));
                         }
@@ -568,7 +565,7 @@ async fn guide_pipeline(source: SourceId, tx: &Sender<Msg>) {
                 playback: Streams::Current,
                 guide: GuideStore::default(),
                 now,
-                source: Some(source),
+                source,
                 resume: false,
             })));
         }
@@ -716,7 +713,7 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
             ),
             guide,
             now,
-            source: Some(id),
+            source: id,
             resume: true,
         })
     };

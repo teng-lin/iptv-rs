@@ -137,13 +137,11 @@ pub fn span(ui: Ui) -> Option<(i32, i32)> {
 }
 
 /// A seek to `target` seconds into the archived programme being chosen
-/// (the play bar's progress bar under a finger or the mouse): shown at
-/// once, opened once `commit` says so or the pointer pauses.
-pub fn to(ui: Ui, target: i32, commit_now: bool) -> bool {
-    let Some((_, _, limit)) = programme(ui) else {
-        return false;
-    };
-    ui.seek_target.set(Some(target.clamp(0, limit)));
+/// (the play bar's progress bar under a finger or the mouse, within
+/// [`span`]'s limit): shown at once, opened once `commit` says so or the
+/// pointer pauses.
+pub fn to(ui: Ui, target: i32, commit_now: bool) {
+    ui.seek_target.set(Some(target.max(0)));
     commit_later(
         ui,
         if commit_now {
@@ -152,7 +150,6 @@ pub fn to(ui: Ui, target: i32, commit_now: bool) -> bool {
             COMMIT_AFTER
         },
     );
-    true
 }
 
 /// Opens the archive at the target after `wait`, unless another seek came.

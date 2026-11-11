@@ -184,7 +184,7 @@ fn save_and_rebind(
         channels,
         playback: Streams::Current,
         now,
-        source: Some(source),
+        source,
         resume: false,
     })))
 }

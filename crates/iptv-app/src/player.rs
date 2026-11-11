@@ -200,14 +200,10 @@ fn real_schedule(s: &Rc<dyn Schedule>) -> Option<&EpgSchedule> {
     s.as_any()?.downcast_ref::<EpgSchedule>()
 }
 
-/// Called by [`Ui::play`] after it set the channel and playback: opens the
-/// stream with a fresh health session.
-pub fn start(ui: &Ui) {
+/// Called by [`Ui::play`] after it set `channel` playing and the playback:
+/// opens the stream with a fresh health session.
+pub fn start(ui: &Ui, channel: usize) {
     let ui = *ui;
-    let Some(channel) = ui.playing.get_untracked() else {
-        stop(ui);
-        return;
-    };
     let live = ui.playback.get_untracked() == Playback::Live;
     let now = ui.now_ms();
     let mut session = 0;
@@ -579,15 +575,31 @@ fn follow_playing(ui: Ui) {
         }
         // Another source (or the channel left it): its row now means
         // another channel, so nothing plays.
-        None => {
-            log::info!("iptv player: the playing channel is not in the new guide; stopping");
-            ui.playing.set(None);
-            ui.player.main().key.set(None);
-            stop(ui);
-            if ui.mode.get_untracked() != ViewMode::Guide {
-                ui.mode.set(ViewMode::Guide);
-            }
-        }
+        None => gone(ui),
+    }
+}
+
+/// The playing channel is not in the new guide: nothing plays, the guide
+/// shows.
+fn gone(ui: Ui) {
+    log::info!("iptv player: the playing channel is not in the new guide; stopping");
+    ui.playing.set(None);
+    ui.player.main().key.set(None);
+    stop(ui);
+    if ui.mode.get_untracked() != ViewMode::Guide {
+        ui.mode.set(ViewMode::Guide);
+    }
+}
+
+/// `set_schedule` swapped in a guide with fewer rows than the playing
+/// channel's: it is found again by key, as [`follow_playing`] finds it,
+/// else nothing plays (multiview follows its tiles itself).
+pub fn row_dropped(ui: Ui) {
+    let key = ui.player.main().key.get_untracked();
+    match key.and_then(|k| crate::schedule().find_channel(&k)) {
+        Some(row) => ui.playing.set(Some(row)),
+        None if crate::multiview::session(ui) => ui.playing.set(None),
+        None => gone(ui),
     }
 }
 

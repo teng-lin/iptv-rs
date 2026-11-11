@@ -165,7 +165,8 @@ pub struct Ui {
     /// A catch-up seek being chosen: the target, in seconds into the
     /// programme, opened once the keys pause (`seek.rs`).
     pub seek_target: Signal<Option<i32>>,
-    /// The app's monotonic clock origin (core state machines take ms).
+    /// The app's monotonic clock origin (core state machines take ms), on
+    /// the engine's clock: the one its timers run on.
     pub epoch: Instant,
     /// The open context menu, if any.
     pub menu: Signal<Option<Menu>>,
@@ -270,7 +271,7 @@ impl Ui {
         self.playback.set(playback);
         self.playing.set(Some(channel));
         self.paused.set(false);
-        player::start(self);
+        player::start(self, channel);
     }
 
     /// A touch on any control.
@@ -303,8 +304,12 @@ impl Ui {
         tint(rgb_hex, alpha)
     }
 
+    /// Milliseconds since the app started, on the engine's clock (a
+    /// test's manual clock moves it with the timers).
     pub fn now_ms(&self) -> u64 {
-        self.epoch.elapsed().as_millis() as u64
+        nsh_core::time::now()
+            .saturating_duration_since(self.epoch)
+            .as_millis() as u64
     }
 
     /// What just started playing over full-screen video: the banner for
@@ -360,15 +365,16 @@ pub fn schedule() -> Rc<dyn Schedule> {
 
 /// Swaps the guide data (after an import) and tells the views to re-read.
 /// The guide keeps its list and focused channel by identity, at the new
-/// schedule's now; channel indices into the old data (playing, open menus)
-/// that no longer exist are dropped, favourites are found again by key.
+/// schedule's now; channel indices into the old data (open menus) that no
+/// longer exist are dropped, the playing channel and favourites are found
+/// again by key.
 pub fn set_schedule(ui: &Ui, schedule: Rc<dyn Schedule>) {
     let kept = lists::keep(*ui);
     SCHEDULE.with(|s| *s.borrow_mut() = schedule.clone());
     time::mark_shown();
     let n = schedule.channel_count();
     if ui.playing.get_untracked().is_some_and(|ch| ch >= n) {
-        ui.playing.set(None);
+        player::row_dropped(*ui);
     }
     favorites::catalog_changed(*ui, &*schedule);
     lists::restore(*ui, kept);
@@ -431,7 +437,7 @@ pub fn App() -> impl IntoElement {
         play_bar: signal(Default::default()),
         paused: signal(false),
         seek_target: signal(None),
-        epoch: Instant::now(),
+        epoch: nsh_core::time::now(),
         menu: signal(None),
         description: signal(None),
         favorites: signal(BTreeSet::new()),

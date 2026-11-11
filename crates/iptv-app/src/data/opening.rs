@@ -99,7 +99,7 @@ pub(super) fn send_stored(job: &Job, id: SourceId, now: UnixTime, tx: &Sender<Ms
             playback: Streams::New(context, None),
             guide,
             now,
-            source: Some(id),
+            source: id,
         })
     };
     let started = Instant::now();

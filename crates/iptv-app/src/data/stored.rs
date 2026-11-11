@@ -517,7 +517,7 @@ async fn download_now(
                         playback: Streams::Current,
                         guide,
                         now,
-                        source: Some(source),
+                        source,
                         resume: false,
                     })));
                 }
@@ -596,7 +596,7 @@ pub fn clear(ui: Ui, done: impl FnOnce(bool) + 'static) -> bool {
                 playback: Streams::Current,
                 guide: GuideStore::default(),
                 now: super::now_unix(),
-                source: Some(source),
+                source,
                 resume: false,
             });
             super::show(ui, imported, generation, false);
@@ -921,6 +921,64 @@ mod tests {
                 kind: ImportErrorKind::Network
             }
         );
+    }
+
+    #[test]
+    fn a_failed_imports_kind_is_stored_without_its_details() {
+        use iptv_import::{AuthProblem, FetchError, FetchErrorKind, ParseProblem, Step};
+        use iptv_providers::{StalkerError, StalkerErrorKind};
+        let cases = [
+            (
+                ImportError::InvalidConfig("no link".into()),
+                ImportErrorKind::InvalidConfig,
+            ),
+            (ImportError::Cancelled, ImportErrorKind::Cancelled),
+            (
+                ImportError::Network {
+                    step: Step::Playlist,
+                    error: FetchError::new(FetchErrorKind::Connect, "refused"),
+                },
+                ImportErrorKind::Network,
+            ),
+            (
+                ImportError::HttpStatus {
+                    step: Step::Playlist,
+                    status: 500,
+                },
+                ImportErrorKind::HttpStatus,
+            ),
+            (
+                ImportError::Auth {
+                    step: Step::AccountInfo,
+                    problem: AuthProblem::HttpStatus(401),
+                },
+                ImportErrorKind::AccountRejected,
+            ),
+            (
+                ImportError::Parse {
+                    step: Step::Playlist,
+                    problem: ParseProblem::NotAPlaylist,
+                },
+                ImportErrorKind::InvalidBody,
+            ),
+            (
+                ImportError::Portal {
+                    step: Step::Authentication,
+                    error: StalkerError::with_text(StalkerErrorKind::Portal, None),
+                },
+                ImportErrorKind::Other,
+            ),
+            (
+                ImportError::Empty {
+                    step: Step::Playlist,
+                },
+                ImportErrorKind::Other,
+            ),
+            (ImportError::Storage("disk".into()), ImportErrorKind::Other),
+        ];
+        for (error, kind) in cases {
+            assert_eq!(error_kind(&error), kind, "{error:?}");
+        }
     }
 
     #[test]

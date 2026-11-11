@@ -8,7 +8,8 @@ use std::thread;
 use std::time::Duration;
 
 use common::*;
-use iptv_store_sqlite::{ChannelQuery, OpenOptions, Store, StoreError};
+use iptv_providers::SecretUrl;
+use iptv_store_sqlite::{ChannelQuery, GuideSource, OpenOptions, Store, StoreError};
 
 #[test]
 fn reader_sees_the_last_commit_while_a_write_is_pending() {
@@ -142,4 +143,46 @@ fn concurrent_reads_never_see_a_partial_catalog() {
     let (reads, seen) = reader.join().unwrap();
     assert!(reads >= 5);
     assert!(!seen.is_empty());
+}
+
+/// Two refreshes saving their playlists' guide sources at once (the app's
+/// "Refresh all"), each on its own connection: neither fails as locked. A
+/// write that reads first in a deferred transaction cannot wait for the
+/// lock once another commit made its snapshot stale (`SQLITE_BUSY` at once,
+/// whatever the busy timeout), so such writes take the lock up front.
+#[test]
+fn concurrent_guide_source_edits_wait_for_each_other() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.db");
+    let mut setup = Store::open(&path).unwrap();
+    let sources = [
+        setup.add_source(&m3u_source("A")).unwrap(),
+        setup.add_source(&m3u_source("B")).unwrap(),
+    ];
+    drop(setup);
+    let start = Arc::new(Barrier::new(2));
+    let writers: Vec<_> = sources
+        .into_iter()
+        .map(|src| {
+            let (start, path) = (start.clone(), path.clone());
+            thread::spawn(move || {
+                let mut store = Store::open(&path).unwrap();
+                let guides = [GuideSource {
+                    feed: iptv_epg::SourceId(1),
+                    provider_index: Some(0),
+                    url: SecretUrl::new("http://guide.example.test/g.xml"),
+                    name: None,
+                    enabled: true,
+                    shift_minutes: 0,
+                }];
+                start.wait();
+                for _ in 0..300 {
+                    store.set_guide_sources(src, &guides).unwrap();
+                }
+            })
+        })
+        .collect();
+    for w in writers {
+        w.join().unwrap();
+    }
 }
