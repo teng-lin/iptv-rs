@@ -1,0 +1,6 @@
+[env]
+# iOS: one deployment target for Rust, the C code and the libraries linked
+# in (MPVKit's are built for 15.0; MoltenVK needs libSystem's
+# `__chkstk_darwin`, iOS 13 and later), as NSH's own workspace and the
+# `MinimumOSVersion` `nsh package` writes.
+IPHONEOS_DEPLOYMENT_TARGET = "15.0"

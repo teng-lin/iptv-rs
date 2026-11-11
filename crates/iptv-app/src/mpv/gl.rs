@@ -1,7 +1,8 @@
 //! OpenGL entry points for mpv's renderer and the few calls the player
 //! makes itself. On Linux they are resolved in GTK's GL context: through
 //! EGL when GTK uses it (Wayland, and X11 by default), else GLX, else the
-//! process's symbols. On macOS they are OpenGL.framework's.
+//! process's symbols. On macOS they are OpenGL.framework's, on iOS
+//! OpenGLES.framework's.
 
 use std::ffi::{CStr, c_char, c_void};
 #[cfg(target_os = "linux")]
@@ -101,6 +102,12 @@ fn address(name: &CStr) -> *mut c_void {
     }
     // SAFETY: a live handle and a NUL-terminated name.
     unsafe { libc::dlsym(handle as *mut c_void, name.as_ptr()) }
+}
+
+/// `name`'s address in OpenGLES.framework (null if unknown).
+#[cfg(target_os = "ios")]
+fn address(name: &CStr) -> *mut c_void {
+    super::ios::address(name)
 }
 
 /// mpv's `get_proc_address`.

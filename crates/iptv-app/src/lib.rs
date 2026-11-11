@@ -23,7 +23,7 @@ mod list_rows;
 mod lists;
 mod media;
 mod menu_view;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))]
 mod mpv;
 mod multiview;
 mod multiview_view;
@@ -82,6 +82,14 @@ pub fn components(components: &nsh_platform_linux::Components) {
 #[cfg(target_os = "macos")]
 #[native_components(macos)]
 pub fn components(components: &nsh_platform_macos::Components) {
+    mpv::register(components);
+}
+
+/// iOS and iPadOS's native components: `tv.player` on libmpv (MPVKit's,
+/// OpenGL ES), as on the desktops.
+#[cfg(target_os = "ios")]
+#[native_components(ios)]
+pub fn components(components: &nsh_platform_ios::Components) {
     mpv::register(components);
 }
 

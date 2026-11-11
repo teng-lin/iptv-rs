@@ -1,7 +1,9 @@
 //! `tv.player` on the desktops: one persistent libmpv player per component
 //! drawing through mpv's render API (OpenGL) into the native view NSH hosts
 //! in the video layer's view (`video.rs`): a `GtkGLArea` on Linux
-//! ([`gtk`]), an `NSView` backed by a `CAOpenGLLayer` on macOS ([`mac`]).
+//! ([`gtk`]), an `NSView` backed by a `CAOpenGLLayer` on macOS ([`mac`]),
+//! a `UIView` whose layer is a `CAEAGLLayer` on iOS and iPadOS ([`ios`],
+//! OpenGL ES 3, MPVKit's libmpv).
 //! In-process; the app's UI draws above it as above any view. Layout
 //! changes resize the view; the mpv instance lives as long as the
 //! component. Nothing is process-wide but the registry mpv's threads find
@@ -54,6 +56,10 @@ use gtk as platform;
 mod mac;
 #[cfg(target_os = "macos")]
 use mac as platform;
+#[cfg(target_os = "ios")]
+mod ios;
+#[cfg(target_os = "ios")]
+use ios as platform;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -155,6 +161,9 @@ struct State {
     channels: i64,
     /// The frame rate and channels last sent in `format`.
     format_sent: (f64, i64),
+    /// The app is in the background (iOS): the stream stopped and opens
+    /// again in the foreground ([`Inner::suspend`]).
+    suspended: bool,
 }
 
 /// One player: its mpv instance, control thread, render context and the
@@ -256,6 +265,7 @@ impl Inner {
                 fps: 0.0,
                 channels: 0,
                 format_sent: (0.0, 0),
+                suspended: false,
             }),
             waker,
         });
@@ -263,6 +273,33 @@ impl Inner {
         // `position` once a second while playing (catch-up seeking).
         platform::every_second(id, Inner::tick);
         inner
+    }
+
+    /// The app went to the background, where iOS suspends it: the stream
+    /// stops (no connection held for nothing); [`Inner::resume`] opens it
+    /// again. Android's host does the same (`PlayerComponent.background`);
+    /// the app counts no stall meanwhile (`player.rs`).
+    #[cfg_attr(not(target_os = "ios"), allow(dead_code))]
+    fn suspend(&self) {
+        {
+            let mut st = self.state.borrow_mut();
+            if st.url.is_none() || st.suspended {
+                return;
+            }
+            st.suspended = true;
+            st.expected = None;
+        }
+        self.send(Cmd::Stop);
+    }
+
+    /// Back in the foreground: the stream opens again, its last frame
+    /// kept until it plays.
+    #[cfg_attr(not(target_os = "ios"), allow(dead_code))]
+    fn resume(&self) {
+        let was = std::mem::take(&mut self.state.borrow_mut().suspended);
+        if was {
+            self.open(true);
+        }
     }
 
     fn set_prop(&self, name: &str, value: Option<&Value>) {
@@ -361,7 +398,7 @@ impl Inner {
             (changed, keep)
         };
         self.apply_http();
-        if changed {
+        if changed && !self.state.borrow().suspended {
             self.open(keep);
         }
     }

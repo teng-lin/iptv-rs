@@ -1,7 +1,7 @@
 //! The guide's scale on desktop: its type and geometry (`fonts.rs`, the
 //! grid, the ruler, the channel column and the header's text) are the
 //! full-screen sizes, shrunk a little in a smaller window. An Android
-//! tablet keeps the full sizes (its window is the screen); a TV shows them
+//! tablet and an iPad keep the full sizes (the window is the screen); a TV shows them
 //! at [`TV`], as dense as the reference's TV guide (8 rows of ≈ 39 dp
 //! under its header on a 960 × 540 dp screen).
 //!
@@ -28,7 +28,7 @@ pub const MAX: f32 = 1.0;
 /// The scale moves in these steps.
 pub const STEP: f32 = 0.025;
 /// Whether this platform scales the guide with its window.
-const SCALES: bool = !cfg!(target_os = "android");
+const SCALES: bool = !cfg!(any(target_os = "android", target_os = "ios"));
 /// The scale on a TV (rows 50 → 40 dp, type 20 → 16).
 pub const TV: f32 = 0.8;
 
@@ -141,6 +141,6 @@ mod tests {
         // A tablet (1280 × 800 dp) and a TV (960 × 540 dp).
         assert_eq!(scale_for(1280.0, 800.0, false), 1.0);
         assert_eq!(scale_for(960.0, 540.0, false), 1.0);
-        assert_eq!(SCALES, !cfg!(target_os = "android"));
+        assert_eq!(SCALES, !cfg!(any(target_os = "android", target_os = "ios")));
     }
 }

@@ -34,7 +34,6 @@ impl Mpv {
             ("terminal", "no".to_owned()),
             ("config", "no".to_owned()),
             ("load-scripts", "no".to_owned()),
-            ("ytdl", "no".to_owned()),
             ("input-default-bindings", "no".to_owned()),
             ("input-vo-keyboard", "no".to_owned()),
             ("osd-level", "0".to_owned()),
@@ -46,8 +45,24 @@ impl Mpv {
             ("user-agent", DEFAULT_UA.to_owned()),
             ("hwdec", hwdec),
         ];
+        // No youtube-dl hook (MPVKit's iOS build has none to turn off).
+        if !cfg!(target_os = "ios") {
+            options.push(("ytdl", "no".to_owned()));
+        }
+        // A tablet's GPU draws every frame on the main thread: mpv's fast
+        // profile (bilinear scaling, no dithering or debanding).
+        if cfg!(target_os = "ios") {
+            options.insert(0, ("profile", "fast".to_owned()));
+        }
         if let Some(ao) = env("IPTV_RS_AUDIO") {
             options.push(("ao", ao));
+        } else if cfg!(all(target_os = "ios", target_abi = "sim")) {
+            // The iOS simulator plays no sound through mpv: its audio server
+            // timed AudioUnit's output out as a stream reopened (and
+            // AudioToolbox aborted the app), and AVFoundation's output never
+            // advanced, holding the video. Devices keep mpv's own choice
+            // (AudioUnit).
+            options.push(("ao", "null".to_owned()));
         }
         for (k, v) in &options {
             mpv.option(k, v);

@@ -104,7 +104,8 @@ pub struct mpv_opengl_fbo {
 
 pub type Callback = unsafe extern "C" fn(data: *mut c_void);
 
-#[link(name = "mpv")]
+// iOS links MPVKit's static `Libmpv.framework` (build.rs).
+#[cfg_attr(not(target_os = "ios"), link(name = "mpv"))]
 unsafe extern "C" {
     pub fn mpv_create() -> *mut mpv_handle;
     pub fn mpv_initialize(ctx: *mut mpv_handle) -> c_int;
