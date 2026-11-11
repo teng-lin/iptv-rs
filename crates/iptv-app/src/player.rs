@@ -432,7 +432,7 @@ pub fn previous_channel(ui: Ui) {
     if ui.mode.get_untracked() == ViewMode::Fullscreen
         && crate::settings::flag(iptv_settings::keys::INFO_ON_SWITCH)
     {
-        ui.update_panels(|p, now| p.show_info(now));
+        ui.show_playing();
     }
 }
 
@@ -443,7 +443,7 @@ pub fn go_live(ui: Ui) {
     {
         ui.play(channel, Playback::Live);
         if ui.mode.get_untracked() == ViewMode::Fullscreen {
-            ui.update_panels(|p, now| p.show_info(now));
+            ui.show_playing();
         }
     }
 }
@@ -594,5 +594,5 @@ pub fn source_ready(ui: Ui, refresh: bool) {
     show_channel(ui, channel);
     ui.play(channel, Playback::Live);
     ui.mode.set(ViewMode::Fullscreen);
-    ui.update_panels(|p, now| p.show_info(now));
+    ui.show_playing();
 }

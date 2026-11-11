@@ -7,11 +7,14 @@
 //!
 //! Steps are the `catchup.*_step` settings (by default fast-forward 30 s,
 //! rewind 10 s, one time-bar step 5 min); `catchup.seek_keys` chooses
-//! which keys step along the time bar (`input.rs`).
+//! which keys step along the time bar (`player_keys.rs`). A held key steps
+//! a few times a second, faster the longer it is held
+//! (`iptv_core::seek_hold`); OK opens the archive at the target at once.
 
 use std::cell::Cell;
 use std::time::Duration;
 
+use iptv_core::seek_hold::SeekHold;
 use iptv_settings::{Settings, Target, keys};
 use nsh_core::prelude::*;
 
@@ -48,6 +51,8 @@ const END_MARGIN: i32 = 10;
 thread_local! {
     /// The latest seek key; an older commit timer does nothing.
     static PRESSES: Cell<u64> = const { Cell::new(0) };
+    /// The seek key being held.
+    static HOLD: Cell<SeekHold> = Cell::new(SeekHold::default());
 }
 
 /// The archived programme playing: its start and length in seconds and how
@@ -96,6 +101,33 @@ pub fn step(ui: Ui, delta: i32) -> bool {
     show_info(ui);
     commit_later(ui, COMMIT_AFTER);
     true
+}
+
+/// A seek key: one `step` (seconds, negative back), or a multiple of it
+/// while the key is held (`repeat`: an auto-repeat); some repeats take
+/// no step. False when nothing plays from the archive.
+pub fn key(ui: Ui, step: i32, repeat: bool) -> bool {
+    let factor = HOLD.with(|h| {
+        let mut hold = h.get();
+        let factor = hold.step(step, repeat, ui.now_ms());
+        h.set(hold);
+        factor
+    });
+    match factor {
+        Some(f) => self::step(ui, step.saturating_mul(f)),
+        None => programme(ui).is_some(),
+    }
+}
+
+/// A seek is being chosen (the archive has not reopened there yet).
+pub fn pending(ui: Ui) -> bool {
+    ui.seek_target.get_untracked().is_some()
+}
+
+/// OK while a seek is being chosen: the archive opens there now.
+pub fn commit_now(ui: Ui) {
+    PRESSES.with(|p| p.set(p.get() + 1));
+    commit(ui);
 }
 
 /// The programme playing from the archive: its length in seconds and how

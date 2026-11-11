@@ -23,6 +23,7 @@ pub struct BindingsKey(pub &'static str);
 pub const LONG_PRESS: DurationKey = DurationKey("remote.long_press");
 pub const DIGIT_TIMEOUT: DurationKey = DurationKey("remote.digit_timeout");
 pub const KEY_OVERRIDES: BindingsKey = BindingsKey("remote.key_overrides");
+pub const PLAYER_UP_DOWN: EnumKey = EnumKey("remote.player_up_down");
 
 // Player panels (iptv-core panels::Timeouts).
 pub const INFO_PANEL_TIMEOUT: DurationKey = DurationKey("player.info_panel_timeout");
@@ -82,6 +83,7 @@ pub const ALL: &[(&str, &str)] = &[
     (LONG_PRESS.0, "duration"),
     (DIGIT_TIMEOUT.0, "duration"),
     (KEY_OVERRIDES.0, "key_bindings"),
+    (PLAYER_UP_DOWN.0, "enum"),
     (INFO_PANEL_TIMEOUT.0, "duration"),
     (CONTROLS_PANEL_TIMEOUT.0, "duration"),
     (SWITCH_DELAY.0, "duration"),

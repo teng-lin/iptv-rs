@@ -1,0 +1,310 @@
+//! The remote over full-screen video, after the keymap (`iptv_nav`):
+//!
+//! | Key | Tap | Hold |
+//! | --- | --- | --- |
+//! | OK | info card + action cards (again: hide; a replay: play/pause) | control strip |
+//! | Menu | control strip (again: hide) | – |
+//! | Up / Down | channel up / down (`remote.player_up_down`: the channel list) | repeats |
+//! | Left | channel list over the video | channel list beside it |
+//! | Right | most recent channel | History |
+//! | Back | hide the panels, then the guide | stop playback |
+//!
+//! Over the card and the strip Left/Right move the focus, OK presses it and
+//! Up/Down still zap. In a replay the `catchup.seek_keys` seek instead
+//! (held: faster, `seek.rs`), the card showing its seek bar.
+
+use iptv_core::channel_list::ListMode;
+use iptv_core::panels::{Control, Pick, QuickAction};
+use iptv_core::tracks::Kind as Track;
+use iptv_nav::{Action, Context, RemoteKey};
+
+use crate::{Playback, Ui, ViewMode};
+
+/// The player's action for `key` after the settings that change it: the
+/// seek keys in a replay, and Up/Down's choice.
+pub(crate) fn remap(
+    ui: &Ui,
+    ctx: Context,
+    key: RemoteKey,
+    action: Option<Action>,
+) -> Option<Action> {
+    if !matches!(ctx, Context::Player | Context::Controls) {
+        return action;
+    }
+    let replay = matches!(ui.playback.get_untracked(), Playback::CatchUp { .. });
+    let action = if replay && ctx == Context::Player {
+        seek_key(seek_scheme(), key, action)
+    } else {
+        action
+    };
+    up_down_key(
+        crate::settings::choice(iptv_settings::keys::PLAYER_UP_DOWN),
+        key,
+        action,
+    )
+}
+
+/// Whether `key` seeks now (in a replay, under the panels' Player context):
+/// it then has no long press, so holding it repeats the step.
+pub(crate) fn seeks(ui: &Ui, ctx: Context, key: RemoteKey) -> bool {
+    let replay = matches!(ui.playback.get_untracked(), Playback::CatchUp { .. });
+    replay && ctx == Context::Player && seek_arrows(seek_scheme()).contains(&key)
+}
+
+fn seek_scheme() -> &'static str {
+    crate::settings::choice(iptv_settings::keys::SEEK_KEYS)
+}
+
+/// The arrows that step along a replay's time bar under `scheme`.
+fn seek_arrows(scheme: &str) -> &'static [RemoteKey] {
+    match scheme {
+        "left_right" => &[RemoteKey::Left, RemoteKey::Right],
+        "down_up" => &[RemoteKey::Down, RemoteKey::Up],
+        _ => &[],
+    }
+}
+
+/// The player's action for `key` during catch-up under the `seek_keys`
+/// choice `scheme`: Left/Right (the default, instead of the channel list
+/// and the most recent channel) or Down/Up (instead of zapping); with
+/// `transport` only the media keys seek (Rewind/Fast-forward always do).
+pub(crate) fn seek_key(scheme: &str, key: RemoteKey, action: Option<Action>) -> Option<Action> {
+    match (scheme, key) {
+        ("left_right", RemoteKey::Left) | ("down_up", RemoteKey::Down) => Some(Action::TimeBarBack),
+        ("left_right", RemoteKey::Right) | ("down_up", RemoteKey::Up) => {
+            Some(Action::TimeBarForward)
+        }
+        _ => action,
+    }
+}
+
+/// Up/Down over the video under `remote.player_up_down`: zap (the
+/// default) or open the channel list. Channel+/− and Page keys always zap.
+pub(crate) fn up_down_key(choice: &str, key: RemoteKey, action: Option<Action>) -> Option<Action> {
+    match (choice, key, action) {
+        (
+            "channel_list",
+            RemoteKey::Up | RemoteKey::Down,
+            Some(Action::ChannelUp | Action::ChannelDown),
+        ) => Some(Action::ShowChannels),
+        _ => action,
+    }
+}
+
+/// Seeking in a replay: whether OK plays and pauses (the arrows seek, as
+/// in a media player) instead of showing the card.
+fn ok_pauses(ui: Ui) -> bool {
+    let replay = matches!(ui.playback.get_untracked(), Playback::CatchUp { .. });
+    replay && !seek_arrows(seek_scheme()).is_empty()
+}
+
+/// The player's own actions (full screen and its panels); false for any
+/// other. `repeat`: the key's auto-repeat.
+pub(crate) fn apply(ui: Ui, key: RemoteKey, action: Action, repeat: bool) -> bool {
+    let fullscreen = ui.mode.get() == ViewMode::Fullscreen;
+    let buttons = fullscreen && ui.panels.with(|p| p.captures_input());
+    let seek = |step: i32| {
+        crate::seek::key(ui, step, repeat);
+    };
+    match action {
+        Action::MoveLeft if buttons => ui.update_panels(|p, now| p.move_focus(-1, now)),
+        Action::MoveRight if buttons => ui.update_panels(|p, now| p.move_focus(1, now)),
+        Action::MoveUp | Action::MoveDown if buttons => {}
+        Action::Select if buttons => {
+            let mut pick = Pick::Nothing;
+            ui.update_panels(|p, now| pick = p.select(now));
+            match pick {
+                Pick::Quick(action) => press_quick(ui, action),
+                Pick::Control(control) => press_control(ui, control),
+                Pick::Hidden | Pick::Nothing => {}
+            }
+        }
+        // Over a failed stream, OK retries.
+        Action::ShowPanels if crate::player::failed(&ui) => crate::player::retry(ui),
+        Action::ShowPanels if crate::seek::pending(ui) => crate::seek::commit_now(ui),
+        Action::ShowPanels if ok_pauses(ui) => {
+            ui.paused.update(|p| *p = !*p);
+            ui.update_panels(|p, now| p.show_info(now));
+        }
+        Action::ShowPanels => ui.update_panels(|p, now| p.show_card(now)),
+        Action::ShowControls if !fullscreen => return false,
+        Action::ShowControls if key == RemoteKey::Menu => {
+            ui.update_panels(|p, now| p.toggle_controls(now))
+        }
+        Action::ShowControls => ui.update_panels(|p, now| p.show_controls(now)),
+        Action::ShowInfo if fullscreen => ui.update_panels(|p, now| p.show_info(now)),
+        Action::ShowHistory => crate::chooser::open(ui, crate::chooser::Kind::History),
+        Action::PlayPause => ui.paused.update(|p| *p = !*p),
+        // Catch-up seeking (`seek.rs`); nothing to seek in a live stream.
+        Action::SeekBack => seek(-crate::seek::steps().rewind),
+        Action::SeekForward => seek(crate::seek::steps().forward),
+        Action::TimeBarBack => seek(-crate::seek::steps().timebar),
+        Action::TimeBarForward => seek(crate::seek::steps().timebar),
+        Action::ChannelUp => zap(ui, -1),
+        Action::ChannelDown => zap(ui, 1),
+        Action::PreviousChannel => crate::player::previous_channel(ui),
+        Action::ShowChannels => crate::channels_view::open(ui, ListMode::Overlay),
+        Action::ShowChannelsPreview => crate::channels_view::open(ui, ListMode::Preview),
+        Action::Stop => stop_playback(ui),
+        Action::GoLive => crate::player::go_live(ui),
+        _ => return false,
+    }
+    true
+}
+
+/// Long Back (or Stop): nothing plays (multiview's tiles neither); back to
+/// the guide.
+pub(crate) fn stop_playback(ui: Ui) {
+    let multiview = nsh_core::prelude::untracked(|| crate::multiview::session(ui));
+    crate::multiview::close(ui);
+    if ui.playing.get_untracked().is_none() && !multiview {
+        return;
+    }
+    log::info!("iptv player: stopped by the viewer");
+    ui.playing.set(None);
+    crate::player::stop(ui);
+    ui.mode.set(ViewMode::Guide);
+}
+
+/// Channel up/down: switches playback and keeps the focus on it. Wraps
+/// within the list on screen (from the playing channel's row, else the
+/// focused one); a channel the list does not have zaps within its group.
+pub(crate) fn zap(ui: Ui, step: isize) {
+    let list = ui.list.get();
+    let playing = ui.playing.get();
+    let from_row = playing
+        .and_then(|ch| list.row_of(ch))
+        .or_else(|| playing.is_none().then(|| ui.focus.with(|f| f.channel)));
+    let to = match from_row.and_then(|row| list.zap(row, step)) {
+        Some(row) => list.channel(row),
+        None => playing.map(|ch| iptv_core::playback::zap_target(&*crate::schedule(), ch, step)),
+    };
+    let Some(to) = to else {
+        return;
+    };
+    crate::lists::show_channel(ui, to);
+    ui.play(to, Playback::Live);
+    // Channel-change feedback over full-screen video (`player.info_on_switch`):
+    // the banner, or the open card or strip showing the new channel.
+    if ui.mode.get() == ViewMode::Fullscreen
+        && crate::settings::flag(iptv_settings::keys::INFO_ON_SWITCH)
+    {
+        ui.update_panels(|p, now| p.show_banner(now));
+    }
+}
+
+/// OK (or a tap) on an action card under the info card.
+pub fn press_quick(ui: Ui, action: QuickAction) {
+    ui.update_panels(|p, now| p.touch(now));
+    match action {
+        QuickAction::Guide => {
+            if let Some(ch) = ui.playing.get() {
+                crate::lists::show_channel(ui, ch);
+            }
+            ui.mode.set(ViewMode::Guide);
+        }
+        QuickAction::History => crate::chooser::open(ui, crate::chooser::Kind::History),
+        QuickAction::Channels => crate::channels_view::open(ui, ListMode::Overlay),
+        QuickAction::Favorite => press_control(ui, Control::Favorite),
+        QuickAction::Multiview => press_control(ui, Control::Multiview),
+        QuickAction::Controls => ui.update_panels(|p, now| p.show_controls(now)),
+    }
+}
+
+/// OK (or a tap) on a control-strip button.
+pub fn press_control(ui: Ui, control: Control) {
+    use crate::chooser::Kind;
+    ui.update_panels(|p, now| p.touch(now));
+    if !crate::player_panels::enabled(ui, control) {
+        log::info!("iptv control {control:?} not available");
+        return;
+    }
+    match control {
+        Control::Search => crate::search_view::open(ui),
+        Control::Multiview => crate::multiview::open(ui),
+        Control::ChannelList => crate::channels_view::open(ui, ListMode::Overlay),
+        Control::Scaling => crate::chooser::open(ui, Kind::Picture),
+        Control::SleepTimer => crate::chooser::open(ui, Kind::Sleep),
+        Control::VideoTracks => crate::chooser::open(ui, Kind::Track(Track::Video)),
+        Control::AudioTracks => crate::chooser::open(ui, Kind::Track(Track::Audio)),
+        Control::Captions => crate::chooser::open(ui, Kind::Track(Track::Text)),
+        Control::AudioOffset => crate::chooser::open(ui, Kind::AudioDelay),
+        Control::Favorite => {
+            if let Some(ch) = ui.playing.get() {
+                crate::favorites::toggle(ui, ch);
+            }
+        }
+        other => log::info!("iptv control {other:?} not implemented yet"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn seek_keys_choose_the_time_bar_keys() {
+        // The player's Left/Right: the channel list and the most recent channel.
+        let (list, recent) = (Some(Action::ShowChannels), Some(Action::PreviousChannel));
+        let (up, down) = (Some(Action::ChannelUp), Some(Action::ChannelDown));
+        let back = Some(Action::TimeBarBack);
+        let forward = Some(Action::TimeBarForward);
+        // Left/Right (default): instead of those; Up/Down still zap.
+        assert_eq!(seek_key("left_right", RemoteKey::Left, list), back);
+        assert_eq!(seek_key("left_right", RemoteKey::Right, recent), forward);
+        assert_eq!(seek_key("left_right", RemoteKey::Up, up), up);
+        // Down/Up: instead of zapping; Left/Right keep their meaning.
+        assert_eq!(seek_key("down_up", RemoteKey::Down, down), back);
+        assert_eq!(seek_key("down_up", RemoteKey::Up, up), forward);
+        assert_eq!(seek_key("down_up", RemoteKey::Left, list), list);
+        // Page keys zap whatever the choice.
+        assert_eq!(seek_key("down_up", RemoteKey::PageUp, up), up);
+        // Transport keys only: the arrows keep their meaning.
+        for (key, action) in [
+            (RemoteKey::Left, list),
+            (RemoteKey::Right, recent),
+            (RemoteKey::Up, up),
+            (RemoteKey::Down, down),
+        ] {
+            assert_eq!(seek_key("transport", key, action), action);
+        }
+    }
+
+    #[test]
+    fn a_held_seek_arrow_seeks_instead_of_its_long_press() {
+        // Long Left (the list beside the video) and Long Right (History)
+        // give way to the seek in a replay: the arrows are the seek keys.
+        let preview = Some(Action::ShowChannelsPreview);
+        let history = Some(Action::ShowHistory);
+        assert_eq!(
+            seek_key("left_right", RemoteKey::Left, preview),
+            Some(Action::TimeBarBack)
+        );
+        assert_eq!(
+            seek_key("left_right", RemoteKey::Right, history),
+            Some(Action::TimeBarForward)
+        );
+        assert_eq!(
+            seek_arrows("left_right"),
+            [RemoteKey::Left, RemoteKey::Right]
+        );
+        assert_eq!(seek_arrows("down_up"), [RemoteKey::Down, RemoteKey::Up]);
+        assert!(seek_arrows("transport").is_empty());
+    }
+
+    #[test]
+    fn up_down_switch_channels_or_open_the_channel_list() {
+        let (up, down) = (Some(Action::ChannelUp), Some(Action::ChannelDown));
+        let list = Some(Action::ShowChannels);
+        assert_eq!(up_down_key("switch_channels", RemoteKey::Up, up), up);
+        assert_eq!(up_down_key("switch_channels", RemoteKey::Down, down), down);
+        assert_eq!(up_down_key("channel_list", RemoteKey::Up, up), list);
+        assert_eq!(up_down_key("channel_list", RemoteKey::Down, down), list);
+        // Channel+/− and the page keys zap whatever the choice.
+        assert_eq!(up_down_key("channel_list", RemoteKey::ChannelUp, up), up);
+        assert_eq!(up_down_key("channel_list", RemoteKey::PageDown, down), down);
+        // A seek (Down/Up in a replay) stays a seek.
+        let seek = Some(Action::TimeBarBack);
+        assert_eq!(up_down_key("channel_list", RemoteKey::Down, seek), seek);
+    }
+}

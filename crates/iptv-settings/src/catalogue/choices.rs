@@ -147,6 +147,11 @@ pub static SEEK_KEYS: Choices = Choices {
     variants: &["left_right", "down_up", "transport"],
 };
 
+pub static PLAYER_UP_DOWN: Choices = Choices {
+    family: "player_up_down",
+    variants: &["switch_channels", "channel_list"],
+};
+
 pub static RECORDING_FORMAT: Choices = Choices {
     family: "recording_format",
     variants: &["ts", "mkv"],
@@ -216,6 +221,7 @@ pub static ALL: &[&Choices] = &[
     &CATCHUP_SCHEME,
     &REWIND_LIVE_KEY,
     &SEEK_KEYS,
+    &PLAYER_UP_DOWN,
     &RECORDING_FORMAT,
     &REMINDER_ACTION,
     &PIN_SCOPE,

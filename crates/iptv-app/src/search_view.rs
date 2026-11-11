@@ -499,7 +499,7 @@ fn watch(ui: Ui, channel: usize, playback: Playback) {
     ui.play(channel, playback);
     // Full screen first: the resume effect ignores a suspended screen in full screen.
     ui.mode.set(ViewMode::Fullscreen);
-    ui.update_panels(|p, now| p.show_info(now));
+    ui.show_playing();
     if !options(&crate::settings::get()).stay {
         close(ui);
         return;
