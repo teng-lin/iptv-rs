@@ -14,8 +14,12 @@
 //! A stored guide can be held in part: the store passed in covers a recent
 //! window, and older days are paged in on demand ([`pages`],
 //! [`EpgSchedule::with_pages`]). Until a day arrives its cells are
-//! hour slots titled [`LOADING`].
+//! hour slots titled [`LOADING`]. A cold start's first schedule may hold
+//! even less, only the hours of its first screen
+//! ([`EpgSchedule::held_only`]): the rest shows as loading until a schedule
+//! with the whole window replaces it.
 
+mod held;
 pub mod pages;
 pub mod playback;
 
@@ -64,10 +68,33 @@ pub struct EpgSchedule {
     /// When the first programme in `store` starts and the last one ends.
     data_start: Option<UnixTime>,
     data_end: Option<UnixTime>,
+    /// The only times `store` holds, when it holds less than its window
+    /// (a cold start's first screen): `[from, to)`.
+    held: Option<(UnixTime, UnixTime)>,
+    /// The only channels `store` holds then (`None`: every bound one).
+    held_keys: Option<std::collections::HashSet<ChannelKey>>,
     /// The source's account or session, for streams that need one.
     /// Shared with the next schedule of the same source (a refreshed guide),
     /// so a Stalker session renewed by one is the other's too.
     playback: Option<std::rc::Rc<playback::PlaybackContext>>,
+}
+
+/// Each channel's group slot (its first group's position in `groups`;
+/// `groups.len()` for none) with its index, in playlist order.
+fn group_slots<'a>(
+    groups: &'a [Group],
+    channels: &'a [Channel],
+) -> impl Iterator<Item = (usize, usize)> + 'a {
+    let at: std::collections::HashMap<&iptv_providers::GroupId, usize> = groups
+        .iter()
+        .enumerate()
+        .rev()
+        .map(|(i, g)| (&g.id, i))
+        .collect();
+    channels.iter().enumerate().map(move |(i, c)| {
+        let slot = c.groups.first().and_then(|gid| at.get(gid).copied());
+        (slot.unwrap_or(groups.len()), i)
+    })
 }
 
 /// Reads the description of the programme starting at the given time on a
@@ -98,6 +125,8 @@ impl EpgSchedule {
             epoch: now - now.rem_euclid(SLOT),
             describe: None,
             pages: Pages::default(),
+            held: None,
+            held_keys: None,
             playback: None,
         }
     }
@@ -153,6 +182,11 @@ impl EpgSchedule {
     /// `f` on the store holding the programmes around `t`; `None` while
     /// its day is being read.
     fn with_store<R>(&self, t: UnixTime, f: impl FnOnce(&GuideStore) -> R) -> Option<R> {
+        if let Some((from, to)) = self.held
+            && !(from..to).contains(&t)
+        {
+            return None;
+        }
         if self.pages.in_window(t) {
             Some(f(&self.store))
         } else {
@@ -181,12 +215,8 @@ impl EpgSchedule {
         // With their playlist positions (1-based), for channels without a
         // provider number.
         let mut buckets: Vec<Vec<(u32, &Channel)>> = vec![Vec::new(); groups.len() + 1];
-        for (i, c) in channels.iter().enumerate() {
-            let slot = c
-                .groups
-                .first()
-                .and_then(|gid| groups.iter().position(|g| &g.id == gid));
-            buckets[slot.unwrap_or(groups.len())].push((i as u32 + 1, c));
+        for (slot, i) in group_slots(groups, channels) {
+            buckets[slot].push((i as u32 + 1, &channels[i]));
         }
         let names = groups
             .iter()
@@ -328,7 +358,7 @@ impl EpgSchedule {
         let key = self.key(channel)?;
         let t = self.probe(program);
         let (desc, start) = self
-            .with_store(t, |s| {
+            .channel_store(Some(key), t, |s| {
                 let p = s.programme_at(key, t)?;
                 Some((p.desc().map(str::to_owned), p.start()))
             })
@@ -345,7 +375,8 @@ impl EpgSchedule {
     fn probe(&self, program: Program) -> UnixTime {
         let (a, b) = (self.unix(program.start), self.unix(program.end));
         let t = (a + 59).min((a + b) / 2).max(a);
-        let from = self.pages.loaded_from();
+        let held_from = self.held.map_or(UnixTime::MIN, |(from, _)| from);
+        let from = self.pages.loaded_from().max(held_from);
         if b > from { t.max(from) } else { t }
     }
 
@@ -420,15 +451,14 @@ impl Schedule for EpgSchedule {
         // before it, and cells never overlap.
         let t = self.unix(minute) + 59;
         let key = self.key(channel);
-        let found = self.with_store(t, |s| match key.and_then(|k| s.programme_at(k, t)) {
-            Some(p) => (p.start(), p.stop()),
-            None => Self::gap(s, key, t),
-        });
+        let found = self
+            .channel_store(key, t, |s| match key.and_then(|k| s.programme_at(k, t)) {
+                Some(p) => (p.start(), p.stop()),
+                None => Self::gap(s, key, t),
+            })
+            .or_else(|| self.held_across(key, t));
         // Its day is loading: the hour slot.
-        let (start, end) = found.unwrap_or_else(|| {
-            let slot = t - t.rem_euclid(SLOT);
-            (slot, slot + SLOT)
-        });
+        let (start, end) = found.unwrap_or_else(|| self.loading_slot(key, t));
         let (start, end) = (self.minute(start), self.minute(end));
         // Sub-minute programmes still get a one-minute cell.
         Program {
@@ -511,7 +541,7 @@ impl Schedule for EpgSchedule {
             return NO_INFORMATION.to_owned();
         };
         let t = self.probe(program);
-        let found = self.with_store(t, |s| {
+        let found = self.channel_store(Some(key), t, |s| {
             s.programme_at(key, t)
                 .filter(|p| self.minute(p.start()) == program.start)
                 // A guide stored before badges were folded at import.
@@ -524,6 +554,8 @@ impl Schedule for EpgSchedule {
     }
 }
 
+#[cfg(test)]
+mod held_tests;
 #[cfg(test)]
 mod pages_tests;
 #[cfg(test)]
