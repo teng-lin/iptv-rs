@@ -3,7 +3,11 @@
 # the app installed and a playlist already added (synthetic data only; the
 # large fixture: tools/make-iptv-fixtures.py --channels 10000 --days-back 7).
 #
-#   tools/perf-android.sh [serial]      (default: the only device)
+#   tools/perf-android.sh [serial] [--cold]   (default: the only device)
+#
+# --cold: only the cold starts (no zaps, keys or memory), for quick runs.
+# Each cold start prints the app's startup phases (`iptv startup:` lines,
+# `crates/iptv-app/src/startup.rs`): ms since the process started.
 #
 # Reports: cold start to the stored guide on screen, zap to first picture
 # (channel down in full screen), guide key handling and frame times during
@@ -12,6 +16,7 @@
 set -uo pipefail
 export PATH="${ANDROID_HOME:-$HOME/Android/Sdk}/platform-tools:$PATH"
 serial=${1:-}
+cold_only=${2:-}
 adb="adb${serial:+ -s $serial}"
 pkg=com.hantekllc.iptvrs
 act=$pkg/.host.TvActivity
@@ -38,13 +43,20 @@ for run in 1 2 3; do
     $adb logcat -d | grep -q 'iptv data: guide switched' && break
     pause 0.25
   done
+  # The resumed channel's first picture, when one resumes.
+  for _ in $(seq 1 24); do
+    $adb logcat -d | grep -qE 'iptv startup: video frame|iptv player 0 error' && break
+    pause 0.25
+  done
   guide=$($adb logcat -v epoch -d | grep -m1 'iptv data: guide switched' | ms)
-  played=$($adb logcat -v epoch -d | grep -m1 'iptv player state: ready' | ms)
+  played=$($adb logcat -v epoch -d | grep -m1 'iptv player 0 state: ready' | ms)
   echo "run $run: first frame ${total} ms, guide on screen $((guide - t0)) ms${played:+, resumed channel ready $((played - t0)) ms}"
+  $adb logcat -d | sed -n 's/.*iptv startup: /   /p' | tr -d '\r'
   starts+=($((guide - t0)))
   pause 3
 done
 echo "median guide on screen: $(printf '%s\n' "${starts[@]}" | median) ms (budget 2000)"
+[ "$cold_only" = "--cold" ] && exit 0
 
 echo "== zap to picture (channel down x5): key to first decoded frame (size) and to ready"
 pause 5
@@ -53,12 +65,12 @@ for z in 1 2 3 4 5; do
   $adb logcat -c
   key 167
   for _ in $(seq 1 50); do
-    $adb logcat -d | grep -q 'iptv player state: ready' && break
+    $adb logcat -d | grep -q 'iptv player 0 state: ready' && break
     pause 0.2
   done
   down=$($adb logcat -v epoch -d | grep -m1 'iptv key=channel_down' | ms)
-  frame=$($adb logcat -v epoch -d | grep -m1 'iptv player size' | ms)
-  ready=$($adb logcat -v epoch -d | grep -m1 'iptv player state: ready' | ms)
+  frame=$($adb logcat -v epoch -d | grep -m1 'iptv player 0 size' | ms)
+  ready=$($adb logcat -v epoch -d | grep -m1 'iptv player 0 state: ready' | ms)
   if [ -n "$down" ] && [ -n "$frame" ]; then
     zaps+=($((frame - down)))
     echo "zap $z: picture $((frame - down)) ms${ready:+, ready $((ready - down)) ms}"

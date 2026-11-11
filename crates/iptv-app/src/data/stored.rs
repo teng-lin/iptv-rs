@@ -38,8 +38,8 @@ use iptv_providers::SecretUrl;
 use iptv_providers::model::{Channel, ContentKind, Group};
 use iptv_settings::{Settings, Target};
 use iptv_store_sqlite::{
-    ChannelOrder, ChannelQuery, EpgCounts, EpgFeedMeta, FeedResult, GuideSource, ImportErrorKind,
-    SourceId, StoreError, StoredGuide,
+    ChannelOrder, ChannelQuery, EpgCounts, EpgFeedMeta, EpgWindow, FeedResult, GuideSource,
+    ImportErrorKind, SourceId, Store, StoreError, StoredGuide,
 };
 
 use nsh_core::prelude::timer;
@@ -81,7 +81,14 @@ fn with_storage(mut configs: Vec<EpgSourceConfig>, settings: &Settings) -> Vec<E
 
 /// A stored source's live groups and channels, in provider order.
 pub fn catalog(source: SourceId) -> Result<(Vec<Group>, Vec<Channel>), StoreError> {
-    let store = open_store()?;
+    catalog_in(&open_store()?, source)
+}
+
+/// [`catalog`] from an open store.
+pub fn catalog_in(
+    store: &Store,
+    source: SourceId,
+) -> Result<(Vec<Group>, Vec<Channel>), StoreError> {
     let groups = store.groups(source, Some(ContentKind::Live))?;
     let query = ChannelQuery {
         include_hidden: true,
@@ -112,8 +119,12 @@ pub fn guide_state(source: SourceId) -> Option<StoredGuide> {
 /// descriptions; `None` when nothing is stored.
 pub fn load_guide(source: SourceId, now: UnixTime) -> Option<GuideStore> {
     let window = super::pages::window(now, keep_past_days(&crate::settings::get()));
-    let window = super::pages::store_window(window);
-    match open_store().and_then(|s| s.load_epg(source, &window)) {
+    read_guide(source, &super::pages::store_window(window))
+}
+
+/// `window` of `source`'s stored guide; `None` when nothing is stored.
+pub fn read_guide(source: SourceId, window: &EpgWindow<'_>) -> Option<GuideStore> {
+    match open_store().and_then(|s| s.load_epg(source, window)) {
         Ok(guide) if guide.bound_count() > 0 => Some(guide),
         Ok(_) => None,
         Err(e) => {

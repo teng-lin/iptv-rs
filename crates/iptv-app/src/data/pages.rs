@@ -145,6 +145,14 @@ fn epg(schedule: &dyn Schedule) -> Option<&EpgSchedule> {
     schedule.as_any()?.downcast_ref::<EpgSchedule>()
 }
 
+/// A schedule replaced the one on screen (with the whole window after a
+/// first screen, `opening.rs`): what waited for its programmes looks again.
+pub fn replaced() {
+    for waiter in WAITERS.with(|w| std::mem::take(&mut *w.borrow_mut())) {
+        waiter();
+    }
+}
+
 /// Asks for the day holding guide `minute` before the grid shows it (where
 /// a fling of the timeline lands).
 pub fn want(schedule: &dyn Schedule, minute: i32) {

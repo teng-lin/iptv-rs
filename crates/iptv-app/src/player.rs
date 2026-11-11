@@ -11,8 +11,10 @@
 //! [`Stream::channel`] live; every surface has its own [`Stream`]: stream,
 //! retries, position, size and tracks.
 //!
-//! The last channel starts after the startup refresh of a stored source
-//! (never under the first-run wizard). Each playlist has its own: a
+//! The last channel starts at a cold start as soon as the store is open,
+//! before the guide is read (`resume.rs`); else (a Stalker channel) after
+//! the startup refresh of a stored source shows the guide (never under the
+//! first-run wizard). Each playlist has its own: a
 //! one-line file, `last_channel-<source id>` in [`crate::data::data_dir`],
 //! holding the channel's content key (never a list index); builds before
 //! that kept one `last_channel` file, still read when a playlist has none.
@@ -39,6 +41,7 @@ use crate::guide::Schedule;
 use crate::{Playback, Ui, ViewMode};
 
 mod recover;
+pub(crate) mod resume;
 
 use recover::{fail, watch_stall};
 pub use recover::{failed, on_error, on_state, retry, retry_surface, surface_failed};
@@ -110,6 +113,8 @@ pub struct Player {
     pub history: Signal<ChannelHistory>,
     /// The last channel still starts on its own until something plays.
     resume: Signal<bool>,
+    /// What surface 0 plays before the guide arrived (`resume.rs`).
+    early: Signal<Option<resume::Early>>,
     /// The app's owner: retry and stall timers outlive the effect or
     /// handler that armed them.
     owner: Owner,
@@ -121,6 +126,7 @@ impl Player {
             streams: std::array::from_fn(|_| Stream::new()),
             history: signal(ChannelHistory::default()),
             resume: signal(true),
+            early: signal(None),
             owner: Owner::current(),
         }
     }
@@ -274,7 +280,11 @@ fn close(ui: Ui, surface: usize) {
 /// Resolves what `surface` plays and hands the stream to its player.
 fn open(ui: Ui, surface: usize, session: u64) {
     let Some((channel, playback)) = target(ui, surface) else {
-        close(ui, surface);
+        // A retry of the last channel started before the guide arrived.
+        match resume::source(ui).filter(|_| surface == 0) {
+            Some(source) => load(ui, 0, session, source),
+            None => close(ui, surface),
+        }
         return;
     };
     let schedule = crate::schedule();
@@ -338,6 +348,9 @@ fn load(ui: Ui, surface: usize, session: u64, mut source: PlaySource) {
     let (live, reconnect) = stream
         .health
         .with_untracked(|h| (h.live(), h.reconnecting()));
+    if surface == 0 {
+        crate::startup::mark("player opened");
+    }
     log::info!(
         "iptv player {surface} open: session {session}, {} header(s){}",
         source.headers.len(),
@@ -578,6 +591,9 @@ fn follow_playing(ui: Ui) {
 /// the last channel starts once (`general.resume_last_channel`), unless
 /// something already plays.
 pub fn source_ready(ui: Ui, refresh: bool) {
+    if resume::adopt(ui) {
+        return;
+    }
     if !refresh
         || !crate::settings::flag(iptv_settings::keys::RESUME_LAST_CHANNEL)
         || !ui.player.resume.get_untracked()
@@ -591,6 +607,7 @@ pub fn source_ready(ui: Ui, refresh: bool) {
         return;
     };
     log::info!("iptv player: resuming the last channel");
+    crate::startup::mark("last channel resolved");
     show_channel(ui, channel);
     ui.play(channel, Playback::Live);
     ui.mode.set(ViewMode::Fullscreen);

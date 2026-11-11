@@ -18,6 +18,9 @@
         android:enableOnBackInvokedCallback="true"
         android:usesCleartextTraffic="true">
 
+        <!-- simpleperf from adb on a release (non-debuggable) build. -->
+        <profileable android:shell="true" />
+
         <provider
             android:name="com.longbridge.nsh.FilesProvider"
             android:authorities="${applicationId}.files"

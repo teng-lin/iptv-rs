@@ -61,15 +61,40 @@ pub const FILES: [(&str, &[u8]); 3] = [
 
 /// Registers the fonts and makes Roboto the default family. Text laid out
 /// before a font arrives is laid out again with it.
+///
+/// The WOFF2 files are unpacked on their own thread first: NSH would unpack
+/// each one twice on the UI thread (for its family name, then to register
+/// it), about 0.7 s of a cold start on a 32-bit TV box (`docs/perf.md`).
 pub fn register() {
-    for (family, data) in FILES {
-        let answer = register_font(data);
-        drop(spawn(async move {
-            if let Err(e) = answer.await {
+    let started = std::time::Instant::now();
+    let (tx, rx) = futures_channel::oneshot::channel();
+    std::thread::spawn(move || {
+        let unpacked: Vec<_> = FILES
+            .iter()
+            .map(|&(family, data)| (family, nsh_core::font_data(data).map(|d| d.into_owned())))
+            .collect();
+        let _ = tx.send(unpacked);
+    });
+    drop(spawn(async move {
+        let Ok(unpacked) = rx.await else {
+            return;
+        };
+        let unpacked_ms = started.elapsed().as_millis();
+        for (family, data) in unpacked {
+            let registered = match data {
+                Ok(data) => register_font(data).await,
+                Err(e) => Err(e),
+            };
+            if let Err(e) = registered {
                 log::warn!("iptv font {family} not registered: {e}");
             }
-        }));
-    }
+        }
+        let ms = started.elapsed().as_millis();
+        crate::startup::mark_with(
+            "fonts registered",
+            format_args!("unpacked in {unpacked_ms} ms, registered {ms} ms after asking"),
+        );
+    }));
     let mut tokens = (*tokens()).clone();
     tokens.set_font(nsh_core::element::FONT_SANS, SANS);
     set_tokens(tokens);

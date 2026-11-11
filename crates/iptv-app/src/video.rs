@@ -130,7 +130,7 @@ fn count_open(surface: usize, last: &RefCell<Option<(String, u64)>>, value: &Val
 fn source_prop(ui: Ui, surface: usize) -> Value {
     let stream = ui.player.stream(surface);
     let playing = if surface == 0 {
-        ui.playing.get().is_some()
+        ui.playing.get().is_some() || crate::player::resume::playing(ui)
     } else {
         stream.channel.get().is_some()
     };
@@ -221,6 +221,9 @@ pub fn layer(ui: Ui, surface: usize) -> impl IntoElement {
                     let (w, h) = (e.data["width"].as_u64(), e.data["height"].as_u64());
                     if let (Some(w), Some(h)) = (w, h) {
                         stream.size.set(Some((w as u32, h as u32)));
+                    }
+                    if surface == 0 {
+                        crate::startup::mark("video frame");
                     }
                     format!("{}×{}", e.data["width"], e.data["height"])
                 }

@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, HashMap};
 use iptv_core::wizard::{ImportCounts, ImportFailure, ImportProgress};
 use iptv_import::CancelToken;
 use iptv_providers::model::{Source, SourceConfig, SourceKind};
-use iptv_store_sqlite::{GuideSource, ImportErrorKind, SourceId, StoreError, StoredSource};
+use iptv_store_sqlite::{GuideSource, ImportErrorKind, SourceId, Store, StoreError, StoredSource};
 use nsh_core::prelude::*;
 
 use super::{Job, Purpose, Update, guides, open_store, start_import_with, stored};
@@ -113,8 +113,7 @@ pub fn playlists() -> Result<Vec<Playlist>, StoreError> {
 }
 
 /// The playlist to open at startup: the one shown last, else the newest.
-pub(super) fn startup_source() -> Result<Option<StoredSource>, StoreError> {
-    let store = open_store()?;
+pub(super) fn startup_source(store: &Store) -> Result<Option<StoredSource>, StoreError> {
     let id = match store.active_source()? {
         Some(id) => Some(id),
         None => store.sources()?.last().map(|s| s.id),

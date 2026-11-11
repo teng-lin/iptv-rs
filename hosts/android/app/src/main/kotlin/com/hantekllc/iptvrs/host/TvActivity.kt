@@ -5,6 +5,9 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
+import android.os.Process
+import android.os.SystemClock
+import android.util.Log
 import android.view.KeyEvent
 import android.view.View
 import android.view.WindowInsets
@@ -29,8 +32,10 @@ class TvActivity : Activity() {
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
+        mark("activity created")
         DevActivity.edgeToEdge(this)
         nsh = NshView(this)
+        mark("library loaded")
         nsh.useStandaloneLimits()
         nsh.registerComponent(PlayerComponent.NAME) { context ->
             PlayerComponent(this, context) { players.remove(it) }.also {
@@ -43,6 +48,13 @@ class TvActivity : Activity() {
         nsh.handleNotificationIntent(intent)
         if (state == null) nsh.handleUrlSchemeIntent(intent)
         nsh.runRustApp("nsh")
+        mark("rust app started")
+    }
+
+    /** A cold-start phase mark, as the Rust side logs them (`startup.rs`). */
+    private fun mark(phase: String) {
+        val ms = SystemClock.uptimeMillis() - Process.getStartUptimeMillis()
+        Log.i("nsh", "iptv startup: $phase +$ms ms")
     }
 
     override fun onStart() {

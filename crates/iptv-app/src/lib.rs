@@ -39,6 +39,7 @@ mod search_view;
 mod seek;
 mod settings;
 mod settings_view;
+pub mod startup;
 pub mod time;
 mod ui_kit;
 mod video;
@@ -362,8 +363,11 @@ pub fn channel_name(ch: usize) -> String {
 
 #[component]
 pub fn App() -> impl IntoElement {
+    startup::mark("rust root");
+    startup::log_library_base();
     fonts::register();
     settings::load();
+    startup::mark("settings loaded");
     let ui = Ui {
         focus: signal(Focus::default()),
         list: signal(Rc::new(ChannelList::build(

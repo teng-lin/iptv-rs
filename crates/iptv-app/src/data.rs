@@ -18,6 +18,7 @@
 pub(crate) mod assign;
 pub(crate) mod guides;
 mod library;
+mod opening;
 pub(crate) mod pages;
 pub(crate) mod stored;
 mod wizard_map;
@@ -166,6 +167,9 @@ enum Msg {
     /// What the store has (before the playlist), or the source's guide
     /// loaded after the playlist was reported.
     Guide(Box<Imported>),
+    /// What the store has, with only the first screen's programmes
+    /// (`opening.rs`); a `Guide` follows.
+    FirstScreen(Box<Imported>, opening::Held),
 }
 
 thread_local! {
@@ -232,8 +236,24 @@ pub fn start(ui: Ui) {
     APP_OWNER.with(|o| o.set(Some(Owner::current())));
     // Guide downloads a crash interrupted (none runs yet).
     EpgStage::remove_stale(data_dir());
-    match library::startup_source() {
-        Ok(Some(stored)) => library::run(ui, stored, Purpose::Startup, false),
+    let started = std::time::Instant::now();
+    let (store, source) = match open_store() {
+        Ok(store) => {
+            let source = library::startup_source(&store);
+            (Some(store), source)
+        }
+        Err(e) => (None, Err(e)),
+    };
+    let ms = started.elapsed().as_millis();
+    crate::startup::mark_with("store opened", format_args!("{ms} ms"));
+    match source {
+        Ok(Some(stored)) => {
+            if let Some(store) = &store {
+                opening::begin(ui, store, &stored);
+            }
+            drop(store);
+            library::run(ui, stored, Purpose::Startup, false);
+        }
         Ok(None) => crate::wizard_view::open_first_run(ui),
         Err(e) => {
             log::warn!("iptv data: store unavailable ({e}); opening the wizard");
@@ -278,9 +298,9 @@ fn start_import_with(ui: Ui, job: Job, cancel: CancelToken, on_update: impl Fn(U
         let cancel = cancel.clone();
         std::thread::spawn(move || run(job, &tx, &cancel));
     }
-    let show = move |imported: Box<Imported>| {
+    let show = move |imported: Box<Imported>, held: Option<opening::Held>| {
         if shows {
-            show(ui, imported, generation, resume);
+            show_part(ui, imported, generation, resume, held);
         }
     };
     spawn_in_app(async move {
@@ -297,11 +317,12 @@ fn start_import_with(ui: Ui, job: Job, cancel: CancelToken, on_update: impl Fn(U
                         }
                         finished = true;
                         on_update(Update::Done(result.map(|(counts, imported)| {
-                            show(imported);
+                            show(imported, None);
                             counts
                         })));
                     }
-                    Ok(Msg::Guide(imported)) => show(imported),
+                    Ok(Msg::Guide(imported)) => show(imported, None),
+                    Ok(Msg::FirstScreen(imported, held)) => show(imported, Some(held)),
                     Ok(Msg::NextCheck { source, at }) if shows => {
                         schedule_check(ui, source, at, generation);
                     }
@@ -330,6 +351,18 @@ fn start_import_with(ui: Ui, job: Job, cancel: CancelToken, on_update: impl Fn(U
 
 /// Puts `imported` on screen unless a newer import owns the guide.
 fn show(ui: Ui, imported: Box<Imported>, generation: u64, resume: bool) {
+    show_part(ui, imported, generation, resume, None);
+}
+
+/// [`show`]; with `held`, its guide holds only those programmes (a first
+/// screen, `opening.rs`).
+fn show_part(
+    ui: Ui,
+    imported: Box<Imported>,
+    generation: u64,
+    resume: bool,
+    held: Option<opening::Held>,
+) {
     if GENERATION.with(Cell::get) != generation {
         return;
     }
@@ -338,12 +371,14 @@ fn show(ui: Ui, imported: Box<Imported>, generation: u64, resume: bool) {
     }
     stored::note_shown(imported.source);
     let channels = imported.channels.len();
+    let started = std::time::Instant::now();
     let schedule = EpgSchedule::from_catalog(
         &imported.groups,
         &imported.channels,
         imported.guide,
         imported.now,
     );
+    let built = started.elapsed();
     let mut schedule = match imported.playback {
         Streams::New(context, allowed) => {
             crate::multiview::set_account_streams(allowed);
@@ -361,13 +396,29 @@ fn show(ui: Ui, imported: Box<Imported>, generation: u64, resume: bool) {
     if let Some(lookup) = imported.source.and_then(stored::description_lookup) {
         schedule = schedule.with_description_lookup(lookup);
     }
-    // Its guide is the stored one's recent part (`stored::load_guide`).
-    if let Some(source) = imported.source {
-        schedule = pages::paged(ui, schedule, source, imported.now);
+    // Its guide is the stored one's recent part (`stored::load_guide`), or
+    // only its first screen until that arrives.
+    match (held, imported.source) {
+        (Some(held), _) => {
+            schedule = schedule
+                .held_only(held.from, held.to)
+                .held_channels(held.keys);
+        }
+        (None, Some(source)) => schedule = pages::paged(ui, schedule, source, imported.now),
+        (None, None) => {}
     }
+    let wrapped = started.elapsed();
     log::info!("iptv data: guide switched to {channels} imported channels");
     crate::favorites::set_source(imported.source);
+    let favorites = started.elapsed();
     crate::set_schedule(&ui, Rc::new(schedule));
+    pages::replaced();
+    crate::startup::shown(&[
+        ("schedule", built),
+        ("pages", wrapped),
+        ("favourites", favorites),
+        ("swapped", started.elapsed()),
+    ]);
     crate::player::source_ready(ui, resume && imported.resume);
 }
 
@@ -553,14 +604,14 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
         let _ = tx.send(Msg::Playlist(Err(failure)));
     };
     let now = now_unix();
-    let stored_guide = job.stored.and_then(stored::guide_state);
     // Opening a stored source: what the store has is on screen before any
     // network.
     if job.purpose.shows_stored_first()
-        && let Some(view) = job.stored.and_then(|id| stored_view(&job, id, now))
+        && let Some(id) = job.stored
     {
-        let _ = tx.send(Msg::Guide(view));
+        opening::send_stored(&job, id, now, tx);
     }
+    let stored_guide = job.stored.and_then(stored::guide_state);
     let Ok(net) = NetClient::new(crate::settings::net_config()) else {
         log::warn!("iptv data: network client setup failed");
         return fail(ImportFailure::new(FailureKind::Network));
@@ -724,34 +775,6 @@ fn planned_guides(job: &Job) -> Vec<GuideSource> {
         )],
         (None, None) => Vec::new(),
     }
-}
-
-/// A stored source's saved channels and guide, as they were last imported.
-fn stored_view(job: &Job, id: SourceId, now: i64) -> Option<Box<Imported>> {
-    let (groups, channels) = match stored::catalog(id) {
-        Ok(catalog) => catalog,
-        Err(e) => {
-            log::warn!("iptv data: stored catalog: {e}");
-            return None;
-        }
-    };
-    if channels.is_empty() {
-        return None;
-    }
-    let context = crate::player::stored_context(&job.source.config);
-    log::info!(
-        "iptv data: showing {} stored channels before the refresh",
-        channels.len()
-    );
-    Some(Box::new(Imported {
-        groups,
-        channels,
-        resume: context.is_some(),
-        playback: Streams::New(context, None),
-        guide: stored::load_guide(id, now).unwrap_or_default(),
-        now,
-        source: Some(id),
-    }))
 }
 
 /// A downloaded guide not stored yet: how it matched, and its programmes

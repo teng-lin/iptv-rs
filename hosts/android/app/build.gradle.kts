@@ -21,6 +21,19 @@ android {
         ndk { abiFilters += listOf("x86_64", "arm64-v8a", "armeabi-v7a") }
     }
 
+    buildTypes {
+        // What a viewer installs: not debuggable, so ART compiles the host's
+        // and Media3's Java instead of interpreting it (a debuggable APK runs
+        // it in the slow interpreter: seconds of a cold start on a TV box;
+        // docs/perf.md). Signed with the debug key, so it installs over a
+        // debug build and keeps the app's data. `profileable` (manifest)
+        // keeps simpleperf working on it.
+        getByName("release") {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("debug")
+        }
+    }
+
     sourceSets["main"].java.srcDirs("src/main/kotlin", "src/main/java", nshJava)
     sourceSets["main"].jniLibs.srcDirs(File(nshOut, "jniLibs"))
     sourceSets["main"].assets.srcDirs(File(nshOut, "assets"))
