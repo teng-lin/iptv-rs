@@ -4,7 +4,8 @@ Codename for an IPTV player for Android TV and Android tablets, written in Rust
 with [Native Shell (NSH)](https://github.com/longbridge/nsh). The UX targets
 parity with the reference TV player described in `~/src/tivimate/docs` (remote
 first, guide over live video, touch as a first-class second input). The
-product name is not decided; `iptv-rs` is the working name.
+product is Patina IPTV Player ("Patina" on the Android launcher); `iptv-rs`
+stays the codename, the crate names and the desktop name.
 
 Plan and decisions: [`.plans/2026-11-09-tivimate-ux-replication.md`](.plans/2026-11-09-tivimate-ux-replication.md).
 Android video/input research: [`docs/research/android-video-and-input.md`](docs/research/android-video-and-input.md).
@@ -311,6 +312,10 @@ xcrun devicectl device process launch --device <id> com.hantekllc.iptvrs
 ## Before any public release
 
 - Replace `crates/iptv-app/src/theme.rs` (placeholder palette) with our own design.
-- Choose the product name, icon and banner. The application id
-  `com.hantekllc.iptvrs` is final once uploaded to Play.
+- The desktop name: `nsh.json` `"name"` is still `iptv-rs`, and the
+  desktop data directories are named after it, so renaming it to Patina
+  moves them (or needs a migration). The application id
+  `com.hantekllc.iptvrs` is final once uploaded to Play. The icon, TV
+  banner and Android label are in place (`art/icon`,
+  `tools/make-icons.py`).
 - See Phase 9 of the plan.

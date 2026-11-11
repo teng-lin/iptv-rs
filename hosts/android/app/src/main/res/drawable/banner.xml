@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- Placeholder TV launcher banner (320x180 dp): a plain colour block, replaced by the product's own artwork. -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-    <size android:width="320dp" android:height="180dp" />
-    <solid android:color="#FF263238" />
-</shape>

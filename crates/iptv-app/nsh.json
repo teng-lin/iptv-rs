@@ -1,6 +1,7 @@
 {
   "name": "iptv-rs",
   "id": "com.hantekllc.iptvrs",
+  "icon": "icon.png",
   "appearance": "dark",
   "statusBar": {
     "hidden": true
