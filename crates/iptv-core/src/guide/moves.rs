@@ -37,6 +37,12 @@ impl Focus {
         self.window = home_window(self.now);
     }
 
+    /// A tap beside the groups column and the rail (touch): they close and
+    /// the focus is back on the guide where it was, nothing chosen.
+    pub fn close_columns(&mut self) {
+        self.pane = Pane::Guide;
+    }
+
     /// A pan (touch, mouse wheel) settled with `window` the first minute
     /// shown: the window goes there and the cursor follows into it.
     pub fn pan_to(&mut self, window: i32, s: &dyn Schedule) {
@@ -50,6 +56,26 @@ mod tests {
     use super::*;
 
     const S: SyntheticSchedule = SyntheticSchedule;
+
+    #[test]
+    fn closing_the_side_columns_keeps_the_guides_place() {
+        // A tap beside the groups (and the rail) on a touch screen only
+        // closes them: the focus goes back to the guide where it was.
+        let mut f = Focus::at(0);
+        f.apply(Move::Down, &S);
+        f.step_time(HOUR, &S);
+        let (channel, cursor, window) = (f.channel, f.cursor, f.window);
+        f.pane = Pane::Groups;
+        f.close_columns();
+        assert_eq!(f.pane, Pane::Guide);
+        assert_eq!((f.channel, f.cursor, f.window), (channel, cursor, window));
+        f.pane = Pane::Rail;
+        f.close_columns();
+        assert_eq!(f.pane, Pane::Guide);
+        // On the guide already: nothing moves.
+        f.close_columns();
+        assert_eq!((f.channel, f.cursor, f.window), (channel, cursor, window));
+    }
 
     #[test]
     fn hour_steps_move_the_time_column_and_the_window_together() {

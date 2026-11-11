@@ -249,9 +249,14 @@ fn check_ruler(app: &mut Headless) {
         .into_iter()
         .filter_map(|n| {
             let t = n.text.as_ref()?.text.text.to_string();
-            let time = t.len() == 5
-                && t.as_bytes()[2] == b':'
-                && t.replace(':', "").parse::<u32>().is_ok();
+            // "23:30", or past midnight "Wed 11 · 00:00" (not a programme's
+            // "23:10 – 00:10", nor the clock's "Tue 10 Nov  23:11").
+            let hhmm = t.rsplit(" · ").next().unwrap_or(&t);
+            let time = hhmm.len() == 5
+                && hhmm.as_bytes()[2] == b':'
+                && hhmm.replace(':', "").parse::<u32>().is_ok()
+                && !t.contains('–')
+                && (t.len() == 5 || t.contains(" · "));
             time.then_some((
                 t,
                 n.bounds.origin.x.0,

@@ -556,10 +556,10 @@ pub fn bind(ui: Ui) {
 
 /// Whether the host stops its players in `lifecycle`: Android's does while
 /// the activity is stopped (`TvActivity`, `PlayerComponent.background`) and
-/// reopens them after, so waiting then is no stall. Desktop players play on
-/// in a minimised window.
+/// reopens them after, and so does iOS's (`mpv/ios.rs`), so waiting then
+/// is no stall. Desktop players play on in a minimised window.
 fn stopped_in_background(lifecycle: Lifecycle) -> bool {
-    cfg!(target_os = "android") && lifecycle == Lifecycle::Background
+    cfg!(any(target_os = "android", target_os = "ios")) && lifecycle == Lifecycle::Background
 }
 
 fn follow_playing(ui: Ui) {

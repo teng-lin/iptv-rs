@@ -152,7 +152,59 @@ pub(crate) fn hover(ui: Ui, over: bool) {
 
 pub fn layer(ui: Ui) -> impl IntoElement {
     let shown = computed(move || shows(ui));
-    when(move || shown.get(), move || bar(ui))
+    when(
+        move || shown.get(),
+        move || {
+            view()
+                .absolute()
+                .inset_0()
+                .pointer_events(PointerEvents::BoxNone)
+                .child(when(move || ui.touch_controls(), move || back(ui)))
+                .child(bar(ui))
+        },
+    )
+}
+
+/// A tablet's way back from full-screen video, where an iPad's players
+/// keep it: a round ‹ top left, with the bar. It leaves at once for the
+/// guide, or multiview's grid from a tile watched full screen (its
+/// accessibility label says which; a remote's Back and an iPad's swipe
+/// from the left edge hide the bar first).
+fn back(ui: Ui) -> impl IntoElement {
+    let side = target();
+    view()
+        .absolute()
+        .left(px(0.0))
+        .top(px(0.0))
+        .pl_safe_area_plus(px(20.0))
+        .pt_safe_area_plus(px(16.0))
+        // Only the button takes presses: around it they reach the video.
+        .pointer_events(PointerEvents::BoxNone)
+        .child(crate::ui_kit::round_back(
+            side,
+            0.0,
+            back_bg(ui),
+            move || {
+                if crate::multiview::detour(ui) {
+                    "Multiview"
+                } else {
+                    "Guide"
+                }
+            },
+            move || {
+                ui.touched();
+                log::info!("iptv play bar: back");
+                ui.panels.update(|p| p.hide());
+                ui.play_bar.update(PlayBar::hide);
+                crate::go_back(ui);
+            },
+        ))
+}
+
+/// The round ‹'s colour over video (the player's, the guide's over its
+/// preview): the bar's panel.
+pub(crate) fn back_bg(ui: Ui) -> impl Fn() -> Rgba + Copy + 'static {
+    move || tint(ui.theme.with(|t| t.background.panel), PANEL_ALPHA)
 }
 
 fn bar(ui: Ui) -> impl IntoElement {

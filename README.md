@@ -255,6 +255,59 @@ Limits of this package, and what a public one needs:
   `xcrun notarytool submit iptv-rs.zip --keychain-profile <profile>
   --wait` and `xcrun stapler staple iptv-rs.app`.
 
+### iPad
+
+The iPad app runs through NSH's UIKit backend, in landscape, full screen
+(`nsh.json` `"ios"`). Video plays through the same libmpv player as the
+desktops, from MPVKit's LGPL static build, drawing with mpv's render API
+(OpenGL ES 3) into a `CAEAGLLayer` under the UI (`src/mpv/ios.rs`). The
+guide keeps its full sizes, as on an Android tablet.
+
+```sh
+tools/fetch-mpvkit.sh                # MPVKit 1.0.0's xcframeworks into target/mpvkit (checksums pinned)
+cd crates/iptv-app
+nsh package . --target ios-simulator -o ../../target/ios-sim   # iptv-rs.app for the simulator
+nsh package . --target ios -o ../../target/ios \
+  --sign <signing identity SHA-1> --profile <app.mobileprovision>
+xcrun devicectl list devices
+xcrun devicectl device install app --device <id> ../../target/ios/iptv-rs.app
+xcrun devicectl device process launch --device <id> com.hantekllc.iptvrs
+```
+
+- Signing: Xcode's automatic signing with a personal team gives a
+  development certificate and a profile for the bundle id once a project
+  with that id is built for the connected iPad. The iPad needs Developer
+  Mode on (Settings → Privacy & Security, then a restart) and, on the
+  first launch, the developer trusted (Settings → General → VPN & Device
+  Management). If `codesign` fails with `errSecInternalComponent` from a
+  terminal, `security set-key-partition-list -S
+  apple-tool:,apple:,codesign: -s ~/Library/Keychains/login.keychain-db`
+  lets it use the key.
+- Touch: a tap previews, a second watches full screen; the timeline pans
+  and flings (Now returns). A round ‹ top left, over the video (the
+  full-screen picture or the guide's preview), walks back the way a
+  remote's Back and Left do: full-screen video → the guide (or
+  multiview's grid) → the groups → the menu with Search, Live TV,
+  Playlists and Settings named; a swipe in from the left edge is Back
+  too. The header's ☰ also opens the groups;
+  a tap beside them, or on the video beside the channel list, closes
+  them. Settings has a Close button and the wizard a ‹ Back button; the
+  remote's key hints show only after a hardware keyboard's key. These
+  touch controls are the iPad's only: Android tablets keep their back
+  button's model.
+- Leaving the app stops the streams, as on Android, and coming back opens
+  them again.
+- Data lives in the app's `Library/Application Support/iptv-rs`.
+- Development: `IPTV_RS_DEV_PLAYLIST=<url>` while building adds that
+  playlist on the first start (a mock server on the Mac's LAN address for
+  a device); `nsh test <file>.test.tsx --target ios` drives the app in a
+  simulator. The simulator plays without sound (`ao=null`: its audio
+  output stalls mpv's clock or aborts on a reopen). mpv runs with
+  `profile=fast` on iOS: its default scalers took 117 ms a full-screen
+  frame on the simulator's OpenGL ES, `fast` 44 ms.
+- Size: the signed device app is about 69 MB (the executable 72 MB,
+  59 MB stripped), the IPA about 26 MB.
+
 ## Before any public release
 
 - Replace `crates/iptv-app/src/theme.rs` (placeholder palette) with our own design.

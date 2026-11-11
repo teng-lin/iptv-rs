@@ -59,6 +59,31 @@ objc2-open-gl = { version = "0.3.2", default-features = false, features = [
 ] }
 objc2-core-video = { version = "0.3.2", default-features = false, features = ["std", "CVBase"] }
 
+# iOS and iPadOS: NSH's UIKit backend, and `tv.player` on MPVKit's libmpv
+# drawing into a CAEAGLLayer (`src/mpv/ios.rs`; `tools/fetch-mpvkit.sh`,
+# linked by build.rs).
+[target.'cfg(target_os = "ios")'.dependencies]
+nsh-platform-ios.workspace = true
+dispatch2 = "0.3.1"
+objc2 = "0.6.5"
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "NSGeometry",
+  "NSObject",
+  "NSString",
+  "objc2-core-foundation",
+] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFCGTypes"] }
+objc2-ui-kit = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "objc2-core-foundation",
+  "UIEvent",
+  "UIResponder",
+  "UIScreen",
+  "UIView",
+  "UIWindow",
+] }
+
 [dev-dependencies]
 # Headless runs of the app: what a press reaches (tests/pointer.rs).
 nsh-engine.workspace = true

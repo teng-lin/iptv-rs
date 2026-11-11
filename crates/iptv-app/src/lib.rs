@@ -23,7 +23,7 @@ mod list_rows;
 mod lists;
 mod media;
 mod menu_view;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))]
 mod mpv;
 mod multiview;
 mod multiview_view;
@@ -53,6 +53,10 @@ pub use time::clock;
 pub use video::has_source as player_has_source;
 #[doc(hidden)]
 pub use video::opens as player_opens;
+
+/// iOS (an iPad): its touch ways back ([`Ui::touch_controls`], a tap
+/// beside the open columns or list closing them).
+pub(crate) const IOS: bool = cfg!(target_os = "ios");
 
 use std::time::{Duration, Instant};
 
@@ -87,6 +91,14 @@ pub fn components(components: &nsh_platform_linux::Components) {
 #[cfg(target_os = "macos")]
 #[native_components(macos)]
 pub fn components(components: &nsh_platform_macos::Components) {
+    mpv::register(components);
+}
+
+/// iOS and iPadOS's native components: `tv.player` on libmpv (MPVKit's,
+/// OpenGL ES), as on the desktops.
+#[cfg(target_os = "ios")]
+#[native_components(ios)]
+pub fn components(components: &nsh_platform_ios::Components) {
     mpv::register(components);
 }
 
@@ -270,6 +282,14 @@ impl Ui {
         self.input.get() == Input::Keys
     }
 
+    /// Whether the buttons that stand in for a remote's Back show (the
+    /// full-screen player's ‹, a wizard's Back, Settings' Close): on an
+    /// iPad being touched, which has no Back key. Android's back button,
+    /// TVs' and desktops' keys keep their own ways.
+    pub fn touch_controls(&self) -> bool {
+        IOS && !self.keys_shown()
+    }
+
     /// A foreground UI surface colour. In guide mode the opaque colours are
     /// drawn by the backdrop *under* the video layer (`panels::backdrop`), so
     /// the foreground is clear and the preview rectangle shows the video; in
@@ -396,7 +416,12 @@ pub fn App() -> impl IntoElement {
             &[],
         ))),
         playing: signal(None),
-        input: signal(Input::Keys),
+        // An iPad is touched first: no remote hints until a key is used.
+        input: signal(if cfg!(target_os = "ios") {
+            Input::Touch
+        } else {
+            Input::Keys
+        }),
         mode: signal(ViewMode::Guide),
         theme: signal(Theme::default()),
         stats: signal(Stats::default()),
@@ -601,6 +626,11 @@ fn ui_layers(ui: Ui, groups: ElementRef, rows: ElementRef) -> View {
 /// else the card and its buttons; beside multiview's tiles, its pointer
 /// chrome (the tiles take their own taps).
 fn toggle_panels(ui: Ui) {
+    // An iPad's tap on the video beside the channel list closes it.
+    if IOS && untracked(|| channels_view::is_open(ui)) {
+        channels_view::close(ui);
+        return;
+    }
     if untracked(|| multiview::is_open(ui)) {
         // Beside the tiles: the menu closes first.
         if multiview::dismiss(ui) {

@@ -11,7 +11,7 @@ use std::time::Duration;
 use nsh_core::prelude::*;
 
 use crate::fonts::{HEADER_BODY, HEADER_TIMES, HEADER_TITLE, MEDIUM, SANS};
-use crate::guide::{Airing, Program};
+use crate::guide::{Airing, Pane, Program};
 use crate::panels::{PREVIEW_MARGIN, PREVIEW_RADIUS, header_now};
 use crate::scale::Scale;
 use crate::theme::{BRIGHT_TEXT, RADIUS, RESTING_ALPHA, TEXT_SECONDARY_ALPHA};
@@ -346,6 +346,42 @@ pub fn header(ui: Ui) -> impl IntoElement {
                 .child(preview(ui, size))
                 .child(details(ui, program, size))
                 .child(side(ui))
-                .child(preview_ring(ui)),
+                .child(preview_ring(ui))
+                .child(when(move || corner_back_shown(ui), move || corner_back(ui))),
         )
+}
+
+/// Whether the guide's ‹ shows: an iPad being touched, until the rail
+/// (the top of the chain) is open.
+fn corner_back_shown(ui: Ui) -> bool {
+    ui.touch_controls()
+        && ui.mode.get() == ViewMode::Guide
+        && ui.focus.with(|f| f.pane) != Pane::Rail
+}
+
+/// An iPad's way to the left columns, top left over the preview where
+/// the full-screen player keeps its ‹: one step of the chain a remote's
+/// Back and Left walk, the guide to its groups, the groups to the rail
+/// with its names (Search, Settings).
+fn corner_back(ui: Ui) -> impl IntoElement {
+    let groups = move || ui.focus.with(|f| f.pane) == Pane::Guide;
+    view()
+        .absolute()
+        // The player's ‹ is 20 and 16 points in from the safe area.
+        .left(px(20.0))
+        .top(px(16.0))
+        .child(crate::ui_kit::round_back(
+            crate::ui_kit::TOUCH,
+            0.0,
+            crate::play_bar::back_bg(ui),
+            move || if groups() { "Groups" } else { "Menu" },
+            move || {
+                ui.touched();
+                if groups() {
+                    crate::lists::open_groups(ui);
+                } else {
+                    crate::lists::open_rail(ui);
+                }
+            },
+        ))
 }

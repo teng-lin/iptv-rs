@@ -142,6 +142,9 @@ pub(super) fn cell(
         .on_press(move || {
             let Some(p) = program() else { return };
             ui.touched();
+            if super::closed_columns(ui) {
+                return;
+            }
             let view = crate::lists::view(ui);
             ui.focus.update(|f| f.tap(at.index(), p.start, &view));
             ui.watch();

@@ -510,3 +510,23 @@ fn tab_toggles_between_the_grid_and_the_groups() {
     assert!(!s.focus.toggle_groups(&SyntheticList));
     assert_eq!(s.focus.pane, Pane::Groups);
 }
+
+#[test]
+fn the_groups_back_button_opens_the_rail_as_back_does() {
+    // An iPad's ‹ in the groups column: where Back from the groups goes.
+    let mut s = Screen::new();
+    s.focus.open_groups();
+    let mut by_back = s.focus.clone();
+    let rail = s.rail.clone();
+    let cols = Columns {
+        entries: entry_count(&*s.catalog),
+        rail: &rail,
+        back_to_now: true,
+    };
+    by_back.back(&cols, &s.view);
+    s.focus.hint = true;
+    s.focus.open_rail(&cols);
+    assert_eq!(s.focus.pane, Pane::Rail);
+    assert_eq!(s.focus.rail, by_back.rail);
+    assert!(!s.focus.hint, "the hint goes");
+}

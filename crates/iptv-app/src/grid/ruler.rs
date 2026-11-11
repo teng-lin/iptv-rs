@@ -85,7 +85,9 @@ pub(super) fn ruler(
                 .flex_row()
                 .items_center()
                 .child(
-                    // The date and time, then the touch steps of the window.
+                    // The date and time, then the touch steps of the window
+                    // (an iPad drags and flings it, Now returns: its ‹ top
+                    // left is the way back).
                     view()
                         .w(move || px(column()))
                         .flex_row()
@@ -94,8 +96,12 @@ pub(super) fn ruler(
                         .px(move || size.px(16.0))
                         .child(date_time(ui, size, pan).flex_1())
                         .child(now_button)
-                        .child(shift("‹", -STEP))
-                        .child(shift("›", STEP)),
+                        .children(
+                            (!crate::IOS)
+                                .then(|| [shift("‹", -STEP), shift("›", STEP)])
+                                .into_iter()
+                                .flatten(),
+                        ),
                 )
                 .child(
                     view()

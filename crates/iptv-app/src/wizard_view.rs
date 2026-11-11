@@ -310,6 +310,25 @@ fn hint(ui: Ui, size: Scale, keys: &'static str) -> impl IntoElement {
     ui_kit::caption(size, move || if ui.keys_shown() { keys } else { "" }).mt(move || size.px(6.0))
 }
 
+/// A step that Back leaves: the keys' hint, or on touch a Back button
+/// (an iPad has no Back key).
+fn hint_or_back(ui: Ui, size: Scale, keys: &'static str) -> impl IntoElement {
+    view().child(hint(ui, size, keys)).child(when(
+        move || ui.touch_controls(),
+        move || {
+            ui_kit::button(
+                ui,
+                size,
+                "‹ Back",
+                || false,
+                move || send(ui, WizardEvent::Back),
+            )
+            .self_start()
+            .mt(move || size.px(4.0))
+        },
+    ))
+}
+
 /// A focusable button for `target`; a tap sends `Tap(target)`.
 fn button(ui: Ui, size: Scale, label: &'static str, target: Target) -> impl IntoElement {
     ui_kit::button(
@@ -355,7 +374,7 @@ fn choose_type(ui: Ui) -> impl IntoElement {
     card(ui, size)
         .child(ui_kit::title(size, "What did your provider give you?"))
         .children(PlaylistKind::ALL.map(row))
-        .child(hint(ui, size, "▲▼ choose   OK next   Back back"))
+        .child(hint_or_back(ui, size, "▲▼ choose   OK next   Back back"))
 }
 
 fn shown_value(field: Field, value: &str) -> String {
@@ -440,7 +459,7 @@ fn form(ui: Ui, kind: PlaylistKind) -> impl IntoElement {
         )
         .children(kind.fields().iter().map(|f| field_row(ui, size, *f)))
         .child(button(ui, size, "Add playlist", Target::Submit))
-        .child(hint(
+        .child(hint_or_back(
             ui,
             size,
             "▲▼ move   OK type   Menu paste   Back other types",

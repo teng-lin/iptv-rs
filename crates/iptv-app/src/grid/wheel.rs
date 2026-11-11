@@ -8,15 +8,16 @@
 //! middle. Touch drags are the grid's own pan (`pan.rs`), which takes them
 //! before this scroll view can.
 //!
-//! Android has no wheels: there the content is as wide as the area and
-//! nothing scrolls.
+//! Android and iPadOS are touch first: there the content is as wide as
+//! the area and nothing scrolls, so a finger's drag is always the grid's
+//! pan (a UIKit scroll view would take it first).
 
 use nsh_core::prelude::*;
 
 use super::Pan;
 
 /// Room to scroll either way before the view goes back to the middle.
-const PAD: f32 = if cfg!(target_os = "android") {
+const PAD: f32 = if cfg!(any(target_os = "android", target_os = "ios")) {
     0.0
 } else {
     20_000.0

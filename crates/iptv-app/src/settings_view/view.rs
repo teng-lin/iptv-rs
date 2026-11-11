@@ -107,6 +107,10 @@ fn header(ui: Ui, size: Scale) -> impl IntoElement {
                 .flex_1()
                 .number_of_lines(1),
         )
+        .child(when(
+            move || ui.touch_controls(),
+            move || ui_kit::button(ui, size, "Close", || false, move || close(ui)),
+        ))
 }
 
 fn hint(ui: Ui) -> &'static str {

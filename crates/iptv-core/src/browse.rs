@@ -215,6 +215,13 @@ impl Focus {
         self.pane = Pane::Groups;
     }
 
+    /// A touch's way to the rail (the groups column's ‹ on an iPad): the
+    /// rail open on its home item, as Back from the groups.
+    pub fn open_rail(&mut self, cols: &Columns) {
+        self.hint = false;
+        self.focus_rail(cols);
+    }
+
     /// A keyboard's Tab: the groups column from the grid, the grid again
     /// from the columns (when the list has rows). Whether it changed.
     pub fn toggle_groups(&mut self, list: &dyn Schedule) -> bool {

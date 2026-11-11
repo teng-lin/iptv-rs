@@ -66,6 +66,9 @@ pub(super) fn cell(
         .gap(move || size.px(GAP))
         .on_press(move || {
             ui.touched();
+            if crate::grid::closed_columns(ui) {
+                return;
+            }
             let view = crate::lists::view(ui);
             ui.focus.update(|f| {
                 let now = f.now;

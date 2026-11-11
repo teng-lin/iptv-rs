@@ -2,7 +2,9 @@
   "name": "iptv-rs",
   "id": "com.hantekllc.iptvrs",
   "appearance": "dark",
-  "statusBar": { "hidden": true },
+  "statusBar": {
+    "hidden": true
+  },
   "rust": ".",
   "root": "App",
   "features": [],
@@ -10,6 +12,27 @@
     "defaultSize": {
       "width": 1280,
       "height": 720
+    }
+  },
+  "ios": {
+    "infoPlist": {
+      "UIDeviceFamily": [
+        2
+      ],
+      "UIRequiresFullScreen": true,
+      "UISupportedInterfaceOrientations": [
+        "UIInterfaceOrientationLandscapeLeft",
+        "UIInterfaceOrientationLandscapeRight"
+      ],
+      "UISupportedInterfaceOrientations~ipad": [
+        "UIInterfaceOrientationLandscapeLeft",
+        "UIInterfaceOrientationLandscapeRight"
+      ],
+      "NSLocalNetworkUsageDescription": "Plays and reads playlists from servers on your local network.",
+      "NSAppTransportSecurity": {
+        "NSAllowsArbitraryLoads": true,
+        "NSAllowsArbitraryLoadsForMedia": true
+      }
     }
   }
 }

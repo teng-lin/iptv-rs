@@ -7,6 +7,7 @@
 //! the desktop window (`scale.rs`). Sizes live here and in `fonts.rs`
 //! only: `tests/type_drift.rs` fails on a literal text size elsewhere.
 
+use nsh_core::element::ImageSrc;
 use nsh_core::prelude::*;
 
 use crate::fonts::{CAPTION, LIST_ITEM, LIST_SECONDARY, MEDIUM, SANS, SECTION, TITLE};
@@ -14,6 +15,39 @@ use crate::list_rows::{self, Mark, ROW};
 use crate::scale::Scale;
 use crate::theme::{FOCUS_ALPHA, FOCUSED_TEXT, LIST_TEXT, RADIUS, RADIUS_LARGE, RESTING_ALPHA};
 use crate::{Ui, tint};
+
+/// A round ‹, an iPad's way back where a remote has Back: out of the
+/// full-screen player, from the guide to its groups, from the groups to
+/// the rail. `side` across on `bg`, its press reaching `slop` around it,
+/// named `label` (VoiceOver, tests).
+pub fn round_back(
+    side: f32,
+    slop: f32,
+    bg: impl Fn() -> Rgba + 'static,
+    label: impl Fn() -> &'static str + 'static,
+    on_press: impl Fn() + 'static,
+) -> View {
+    let chevron = ImageSrc::svg_markup(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24' \
+         fill='none' stroke='currentColor' stroke-width='2.2' stroke-linecap='round' \
+         stroke-linejoin='round'><path d='M15 4.5L7.5 12l7.5 7.5'/></svg>",
+    );
+    view()
+        .size(px(side))
+        .flex_shrink_0()
+        .items_center()
+        .justify_center()
+        .rounded(px(side / 2.0))
+        .bg(bg)
+        .hit_slop(EdgeInsets::all(px(slop)))
+        .label(move || label().to_owned())
+        .on_press(on_press)
+        .child(
+            svg(chevron)
+                .size(px((side * 0.55).round()))
+                .text_color(rgb(WHITE)),
+        )
+}
 
 /// A button's or a tab's label: a list heading's size in Roboto Medium.
 pub const BUTTON: f32 = SECTION;
