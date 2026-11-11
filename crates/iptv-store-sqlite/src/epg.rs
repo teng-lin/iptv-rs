@@ -87,15 +87,13 @@
 use std::collections::{HashMap, HashSet};
 
 use iptv_epg::{
-    ChannelKey, EpgRef, GuideStore, MatchKind, ProgrammeData, SettledBuilder, StoreOptions,
-    TimePolicy, UnixTime,
+    ChannelKey, EpgRef, GuideStore, MatchKind, SettledBuilder, StoreOptions, TimePolicy, UnixTime,
 };
 use iptv_import::{EpgImport, EpgSourceConfig, FailureKind, GuideState};
 
 use crate::epg_stage::EpgStage;
 use iptv_providers::SecretUrl;
-use rusqlite::types::ValueRef;
-use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use crate::error::{Result, StoreError};
 use crate::sources::{ImportErrorKind, ensure_source};
@@ -347,43 +345,14 @@ fn copy_programmes(conn: &Connection, channel: i64, stage: i64) -> Result<(u64, 
     Ok((n as u64, d as u64))
 }
 
-/// A text column borrowed from the row.
-fn text<'r>(row: &'r Row<'_>, i: usize) -> Result<Option<&'r str>> {
-    match row.get_ref(i)? {
-        ValueRef::Null => Ok(None),
-        ValueRef::Text(t) => std::str::from_utf8(t)
-            .map(Some)
-            .map_err(|_| StoreError::InvalidData("epg_programmes text".into())),
-        _ => Err(StoreError::InvalidData("epg_programmes text".into())),
-    }
-}
-
-fn small(row: &Row<'_>, i: usize) -> Result<Option<u16>> {
-    Ok(row
-        .get::<_, Option<i64>>(i)?
-        .and_then(|n| u16::try_from(n).ok()))
-}
-
-const PROGRAMMES: &str = "SELECT p.start, p.stop, p.title, p.sub_title, p.category, p.icon,
-         p.rating, p.catchup_id, p.season, p.episode, NULL
-     FROM epg_programmes p
-     WHERE p.channel_id = ?1 AND p.start < ?3 AND p.stop > ?2
-     ORDER BY p.start";
-
-const PROGRAMMES_WITH_DESC: &str = "SELECT p.start, p.stop, p.title, p.sub_title, p.category,
-         p.icon, p.rating, p.catchup_id, p.season, p.episode, d.description
-     FROM epg_programmes p
-     LEFT JOIN epg_descriptions d ON d.channel_id = p.channel_id AND d.start = p.start
-     WHERE p.channel_id = ?1 AND p.start < ?3 AND p.stop > ?2
-     ORDER BY p.start";
-
 /// A bound channel as stored.
-struct Binding {
-    key: String,
-    kind: MatchKind,
-    channel: i64,
-    feed: u32,
-    epg_channel: String,
+pub(crate) struct Binding {
+    pub key: String,
+    pub kind: MatchKind,
+    /// The EPG channel's row id.
+    pub channel: i64,
+    pub feed: u32,
+    pub epg_channel: String,
 }
 
 impl Store {
@@ -647,39 +616,7 @@ impl Store {
             builders.insert(id, b);
         }
         drop(rows);
-        let sql = if window.descriptions {
-            PROGRAMMES_WITH_DESC
-        } else {
-            PROGRAMMES
-        };
-        let mut progs = self.conn.prepare_cached(sql)?;
-        let mut loaded = HashSet::new();
-        for b in &bindings {
-            let Some(builder) = builders.get_mut(&b.feed) else {
-                continue;
-            };
-            if !loaded.insert(b.channel) {
-                continue;
-            }
-            builder.channel(&b.epg_channel);
-            let mut rows = progs.query(params![b.channel, window.from, window.to])?;
-            while let Some(r) = rows.next()? {
-                let data = ProgrammeData {
-                    start: r.get(0)?,
-                    stop: Some(r.get(1)?),
-                    title: text(r, 2)?.unwrap_or_default(),
-                    sub_title: text(r, 3)?,
-                    category: text(r, 4)?,
-                    icon: text(r, 5)?,
-                    rating: text(r, 6)?,
-                    catchup_id: text(r, 7)?,
-                    season: small(r, 8)?,
-                    episode: small(r, 9)?,
-                    desc: text(r, 10)?,
-                };
-                builder.push(&data);
-            }
-        }
+        crate::epg_window::read_programmes(&self.conn, &bindings, &mut builders, window)?;
         let mut guide = GuideStore::new();
         for (_, b) in builders {
             guide.replace_source(b.finish());

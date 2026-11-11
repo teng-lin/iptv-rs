@@ -35,6 +35,7 @@ mod epg_assign;
 mod epg_extent;
 mod epg_stage;
 mod epg_titles;
+mod epg_window;
 mod error;
 mod guide_sources;
 mod history;

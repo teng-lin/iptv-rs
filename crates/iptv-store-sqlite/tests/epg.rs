@@ -404,3 +404,41 @@ fn the_first_programme_stored_bounds_the_guide() {
     store.prune_epg(NOW).unwrap();
     assert_eq!(store.epg_first_start(a).unwrap(), Some(NOW));
 }
+
+#[test]
+fn a_window_read_seeks_to_the_programme_reaching_into_it() {
+    let (mut store, a, _) = store_with_sources();
+    let mut b = SourceBuilder::new(iptv_epg::SourceId(1), 0, StoreOptions::default(), NOW);
+    b.push_programme(prog("x", NOW - 50 * H, NOW - 40 * H, "Old", None));
+    b.push_programme(prog("x", NOW - 40 * H, NOW - 30 * H, "Older", None));
+    // A day and more on air: it started long before the windows below.
+    b.push_programme(prog("x", NOW - 30 * H, NOW + 2 * H, "Long", None));
+    b.push_programme(prog("x", NOW + 2 * H, NOW + 3 * H, "After", None));
+    let mut g = GuideStore::new();
+    g.replace_source(b.finish());
+    let cand = EpgRef {
+        source: iptv_epg::SourceId(1),
+        epg_id: "x".into(),
+        kind: MatchKind::TvgId,
+    };
+    g.set_matches([(ChannelKey::from("k"), vec![cand])].into_iter().collect());
+    staged::replace_epg(&mut store, a, &g, &[meta(config(1, 0))], 0).unwrap();
+    let read = |from: i64, to: i64| {
+        let w = EpgWindow {
+            from,
+            to,
+            keys: None,
+            descriptions: false,
+        };
+        titles(&store.load_epg(a, &w).unwrap(), "k", i64::MIN, i64::MAX)
+    };
+    assert_eq!(read(NOW - H, i64::MAX), ["Long", "After"]);
+    assert_eq!(read(NOW, NOW + H), ["Long"]);
+    // From exactly a programme's start, and between two.
+    assert_eq!(read(NOW + 2 * H, i64::MAX), ["After"]);
+    assert_eq!(read(NOW - 40 * H, NOW - 35 * H), ["Older"]);
+    assert_eq!(read(NOW - 45 * H, NOW - 39 * H), ["Old", "Older"]);
+    // Before anything stored, and after everything.
+    assert_eq!(read(NOW - 60 * H, NOW - 55 * H), Vec::<String>::new());
+    assert_eq!(read(NOW + 4 * H, i64::MAX), Vec::<String>::new());
+}
