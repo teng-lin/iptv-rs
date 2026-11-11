@@ -40,6 +40,12 @@ struct Nav {
 
 /// The surface that owns input now.
 pub fn context(ui: &Ui) -> Context {
+    if crate::remote_editor::is_open(*ui) {
+        return Context::Editor;
+    }
+    if crate::organization_view::is_open(*ui) {
+        return Context::Editor;
+    }
     if crate::epg_sources_view::is_open(*ui) {
         return Context::Editor; // Up/Down/Left/Right, OK, Back
     }
@@ -65,7 +71,7 @@ pub fn context(ui: &Ui) -> Context {
         return Context::ChannelList;
     }
     if crate::search_view::is_open(*ui) {
-        return Context::Editor; // Up/Down/Left/Right, OK and digits
+        return Context::Search; // isolated user bindings
     }
     if crate::multiview::is_open(*ui) {
         return Context::Multiview; // Up/Down/Left/Right, OK, Long OK, Menu
@@ -80,7 +86,7 @@ pub fn context(ui: &Ui) -> Context {
 
 pub fn bind(ui: Ui) {
     let nav = Rc::new(RefCell::new(Nav {
-        keymap: Keymap::for_profile(PROFILE),
+        keymap: crate::remote_editor::keymap(),
         detector: PressDetector::default(),
         start: Instant::now(),
     }));
@@ -127,10 +133,19 @@ pub fn bind(ui: Ui) {
 }
 
 fn key_event(ui: Ui, nav: &Rc<RefCell<Nav>>, key: RemoteKey, phase: Phase) {
+    if crate::remote_editor::captures(ui) {
+        if phase == Phase::Down {
+            crate::remote_editor::capture(ui, key);
+        }
+        return;
+    }
     let t = Instant::now();
     let ctx = context(&ui);
     let (action, deadline) = {
         let mut nav = nav.borrow_mut();
+        if phase == Phase::Down {
+            nav.keymap = crate::remote_editor::keymap();
+        }
         let now = nav.start.elapsed().as_millis() as u64;
         // `remote.long_press`, taken up when a key goes down (a new press
         // ends whatever was held).
@@ -141,13 +156,19 @@ fn key_event(ui: Ui, nav: &Rc<RefCell<Nav>>, key: RemoteKey, phase: Phase) {
         // A seek key in a replay has no long press: held, it repeats.
         let has_long = LONG_PRESS
             && nav.keymap.has_long(ctx, key)
-            && !crate::player_keys::seeks(&ui, ctx, key);
+            && (crate::remote_editor::overridden(ctx, key)
+                || !crate::player_keys::seeks(&ui, ctx, key));
         let action = nav
             .detector
             .feed(key, phase, now, has_long)
             .and_then(|(k, press)| {
                 let action = nav.keymap.resolve(ctx, k, press);
-                crate::player_keys::remap(&ui, ctx, k, action).map(|a| (k, press, a))
+                let action = if crate::remote_editor::overridden(ctx, k) {
+                    action
+                } else {
+                    crate::player_keys::remap(&ui, ctx, k, action)
+                };
+                action.map(|a| (k, press, a))
             });
         let deadline = (phase == Phase::Down)
             .then(|| nav.detector.long_deadline_ms())
@@ -217,6 +238,14 @@ fn apply(ui: Ui, key: RemoteKey, action: Action, repeat: bool) {
     // screen, which opens over settings.
     if crate::epg_sources_view::is_open(ui) {
         crate::epg_sources_view::key(ui, action);
+        return;
+    }
+    if crate::remote_editor::is_open(ui) {
+        crate::remote_editor::key(ui, action);
+        return;
+    }
+    if crate::organization_view::is_open(ui) {
+        crate::organization_view::key(ui, action);
         return;
     }
     if crate::playlists_view::is_open(ui) {
@@ -327,6 +356,15 @@ fn apply(ui: Ui, key: RemoteKey, action: Action, repeat: bool) {
         | Action::DayForward
         | Action::ToggleGroups) => crate::grid::keys::apply(ui, a),
         Action::ReturnToPlayer if ui.playing.get().is_some() => ui.mode.set(ViewMode::Fullscreen),
+        Action::ToggleFavorite => {
+            if let Some(channel) = if ui.mode.get() == ViewMode::Fullscreen {
+                ui.playing.get()
+            } else {
+                crate::lists::focused_channel(ui)
+            } {
+                crate::favorites::toggle(ui, channel);
+            }
+        }
         Action::PageUp => page(ui, -1),
         Action::PageDown => page(ui, 1),
         other => log::info!("iptv action {other:?} not implemented yet"),

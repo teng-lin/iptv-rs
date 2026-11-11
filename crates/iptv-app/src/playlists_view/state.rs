@@ -24,6 +24,11 @@ pub enum Item {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Act {
     Show,
+    Enabled,
+    RefreshInterval,
+    RefreshOnStart,
+    Channels,
+    Groups,
     Refresh,
     Rename,
     /// Link, server and login, or portal and MAC address.
@@ -93,6 +98,8 @@ pub enum Effect {
     /// Open the add-playlist wizard.
     Add,
     Show(SourceId),
+    Policy(SourceId, iptv_store_sqlite::SourcePolicy),
+    Organize(SourceId, bool),
     Refresh(SourceId),
     Rename(SourceId, String),
     /// Open the guide sources screen of `id`.
@@ -186,7 +193,19 @@ impl Screen {
         let Some(row) = self.row(id) else {
             return Vec::new();
         };
-        let mut acts = vec![Act::Show, Act::Refresh, Act::Rename];
+        let mut acts = Vec::new();
+        if row.policy.enabled {
+            acts.push(Act::Show);
+        }
+        acts.extend([
+            Act::Refresh,
+            Act::Rename,
+            Act::Enabled,
+            Act::RefreshInterval,
+            Act::RefreshOnStart,
+            Act::Channels,
+            Act::Groups,
+        ]);
         // A file has no link to change (adding it again picks a new one).
         if !row.from_file {
             acts.push(Act::Details);
@@ -225,7 +244,7 @@ impl Screen {
             Layer::Actions { id, focus } if !self.acts(id).contains(&focus) => {
                 self.layer = Layer::Actions {
                     id,
-                    focus: Act::Show,
+                    focus: self.acts(id).first().copied().unwrap_or(Act::Enabled),
                 };
             }
             _ => {}
@@ -268,7 +287,7 @@ impl Screen {
             (Key::Ok | Key::Menu, Item::Playlist(id)) => {
                 self.layer = Layer::Actions {
                     id,
-                    focus: Act::Show,
+                    focus: self.acts(id).first().copied().unwrap_or(Act::Enabled),
                 };
             }
             (Key::Back, _) => return Some(Effect::Close),
@@ -304,6 +323,23 @@ impl Screen {
             Some(effect)
         };
         match act {
+            Act::Enabled | Act::RefreshInterval | Act::RefreshOnStart => {
+                let mut policy = row.policy;
+                match act {
+                    Act::Enabled => policy.enabled = !policy.enabled,
+                    Act::RefreshOnStart => policy.refresh_on_start = !policy.refresh_on_start,
+                    _ => {
+                        let values = [0, 3600, 21600, 43200, 86400];
+                        let at = values
+                            .iter()
+                            .position(|v| *v == policy.refresh_seconds)
+                            .unwrap_or(0);
+                        policy.refresh_seconds = values[(at + 1) % values.len()];
+                    }
+                }
+                Some(Effect::Policy(id, policy))
+            }
+            Act::Channels | Act::Groups => Some(Effect::Organize(id, act == Act::Groups)),
             Act::Show => to_list(self, Effect::Show(id)),
             Act::Refresh => to_list(self, Effect::Refresh(id)),
             // The guide sources screen opens over the actions.
@@ -514,6 +550,7 @@ mod tests {
             guide_failed: false,
             user_agent: None,
             from_file: false,
+            policy: Default::default(),
         }
     }
 
@@ -582,6 +619,11 @@ mod tests {
                 Act::Show,
                 Act::Refresh,
                 Act::Rename,
+                Act::Enabled,
+                Act::RefreshInterval,
+                Act::RefreshOnStart,
+                Act::Channels,
+                Act::Groups,
                 Act::Details,
                 Act::UserAgent,
                 Act::Guides,
@@ -603,7 +645,7 @@ mod tests {
     fn delete_asks_first_and_keeping_is_the_default() {
         let mut s = Screen::new(rows(), Some(A));
         s.key(Key::Ok);
-        for _ in 0..10 {
+        for _ in 0..100 {
             s.key(Key::Down);
         }
         assert_eq!(

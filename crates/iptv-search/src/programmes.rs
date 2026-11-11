@@ -53,6 +53,8 @@ pub enum GroupBy {
 
 #[derive(Clone, Copy)]
 pub struct ProgrammeSearchOptions<'a> {
+    /// Visibility is applied before ranking/limiting, preserving catalog indices.
+    pub visible: Option<&'a dyn Fn(usize) -> bool>,
     /// Past programmes are dropped unless the channel's archive still has
     /// them; `true` keeps them anyway (shown as without catch-up).
     pub include_past_without_catchup: bool,
@@ -73,6 +75,7 @@ pub struct ProgrammeSearchOptions<'a> {
 impl Default for ProgrammeSearchOptions<'_> {
     fn default() -> Self {
         ProgrammeSearchOptions {
+            visible: None,
             include_past_without_catchup: false,
             catchup_days: None,
             look_back: 7 * DAY,
@@ -412,6 +415,9 @@ impl ProgrammeIndex {
                         continue;
                     }
                     let ch = o.channel as usize;
+                    if opts.visible.is_some_and(|f| !f(ch)) {
+                        continue;
+                    }
                     let archive = now - i64::from(days[ch]) * DAY;
                     let (airing, class, dist) = if end <= now {
                         (Airing::Ended, 2, now - end)

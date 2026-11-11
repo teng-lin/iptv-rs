@@ -55,6 +55,7 @@ pub enum Activity {
 /// addresses, which redact themselves.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Playlist {
+    pub policy: iptv_store_sqlite::SourcePolicy,
     pub id: SourceId,
     pub name: String,
     pub kind: SourceKind,
@@ -76,6 +77,7 @@ pub struct Playlist {
 thread_local! {
     /// Running imports of stored playlists: their ticket and cancel token.
     static RUNNING: RefCell<HashMap<SourceId, (u64, CancelToken)>> = RefCell::default();
+    static ATTEMPTS: RefCell<HashMap<SourceId,i64>> = RefCell::default();
     static TICKETS: Cell<u64> = const { Cell::new(0) };
 }
 
@@ -97,6 +99,7 @@ pub fn playlists() -> Result<Vec<Playlist>, StoreError> {
                 _ => (None, false),
             };
             Ok(Playlist {
+                policy: store.source_policy(s.id)?,
                 id: s.id,
                 name: s.name,
                 kind: s.kind,
@@ -114,22 +117,92 @@ pub fn playlists() -> Result<Vec<Playlist>, StoreError> {
 
 /// The playlist to open at startup: the one shown last, else the newest.
 pub(super) fn startup_source(store: &Store) -> Result<Option<StoredSource>, StoreError> {
-    let id = match store.active_source()? {
-        Some(id) => Some(id),
-        None => store.sources()?.last().map(|s| s.id),
-    };
-    match id {
-        Some(id) => store.source(id),
-        None => Ok(None),
+    if let Some(id) = store.active_source()? {
+        if store.source_policy(id)?.enabled {
+            return store.source(id);
+        }
     }
+    for summary in store.sources()?.iter().rev() {
+        if store.source_policy(summary.id)?.enabled {
+            return store.source(summary.id);
+        }
+    }
+    Ok(None)
 }
 
 fn newest() -> Result<Option<StoredSource>, StoreError> {
-    let store = open_store()?;
-    match store.sources()?.last() {
-        Some(summary) => store.source(summary.id),
-        None => Ok(None),
+    startup_source(&open_store()?)
+}
+
+pub fn policy(id: SourceId) -> Result<iptv_store_sqlite::SourcePolicy, StoreError> {
+    open_store()?.source_policy(id)
+}
+pub fn set_policy(
+    ui: Ui,
+    id: SourceId,
+    policy: iptv_store_sqlite::SourcePolicy,
+) -> Result<(), StoreError> {
+    open_store()?.set_source_policy(id, policy)?;
+    changed(ui);
+    if !policy.enabled {
+        cancel_running(id);
+        if ui.library.shown.get_untracked() == Some(id) {
+            let next = newest()?;
+            super::show_nothing(ui);
+            match next {
+                Some(next) => run(ui, next, Purpose::Switch, false),
+                None => crate::playlists_view::open(ui),
+            }
+        }
     }
+    Ok(())
+}
+/// Cached startup/switch can avoid a playlist download independently of EPG policy.
+pub(super) fn network_due(id: SourceId, purpose: Purpose) -> bool {
+    if !matches!(purpose, Purpose::Startup | Purpose::Switch) {
+        return true;
+    }
+    open_store()
+        .and_then(|s| Ok((s.source_policy(id)?, s.import_status(id)?)))
+        .map(|(p, status)| {
+            status.last_success_at.is_none()
+                || p.due(
+                    super::now_unix(),
+                    status.last_attempt_at,
+                    purpose == Purpose::Startup,
+                )
+        })
+        .unwrap_or(true)
+}
+/// UI-owned scheduler; never wakes the operating system or schedules disabled sources.
+pub fn start_scheduler(ui: Ui) {
+    super::spawn_in_app(async move {
+        let mut startup = true;
+        loop {
+            if lifecycle() == nsh_core::platform::Lifecycle::Background {
+                timer(std::time::Duration::from_secs(60)).await;
+                continue;
+            }
+            if let Ok(store) = open_store() {
+                if let Ok(sources) = store.sources() {
+                    for source in sources {
+                        let Ok(policy) = store.source_policy(source.id) else {
+                            continue;
+                        };
+                        let attempted = ATTEMPTS
+                            .with(|a| a.borrow().get(&source.id).copied())
+                            .or(source.import.last_attempt_at);
+                        if policy.due(super::now_unix(), attempted, startup) && !running(source.id)
+                        {
+                            refresh(ui, source.id);
+                        }
+                    }
+                }
+            }
+            startup = false;
+            timer(std::time::Duration::from_secs(60)).await;
+        }
+    });
 }
 
 fn load(id: SourceId) -> Option<StoredSource> {
@@ -172,6 +245,9 @@ fn cancel_running(id: SourceId) {
 /// try (saved only if they import).
 pub(super) fn run(ui: Ui, stored: StoredSource, purpose: Purpose, edit: bool) {
     let id = stored.id;
+    if network_due(id, purpose) {
+        ATTEMPTS.with(|a| a.borrow_mut().insert(id, super::now_unix()));
+    }
     log::info!(
         "iptv data: {purpose:?} of source {} ({:?})",
         id.0,
@@ -240,6 +316,9 @@ pub(super) fn run(ui: Ui, stored: StoredSource, purpose: Purpose, edit: bool) {
 /// Shows stored playlist `id`: its stored channels and guide at once,
 /// refreshed in the background as at startup.
 pub fn switch_to(ui: Ui, id: SourceId) {
+    if policy(id).is_ok_and(|p| !p.enabled) {
+        return;
+    }
     if ui.library.shown.get_untracked() == Some(id) {
         return;
     }
@@ -275,7 +354,10 @@ fn refresh_purpose(ui: Ui, id: SourceId) -> Purpose {
 /// Refreshes every stored playlist (each one not refreshing already).
 pub fn refresh_all(ui: Ui) {
     match playlists() {
-        Ok(all) => all.iter().for_each(|p| refresh(ui, p.id)),
+        Ok(all) => all
+            .iter()
+            .filter(|p| p.policy.enabled)
+            .for_each(|p| refresh(ui, p.id)),
         Err(e) => log::warn!("iptv data: the store is unavailable: {e}"),
     }
 }
@@ -352,8 +434,44 @@ pub fn delete(ui: Ui, id: SourceId) -> Result<(), StoreError> {
         None => {
             super::show_nothing(ui);
             crate::playlists_view::close(ui);
-            crate::wizard_view::open_first_run(ui);
+            if playlists()?.is_empty() {
+                crate::wizard_view::open_first_run(ui);
+            } else {
+                crate::playlists_view::open(ui);
+            }
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod policy_tests {
+    use super::*;
+    use iptv_providers::{SecretUrl, model::M3uSourceConfig};
+    #[test]
+    fn startup_ignores_disabled_active_source_and_recovers_when_reenabled() {
+        let mut s = Store::open_in_memory().unwrap();
+        let source = |name: &str| Source {
+            name: name.into(),
+            config: SourceConfig::M3u(M3uSourceConfig {
+                location: SecretUrl::new("http://example.test/list.m3u"),
+                user_agent: None,
+                referrer: None,
+            }),
+        };
+        let a = s.add_source(&source("A")).unwrap();
+        let b = s.add_source(&source("B")).unwrap();
+        s.set_active_source(a).unwrap();
+        assert_eq!(startup_source(&s).unwrap().unwrap().id, a);
+        let off = iptv_store_sqlite::SourcePolicy {
+            enabled: false,
+            ..Default::default()
+        };
+        s.set_source_policy(a, off).unwrap();
+        assert_eq!(startup_source(&s).unwrap().unwrap().id, b);
+        s.set_source_policy(b, off).unwrap();
+        assert!(startup_source(&s).unwrap().is_none());
+        s.set_source_policy(a, Default::default()).unwrap();
+        assert_eq!(startup_source(&s).unwrap().unwrap().id, a);
+    }
 }

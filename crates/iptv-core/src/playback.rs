@@ -124,38 +124,31 @@ pub fn group_range(schedule: &dyn Schedule, channel: usize) -> Range<usize> {
     if groups == 0 || count == 0 {
         return 0..count;
     }
-    // Group starts ascend: binary search for the last start <= channel.
-    let (mut lo, mut hi) = (0, groups);
-    while hi - lo > 1 {
-        let mid = (lo + hi) / 2;
-        if schedule.group_start(mid) <= channel {
-            lo = mid;
-        } else {
-            hi = mid;
+    for group in 0..groups {
+        let members = schedule.group_channels(group);
+        if members.contains(&channel) {
+            return members.iter().min().copied().unwrap_or(0)
+                ..members.iter().max().map_or(0, |c| c + 1);
         }
     }
-    let start = schedule.group_start(lo).min(count);
-    let end = if lo + 1 < groups {
-        schedule.group_start(lo + 1).clamp(start, count)
-    } else {
-        count
-    };
-    if start < end && (start..end).contains(&channel) {
-        start..end
-    } else {
-        0..count
-    }
+    0..count
 }
 
 /// Channel up/down from `channel` by `step`, wrapping within its group.
 pub fn zap_target(schedule: &dyn Schedule, channel: usize, step: isize) -> usize {
-    let range = group_range(schedule, channel);
-    let len = range.len();
-    if len == 0 {
+    let mut channels = crate::lists::group_of(schedule, channel)
+        .map_or_else(|| schedule.playlist_order(), |g| schedule.group_channels(g));
+    channels.retain(|&c| !schedule.channel_hidden(c));
+    if channels.is_empty() {
         return channel;
     }
-    let at = channel.clamp(range.start, range.end - 1) - range.start;
-    range.start + (at as isize + step).rem_euclid(len as isize) as usize
+    let at = channels.iter().position(|&c| c == channel);
+    let to = match at {
+        Some(at) => (at as isize + step).rem_euclid(channels.len() as isize) as usize,
+        None if step < 0 => channels.len() - 1,
+        None => 0,
+    };
+    channels[to]
 }
 
 #[cfg(test)]

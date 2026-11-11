@@ -85,7 +85,7 @@ impl ListId {
             Entry::Favorites => ListId::Favorites,
             Entry::Recent => ListId::Recent,
             Entry::All => ListId::All,
-            Entry::Group(g) => ListId::Group(catalog.group_name(g)),
+            Entry::Group(g) => ListId::Group(catalog.group_key(g)),
         }
     }
 
@@ -97,7 +97,7 @@ impl ListId {
             ListId::Recent => RECENT,
             ListId::All => ALL,
             ListId::Group(name) => (0..catalog.group_count())
-                .find(|&g| catalog.group_name(g) == *name)
+                .find(|&g| catalog.group_key(g) == *name)
                 .map_or(ALL, |g| Entry::Group(g).index()),
         }
     }
@@ -108,17 +108,7 @@ pub fn group_of(catalog: &dyn Schedule, channel: usize) -> Option<usize> {
     if channel >= catalog.channel_count() || catalog.group_count() == 0 {
         return None;
     }
-    // Group starts ascend: the last start at or before the channel.
-    let (mut lo, mut hi) = (0, catalog.group_count());
-    while hi - lo > 1 {
-        let mid = (lo + hi) / 2;
-        if catalog.group_start(mid) <= channel {
-            lo = mid;
-        } else {
-            hi = mid;
-        }
-    }
-    (catalog.group_start(lo) <= channel).then_some(lo)
+    (0..catalog.group_count()).find(|&g| catalog.group_channels(g).contains(&channel))
 }
 
 /// The channels a list shows: catalog indices in display order.
@@ -154,17 +144,13 @@ impl ChannelList {
             Entry::Favorites => favorites.iter().copied().filter(|&c| c < n).collect(),
             Entry::Recent => recent.iter().copied().filter(|&c| c < n).collect(),
             Entry::All => catalog.playlist_order(),
-            Entry::Group(g) if g < catalog.group_count() => {
-                let start = catalog.group_start(g).min(n);
-                let end = if g + 1 < catalog.group_count() {
-                    catalog.group_start(g + 1).clamp(start, n)
-                } else {
-                    n
-                };
-                (start..end).collect()
-            }
+            Entry::Group(g) if g < catalog.group_count() => catalog.group_channels(g),
             Entry::Group(_) => Vec::new(),
         };
+        let channels: Vec<usize> = channels
+            .into_iter()
+            .filter(|&c| !catalog.channel_hidden(c))
+            .collect();
         let archive_days = channels
             .iter()
             .map(|&c| catalog.catchup_days(c))

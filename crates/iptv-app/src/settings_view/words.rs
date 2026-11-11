@@ -257,7 +257,7 @@ pub fn label(key: &str) -> &'static str {
         "remote.digit_timeout" => "Channel number pause",
         "remote.player_up_down" => "Up and Down in the player",
         "remote.key_overrides" => "Changed keys",
-        "remote.customize" => "Keys and what they do",
+        "remote.customize" => "Edit remote bindings",
         "remote.restore_defaults" => "Restore the original keys",
         "vod.movies_by_category" => "Movies by category",
         "vod.shows_by_category" => "Series by category",
@@ -272,7 +272,9 @@ pub fn label(key: &str) -> &'static str {
 /// this version does.
 pub fn description(key: &str) -> Option<&'static str> {
     Some(match key {
-        "remote.customize" => "What each key of the remote does, screen by screen.",
+        "remote.customize" => {
+            "Choose a key, press and action per screen; capture keys or restore defaults."
+        }
         "general.about" => {
             "The version of this app. Text is set in Roboto and Roboto Condensed (Google, \
              SIL Open Font License 1.1)."

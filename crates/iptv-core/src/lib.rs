@@ -29,3 +29,5 @@ pub mod sound;
 pub mod timeline;
 pub mod tracks;
 pub mod wizard;
+
+pub mod organization;

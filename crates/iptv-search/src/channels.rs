@@ -52,7 +52,13 @@ fn key_words(text: &str) -> Vec<Box<str>> {
 impl ChannelIndex {
     /// Indexes the channel names of `schedule`.
     pub fn from_schedule(schedule: &dyn Schedule) -> Self {
-        Self::from_names((0..schedule.channel_count()).map(|c| schedule.channel_name(c)))
+        Self::from_names((0..schedule.channel_count()).map(|c| {
+            if schedule.channel_hidden(c) {
+                String::new()
+            } else {
+                schedule.channel_name(c)
+            }
+        }))
     }
 
     /// Indexes names in channel order. A leading country/group tag
@@ -239,5 +245,67 @@ mod tests {
         // "Channel 420".. "Channel 4299" follow as prefixes, in index order.
         assert_eq!(hits[1].channel, 419);
         assert!(hits.iter().skip(1).all(|h| h.score == Prefix));
+    }
+}
+
+#[cfg(test)]
+mod visibility_tests {
+    use super::*;
+    use iptv_core::guide::{Program, Schedule, SyntheticSchedule};
+    struct VisibleCatalogue;
+    impl Schedule for VisibleCatalogue {
+        fn channel_count(&self) -> usize {
+            3
+        }
+        fn group_count(&self) -> usize {
+            1
+        }
+        fn group_start(&self, _: usize) -> usize {
+            0
+        }
+        fn group_name(&self, _: usize) -> String {
+            "Local".into()
+        }
+        fn channel_name(&self, c: usize) -> String {
+            ["Hidden news", "Visible news", "Visible sport"][c].into()
+        }
+        fn channel_hidden(&self, c: usize) -> bool {
+            c == 0
+        }
+        fn catchup_days(&self, _: usize) -> u8 {
+            0
+        }
+        fn program_at(&self, c: usize, t: i32) -> Program {
+            SyntheticSchedule.program_at(c, t)
+        }
+        fn programs_between(&self, c: usize, t: i32, m: i32) -> Vec<Program> {
+            SyntheticSchedule.programs_between(c, t, m)
+        }
+        fn title(&self, c: usize, p: Program) -> String {
+            SyntheticSchedule.title(c, p)
+        }
+    }
+    #[test]
+    fn hidden_channels_cannot_match_or_consume_the_visible_result_limit() {
+        let index = ChannelIndex::from_schedule(&VisibleCatalogue);
+        let options = ChannelSearchOptions {
+            limit: 1,
+            favourites_first: true,
+        };
+        let favorites = [0].into_iter().collect();
+        assert!(
+            index
+                .search_channels("hidden", &favorites, options)
+                .is_empty()
+        );
+        assert_eq!(
+            index.search_channels("news", &favorites, options)[0].channel,
+            1
+        );
+        assert_eq!(
+            index.len(),
+            3,
+            "result indices remain catalog/playback indices"
+        );
     }
 }

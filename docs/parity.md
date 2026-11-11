@@ -133,3 +133,5 @@ key remapping (P1); the player's remote defaults are in (§3).
    hard-coded behaviours.
 
 Detailed follow-up: [Playlist, settings and organization backlog](missing-features-2026-11-11.md).
+
+Library management (hide/show, rename/reorder, playlist policies, remote bindings): see [implementation scope and validation](library-management-implementation.md).

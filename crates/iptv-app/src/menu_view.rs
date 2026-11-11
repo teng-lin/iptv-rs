@@ -25,6 +25,11 @@ fn implemented(item: MenuItem) -> bool {
             | MenuItem::StartFromBeginning
             | MenuItem::ManageFavorites
             | MenuItem::AssignEpg
+            | MenuItem::HideChannel
+            | MenuItem::ManageHidden
+            | MenuItem::ReorderChannels
+            | MenuItem::ChannelOptions
+            | MenuItem::GroupOptions
     )
 }
 
@@ -138,6 +143,49 @@ pub fn perform(ui: Ui, item: MenuItem) {
         MenuItem::ToggleFavorite => {
             close(ui);
             crate::favorites::toggle(ui, origin.channel);
+        }
+        MenuItem::HideChannel => {
+            close(ui);
+            if let (Some(source), Some(id)) = (
+                ui.library.shown.get_untracked(),
+                crate::schedule().channel_key(origin.channel),
+            ) {
+                match crate::data::open_store().and_then(|mut s| {
+                    s.set_hidden(source, &iptv_providers::ContentId::from_stored(id), true)
+                }) {
+                    Ok(()) => crate::data::organization::changed(ui, source),
+                    Err(e) => log::warn!("iptv organization: {e}"),
+                }
+            }
+        }
+        MenuItem::ChannelOptions
+        | MenuItem::ManageHidden
+        | MenuItem::ReorderChannels
+        | MenuItem::GroupOptions => {
+            close(ui);
+            if let Some(source) = ui.library.shown.get_untracked() {
+                let groups = item == MenuItem::GroupOptions;
+                let preferred = if groups {
+                    Some(
+                        crate::schedule().group_key(
+                            ui.focus
+                                .with(|f| f.group.saturating_sub(iptv_core::lists::FIRST_GROUP)),
+                        ),
+                    )
+                } else {
+                    crate::schedule().channel_key(origin.channel)
+                };
+                crate::organization_view::open(
+                    ui,
+                    source,
+                    if groups {
+                        crate::organization_view::Kind::Groups
+                    } else {
+                        crate::organization_view::Kind::Channels
+                    },
+                    preferred,
+                );
+            }
         }
         // The chooser opens over the guide; the guide's focus stays.
         MenuItem::AssignEpg => {

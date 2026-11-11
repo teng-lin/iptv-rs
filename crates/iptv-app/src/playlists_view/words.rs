@@ -59,7 +59,12 @@ pub fn failure(failure: ImportFailure) -> &'static str {
 
 /// The row's second line: type and channels.
 pub fn summary(p: &Playlist) -> String {
-    format!("{} · {}", kind(p.kind), channels(p.channels))
+    format!(
+        "{} · {}{}",
+        kind(p.kind),
+        channels(p.channels),
+        if p.policy.enabled { "" } else { " · Disabled" }
+    )
 }
 
 /// The row's status: a refresh running or just finished, else what the
@@ -158,6 +163,11 @@ pub fn rejected(f: ImportFailure) -> String {
 
 pub fn act(act: Act, kind: Option<SourceKind>, shown: bool, running: bool) -> &'static str {
     match act {
+        Act::Enabled => "Enable / disable playlist",
+        Act::RefreshInterval => "Automatic refresh",
+        Act::RefreshOnStart => "Refresh on startup",
+        Act::Channels => "Organize channels",
+        Act::Groups => "Organize groups",
         Act::Show if shown => "On screen now: back to the guide",
         Act::Show => "Show this playlist",
         Act::Refresh if running => "Refreshing…",
@@ -255,6 +265,7 @@ mod tests {
             guide_failed: false,
             user_agent: None,
             from_file: false,
+            policy: Default::default(),
         }
     }
 

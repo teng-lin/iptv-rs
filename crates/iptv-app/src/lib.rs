@@ -28,6 +28,7 @@ mod mpv;
 mod multiview;
 mod multiview_view;
 mod numbers;
+mod organization_view;
 mod panels;
 mod pip;
 mod play_bar;
@@ -36,6 +37,7 @@ mod player_keys;
 mod player_panels;
 mod playlists_view;
 mod rail;
+mod remote_editor;
 mod scale;
 mod search_view;
 mod seek;
@@ -190,6 +192,8 @@ pub struct Ui {
     pub chooser: Signal<Option<chooser::Open>>,
     /// The favourites editor, when open.
     pub editor: Signal<Option<FavoritesEditor>>,
+    pub organization: Signal<Option<organization_view::Open>>,
+    pub remote_editor: Signal<Option<iptv_nav::remap::Editor>>,
     /// The search screen, while open (also while a result it chose plays).
     pub search: Signal<Option<search_view::Screen>>,
     /// The add-playlist wizard, when open.
@@ -449,6 +453,8 @@ pub fn App() -> impl IntoElement {
         sleep: signal(SleepTimer::default()),
         chooser: signal(None),
         editor: signal(None),
+        organization: signal(None),
+        remote_editor: signal(None),
         search: signal(None),
         wizard: signal(None),
         playlists: signal(None),
@@ -624,6 +630,8 @@ fn ui_layers(ui: Ui, groups: ElementRef, rows: ElementRef) -> View {
         // The playlists screen opens over settings, a guide sources screen
         // over both.
         .child(playlists_view::layer(ui))
+        .child(remote_editor::layer(ui))
+        .child(organization_view::layer(ui))
         .child(epg_sources_view::layer(ui))
         .child(wizard_view::layer(ui))
 }
@@ -632,6 +640,9 @@ fn ui_layers(ui: Ui, groups: ElementRef, rows: ElementRef) -> View {
 /// else the card and its buttons; beside multiview's tiles, its pointer
 /// chrome (the tiles take their own taps).
 fn toggle_panels(ui: Ui) {
+    if untracked(|| organization_view::is_open(ui) || remote_editor::is_open(ui)) {
+        return;
+    }
     // An iPad's tap on the video beside the channel list closes it.
     if IOS && untracked(|| channels_view::is_open(ui)) {
         channels_view::close(ui);
@@ -669,6 +680,8 @@ fn pointer_moved(ui: Ui, e: &MouseEvent) {
         || ui.wizard.with_untracked(Option::is_some)
         || untracked(|| {
             search_view::is_open(ui)
+                || organization_view::is_open(ui)
+                || remote_editor::is_open(ui)
                 || playlists_view::is_open(ui)
                 || settings_view::is_open(ui)
                 || epg_sources_view::is_open(ui)
@@ -717,6 +730,8 @@ fn bind_back(ui: Ui) {
             && !epg_sources_view::is_open(ui)
             && !guide_assign_view::is_open(ui)
             && !playlists_view::is_open(ui)
+            && !organization_view::is_open(ui)
+            && !remote_editor::is_open(ui)
             && !settings_view::is_open(ui)
             && !desktop::fullscreen()
             && !ui.back_guard.with(iptv_nav::BackGuard::armed);
@@ -743,6 +758,8 @@ pub(crate) fn go_back(ui: Ui) -> bool {
         match (ui.mode.get(), ui.focus.with(|f| f.pane), panels || menu) {
             _ if ui.wizard.with(Option::is_some) => wizard_view::back(ui),
             _ if epg_sources_view::is_open(ui) => epg_sources_view::back(ui),
+            _ if remote_editor::is_open(ui) => remote_editor::back(ui),
+            _ if organization_view::is_open(ui) => organization_view::back(ui),
             _ if playlists_view::is_open(ui) => playlists_view::back(ui),
             _ if settings_view::is_open(ui) => settings_view::back(ui),
             _ if guide_assign_view::is_open(ui) => guide_assign_view::back(ui),

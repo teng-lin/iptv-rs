@@ -49,7 +49,23 @@ pub struct GuideChannel {
     pub catchup_days: u8,
 }
 
+/// User customization in stable provider/content identity order.
+#[derive(Clone, Debug, Default)]
+pub struct Organization {
+    pub channels: Vec<(String, String, bool)>,
+    pub groups: Vec<(String, String, bool)>,
+}
+
+#[derive(Default)]
+struct OrganizationState {
+    names: Vec<String>,
+    hidden: Vec<bool>,
+    order: Vec<usize>,
+    groups: Vec<(usize, String)>,
+}
 pub struct EpgSchedule {
+    organization: std::cell::RefCell<Option<OrganizationState>>,
+    group_keys: Vec<String>,
     channels: Vec<GuideChannel>,
     /// The imported channel behind each guide channel (stream and catch-up).
     sources: Vec<Option<Channel>>,
@@ -117,6 +133,8 @@ impl EpgSchedule {
             data_start: store.first_start(),
             data_end: store.last_stop(),
             sources: vec![None; channels.len()],
+            group_keys: group_names.clone(),
+            organization: Default::default(),
             channels,
             group_names,
             group_starts,
@@ -248,9 +266,96 @@ impl EpgSchedule {
             })
             .collect();
         let mut schedule = EpgSchedule::new(grouped, store, now);
+        schedule.group_keys = groups
+            .iter()
+            .filter(|g| channels.iter().any(|c| c.groups.first() == Some(&g.id)))
+            .map(|g| g.id.as_str().to_owned())
+            .chain(
+                channels
+                    .iter()
+                    .any(|c| {
+                        c.groups
+                            .first()
+                            .is_none_or(|id| !groups.iter().any(|g| &g.id == id))
+                    })
+                    .then(|| "__other__".to_owned()),
+            )
+            .collect();
         schedule.sources = ordered.into_iter().map(Some).collect();
         schedule.playlist_order = stored_at;
         schedule
+    }
+
+    pub fn set_organization(&self, organization: Organization) {
+        use std::collections::HashMap;
+        let channel_prefs: HashMap<_, _> = organization
+            .channels
+            .iter()
+            .enumerate()
+            .map(|(i, (id, name, hidden))| (id.as_str(), (i, name, *hidden)))
+            .collect();
+        let group_prefs: HashMap<_, _> = organization
+            .groups
+            .iter()
+            .enumerate()
+            .map(|(i, (id, name, hidden))| (id.as_str(), (i, name, *hidden)))
+            .collect();
+        let mut state = OrganizationState::default();
+        for (i, c) in self.channels.iter().enumerate() {
+            let pref = channel_prefs.get(c.key.as_str());
+            state
+                .names
+                .push(pref.map_or_else(|| c.name.clone(), |(_, name, _)| (*name).clone()));
+            let group_hidden = self
+                .source_channel(i)
+                .and_then(|c| c.groups.first())
+                .and_then(|g| group_prefs.get(g.as_str()))
+                .is_some_and(|(_, _, hidden)| *hidden);
+            state
+                .hidden
+                .push(pref.is_some_and(|(_, _, hidden)| *hidden) || group_hidden);
+        }
+        state.order = self.playlist_order.clone();
+        if state.order.len() != self.channels.len() {
+            state.order = (0..self.channels.len()).collect();
+        }
+        state.order.sort_by_key(|&c| {
+            channel_prefs
+                .get(self.channels[c].key.as_str())
+                .map_or(usize::MAX, |(i, _, _)| *i)
+        });
+        let mut groups: Vec<_> = (0..self.group_keys.len())
+            .filter(|&g| {
+                !group_prefs
+                    .get(self.group_keys[g].as_str())
+                    .is_some_and(|(_, _, hidden)| *hidden)
+            })
+            .collect();
+        groups.sort_by_key(|&g| {
+            group_prefs
+                .get(self.group_keys[g].as_str())
+                .map_or(usize::MAX, |(i, _, _)| *i)
+        });
+        state.groups = groups
+            .into_iter()
+            .map(|g| {
+                (
+                    g,
+                    group_prefs.get(self.group_keys[g].as_str()).map_or_else(
+                        || self.group_names[g].clone(),
+                        |(_, name, _)| (*name).clone(),
+                    ),
+                )
+            })
+            .collect();
+        *self.organization.borrow_mut() = Some(state);
+    }
+
+    fn visible_groups(&self) -> Vec<usize> {
+        self.organization.borrow().as_ref().map_or_else(
+            || (0..self.group_keys.len()).collect(),
+            |s| s.groups.iter().map(|(g, _)| *g).collect(),
+        )
     }
 
     /// Attaches the source's playback context (Xtream credentials and
@@ -437,11 +542,15 @@ impl Schedule for EpgSchedule {
     }
 
     fn group_count(&self) -> usize {
-        self.group_names.len()
+        self.visible_groups().len()
     }
 
     fn group_start(&self, group: usize) -> usize {
-        self.group_starts.get(group).copied().unwrap_or(0)
+        self.visible_groups()
+            .get(group)
+            .and_then(|&g| self.group_starts.get(g))
+            .copied()
+            .unwrap_or(0)
     }
 
     fn program_at(&self, channel: usize, minute: i32) -> Program {
@@ -484,9 +593,24 @@ impl Schedule for EpgSchedule {
     }
 
     fn channel_name(&self, channel: usize) -> String {
-        self.channels
-            .get(channel)
-            .map_or_else(String::new, |c| c.name.clone())
+        self.organization
+            .borrow()
+            .as_ref()
+            .and_then(|s| s.names.get(channel))
+            .cloned()
+            .unwrap_or_else(|| {
+                self.channels
+                    .get(channel)
+                    .map_or_else(String::new, |c| c.name.clone())
+            })
+    }
+    fn channel_hidden(&self, channel: usize) -> bool {
+        self.organization
+            .borrow()
+            .as_ref()
+            .and_then(|s| s.hidden.get(channel))
+            .copied()
+            .unwrap_or(false)
     }
 
     fn channel_number(&self, channel: usize) -> u32 {
@@ -495,8 +619,36 @@ impl Schedule for EpgSchedule {
             .map_or(channel as u32 + 1, |c| c.number)
     }
 
+    fn group_key(&self, group: usize) -> String {
+        self.visible_groups()
+            .get(group)
+            .and_then(|&g| self.group_keys.get(g))
+            .cloned()
+            .unwrap_or_default()
+    }
     fn group_name(&self, group: usize) -> String {
+        if let Some(state) = self.organization.borrow().as_ref() {
+            return state
+                .groups
+                .get(group)
+                .map_or_else(String::new, |(_, name)| name.clone());
+        }
         self.group_names.get(group).cloned().unwrap_or_default()
+    }
+    fn group_channels(&self, group: usize) -> Vec<usize> {
+        let Some(g) = self.visible_groups().get(group).copied() else {
+            return Vec::new();
+        };
+        let start = self.group_starts[g];
+        let end = self
+            .group_starts
+            .get(g + 1)
+            .copied()
+            .unwrap_or(self.channels.len());
+        self.playlist_order()
+            .into_iter()
+            .filter(|c| (start..end).contains(c))
+            .collect()
     }
 
     fn channel_logo(&self, channel: usize) -> Option<String> {
@@ -505,6 +657,9 @@ impl Schedule for EpgSchedule {
     }
 
     fn playlist_order(&self) -> Vec<usize> {
+        if let Some(state) = self.organization.borrow().as_ref() {
+            return state.order.clone();
+        }
         if self.playlist_order.len() == self.channels.len() {
             self.playlist_order.clone()
         } else {

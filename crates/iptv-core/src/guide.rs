@@ -91,6 +91,28 @@ pub trait Schedule {
     fn group_count(&self) -> usize;
     /// The first channel of `group`.
     fn group_start(&self, group: usize) -> usize;
+    /// Stable group identity, independent of its display name.
+    fn group_key(&self, group: usize) -> String {
+        self.group_name(group)
+    }
+    /// Explicit membership permits custom order without renumbering playback channels.
+    fn group_channels(&self, group: usize) -> Vec<usize> {
+        if group >= self.group_count() {
+            return Vec::new();
+        }
+        let start = self.group_start(group).min(self.channel_count());
+        let end = if group + 1 < self.group_count() {
+            self.group_start(group + 1)
+                .clamp(start, self.channel_count())
+        } else {
+            self.channel_count()
+        };
+        (start..end).collect()
+    }
+    /// Hidden channels remain addressable for an already playing stream.
+    fn channel_hidden(&self, _channel: usize) -> bool {
+        false
+    }
     /// The programme airing at `minute`; gaps without guide data are filled
     /// with placeholder programmes so navigation always has a cell.
     fn program_at(&self, channel: usize, minute: i32) -> Program;

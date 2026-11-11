@@ -145,6 +145,20 @@ fn perform(ui: Ui, effect: Effect) {
             data::refresh(ui, id);
             Ok(())
         }
+        Effect::Policy(id, policy) => data::set_policy(ui, id, policy),
+        Effect::Organize(id, groups) => {
+            crate::organization_view::open(
+                ui,
+                id,
+                if groups {
+                    crate::organization_view::Kind::Groups
+                } else {
+                    crate::organization_view::Kind::Channels
+                },
+                None,
+            );
+            Ok(())
+        }
         Effect::Rename(id, name) => data::rename(ui, id, &name),
         Effect::Guides(id) => {
             crate::epg_sources_view::open(ui, id);
@@ -188,6 +202,8 @@ fn effect_name(effect: &Effect) -> String {
         Effect::Add => "add".to_owned(),
         Effect::Show(id) => format!("show {}", id.0),
         Effect::Refresh(id) => format!("refresh {}", id.0),
+        Effect::Policy(id, _) => format!("playlist policy {}", id.0),
+        Effect::Organize(id, _) => format!("organize {}", id.0),
         Effect::Rename(id, _) => format!("rename {}", id.0),
         Effect::Guides(id) => format!("guide sources of {}", id.0),
         Effect::Delete(id) => format!("delete {}", id.0),
@@ -447,7 +463,28 @@ fn actions_card(ui: Ui, size: Scale, id: SourceId) -> impl IntoElement {
         let label = move || {
             let shown = ui.library.shown.get() == Some(id);
             let kind = playlist().map(|p| p.kind);
-            words::act(act, kind, shown, running()).to_owned()
+            match (act, playlist()) {
+                (Act::Enabled, Some(p)) => format!(
+                    "Playlist enabled: {}",
+                    if p.policy.enabled { "Yes" } else { "No" }
+                ),
+                (Act::RefreshInterval, Some(p)) => format!(
+                    "Automatic refresh: {}",
+                    match p.policy.refresh_seconds {
+                        0 => "Off".to_owned(),
+                        n => format!("every {} hours", n / 3600),
+                    }
+                ),
+                (Act::RefreshOnStart, Some(p)) => format!(
+                    "Refresh on startup: {}",
+                    if p.policy.refresh_on_start {
+                        "Yes"
+                    } else {
+                        "No"
+                    }
+                ),
+                _ => words::act(act, kind, shown, running()).to_owned(),
+            }
         };
         let color = if act == Act::Delete { ERROR } else { WHITE };
         ui_kit::action(ui, size, label, focused, color, move || {
@@ -475,7 +512,23 @@ fn actions_card(ui: Ui, size: Scale, id: SourceId) -> impl IntoElement {
                 .h(move || size.px(if notice().is_some() { 22.0 } else { 0.0 })),
         )
         .child(view().h(move || size.px(6.0)))
-        .children(acts.into_iter().map(act_row))
+        .child({
+            let count = acts.len();
+            let acts = std::rc::Rc::new(acts);
+            let rows = element_ref();
+            let focused_acts = acts.clone();
+            effect(move || {
+                if let Some(Layer::Actions { focus, .. }) = state(ui, Screen::layer) {
+                    if let Some(at) = focused_acts.iter().position(|a| *a == focus) {
+                        rows.scroll_to_index(at as u32, percentage(0.5), px(0.0), false);
+                    }
+                }
+            });
+            virtual_list(move || count, move |at| act_row(acts[at.index()]))
+                .estimated_item_size(list_rows::pitch(size, list_rows::ROW))
+                .element_ref(&rows)
+                .h(move || size.px(360.0))
+        })
 }
 
 fn confirm_card(ui: Ui, size: Scale, id: SourceId) -> impl IntoElement {
