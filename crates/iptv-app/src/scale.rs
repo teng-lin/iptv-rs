@@ -1,7 +1,9 @@
 //! The guide's scale on desktop: its type and geometry (`fonts.rs`, the
 //! grid, the ruler, the channel column and the header's text) are the
-//! full-screen sizes, shrunk a little in a smaller window. Android (TV,
-//! tablet) keeps the full sizes: its windows are the screen.
+//! full-screen sizes, shrunk a little in a smaller window. An Android
+//! tablet keeps the full sizes (its window is the screen); a TV shows them
+//! at [`TV`], as dense as the reference's TV guide (8 rows of ≈ 39 dp
+//! under its header on a 960 × 540 dp screen).
 //!
 //! The window's ratio to a full-screen desktop is the smaller of its height
 //! over [`H_REF`] and its width over [`W_REF`]; the scale follows it
@@ -11,6 +13,7 @@
 //! [`MAX`]: 1920 × 1080 and 2560 × 1440 → 1.0, 1440 × 900 → 0.95,
 //! 1280 × 720 → 0.875, 960 × 540 → 0.8.
 
+use nsh_core::platform::Idiom;
 use nsh_core::prelude::*;
 
 /// The window (logical px) at and above which the full sizes show: a
@@ -26,6 +29,8 @@ pub const MAX: f32 = 1.0;
 pub const STEP: f32 = 0.025;
 /// Whether this platform scales the guide with its window.
 const SCALES: bool = !cfg!(target_os = "android");
+/// The scale on a TV (rows 50 → 40 dp, type 20 → 16).
+pub const TV: f32 = 0.8;
 
 /// The scale for a `width` × `height` window (logical px); 1.0 where the
 /// platform does not scale.
@@ -40,6 +45,9 @@ pub fn scale_for(width: f32, height: f32, scales: bool) -> f32 {
 
 /// The scale of the window now (reactive: the window's size).
 pub fn now() -> f32 {
+    if idiom() == Idiom::Tv {
+        return TV;
+    }
     let w = window();
     scale_for(w.width.0, w.height.0, SCALES)
 }
