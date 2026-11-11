@@ -278,13 +278,10 @@ pub enum Effect {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Test {
     IsTrue,
-    IsFalse,
     /// Enum or colour value is one of these variants.
     EnumIn(&'static [&'static str]),
     /// Text is not empty.
     NotEmpty,
-    /// Integer or duration is not zero.
-    NonZero,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

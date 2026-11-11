@@ -351,28 +351,21 @@ fn decode(s: &Setting, json: &Json) -> Decoded {
     match validate::check(s, &value) {
         Ok(()) => Decoded::Exact(value),
         Err(SettingsError::OutOfRange { .. } | SettingsError::OffStep { .. }) => {
-            Decoded::Clamped(clamp(s, &value))
+            Decoded::Clamped(clamp(s, value))
         }
         Err(e) => Decoded::Invalid(e.to_string()),
     }
 }
 
-fn clamp(s: &Setting, value: &Value) -> Value {
-    match (&s.ty, value) {
-        (ValueType::Int { min, max, step, .. }, Value::Int(n)) => {
-            Value::Int(clamp_to_grid(*n, *min, *max, *step))
-        }
-        (
-            ValueType::Duration {
-                min_ms,
-                max_ms,
-                step_ms,
-                ..
-            },
-            Value::Duration(n),
-        ) => Value::Duration(clamp_to_grid(*n, *min_ms, *max_ms, *step_ms)),
-        _ => value.clone(),
+/// `value` moved onto its setting's grid. Only numbers are out of range
+/// or off their step.
+fn clamp(s: &Setting, mut value: Value) -> Value {
+    if let (Value::Int(n) | Value::Duration(n), Some((min, max, step))) =
+        (&mut value, crate::screen::grid(&s.ty))
+    {
+        *n = clamp_to_grid(*n, min, max, step);
     }
+    value
 }
 
 fn binding_from_json(json: &Json) -> Option<KeyBinding> {

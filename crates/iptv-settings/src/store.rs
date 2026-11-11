@@ -221,42 +221,38 @@ impl Settings {
 
     /// Whether the settings UI shows `key` at `at`: its visibility
     /// conditions hold and every setting they refer to is visible itself.
+    /// (A setting names its parents' conditions as its own, which the schema
+    /// test `dependencies_repeat_their_parents_conditions` checks, so one
+    /// level of conditions decides.)
     pub fn is_visible(&self, key: &str, at: &Target) -> Result<bool, SettingsError> {
-        Ok(self.passes(lookup(key)?, Effect::Visible, at, 0))
+        Ok(self.passes(lookup(key)?, Effect::Visible, at))
     }
 
     /// Whether `key` is visible and editable at `at`.
     pub fn is_enabled(&self, key: &str, at: &Target) -> Result<bool, SettingsError> {
         let s = lookup(key)?;
-        Ok(self.passes(s, Effect::Visible, at, 0) && self.passes(s, Effect::Enabled, at, 0))
+        Ok(self.passes(s, Effect::Visible, at) && self.passes(s, Effect::Enabled, at))
     }
 
-    fn passes(&self, s: &Setting, effect: Effect, at: &Target, depth: usize) -> bool {
-        // The schema test proves dependencies are acyclic; the bound is a
-        // backstop.
-        depth < 16
-            && s.depends
-                .iter()
-                .filter(|d| d.effect == effect)
-                .all(|d| d.any_of.iter().any(|w| self.holds(w, effect, at, depth)))
+    fn passes(&self, s: &Setting, effect: Effect, at: &Target) -> bool {
+        s.depends
+            .iter()
+            .filter(|d| d.effect == effect)
+            .all(|d| d.any_of.iter().any(|w| self.holds(w, at)))
     }
 
-    fn holds(&self, w: &When, effect: Effect, at: &Target, depth: usize) -> bool {
-        let Some(s) = catalogue::setting(w.key) else {
-            return false;
-        };
-        if !self.passes(s, effect, at, depth + 1) {
-            return false;
-        }
-        match (w.test, self.resolve(s, at)) {
-            (Test::IsTrue, Value::Bool(b)) => b,
-            (Test::IsFalse, Value::Bool(b)) => !b,
-            (Test::EnumIn(variants), Value::Enum(v) | Value::Colour(v)) => {
-                variants.contains(&v.as_str())
-            }
-            (Test::NotEmpty, Value::Text(t)) => !t.is_empty(),
-            (Test::NonZero, Value::Int(n) | Value::Duration(n)) => n != 0,
-            _ => false,
+    /// Whether condition `w` holds. Its key names a setting and its test
+    /// fits that setting's type (both checked by the schema tests); an
+    /// unknown key or a value of another type would not pass.
+    fn holds(&self, w: &When, at: &Target) -> bool {
+        let value = self.get_in(w.key, at);
+        match w.test {
+            Test::IsTrue => value == Ok(Value::Bool(true)),
+            Test::EnumIn(variants) => matches!(
+                &value,
+                Ok(Value::Enum(v) | Value::Colour(v)) if variants.contains(&v.as_str())
+            ),
+            Test::NotEmpty => matches!(&value, Ok(Value::Text(t)) if !t.is_empty()),
         }
     }
 

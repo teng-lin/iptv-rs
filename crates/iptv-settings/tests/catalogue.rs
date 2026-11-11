@@ -505,7 +505,6 @@ fn condition_value(w: &When, holds: bool) -> Value {
     let s = catalogue::setting(w.key).unwrap();
     match w.test {
         Test::IsTrue => Value::Bool(holds),
-        Test::IsFalse => Value::Bool(!holds),
         Test::EnumIn(variants) => {
             let all = s.ty.choices().unwrap().variants;
             let v = all
@@ -519,11 +518,6 @@ fn condition_value(w: &When, holds: bool) -> Value {
         }
         Test::NotEmpty if holds => other_value(s),
         Test::NotEmpty => Value::text(""),
-        Test::NonZero if holds => other_value(s),
-        Test::NonZero => match s.ty {
-            ValueType::Int { .. } => Value::Int(0),
-            _ => Value::Duration(0),
-        },
     }
 }
 

@@ -161,10 +161,12 @@ pub fn rows(page: &Page, ctx: &Ctx) -> Vec<Row> {
             }
             Part::Section(section) => *section,
         };
-        let Some(node) = tree.iter().find(|n| n.section == section) else {
-            continue;
-        };
-        for group in &node.groups {
+        // The tree has a node for every section.
+        let groups = tree
+            .iter()
+            .filter(|n| n.section == section)
+            .flat_map(|n| &n.groups);
+        for group in groups {
             let visible = |s: &&&Setting| {
                 ctx.offered(s.key)
                     && ctx
@@ -408,7 +410,12 @@ impl Screen {
     }
 
     fn rows_key(&mut self, key: Key, ctx: &Ctx) -> Effect {
-        let rows = self.rows(ctx);
+        // The rows that take the focus (not headings), and their keys.
+        let rows: Vec<Row> = self
+            .rows(ctx)
+            .into_iter()
+            .filter(|r| r.key().is_some())
+            .collect();
         let keys: Vec<&'static str> = rows.iter().filter_map(Row::key).collect();
         if keys.is_empty() {
             self.pane = Pane::Pages;
@@ -427,41 +434,34 @@ impl Screen {
             Key::PageDown => self.focus = step(PAGE as isize),
             Key::Left | Key::Back => self.pane = Pane::Pages,
             Key::Right => {}
-            Key::Ok => {
-                let row = rows.iter().find(|r| r.key() == Some(keys[at]));
-                return match row {
-                    Some(row) => self.activate(*row, ctx),
-                    None => Effect::None,
-                };
-            }
+            Key::Ok => return self.activate(rows[at], ctx),
         }
         Effect::None
     }
 
     /// OK (or a tap) on `row`.
     fn activate(&mut self, row: Row, ctx: &Ctx) -> Effect {
-        if ctx.status(&row) != Status::Active {
-            return Effect::None;
-        }
+        let active = ctx.status(&row) == Status::Active;
         let s = match row {
-            Row::Setting(s) => s,
-            Row::Command(c) if c.confirm => {
+            Row::Setting(s) if active => s,
+            Row::Command(c) if active && c.confirm => {
                 self.editor = Some(Editor::Confirm { command: c });
                 return Effect::None;
             }
-            Row::Command(c) => return Effect::Run(c.key),
-            Row::Heading { .. } => return Effect::None,
+            Row::Command(c) if active => return Effect::Run(c.key),
+            // Rows the app does not act on; headings (never focused or
+            // tapped) are read-only.
+            _ => return Effect::None,
         };
-        let current = ctx.value(s);
-        self.editor = match (&s.ty, current) {
-            (ValueType::Bool { .. }, Value::Bool(b)) => {
+        self.editor = match ctx.value(s) {
+            Value::Bool(b) => {
                 return Effect::Set {
                     key: s.key,
                     value: Value::Bool(!b),
                 };
             }
-            (ty, Value::Enum(v) | Value::Colour(v)) => {
-                let variants = ty.choices().map_or(&[][..], |c| c.variants);
+            Value::Enum(v) | Value::Colour(v) => {
+                let variants = s.ty.choices().map_or(&[][..], |c| c.variants);
                 let selected = variants.iter().position(|x| *x == v).unwrap_or(0);
                 Some(Editor::Choice {
                     setting: s,
@@ -469,15 +469,17 @@ impl Screen {
                     selected,
                 })
             }
-            (_, Value::Int(value) | Value::Duration(value)) => {
+            Value::Int(value) | Value::Duration(value) => {
                 Some(Editor::Number { setting: s, value })
             }
-            (_, Value::Text(text)) => Some(Editor::Text {
+            Value::Text(text) => Some(Editor::Text {
                 setting: s,
                 text,
                 invalid: false,
             }),
-            _ => None,
+            // Needed for the match over `Value`: key bindings are read-only
+            // (`Ctx::status`), so their rows never get here.
+            Value::KeyBindings(_) => None,
         };
         Effect::None
     }

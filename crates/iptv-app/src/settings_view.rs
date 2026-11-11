@@ -7,9 +7,9 @@
 //! applied where the app reads it) and runs its commands.
 //!
 //! Rows the app does not act on yet are dimmed and say so ("later" for
-//! recordings, reminders, movies and series, parental control); rows
-//! another setting switches off say which; device-level features of TV
-//! boxes are left out (`settings::offer`). Remote: Up/Down move, Right/OK
+//! recordings, reminders, movies and series, parental control); none of
+//! the rows it acts on can be switched off by another setting yet;
+//! device-level features of TV boxes are left out (`settings::offer`). Remote: Up/Down move, Right/OK
 //! enter a page, OK changes a row, Left/Back go back, Back on the pages
 //! closes. Touch and mouse: tap a page, tap a row. Wording is iptv-rs's
 //! own (`words`). Also the short notices of the app (`notify`), such as
@@ -26,7 +26,7 @@ use std::cell::Cell;
 use std::time::{Duration, Instant};
 
 use iptv_nav::Action;
-use iptv_settings::schema::{Effect as DependencyEffect, Test, ValueType};
+use iptv_settings::schema::ValueType;
 use iptv_settings::screen::{Ctx, Editor, Effect, Key, Page, Pane, Part, Row, Screen, Status};
 use iptv_settings::{Section, Settings, Target, Value, keys};
 use nsh_core::prelude::*;
@@ -276,19 +276,6 @@ fn note(settings: &Settings, row: &Row) -> String {
     match (status(settings, row), row) {
         (Status::NotYet, _) => "Not available yet".to_owned(),
         (Status::Later, _) => "In a later version".to_owned(),
-        (Status::Disabled, Row::Setting(s)) => {
-            // The first switch that is off where it needs to be on.
-            let blocker = s
-                .depends
-                .iter()
-                .filter(|d| d.effect == DependencyEffect::Enabled)
-                .flat_map(|d| d.any_of.iter())
-                .find(|w| w.test == Test::IsTrue && settings.get(w.key) == Ok(Value::Bool(false)));
-            match blocker {
-                Some(w) => format!("Turn on “{}” first", words::label(w.key)),
-                None => "Turned off by another setting".to_owned(),
-            }
-        }
         (Status::Active, _) if restart => "Takes effect after a restart".to_owned(),
         _ => String::new(),
     }
@@ -370,11 +357,12 @@ pub fn notify(text: &str) {
     };
     notice.set(Some(text.to_owned()));
     let shown = text.to_owned();
-    let _ = set_timeout(NOTICE_FOR, move || {
+    // The timer runs on its own; its handle is not needed.
+    drop(set_timeout(NOTICE_FOR, move || {
         if notice.with_untracked(|n| n.as_deref() == Some(shown.as_str())) {
             notice.set(None);
         }
-    });
+    }));
 }
 
 /// Whether a Back press may leave the app (`general.confirm_exit`): the
@@ -451,6 +439,23 @@ mod tests {
         }
         for p in PAGES {
             assert!(!words::page(p.key).is_empty(), "{}", p.key);
+        }
+    }
+
+    /// No row the app acts on can be switched off by another setting, so
+    /// `note` has nothing to say for `Status::Disabled`; wiring such a
+    /// setting needs a note that names the switch.
+    #[test]
+    fn no_wired_setting_is_switched_off_by_another() {
+        use iptv_settings::schema::Effect as DependencyEffect;
+        for key in crate::settings::WIRED {
+            let s = catalogue::setting(key).unwrap();
+            assert!(
+                s.depends
+                    .iter()
+                    .all(|d| d.effect != DependencyEffect::Enabled),
+                "{key}"
+            );
         }
     }
 

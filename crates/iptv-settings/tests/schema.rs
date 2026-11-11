@@ -130,13 +130,12 @@ fn dependencies_refer_to_existing_settings_of_a_matching_type() {
                 let target = catalogue::setting(w.key)
                     .unwrap_or_else(|| panic!("{} depends on unknown {}", s.key, w.key));
                 let ok = match (w.test, &target.ty) {
-                    (Test::IsTrue | Test::IsFalse, ValueType::Bool { .. }) => true,
+                    (Test::IsTrue, ValueType::Bool { .. }) => true,
                     (Test::EnumIn(vs), ty) => {
                         let c = ty.choices().expect("EnumIn needs an enum or colour");
                         !vs.is_empty() && vs.iter().all(|v| c.contains(v))
                     }
                     (Test::NotEmpty, ValueType::Text { .. }) => true,
-                    (Test::NonZero, ValueType::Int { .. } | ValueType::Duration { .. }) => true,
                     _ => false,
                 };
                 assert!(ok, "{} -> {}: test does not fit the type", s.key, w.key);
@@ -158,6 +157,30 @@ fn dependencies_are_acyclic() {
     }
     for s in all() {
         visit(s.key, &mut Vec::new());
+    }
+}
+
+/// `Settings::is_visible` and `is_enabled` read one level of conditions,
+/// so a setting whose condition refers to a setting with conditions of the
+/// same effect names those too (the frame-rate option that needs the
+/// refresh-rate switch also needs frame-rate matching itself).
+#[test]
+fn dependencies_repeat_their_parents_conditions() {
+    for s in all() {
+        for dep in s.depends {
+            for w in dep.any_of {
+                let parent = catalogue::setting(w.key).unwrap();
+                for inherited in parent.depends.iter().filter(|d| d.effect == dep.effect) {
+                    assert!(
+                        s.depends.contains(inherited),
+                        "{} depends on {}, so it needs {:?} too",
+                        s.key,
+                        parent.key,
+                        inherited
+                    );
+                }
+            }
+        }
     }
 }
 
