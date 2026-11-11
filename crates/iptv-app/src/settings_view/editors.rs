@@ -1,10 +1,8 @@
 //! The settings screen's editors and dialogs, over the screen: a list for
 //! a choice (colours with their swatch), a stepper for numbers and
-//! durations, the text sheet the wizard uses, the confirmation of a
-//! command, and the read-only key list. Each says what it is about; the
-//! remote drives them through `iptv_settings::screen`, taps directly.
-
-mod key_list;
+//! durations, the text sheet the wizard uses, and the confirmation of a
+//! command. Each says what it is about; the remote drives them through
+//! `iptv_settings::screen`, taps directly.
 
 use std::rc::Rc;
 
@@ -24,7 +22,6 @@ use crate::{Ui, tint};
 
 /// The side panels' widths and the dialogs' (dp at full size).
 const CHOICE_W: f32 = 400.0;
-const KEYS_W: f32 = 520.0;
 const DIALOG_W: f32 = 480.0;
 
 /// Which editor is open (rebuilt only when this changes).
@@ -34,7 +31,6 @@ enum Kind {
     Number,
     Text,
     Confirm,
-    List,
 }
 
 fn editor<R>(ui: Ui, f: impl FnOnce(&Editor) -> R) -> Option<R> {
@@ -57,7 +53,6 @@ pub fn layer(ui: Ui) -> impl IntoElement {
             Editor::Number { .. } => Kind::Number,
             Editor::Text { .. } => Kind::Text,
             Editor::Confirm { .. } => Kind::Confirm,
-            Editor::List { .. } => Kind::List,
         })
     });
     view().absolute().inset_0().child(dynamic(move || {
@@ -67,7 +62,6 @@ pub fn layer(ui: Ui) -> impl IntoElement {
             Some(Kind::Number) => stepper(ui).into_element(),
             Some(Kind::Text) => text_sheet(ui).into_element(),
             Some(Kind::Confirm) => confirm(ui).into_element(),
-            Some(Kind::List) => key_list::key_list(ui).into_element(),
             None => view().into_element(),
         })
     }))

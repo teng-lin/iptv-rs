@@ -398,23 +398,14 @@ fn commands_run_after_a_confirmation_when_asked() {
 }
 
 #[test]
-fn a_read_only_list_scrolls_and_closes() {
+fn the_remote_bindings_command_runs_without_an_editor_of_its_own() {
+    // The app opens its own bindings editor for it.
     let s = Settings::new();
     let mut screen = Screen::new(PAGES, "remote");
     assert_eq!(
         screen.tap_row("remote.customize", &ctx(&s)),
         Effect::Run("remote.customize")
     );
-    screen.open_list("remote.customize", 3);
-    press(&mut screen, &s, &[Key::Down; 5]);
-    assert!(matches!(
-        screen.editor(),
-        Some(Editor::List { focus: 2, .. })
-    ));
-    press(&mut screen, &s, &[Key::Ok]);
-    assert_eq!(screen.editor(), None);
-    screen.open_list("remote.customize", 3);
-    press(&mut screen, &s, &[Key::Back]);
     assert_eq!((screen.editor(), screen.pane()), (None, Pane::Rows));
 }
 
@@ -530,9 +521,6 @@ fn editors_name_what_they_edit() {
         ("general.restore", None),
         "a confirmation edits no setting"
     );
-    screen.open_list("remote.customize", 2);
-    let list = screen.editor().unwrap();
-    assert_eq!((list.key(), list.setting()), ("remote.customize", None));
 }
 
 #[test]
@@ -673,9 +661,7 @@ fn ok_keeps_whatever_the_editor_shows() {
             value: Value::choice("transport")
         }
     );
-    // Nothing open, or a read-only list: OK just closes.
-    assert_eq!(screen.commit(), Effect::None);
-    screen.open_list("remote.customize", 4);
+    // Nothing open: OK does nothing.
     assert_eq!(screen.commit(), Effect::None);
     assert_eq!(screen.editor(), None);
 }

@@ -123,7 +123,6 @@ fn hint(ui: Ui) -> &'static str {
         (_, Some(Editor::Number { .. })) => "◀▶ change   OK keep   Back cancel",
         (_, Some(Editor::Text { .. })) => "Type, then OK to keep   Back cancel",
         (_, Some(Editor::Confirm { .. })) => "OK go ahead   Back cancel",
-        (_, Some(Editor::List { .. })) => "▲▼ scroll   OK Back close",
         (Pane::Pages, None) => "▲▼ page   ▶ OK its settings   Back close",
         (Pane::Rows, None) => "▲▼ move   OK change   ◀ Back pages",
     }

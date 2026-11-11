@@ -244,12 +244,6 @@ pub enum Editor {
     },
     /// "Really?" before a command the catalogue wants confirmed.
     Confirm { command: &'static Command },
-    /// A read-only list of `len` lines the app fills (the remote's keys).
-    List {
-        key: &'static str,
-        len: usize,
-        focus: usize,
-    },
 }
 
 impl Editor {
@@ -260,7 +254,6 @@ impl Editor {
             | Editor::Number { setting, .. }
             | Editor::Text { setting, .. } => setting.key,
             Editor::Confirm { command } => command.key,
-            Editor::List { key, .. } => key,
         }
     }
 
@@ -270,7 +263,7 @@ impl Editor {
             Editor::Choice { setting, .. }
             | Editor::Number { setting, .. }
             | Editor::Text { setting, .. } => Some(setting),
-            Editor::Confirm { .. } | Editor::List { .. } => None,
+            Editor::Confirm { .. } => None,
         }
     }
 }
@@ -506,13 +499,6 @@ impl Screen {
                 let len = setting.ty.choices().map_or(0, |c| c.variants.len());
                 *focus = moved(*focus, by, len);
             }
-            Some(Editor::List { focus, len, .. }) => {
-                if key == Key::Ok {
-                    self.cancel();
-                } else {
-                    *focus = moved(*focus, by, *len);
-                }
-            }
             Some(Editor::Number { .. }) => match key {
                 Key::Left | Key::Down => self.step(-1),
                 Key::Right | Key::Up => self.step(1),
@@ -548,12 +534,6 @@ impl Screen {
         self.pane = Pane::Rows;
         self.focus = row.key();
         self.activate(row, ctx)
-    }
-
-    /// Shows the app's read-only list of `len` lines for `key` (after a
-    /// [`Effect::Run`] of that command).
-    pub fn open_list(&mut self, key: &'static str, len: usize) {
-        self.editor = Some(Editor::List { key, len, focus: 0 });
     }
 
     /// Picks entry `index` of an open choice list.
@@ -617,7 +597,7 @@ impl Screen {
                 self.editor = None;
                 return Effect::Run(key);
             }
-            Some(Editor::List { .. }) | None => {
+            None => {
                 self.editor = None;
                 return Effect::None;
             }

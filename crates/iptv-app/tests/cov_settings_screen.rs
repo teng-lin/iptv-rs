@@ -401,9 +401,9 @@ fn settings(app: &mut Headless, home: &Path) {
     step(app.wait_for_gone(PAGES_HINT, GONE));
     open_menu(app);
     step(app.press(MENU_SETTINGS));
-    step(app.wait_for("text:Keys and what they do"));
+    step(app.wait_for("text:Edit remote bindings"));
     step(app.press_key("backspace"));
-    step(app.wait_for_gone("text:Keys and what they do", GONE));
+    step(app.wait_for_gone("text:Edit remote bindings", GONE));
 }
 
 fn appearance(app: &mut Headless, home: &Path) {
@@ -532,16 +532,13 @@ fn other_pages(app: &mut Headless) {
     sheet_closed(app);
     step(app.wait_for("text:Renamed list"));
     back_until(app, |s| shown(s) == 1);
-    // The remote's keys: a read-only list; keys scroll it, OK closes it.
+    // The remote's bindings: its editor opens over the settings (its own
+    // test, tests/library_management.rs, edits them); Back closes it.
     step(app.press("text:Remote control >> nth=0"));
-    step(app.press("text:Keys and what they do"));
-    step(app.wait_for("text:Changing keys comes in a later version."));
-    step(app.wait_for("text:In the guide"));
-    step(app.press_key("down"));
-    step(app.press_key("pagedown"));
-    step(app.wait_for("text:▲▼ scroll   OK Back close"));
-    step(app.press_key("enter"));
-    step(app.wait_for_gone("text:Changing keys comes in a later version.", GONE));
+    step(app.press("text:Edit remote bindings"));
+    step(app.wait_for("text:Remote bindings"));
+    step(app.back());
+    step(app.wait_for_gone("id:remote-editor-screen", GONE));
     // Pages by keys: Page Down and Up move five.
     step(app.press_key("left"));
     step(app.press_key("pagedown"));
