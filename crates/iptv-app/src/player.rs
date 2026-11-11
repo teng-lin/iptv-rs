@@ -519,20 +519,25 @@ pub fn source_changed(ui: Ui) {
 }
 
 /// Data changes keep the playing channel (found again by key); stall
-/// checks pause while paused.
+/// checks pause while paused (full screen's pause, or a multiview tile's).
 pub fn bind(ui: Ui) {
     effect(move || {
         ui.data_version.get();
         // Out of the effect: following the row writes signals.
         later(ui, Duration::ZERO, move || follow_playing(ui));
     });
+    // Changes only when a tile's pause does, not on every multiview step.
+    let tiles_paused = computed(move || {
+        std::array::from_fn::<bool, SURFACES, _>(|s| crate::multiview::paused(ui, s))
+    });
     effect(move || {
         let paused = ui.paused.get();
+        let tiles_paused = tiles_paused.get();
         let away = stopped_in_background(lifecycle());
         let now = ui.now_ms();
         untracked(|| {
-            for surface in 0..SURFACES {
-                let held = away || (surface == 0 && paused);
+            for (surface, tile_paused) in tiles_paused.into_iter().enumerate() {
+                let held = away || (surface == 0 && paused) || tile_paused;
                 ui.player
                     .stream(surface)
                     .health

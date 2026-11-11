@@ -144,14 +144,18 @@ Any remote key hides it; OK still shows the info card.
 Multiview (the control row's or the play bar's Multiview): the playing
 channel becomes the first tile and the channel list opens to add the next
 (up to four on the desktop, two on Android); the screen holds only the
-tiles. Arrows choose the tile that is heard, OK opens its menu (add
-channel, change channel, enlarge or reduce, watch full screen, remove, try
-again), Long OK enlarges or reduces it, Back watches the active tile full
-screen. Watch full screen is a detour: Back (or Multiview again) returns
-to the same tiles; changing channel there ends multiview. A tap makes a
-tile active, a tap on the active one opens its menu, a long press
-enlarges it; a moving mouse or a tap beside the tiles shows a toolbar
-(Add channel, Exit multiview) and each tile's enlarge and remove buttons.
+tiles. Arrows choose the tile that is heard (a thin light outline), OK
+opens its menu, a panel at the right edge that leaves the tiles in view
+(Try again after a failure, Add screen, Search and add, Change channel,
+Pause or Play for that tile alone, Enlarge screen or Reduce screen, Full
+screen, Remove screen), Long OK enlarges or reduces it, Back watches the
+active tile full screen. Search and add opens the search screen over the
+tiles: a channel or programme result adds its channel as a new tile.
+Full screen is a detour: Back (or Multiview again) returns to the same
+tiles; changing channel there ends multiview. A tap makes a tile active,
+a tap on the active one opens its menu, a long press enlarges it; a
+moving mouse or a tap beside the tiles shows a toolbar (Add screen, Exit
+multiview) and each tile's enlarge and remove buttons.
 Adding more streams than an Xtream account allows asks first.
 
 Environment: `IPTV_RS_AUDIO=null` mutes the player (mpv `ao`; use it for

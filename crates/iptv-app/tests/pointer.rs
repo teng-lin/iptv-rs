@@ -191,6 +191,7 @@ fn bar_buttons(app: &mut Headless, step: impl Fn(Result<(), String>)) {
 }
 
 const TILE: &str = "id:multiview-tile";
+const MENU: &str = "id:multiview-menu";
 /// Channel Three's row in the channel list (All channels). The list stays
 /// mounted while hidden: what it did shows in the tiles.
 const ROW_THREE: &str = "text:3  Test Channel Three";
@@ -213,14 +214,15 @@ fn chrome(app: &mut Headless, step: impl Fn(Result<(), String>)) {
 /// it full screen: the grid goes, the session waits.
 fn detour(app: &mut Headless, step: impl Fn(Result<(), String>)) {
     step(app.press(TILE_THREE));
-    step(app.press("text:Watch full screen"));
+    step(app.press(&format!("{MENU} >> text:Full screen")));
     step(app.wait_for_gone(TILE, Duration::from_secs(2)));
 }
 
 /// Multiview by pointer, over full-screen video with the bar hidden: the
 /// tiles alone (no add cell), the toolbar's Add and Exit, a tile's
-/// enlarge and remove buttons, a long press, and Watch full screen as a
-/// detour that Back (or the bar's button) undoes.
+/// enlarge and remove buttons, a long press, the tile menu at the right
+/// edge with no backdrop (the tiles still take presses), and Full screen
+/// as a detour that Back (or the bar's button) undoes.
 fn multiview(app: &mut Headless, step: impl Fn(Result<(), String>) + Copy) {
     let gone = |app: &mut Headless, s: &str| app.wait_for_gone(s, Duration::from_secs(2));
     step(app.press("label:Video"));
@@ -238,28 +240,54 @@ fn multiview(app: &mut Headless, step: impl Fn(Result<(), String>) + Copy) {
     );
     // The chrome: a tile's enlarge button and a long press toggle it.
     chrome(app, step);
-    step(app.press("label:Enlarge Test Channel Two"));
-    step(app.wait_for("label:Reduce Test Channel Two"));
+    step(app.press("label:Enlarge screen: Test Channel Two"));
+    step(app.wait_for("label:Reduce screen: Test Channel Two"));
     step(app.long_press(&format!("{TILE} >> nth=0")));
-    step(app.wait_for("label:Enlarge Test Channel Two"));
+    step(app.wait_for("label:Enlarge screen: Test Channel Two"));
+    // The active tile's menu: a panel at the right edge in the menu's
+    // words, nothing dimming the tiles: a press on the other tile reaches
+    // it and closes the menu, and so does a press beside the tiles.
+    step(app.press(TILE_THREE));
+    step(app.press(TILE_THREE));
+    step(app.wait_for(&format!("{MENU} >> text:Remove screen")));
+    let panel = menu_bounds(app);
+    assert!(
+        (1280.0 - (panel.0 + panel.2) - 10.0 * 0.875).abs() < 0.5,
+        "at the right edge: {panel:?}"
+    );
+    assert!((panel.1 + panel.3 / 2.0 - 360.0).abs() < 1.0, "centred");
+    for item in ["Add screen", "Search and add", "Change channel", "Pause"] {
+        assert!(
+            app.screen()
+                .matches(&format!("{MENU} >> text:{item}"))
+                .unwrap()
+        );
+    }
+    step(app.press(TILE_TWO));
+    step(gone(app, MENU));
+    step(app.press(TILE_THREE));
+    step(app.wait_for(MENU));
+    step(app.press_at("label:Video", Point::new(px(20.0), px(20.0))));
+    step(gone(app, MENU));
     // Its remove button: one tile left, without buttons.
-    step(app.press("label:Remove Test Channel Three"));
+    chrome(app, step);
+    step(app.press("label:Remove screen: Test Channel Three"));
     assert_eq!(tiles(app), 1);
     assert!(!app.screen().matches("label:/^Remove /").unwrap());
     // The toolbar's Add opens the picker (the chrome goes); Back cancels
     // it, and only it.
     chrome(app, step);
-    step(app.press("label:Add channel"));
+    step(app.press("label:Add screen"));
     step(gone(app, "label:Exit multiview"));
     step(app.press_key("backspace"));
     assert_eq!(tiles(app), 1);
     // Again, picking Channel Three.
     chrome(app, step);
-    step(app.press("label:Add channel"));
+    step(app.press("label:Add screen"));
     step(app.press(ROW_THREE));
     step(app.wait_for(TILE_THREE));
     assert_eq!(tiles(app), 2);
-    // Watch full screen is a detour: the play bar's button returns to the
+    // Full screen is a detour: the play bar's button returns to the
     // same grid…
     detour(app, step);
     step(app.wait_for("label:Back to multiview"));
@@ -289,4 +317,16 @@ fn multiview(app: &mut Headless, step: impl Fn(Result<(), String>) + Copy) {
     step(app.wait_for("label:Mute"));
     step(app.press("label:Video"));
     step(gone(app, "label:Mute"));
+}
+
+/// The tile menu's panel (x, y, width, height).
+fn menu_bounds(app: &Headless) -> (f32, f32, f32, f32) {
+    let b = app
+        .screen()
+        .layout_nodes()
+        .into_iter()
+        .find(|n| n.test_id.as_deref() == Some("multiview-menu"))
+        .expect("the tile menu")
+        .bounds;
+    (b.origin.x.0, b.origin.y.0, b.size.width.0, b.size.height.0)
 }

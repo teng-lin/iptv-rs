@@ -57,12 +57,18 @@ fn screen(ui: Ui) -> impl IntoElement {
 
 fn hint(ui: Ui) -> &'static str {
     let idle = state(ui, |s| s.state.phase() == Phase::Idle).unwrap_or(true);
+    // Search and add: a result goes to multiview.
+    let add = pick::picking(ui);
     match (ui.keys_shown(), idle) {
         (true, true) => "OK type   ▼ recent searches   Back close",
+        (true, false) if add => {
+            "▲▼ move   ◀▶ channels / programmes   OK add   Back keyboard, then close"
+        }
         (true, false) => {
             "▲▼ move   ◀▶ channels / programmes   OK watch   Back keyboard, then close"
         }
         (false, true) => "Type a channel or programme, or tap a recent search",
+        (false, false) if add => "Tap a result to add its channel to multiview",
         (false, false) => "Tap a result to watch it",
     }
 }
@@ -99,7 +105,13 @@ fn header(ui: Ui, size: Scale) -> impl IntoElement {
         .flex_row()
         .items_center()
         .gap(move || size.px(12.0))
-        .child(ui_kit::title(size, "Search"))
+        .child(ui_kit::title(size, move || {
+            if pick::picking(ui) {
+                "Search and add"
+            } else {
+                "Search"
+            }
+        }))
         .child(
             ui_kit::field(size, input())
                 .element_ref(&field)
