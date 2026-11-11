@@ -354,3 +354,182 @@ fn tree_lists_every_setting_once() {
         assert_eq!(order, declared, "{}", sec.section.key());
     }
 }
+
+#[test]
+fn time_constructors_convert_their_unit_to_milliseconds() {
+    use iptv_settings::schema::{TimeUnit, days, dur, hours, mins, offset_hm, offset_hms, secs};
+    let ms = |ty: ValueType| match ty {
+        ValueType::Duration {
+            min_ms,
+            max_ms,
+            step_ms,
+            unit,
+            default_ms,
+        } => (unit, [min_ms, max_ms, step_ms, default_ms]),
+        other => panic!("not a duration: {other:?}"),
+    };
+    assert_eq!(
+        ms(dur(TimeUnit::Millis, -20, 40, 10, 0)),
+        (TimeUnit::Millis, [-20, 40, 10, 0])
+    );
+    assert_eq!(
+        ms(secs(1, 30, 1, 4)),
+        (TimeUnit::Seconds, [1_000, 30_000, 1_000, 4_000])
+    );
+    assert_eq!(
+        ms(mins(0, 2, 1, 1)),
+        (TimeUnit::Minutes, [0, 120_000, 60_000, 60_000])
+    );
+    assert_eq!(
+        ms(hours(0, 2, 1, 1)),
+        (TimeUnit::Hours, [0, 7_200_000, 3_600_000, 3_600_000])
+    );
+    assert_eq!(
+        ms(days(1, 2, 1, 2)),
+        (
+            TimeUnit::Days,
+            [86_400_000, 172_800_000, 86_400_000, 172_800_000]
+        )
+    );
+    // Offsets are signed.
+    assert_eq!(
+        ms(offset_hm(-90, 90, 15, -30)),
+        (
+            TimeUnit::HoursMinutes,
+            [-5_400_000, 5_400_000, 900_000, -1_800_000]
+        )
+    );
+    assert_eq!(
+        ms(offset_hms(-60, 60, 1, 5)),
+        (
+            TimeUnit::HoursMinutesSeconds,
+            [-60_000, 60_000, 1_000, 5_000]
+        )
+    );
+}
+
+#[test]
+fn types_name_themselves_and_give_their_default() {
+    use iptv_settings::schema::{
+        IntUnit, Setting, TextKind, bindings, boolean, choice, colour, int, secs, text,
+    };
+    let cases = [
+        (boolean(true), "bool", Value::Bool(true)),
+        (int(0, 10, 2, IntUnit::Percent, 4), "integer", Value::Int(4)),
+        (secs(0, 9, 1, 3), "duration", Value::ms(3_000)),
+        (
+            choice(&choices::SIZE, "large"),
+            "enum",
+            Value::choice("large"),
+        ),
+        (text(TextKind::Plain, 8, "abc"), "text", Value::text("abc")),
+        (
+            colour(&choices::ACCENT, "red"),
+            "colour",
+            Value::colour("red"),
+        ),
+        (bindings(4), "key_bindings", Value::KeyBindings(vec![])),
+    ];
+    for (ty, name, default) in cases {
+        assert_eq!(ty.type_name(), name);
+        let s = Setting::new(Section::Search, "", "search.example", ty, "Synthetic.");
+        assert_eq!(s.default_value(), default, "{name}");
+        assert_eq!(s.default_value().type_name(), name, "value and type agree");
+        // Choices exist exactly for enums and colours.
+        assert_eq!(ty.choices().is_some(), matches!(name, "enum" | "colour"));
+    }
+    assert_eq!(
+        choice(&choices::SIZE, "large").choices(),
+        Some(&choices::SIZE)
+    );
+    assert_eq!(
+        colour(&choices::ACCENT, "red").choices(),
+        Some(&choices::ACCENT)
+    );
+}
+
+#[test]
+fn a_new_setting_is_plain_until_the_builders_add_to_it() {
+    use iptv_settings::schema::{
+        Dependency, Flags, Setting, When, boolean, enabled_if, visible_if, when,
+    };
+    static SHOWN: [When; 1] = [When {
+        key: "search.show_history",
+        test: Test::IsTrue,
+    }];
+    let plain = Setting::new(Section::Search, "", "search.example", boolean(false), "S.");
+    assert_eq!(plain.section, Section::Search);
+    assert_eq!(plain.subsection, None, "an empty subsection is none");
+    assert_eq!(plain.scope, Scope::Global);
+    assert_eq!(plain.flags, Flags::default());
+    assert!(plain.depends.is_empty());
+    assert_eq!(plain.label_key(), "settings.search.example");
+    assert_eq!(plain.help_key(), "settings.search.example.help");
+
+    assert_eq!(when("search.show_history", Test::IsTrue), SHOWN[0]);
+    let visible = visible_if(&SHOWN);
+    let enabled = enabled_if(&SHOWN);
+    assert_eq!(
+        (visible, enabled),
+        (
+            Dependency {
+                effect: Effect::Visible,
+                any_of: &SHOWN
+            },
+            Dependency {
+                effect: Effect::Enabled,
+                any_of: &SHOWN
+            }
+        )
+    );
+
+    let built = Setting::new(
+        Section::Player,
+        "clock",
+        "player.example",
+        boolean(true),
+        "S.",
+    )
+    .scope(Scope::Group)
+    .restart()
+    .advanced()
+    .depends(&[]);
+    assert_eq!(built.subsection, Some("clock"));
+    assert_eq!(built.scope, Scope::Group);
+    assert!(built.flags.requires_restart && built.flags.advanced);
+    // Each builder sets only its own part.
+    let restart =
+        Setting::new(Section::Player, "", "player.example", boolean(true), "S.").restart();
+    assert!(restart.flags.requires_restart && !restart.flags.advanced);
+    assert_eq!(restart.scope, Scope::Global);
+}
+
+#[test]
+fn sections_and_choices_resolve_their_keys() {
+    for section in Section::ALL {
+        assert_eq!(Section::from_key(section.key()), Some(section));
+        assert_eq!(
+            section.label_key(),
+            format!("settings.section.{}", section.key())
+        );
+    }
+    assert_eq!(Section::from_key("Player"), None, "keys are lower case");
+    assert_eq!(Section::from_key("nonexistent"), None);
+    assert_eq!(
+        Section::Player.subsection_label_key("clock"),
+        "settings.section.player.clock"
+    );
+
+    let size = &choices::SIZE;
+    assert!(size.contains("large") && !size.contains("huge"));
+    // Interning hands back the schema's own copy of a member.
+    let owned = String::from("large");
+    let interned = size.intern(&owned).unwrap();
+    assert_eq!(interned, "large");
+    assert!(size.variants.iter().any(|v| std::ptr::eq(*v, interned)));
+    assert_eq!(size.intern("huge"), None);
+    assert_eq!(
+        choices::ACCENT.label_key("red"),
+        "settings.choice.accent.red"
+    );
+}

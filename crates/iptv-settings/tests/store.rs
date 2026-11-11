@@ -329,3 +329,283 @@ fn dependencies_resolve_at_the_requested_level() {
         Ok(true)
     );
 }
+
+/// The texts a refused write shows (and a backup load reports).
+#[test]
+fn errors_say_what_was_wrong() {
+    let mut st = Settings::new();
+    let mut says = |key: &str, at: Target, value: Value| -> String {
+        st.set_in(key, &at, value).unwrap_err().to_string()
+    };
+    let cases = [
+        (
+            says("no.such_key", Target::Global, Value::Bool(true)),
+            r#"unknown setting "no.such_key""#,
+        ),
+        (
+            says("guide.autoplay", Target::Global, Value::Int(1)),
+            "guide.autoplay: expected bool, got integer",
+        ),
+        (
+            says("player.info_panel_timeout", Target::Global, Value::secs(31)),
+            "player.info_panel_timeout: 31000 is outside 1000..=30000",
+        ),
+        (
+            says("guide.switch_delay", Target::Global, Value::ms(300)),
+            "guide.switch_delay: 300 is not a multiple of the step 250",
+        ),
+        (
+            says(
+                "appearance.font_size",
+                Target::Global,
+                Value::choice("huge"),
+            ),
+            r#"appearance.font_size: "huge" is not a valid choice"#,
+        ),
+        (
+            says(
+                "general.user_agent",
+                Target::Global,
+                Value::Text("x".repeat(513)),
+            ),
+            "general.user_agent: 513 characters, at most 512 allowed",
+        ),
+        (
+            says("general.udp_proxy", Target::Global, Value::text("a b:1")),
+            "general.udp_proxy: expected host:port",
+        ),
+        (
+            says("general.language", Target::Global, Value::text("English")),
+            r#"general.language: expected "system" or a language tag"#,
+        ),
+        (
+            says("general.user_agent", Target::Global, Value::text("a\tb")),
+            "general.user_agent: contains control characters",
+        ),
+        (
+            says(
+                "appearance.accent",
+                Target::playlist("pl-1"),
+                Value::colour("red"),
+            ),
+            r#"appearance.accent cannot be overridden for playlist "pl-1""#,
+        ),
+        (
+            says(
+                "channels.group_sort",
+                Target::group("pl-1", "grp-1"),
+                Value::choice("name"),
+            ),
+            r#"channels.group_sort cannot be overridden for group "grp-1" of playlist "pl-1""#,
+        ),
+    ];
+    for (said, expected) in cases {
+        assert_eq!(said, expected);
+    }
+    // Errors are std errors, so callers can box them.
+    let boxed: Box<dyn std::error::Error> = Box::new(SettingsError::UnknownKey("x.y".into()));
+    assert_eq!(boxed.to_string(), r#"unknown setting "x.y""#);
+}
+
+#[test]
+fn a_value_of_another_type_names_both_types() {
+    let mut st = Settings::new();
+    let found = [
+        (Value::Bool(true), "bool"),
+        (Value::Int(1), "integer"),
+        (Value::ms(1), "duration"),
+        (Value::choice("x"), "enum"),
+        (Value::text("x"), "text"),
+        (Value::colour("x"), "colour"),
+        (Value::KeyBindings(vec![]), "key_bindings"),
+    ];
+    for (value, name) in found {
+        assert_eq!(value.type_name(), name);
+        // Every value but a text is the wrong type for a text setting.
+        let err = st.set("general.user_agent", value);
+        if name == "text" {
+            assert_eq!(err, Ok(vec![change("general.user_agent", Target::Global)]));
+        } else {
+            assert_eq!(
+                err,
+                Err(SettingsError::TypeMismatch {
+                    key: "general.user_agent",
+                    expected: "text",
+                    found: name,
+                })
+            );
+        }
+    }
+}
+
+#[test]
+fn bindings_lists_have_a_maximum_length() {
+    let mut st = Settings::new();
+    let list = |n: usize| -> Vec<KeyBinding> {
+        (0..n)
+            .map(|i| KeyBinding::new(Some(&format!("ctx_{i}")), "ok", PressKind::Short, "play"))
+            .collect()
+    };
+    st.set("remote.key_overrides", Value::KeyBindings(list(256)))
+        .unwrap();
+    assert_eq!(
+        st.set("remote.key_overrides", Value::KeyBindings(list(257))),
+        Err(SettingsError::TooLong {
+            key: "remote.key_overrides",
+            len: 257,
+            max: 256,
+        })
+    );
+    assert_eq!(st.key_bindings(keys::KEY_OVERRIDES, G).len(), 256);
+}
+
+#[test]
+fn targets_resolve_from_the_most_specific_level() {
+    use iptv_settings::Scope;
+    let pl = Target::playlist("pl-1");
+    let grp = Target::group("pl-1", "grp-1");
+    assert_eq!(Target::Global.chain(), [Target::Global]);
+    assert_eq!(pl.chain(), [pl.clone(), Target::Global]);
+    assert_eq!(grp.chain(), [grp.clone(), pl.clone(), Target::Global]);
+
+    assert_eq!(Target::Global.scope(), Scope::Global);
+    assert_eq!(pl.scope(), Scope::Playlist);
+    assert_eq!(grp.scope(), Scope::Group);
+    let names: Vec<&str> = [Scope::Global, Scope::Playlist, Scope::Group]
+        .iter()
+        .map(|s| s.key())
+        .collect();
+    assert_eq!(names, ["global", "playlist", "group"]);
+
+    // A scope allows its own level and every less specific one.
+    for scope in [Scope::Global, Scope::Playlist, Scope::Group] {
+        for target in [&Target::Global, &pl, &grp] {
+            assert_eq!(
+                scope.allows(target),
+                target.scope() <= scope,
+                "{scope:?} {target}"
+            );
+        }
+    }
+    assert_eq!(Target::Global.to_string(), "global");
+    assert_eq!(pl.to_string(), r#"playlist "pl-1""#);
+    assert_eq!(grp.to_string(), r#"group "grp-1" of playlist "pl-1""#);
+}
+
+#[test]
+fn clearing_one_value_keeps_the_others_at_that_level() {
+    let mut st = Settings::new();
+    let pl = Target::playlist("pl-1");
+    st.set_in("channels.group_sort", &pl, Value::choice("name"))
+        .unwrap();
+    st.set_in("logos.source", &pl, Value::choice("epg"))
+        .unwrap();
+    assert_eq!(
+        st.clear_in("channels.group_sort", &pl),
+        Ok(vec![change("channels.group_sort", pl.clone())])
+    );
+    assert_eq!(st.stored("logos.source", &pl), Some(&Value::choice("epg")));
+    // Clearing where nothing is stored changes nothing.
+    assert_eq!(st.clear_in("channels.group_sort", &pl), Ok(vec![]));
+    assert_eq!(
+        st.clear_in("channels.group_sort", &Target::playlist("pl-2")),
+        Ok(vec![])
+    );
+    assert_eq!(
+        st.clear_in("no.such_key", &pl),
+        Err(SettingsError::UnknownKey("no.such_key".into()))
+    );
+}
+
+#[test]
+fn removing_a_playlist_keeps_global_values() {
+    let mut st = Settings::new();
+    st.set("channels.group_sort", Value::choice("name"))
+        .unwrap();
+    st.set_in(
+        "channels.group_sort",
+        &Target::playlist("pl-1"),
+        Value::choice("manual"),
+    )
+    .unwrap();
+    st.remove_playlist("pl-1");
+    assert_eq!(
+        st.choice(keys::GROUP_SORT, &Target::playlist("pl-1")),
+        "name"
+    );
+    assert_eq!(
+        st.source("channels.group_sort", G),
+        Ok(Some(Target::Global))
+    );
+}
+
+#[test]
+fn typed_reads_of_every_type() {
+    let mut st = Settings::new();
+    st.set("history.recent_count", Value::Int(3)).unwrap();
+    st.set("general.user_agent", Value::text("SyntheticPlayer/2.0"))
+        .unwrap();
+    assert_eq!(st.int(keys::RECENT_COUNT, G), 3);
+    assert_eq!(st.text(keys::USER_AGENT, G), "SyntheticPlayer/2.0");
+    assert_eq!(st.choice(keys::PLAYER_UP_DOWN, G), "switch_channels");
+    assert!(st.bool(keys::CONFIRM_EXIT, G));
+}
+
+/// The message of the panic `read` raises.
+fn panic_message<R: std::fmt::Debug>(read: impl FnOnce() -> R) -> String {
+    // (The panic is also printed to this test's captured output.)
+    let payload =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(read)).expect_err("the read panics");
+    payload
+        .downcast_ref::<String>()
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// A typed key of the wrong type is a bug in this crate: the read panics
+/// and names the key and what it holds.
+#[test]
+fn typed_reads_of_the_wrong_type_panic() {
+    use iptv_settings::keys::{
+        BindingsKey, BoolKey, ColourKey, DurationKey, EnumKey, IntKey, TextKey,
+    };
+    let st = Settings::new();
+    let holds = |key: &str, ty: &str| format!("typed settings key {key} holds a {ty}");
+    assert_eq!(
+        panic_message(|| st.bool(BoolKey("guide.switch_delay"), G)),
+        holds("guide.switch_delay", "duration")
+    );
+    assert_eq!(
+        panic_message(|| st.int(IntKey("guide.autoplay"), G)),
+        holds("guide.autoplay", "bool")
+    );
+    assert_eq!(
+        panic_message(|| st.duration_ms(DurationKey("history.recent_count"), G)),
+        holds("history.recent_count", "integer")
+    );
+    assert_eq!(
+        panic_message(|| st.choice(EnumKey("general.user_agent"), G)),
+        holds("general.user_agent", "text")
+    );
+    assert_eq!(
+        panic_message(|| st.colour(ColourKey("guide.autoplay"), G)),
+        holds("guide.autoplay", "bool")
+    );
+    assert_eq!(
+        panic_message(|| st.text(TextKey("appearance.accent"), G)),
+        holds("appearance.accent", "colour")
+    );
+    assert_eq!(
+        panic_message(|| st.key_bindings(BindingsKey("appearance.font_size"), G)),
+        holds("appearance.font_size", "enum")
+    );
+    let unknown = r#"typed settings key: unknown setting "no.such_key""#;
+    assert_eq!(
+        panic_message(|| st.bool(BoolKey("no.such_key"), G)),
+        unknown
+    );
+    assert_eq!(
+        panic_message(|| st.choice(EnumKey("no.such_key"), G)),
+        unknown
+    );
+}

@@ -1,7 +1,7 @@
 //! The settings screen's state machine.
 
 use iptv_settings::screen::{
-    Ctx, Editor, Effect, Key, Offer, Page, Pane, Part, Row, Screen, Status, rows,
+    Ctx, Editor, Effect, Key, Offer, Page, Pane, Part, Row, Screen, Status, grid, rows,
 };
 use iptv_settings::{Section, Settings, Value};
 
@@ -472,6 +472,239 @@ fn text_is_kept_only_when_valid() {
             value: Value::text("pt-BR")
         }
     );
+}
+
+#[test]
+fn headings_are_never_acted_on() {
+    let s = Settings::new();
+    let heading = Row::Heading {
+        section: Section::Epg,
+        subsection: Some("updates"),
+    };
+    assert_eq!(heading.key(), None);
+    assert_eq!(ctx(&s).status(&heading), Status::ReadOnly);
+}
+
+#[test]
+fn only_numbers_have_a_grid() {
+    let grid_of = |key: &str| grid(&iptv_settings::catalogue::setting(key).unwrap().ty);
+    assert_eq!(grid_of("appearance.ui_transparency"), Some((0, 80, 5)));
+    assert_eq!(
+        grid_of("epg.time_offset"),
+        Some((-720 * 60_000, 840 * 60_000, 15 * 60_000))
+    );
+    for key in [
+        "guide.autoplay",
+        "appearance.font_size",
+        "appearance.accent",
+        "general.user_agent",
+        "remote.key_overrides",
+    ] {
+        assert_eq!(grid_of(key), None, "{key}");
+    }
+}
+
+#[test]
+fn editors_name_what_they_edit() {
+    let s = Settings::new();
+    let c = Ctx {
+        settings: &s,
+        offer: &everything,
+    };
+    let mut screen = Screen::new(PAGES, "playback");
+    let opened = |screen: &mut Screen, key: &str| {
+        screen.tap_row(key, &c);
+        let editor = screen.editor().cloned().expect("an editor opens");
+        (editor.key(), editor.setting().map(|s| s.key))
+    };
+    for key in ["catchup.seek_keys", "catchup.forward_step"] {
+        assert_eq!(opened(&mut screen, key), (key, Some(key)));
+    }
+    let mut screen = Screen::new(PAGES, "general");
+    assert_eq!(
+        opened(&mut screen, "general.user_agent"),
+        ("general.user_agent", Some("general.user_agent"))
+    );
+    assert_eq!(
+        opened(&mut screen, "general.restore"),
+        ("general.restore", None),
+        "a confirmation edits no setting"
+    );
+    screen.open_list("remote.customize", 2);
+    let list = screen.editor().unwrap();
+    assert_eq!((list.key(), list.setting()), ("remote.customize", None));
+}
+
+#[test]
+fn the_focused_row_is_only_in_the_rows_pane() {
+    let s = Settings::new();
+    let mut screen = Screen::new(PAGES, "epg");
+    assert_eq!(screen.pages().len(), PAGES.len());
+    assert_eq!(screen.focused_row(&ctx(&s)), None);
+    press(&mut screen, &s, &[Key::Right]);
+    assert_eq!(
+        screen.focused_row(&ctx(&s)).and_then(|r| r.key()),
+        Some("epg.update_interval")
+    );
+    // Back in the pages, the row is remembered but not focused.
+    press(&mut screen, &s, &[Key::Back]);
+    assert_eq!(screen.focus(), Some("epg.update_interval"));
+    assert_eq!(screen.focused_row(&ctx(&s)), None);
+}
+
+#[test]
+fn page_keys_and_side_keys_in_the_pages_list() {
+    let s = Settings::new();
+    let mut screen = Screen::new(PAGES, "other");
+    press(&mut screen, &s, &[Key::PageUp]);
+    assert_eq!(screen.page().key, "playlists", "five up");
+    press(&mut screen, &s, &[Key::PageUp]);
+    assert_eq!(screen.page().key, "general", "stops at the first");
+    // Left has nowhere to go from the pages.
+    assert_eq!(press(&mut screen, &s, &[Key::Left]), Effect::None);
+    assert_eq!((screen.page().key, screen.pane()), ("general", Pane::Pages));
+    // Right in the rows does nothing either.
+    press(&mut screen, &s, &[Key::Right, Key::Right]);
+    assert_eq!(
+        (screen.pane(), screen.focus()),
+        (Pane::Rows, Some("general.resume_last_channel"))
+    );
+}
+
+/// Pages whose rows can be empty.
+static SPARSE: &[Page] = &[
+    Page {
+        key: "nothing",
+        parts: &[Part::Keys(&["no.such_key"])],
+    },
+    Page {
+        key: "logos",
+        parts: &[Part::Section(Section::Logos)],
+    },
+];
+
+fn only_inexact_match(key: &str) -> Offer {
+    if key == "logos.inexact_match" {
+        Offer::Active
+    } else {
+        Offer::Hidden
+    }
+}
+
+#[test]
+fn a_page_without_rows_cannot_be_entered() {
+    let s = Settings::new();
+    let c = Ctx {
+        settings: &s,
+        offer: &only_inexact_match,
+    };
+    for page in SPARSE {
+        assert_eq!(rows(page, &c), [], "{}", page.key);
+        let mut screen = Screen::new(SPARSE, page.key);
+        assert_eq!(screen.key(Key::Ok, &c), Effect::None);
+        assert_eq!((screen.pane(), screen.focus()), (Pane::Pages, None));
+    }
+}
+
+#[test]
+fn the_rows_pane_closes_when_its_last_row_hides() {
+    let mut s = Settings::new();
+    s.set("logos.folder", Value::text("/storage/example"))
+        .unwrap();
+    let mut screen = Screen::new(SPARSE, "logos");
+    let c = Ctx {
+        settings: &s,
+        offer: &only_inexact_match,
+    };
+    screen.key(Key::Ok, &c);
+    assert_eq!(screen.focus(), Some("logos.inexact_match"));
+    s.set("logos.folder", Value::text("")).unwrap();
+    let c = Ctx {
+        settings: &s,
+        offer: &only_inexact_match,
+    };
+    assert_eq!(screen.key(Key::Down, &c), Effect::None);
+    assert_eq!(screen.pane(), Pane::Pages);
+}
+
+#[test]
+fn page_keys_move_further_in_editors() {
+    let s = Settings::new();
+    let mut screen = Screen::new(PAGES, "appearance");
+    // appearance.accent: blue is variant 2 of the palette.
+    screen.tap_row("appearance.accent", &ctx(&s));
+    press(
+        &mut screen,
+        &s,
+        &[Key::PageDown, Key::PageDown, Key::PageUp],
+    );
+    assert!(matches!(
+        screen.editor(),
+        Some(Editor::Choice {
+            focus: 7,
+            selected: 2,
+            ..
+        })
+    ));
+    // The stepper: Page Up is ten steps more, Page Down ten less.
+    screen.tap_row("appearance.ui_transparency", &ctx(&s));
+    press(&mut screen, &s, &[Key::PageUp]);
+    assert!(matches!(
+        screen.editor(),
+        Some(Editor::Number { value: 70, .. })
+    ));
+    press(&mut screen, &s, &[Key::PageDown, Key::PageUp]);
+    assert!(matches!(
+        screen.editor(),
+        Some(Editor::Number { value: 70, .. })
+    ));
+}
+
+#[test]
+fn ok_keeps_whatever_the_editor_shows() {
+    let s = Settings::new();
+    let mut screen = Screen::new(PAGES, "playback");
+    screen.tap_row("catchup.seek_keys", &ctx(&s));
+    press(&mut screen, &s, &[Key::Down, Key::Down]);
+    assert_eq!(
+        screen.commit(),
+        Effect::Set {
+            key: "catchup.seek_keys",
+            value: Value::choice("transport")
+        }
+    );
+    // Nothing open, or a read-only list: OK just closes.
+    assert_eq!(screen.commit(), Effect::None);
+    screen.open_list("remote.customize", 4);
+    assert_eq!(screen.commit(), Effect::None);
+    assert_eq!(screen.editor(), None);
+}
+
+#[test]
+fn picking_needs_an_open_list_and_an_entry() {
+    let s = Settings::new();
+    let mut screen = Screen::new(PAGES, "playback");
+    assert_eq!(screen.pick(0), Effect::None, "no list open");
+    screen.tap_row("catchup.seek_keys", &ctx(&s));
+    let open = screen.editor().cloned();
+    assert_eq!(screen.pick(99), Effect::None);
+    assert_eq!(screen.editor().cloned(), open, "the list stays open");
+    // A stepper is no list either.
+    screen.tap_row("catchup.forward_step", &ctx(&s));
+    assert_eq!(screen.pick(0), Effect::None);
+    assert!(matches!(screen.editor(), Some(Editor::Number { .. })));
+}
+
+#[test]
+fn tapping_a_row_that_is_not_shown_does_nothing() {
+    let s = Settings::new();
+    let mut screen = Screen::new(PAGES, "general");
+    press(&mut screen, &s, &[Key::Right]);
+    let before = screen.clone();
+    for key in ["general.start_on_boot", "guide.autoplay", "no.such_key"] {
+        assert_eq!(screen.tap_row(key, &ctx(&s)), Effect::None, "{key}");
+        assert_eq!(screen, before, "{key}");
+    }
 }
 
 #[test]

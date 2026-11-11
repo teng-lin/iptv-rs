@@ -299,3 +299,45 @@ pub static VOD: &[Setting] = &[
         "Continue with the next episode when one ends.",
     ),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The tables are built at compile time; this runs the helpers to
+    /// check that each files its settings under its own section and adds
+    /// nothing the row does not ask for.
+    #[test]
+    fn helpers_build_plain_settings_in_their_section() {
+        let ty = boolean(true);
+        let built = [
+            (history("recent", "history.x", ty, "S."), Section::History),
+            (search("search.x", ty, "S."), Section::Search),
+            (
+                recordings("", "recordings.x", ty, "S."),
+                Section::Recordings,
+            ),
+            (parental("scope", "parental.x", ty, "S."), Section::Parental),
+            (remote("timing", "remote.x", ty, "S."), Section::Remote),
+            (vod("catalogue", "vod.x", ty, "S."), Section::Vod),
+        ];
+        for (s, section) in built {
+            assert_eq!(s.section, section);
+            assert_eq!((s.scope, s.flags), (Scope::Global, Flags::default()));
+            assert!(s.depends.is_empty());
+            assert_eq!(s.ty, ty);
+        }
+        let subsections = built.map(|(s, _)| s.subsection);
+        assert_eq!(
+            subsections,
+            [
+                Some("recent"),
+                None,
+                None,
+                Some("scope"),
+                Some("timing"),
+                Some("catalogue")
+            ]
+        );
+    }
+}

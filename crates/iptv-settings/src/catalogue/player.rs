@@ -317,3 +317,29 @@ pub static CATCHUP: &[Setting] = &[
         "Jump made by one step along the time bar, both directions.",
     ),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The tables are built at compile time; this runs the helpers to
+    /// check that each files its settings under its own section and adds
+    /// nothing the row does not ask for.
+    #[test]
+    fn helpers_build_plain_settings_in_their_section() {
+        let ty = boolean(true);
+        let built = [
+            (player("clock", "player.x", ty, "S."), Section::Player),
+            (playback("", "playback.x", ty, "S."), Section::Playback),
+            (catchup("steps", "catchup.x", ty, "S."), Section::Catchup),
+        ];
+        for (s, section) in built {
+            assert_eq!(s.section, section);
+            assert_eq!((s.scope, s.flags), (Scope::Global, Flags::default()));
+            assert!(s.depends.is_empty());
+            assert_eq!(s.ty, ty);
+        }
+        let subsections = built.map(|(s, _)| s.subsection);
+        assert_eq!(subsections, [Some("clock"), None, Some("steps")]);
+    }
+}

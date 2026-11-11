@@ -197,3 +197,39 @@ pub static COMMANDS: &[Command] = &[
     .confirm()
     .resets(&["remote.key_overrides"]),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The table is built at compile time; this runs the builders to check
+    /// that a new command just runs, and that each builder adds only its
+    /// own part.
+    #[test]
+    fn a_new_command_runs_at_once_until_the_builders_add_to_it() {
+        let plain = Command::new(S::Epg, "", "epg.x", "S.");
+        assert_eq!(
+            plain,
+            Command {
+                key: "epg.x",
+                section: S::Epg,
+                subsection: None,
+                confirm: false,
+                requires_restart: false,
+                resets: &[],
+                summary: "S.",
+            }
+        );
+        assert_eq!(
+            Command::new(S::Epg, "storage", "epg.x", "S.").subsection,
+            Some("storage")
+        );
+        let confirm = plain.confirm();
+        assert!(confirm.confirm && !confirm.requires_restart && confirm.resets.is_empty());
+        let restart = plain.restart();
+        assert!(restart.requires_restart && !restart.confirm);
+        let resets = plain.resets(&["epg.keep_past"]);
+        assert_eq!(resets.resets, ["epg.keep_past"]);
+        assert!(!resets.confirm && !resets.requires_restart);
+    }
+}

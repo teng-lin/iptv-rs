@@ -346,3 +346,33 @@ pub static LOGOS: &[Setting] = &[
     )
     .depends(&[visible_if(&[when("logos.folder", Test::NotEmpty)])]),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The tables are built at compile time; this runs the helpers to
+    /// check that each files its settings under its own section and adds
+    /// nothing the row does not ask for.
+    #[test]
+    fn helpers_build_plain_settings_in_their_section() {
+        let ty = boolean(false);
+        let built = [
+            (epg("updates", "epg.x", ty, "S."), Section::Epg),
+            (
+                appearance("text", "appearance.x", ty, "S."),
+                Section::Appearance,
+            ),
+            (guide("", "guide.x", ty, "S."), Section::Guide),
+            (logos("logos.x", ty, "S."), Section::Logos),
+        ];
+        for (s, section) in built {
+            assert_eq!(s.section, section);
+            assert_eq!((s.scope, s.flags), (Scope::Global, Flags::default()));
+            assert!(s.depends.is_empty());
+            assert_eq!(s.ty, ty);
+        }
+        let subsections = built.map(|(s, _)| s.subsection);
+        assert_eq!(subsections, [Some("updates"), Some("text"), None, None]);
+    }
+}

@@ -328,6 +328,175 @@ fn malformed_documents_fail_to_load() {
 }
 
 #[test]
+fn load_errors_say_what_was_wrong() {
+    let says = |text: &str| Settings::from_json(text).unwrap_err().to_string();
+    assert!(
+        says("not json").starts_with("not a settings document: "),
+        "{}",
+        says("not json")
+    );
+    assert_eq!(says("[1]"), "not a settings document: not an object");
+    assert_eq!(
+        says(r#"{"format": "other.app", "version": 2}"#),
+        "not an iptv-rs settings document"
+    );
+    assert_eq!(
+        says(r#"{"format": "iptv-rs.settings", "version": -1}"#),
+        "missing or invalid version"
+    );
+    assert_eq!(
+        says(r#"{"format": "iptv-rs.settings", "version": 2, "playlists": {"pl-1": 3}}"#),
+        "playlists.pl-1 is not an object of settings"
+    );
+    assert_eq!(
+        says(r#"{"format": "iptv-rs.settings", "version": 2, "groups": {"pl-1": []}}"#),
+        "groups.pl-1 is not an object of settings"
+    );
+    // Every version up to the current one has its step today, so this one
+    // only shows when a step goes missing.
+    assert_eq!(
+        LoadError::NoMigration { from: 7 }.to_string(),
+        "no migration from version 7"
+    );
+    let boxed: Box<dyn std::error::Error> = Box::new(LoadError::WrongFormat);
+    assert_eq!(boxed.to_string(), "not an iptv-rs settings document");
+}
+
+#[test]
+fn rejected_entries_say_why() {
+    let doc = json!({
+        "format": FORMAT,
+        "version": VERSION,
+        "global": {
+            "guide.autoplay": "yes",
+            "appearance.font_size": "gigantic",
+            "remote.key_overrides": [{"key": "ok", "press": "hold", "action": "play"}]
+        },
+        "playlists": {"pl-1": {"appearance.accent": "red"}}
+    });
+    let (_, report) = load(doc);
+    let reasons: Vec<(&str, &str)> = report
+        .rejected
+        .iter()
+        .map(|(e, why)| (e.key.as_str(), why.as_str()))
+        .collect();
+    assert_eq!(
+        reasons,
+        [
+            (
+                "appearance.font_size",
+                r#"appearance.font_size: "gigantic" is not a valid choice"#
+            ),
+            ("guide.autoplay", "guide.autoplay: expected bool"),
+            (
+                "remote.key_overrides",
+                "remote.key_overrides: expected key_bindings"
+            ),
+            (
+                "appearance.accent",
+                r#"appearance.accent cannot be overridden for playlist "pl-1""#
+            ),
+        ]
+    );
+}
+
+#[test]
+fn binding_entries_need_every_field_but_the_context() {
+    let load_bindings = |list: serde_json::Value| {
+        let doc = json!({"format": FORMAT, "version": VERSION,
+            "global": {"remote.key_overrides": list}});
+        let (st, report) = load(doc);
+        (
+            st.key_bindings(keys::KEY_OVERRIDES, G),
+            report.rejected.len(),
+        )
+    };
+    let everywhere = KeyBinding::new(None, "ok", PressKind::Short, "play");
+    for context in [json!(null), json!("absent")] {
+        let mut b = json!({"key": "ok", "press": "short", "action": "play"});
+        if context.is_null() {
+            b["context"] = context;
+        }
+        assert_eq!(load_bindings(json!([b])), (vec![everywhere.clone()], 0));
+    }
+    let broken = [
+        json!(["ok"]),
+        json!([{"context": 5, "key": "ok", "press": "short", "action": "play"}]),
+        json!([{"press": "short", "action": "play"}]),
+        json!([{"key": "ok", "action": "play"}]),
+        json!([{"key": "ok", "press": "short"}]),
+        json!([{"key": "ok", "press": "short", "action": 1}]),
+    ];
+    for list in broken {
+        assert_eq!(load_bindings(list.clone()), (vec![], 1), "{list}");
+    }
+}
+
+#[test]
+fn migrations_reach_every_layer() {
+    let v1 = json!({
+        "format": FORMAT,
+        "version": 1,
+        "global": {"guide.autoplay": true},
+        "playlists": {
+            "pl-1": {"player.panel_timeout_secs": 8},
+            "pl-2": {"channels.group_sort": "name"}
+        },
+        "groups": {"pl-1": {"grp-1": {"player.panel_timeout_secs": 6}}}
+    });
+    let (st, report) = load(v1);
+    assert_eq!(report.migrations, [1]);
+    // The renamed key is global-only, so the overrides are kept but not
+    // applied, under the new name.
+    let rejected: Vec<&Entry> = report.rejected.iter().map(|(e, _)| e).collect();
+    assert_eq!(
+        rejected,
+        [
+            &entry(Target::playlist("pl-1"), "player.controls_panel_timeout"),
+            &entry(
+                Target::group("pl-1", "grp-1"),
+                "player.controls_panel_timeout"
+            ),
+        ]
+    );
+    let saved = st.to_json();
+    assert_eq!(
+        saved["playlists"]["pl-1"],
+        json!({"player.controls_panel_timeout": 8_000})
+    );
+    assert_eq!(
+        saved["groups"]["pl-1"]["grp-1"],
+        json!({"player.controls_panel_timeout": 6_000})
+    );
+    assert_eq!(
+        st.choice(keys::GROUP_SORT, &Target::playlist("pl-2")),
+        "name"
+    );
+}
+
+#[test]
+fn for_each_layer_visits_every_settings_object() {
+    use iptv_settings::backup::for_each_layer;
+    let doc = json!({
+        "format": FORMAT,
+        "global": {"a.global": 1},
+        "playlists": {"pl-1": {"a.playlist": 1}, "pl-2": "not a layer"},
+        "groups": {"pl-1": {"grp-1": {"a.group": 1}, "grp-2": 3}, "pl-2": []}
+    });
+    let serde_json::Value::Object(mut doc) = doc else {
+        unreachable!()
+    };
+    let mut seen = Vec::new();
+    for_each_layer(&mut doc, &mut |layer| {
+        seen.extend(layer.keys().cloned());
+        layer.insert("visited".into(), json!(true));
+    });
+    assert_eq!(seen, ["a.global", "a.playlist", "a.group"]);
+    assert_eq!(doc["groups"]["pl-1"]["grp-1"]["visited"], json!(true));
+    assert_eq!(doc["playlists"]["pl-2"], json!("not a layer"));
+}
+
+#[test]
 fn a_missing_layer_is_empty() {
     let (st, report) = load(json!({"format": FORMAT, "version": VERSION}));
     assert!(report.is_clean());
