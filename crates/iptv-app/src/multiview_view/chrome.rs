@@ -1,16 +1,18 @@
 //! Multiview's affordances over the tiles. A pointer (desktop mouse,
 //! tablet touch; never a TV) gets, while it is active
-//! (`multiview::chrome_shows`): a toolbar at the top centre (add a
-//! channel while another fits, else the device's limit; exit multiview)
-//! and on each tile, with two or more, buttons to enlarge or reduce it and
-//! to remove it. They are not mounted while hidden, so they never take a
-//! press meant for a tile. Keys get a short hint instead, which goes with
-//! the first key or after a few seconds.
+//! (`multiview::chrome_shows`): a toolbar at the top centre (Add screen
+//! while another fits, else the device's limit; exit multiview) and on
+//! each tile, with two or more, buttons to enlarge or reduce it and to
+//! remove it, named as the tile menu's items are. They are not mounted
+//! while hidden, so they never take a press meant for a tile. Keys get a
+//! short hint instead, which goes with the first key or after a few
+//! seconds.
 
 use nsh_core::platform::Idiom;
 use nsh_core::prelude::*;
 
 use super::{PANEL_ALPHA, WHITE, device_limit, with_state};
+use crate::fonts::{OSD_BADGE, OSD_DETAIL};
 use crate::multiview;
 use crate::play_bar::icons::{self, Icon};
 use crate::theme::{RADIUS_LARGE, RESTING_ALPHA, TEXT_SECONDARY_ALPHA};
@@ -37,7 +39,7 @@ fn panel(ui: Ui) -> Rgba {
     tint(ui.theme.with(|t| t.background.panel), PANEL_ALPHA)
 }
 
-/// Add channel (or the device's limit) and Exit multiview, at the top
+/// Add screen (or the device's limit) and Exit multiview, at the top
 /// centre.
 pub fn toolbar(ui: Ui) -> impl IntoElement {
     let shown = computed(move || multiview::chrome_shows(ui));
@@ -54,7 +56,7 @@ pub fn toolbar(ui: Ui) -> impl IntoElement {
                 log::info!("iptv multiview toolbar: {name}");
                 act(ui);
             })
-            .child(text(words).text_size(px(15.0)).text_color(rgb(WHITE)))
+            .child(text(words).text_size(px(OSD_DETAIL)).text_color(rgb(WHITE)))
     };
     when(
         move || shown.get(),
@@ -80,14 +82,14 @@ pub fn toolbar(ui: Ui) -> impl IntoElement {
                         .on_mouse_leave(move |_: &MouseEvent| crate::play_bar::hover(ui, false))
                         .child(when(
                             move || limit().is_none(),
-                            move || pill("+  Add channel", "Add channel", multiview::add),
+                            move || pill("+  Add screen", "Add screen", multiview::add),
                         ))
                         .child(when(
                             move || limit().is_some(),
                             move || {
                                 text(move || limit().unwrap_or_default())
                                     .px(px(10.0))
-                                    .text_size(px(14.0))
+                                    .text_size(px(OSD_DETAIL))
                                     .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA))
                             },
                         ))
@@ -168,13 +170,17 @@ pub fn tile_buttons(ui: Ui, index: usize) -> impl IntoElement {
                         multiview::toggle_enlarge,
                     )
                     .label(move || {
-                        let what = if enlarged() { "Reduce" } else { "Enlarge" };
-                        format!("{what} {}", name())
+                        let what = if enlarged() {
+                            "Reduce screen"
+                        } else {
+                            "Enlarge screen"
+                        };
+                        format!("{what}: {}", name())
                     }),
                 )
                 .child(
                     button(Box::new(|| Icon::Close), multiview::remove)
-                        .label(move || format!("Remove {}", name())),
+                        .label(move || format!("Remove screen: {}", name())),
                 )
         },
     )
@@ -204,7 +210,7 @@ pub fn hint(ui: Ui) -> impl IntoElement {
                     .py(px(5.0))
                     .rounded(px(RADIUS_LARGE))
                     .bg(move || panel(ui))
-                    .text_size(px(13.0))
+                    .text_size(px(OSD_BADGE))
                     .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA)),
             )
     })

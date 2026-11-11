@@ -9,14 +9,16 @@
 //! brings the grid back, and moving the focus leaves it be.
 //!
 //! The arrows move between tiles; OK (or a tap on the active tile) opens
-//! its menu: try again (when it failed), add a channel (while another
-//! fits), change channel, enlarge or reduce and remove (with two or more),
-//! watch full screen. Long OK (a long press on a tile) enlarges or reduces
-//! directly. A tap on another tile makes it active. Remove acts at once
-//! and the sound moves to a remaining tile. Back closes a dialog, else
-//! leaves multiview to the active tile in full screen.
+//! its menu (`menu.rs`): try again (when it failed), add a screen from the
+//! channel list or the search screen (while another fits), change
+//! channel, pause or play that tile alone, enlarge or reduce (with two or
+//! more), full screen, remove (with two or more). Long OK (a long press on
+//! a tile) enlarges or reduces directly. A tap on another tile makes it
+//! active. Remove acts at once and the sound moves to a remaining tile.
+//! Back closes a dialog, else leaves multiview to the active tile in full
+//! screen.
 //!
-//! Watch full screen is a *detour*: that tile plays full screen while the
+//! Full screen is a *detour*: that tile plays full screen while the
 //! session stays as it was (tiles, channels, the enlarged one, the active
 //! one), and [`Multiview::resume`] brings the grid back. The tile moves
 //! to surface 0 (the full-screen player) for it, trading surfaces with the
@@ -36,10 +38,12 @@
 //! Channels are the caller's (`C`); nothing here plays anything.
 
 mod layout;
+mod menu;
 #[cfg(test)]
 mod tests;
 
 pub use layout::{Layout, Rect, THUMB, VIDEO};
+pub use menu::{Dialog, TileAction, WARNING_CHOICES, WarningChoice};
 
 /// The most tiles (and player surfaces) multiview uses.
 pub const MAX_SURFACES: usize = 4;
@@ -49,46 +53,8 @@ pub struct Tile<C> {
     /// The player surface it plays on (0 to [`MAX_SURFACES`] − 1).
     pub surface: usize,
     pub channel: C,
-}
-
-/// A tile's menu items, in the order they are offered.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TileAction {
-    /// Only when its stream failed.
-    Retry,
-    /// Only while another tile fits.
-    Add,
-    Replace,
-    /// With two or more tiles, when this one is not the enlarged one.
-    Enlarge,
-    /// When this tile is the enlarged one.
-    Reduce,
-    FullScreen,
-    /// With two or more tiles.
-    Remove,
-}
-
-/// The connection warning's choices, in order.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WarningChoice {
-    AddAnyway,
-    Cancel,
-}
-
-pub const WARNING_CHOICES: [WarningChoice; 2] = [WarningChoice::AddAnyway, WarningChoice::Cancel];
-
-/// A dialog over the tiles.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Dialog {
-    /// A tile's menu; `focus` indexes `items`.
-    Options {
-        tile: usize,
-        items: Vec<TileAction>,
-        focus: usize,
-    },
-    /// Adding one more stream exceeds what the account allows (`allowed`
-    /// at once); `focus` indexes [`WARNING_CHOICES`].
-    Warning { allowed: u32, focus: usize },
+    /// Its player holds (the menu's Pause); the others play on.
+    pub paused: bool,
 }
 
 /// What the channel being picked is for.
@@ -121,6 +87,8 @@ pub enum Outcome<C> {
     /// Open the channel list; the choice goes to [`Multiview::picked`]
     /// (closing it without one to [`Multiview::cancel_pick`]).
     PickChannel,
+    /// Open the search screen to pick, as for [`Outcome::PickChannel`].
+    SearchChannel,
     /// Open the stream on this surface again.
     Retry(usize),
     /// A detour began: the detour tile (now on surface 0) plays full
@@ -173,6 +141,7 @@ impl<C: Clone + PartialEq> Multiview<C> {
             tiles: vec![Tile {
                 surface: 0,
                 channel,
+                paused: false,
             }],
             active: 0,
             enlarged: None,
@@ -336,59 +305,6 @@ impl<C: Clone + PartialEq> Multiview<C> {
         Outcome::Stay
     }
 
-    /// Item `index` of the open dialog (OK on it, or a tap).
-    pub fn choose(&mut self, index: usize) -> Outcome<C> {
-        match self.dialog.take() {
-            None => Outcome::Stay,
-            Some(Dialog::Warning { .. }) => match WARNING_CHOICES.get(index) {
-                Some(WarningChoice::AddAnyway) => {
-                    self.insisted = true;
-                    self.pick = Some(Pick::Add);
-                    Outcome::PickChannel
-                }
-                _ => Outcome::Stay,
-            },
-            Some(Dialog::Options { tile, items, .. }) => {
-                let Some(action) = items.get(index) else {
-                    return Outcome::Stay;
-                };
-                match action {
-                    TileAction::Retry => Outcome::Retry(self.tiles[tile].surface),
-                    TileAction::Add => self.add(),
-                    TileAction::Replace => {
-                        self.pick = Some(Pick::Replace(tile));
-                        Outcome::PickChannel
-                    }
-                    TileAction::Enlarge | TileAction::Reduce => {
-                        self.toggle_enlarge(tile);
-                        Outcome::Stay
-                    }
-                    TileAction::FullScreen => self.full_screen(tile),
-                    TileAction::Remove => {
-                        self.remove(tile);
-                        Outcome::Stay
-                    }
-                }
-            }
-        }
-    }
-
-    /// Adds a channel (the menu's Add, the pointer's toolbar, opening):
-    /// asks first past the account's limit, else picks one. Nothing while
-    /// no other tile fits.
-    pub fn add(&mut self) -> Outcome<C> {
-        self.dialog = None;
-        if !self.can_add() {
-            return Outcome::Stay;
-        }
-        if let Some(allowed) = self.over_connections().filter(|_| !self.insisted) {
-            self.dialog = Some(Dialog::Warning { allowed, focus: 1 });
-            return Outcome::Stay;
-        }
-        self.pick = Some(Pick::Add);
-        Outcome::PickChannel
-    }
-
     /// Removes tile `index` at once (a tile's remove button); never the
     /// last one. Whether it went.
     pub fn remove_tile(&mut self, index: usize) -> bool {
@@ -416,6 +332,13 @@ impl<C: Clone + PartialEq> Multiview<C> {
         self.active = index;
     }
 
+    /// Pauses (or plays again) tile `index` alone.
+    pub fn set_paused(&mut self, index: usize, paused: bool) {
+        if let Some(t) = self.tiles.get_mut(index) {
+            t.paused = paused;
+        }
+    }
+
     /// Leaves multiview to the active tile in full screen (the pointer's
     /// toolbar).
     pub fn exit(&mut self) -> Outcome<C> {
@@ -438,13 +361,18 @@ impl<C: Clone + PartialEq> Multiview<C> {
                 let surface = (0..MAX_SURFACES)
                     .find(|s| self.tile_on(*s).is_none())
                     .unwrap_or(0);
-                self.tiles.push(Tile { surface, channel });
+                self.tiles.push(Tile {
+                    surface,
+                    channel,
+                    paused: false,
+                });
                 self.active = self.tiles.len() - 1;
             }
             Pick::Add => {}
             Pick::Replace(tile) => {
                 if let Some(t) = self.tiles.get_mut(tile) {
                     t.channel = channel;
+                    t.paused = false;
                     self.active = tile;
                 }
             }
@@ -472,37 +400,6 @@ impl<C: Clone + PartialEq> Multiview<C> {
         !self.tiles.is_empty()
     }
 
-    fn open_options(&mut self, tile: usize, failed: &impl Fn(usize) -> bool) {
-        let Some(t) = self.tiles.get(tile) else {
-            return;
-        };
-        let several = self.tiles.len() > 1;
-        let mut items = Vec::with_capacity(6);
-        if failed(t.surface) {
-            items.push(TileAction::Retry);
-        }
-        if self.can_add() {
-            items.push(TileAction::Add);
-        }
-        items.push(TileAction::Replace);
-        if several {
-            items.push(if self.enlarged == Some(tile) {
-                TileAction::Reduce
-            } else {
-                TileAction::Enlarge
-            });
-        }
-        items.push(TileAction::FullScreen);
-        if several {
-            items.push(TileAction::Remove);
-        }
-        self.dialog = Some(Dialog::Options {
-            tile,
-            items,
-            focus: 0,
-        });
-    }
-
     /// Tile `tile` full screen as a detour: it becomes active and moves
     /// to surface 0, the tile there (if any) taking its surface.
     fn full_screen(&mut self, tile: usize) -> Outcome<C> {
@@ -515,6 +412,7 @@ impl<C: Clone + PartialEq> Multiview<C> {
             }
             self.tiles[tile].surface = 0;
         }
+        self.tiles[tile].paused = false;
         self.active = tile;
         self.detour = Some(tile);
         self.hint = false;

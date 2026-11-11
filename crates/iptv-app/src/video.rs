@@ -8,8 +8,8 @@
 //! Multiview (`multiview.rs`) lays surface 0 out in its tile and mounts one
 //! more `tv.player` per further tile (surfaces 1–3), each made when its
 //! tile comes and dropped when it goes; all but the active tile's get
-//! `muted`. A surface 0 without a tile shrinks to nothing (it is never
-//! hidden or detached).
+//! `muted`, and a paused tile's `paused`. A surface 0 without a tile
+//! shrinks to nothing (it is never hidden or detached).
 //!
 //! The `tv.player` contract (both hosts; every instance is independent: its
 //! own player, props and events, several playing at once):
@@ -174,8 +174,11 @@ pub fn layer(ui: Ui, surface: usize) -> impl IntoElement {
             count_open(surface, &sent, &value);
             value
         })
-        // Multiview's other surfaces play on.
-        .prop("paused", move || json!(surface == 0 && ui.paused.get()))
+        // Full screen's pause holds surface 0; in multiview each tile has
+        // its own (the menu's Pause).
+        .prop("paused", move || {
+            json!((surface == 0 && ui.paused.get()) || crate::multiview::paused(ui, surface))
+        })
         .prop("pictureSize", move || {
             let ch = if surface == 0 {
                 ui.playing.get()

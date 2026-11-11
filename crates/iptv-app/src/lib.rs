@@ -570,6 +570,10 @@ pub fn App() -> impl IntoElement {
 /// chrome (the tiles take their own taps).
 fn toggle_panels(ui: Ui) {
     if untracked(|| multiview::is_open(ui)) {
+        // Beside the tiles: the menu closes first.
+        if multiview::dismiss(ui) {
+            return;
+        }
         if play_bar::available() {
             play_bar::tapped(ui);
         }
