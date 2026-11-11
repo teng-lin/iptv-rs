@@ -258,6 +258,8 @@ Limits of this package, and what a public one needs:
 ## Before any public release
 
 - Replace `crates/iptv-app/src/theme.rs` (placeholder palette) with our own design.
-- Choose the product name, icon and banner. The application id
-  `com.hantekllc.iptvrs` is final once uploaded to Play.
+- Set the product name (Patina IPTV Player) in the launcher label and
+  `nsh.json`. The application id `com.hantekllc.iptvrs` is final once
+  uploaded to Play. The icon and TV banner are in place
+  (`art/icon`, `tools/make-icons.py`).
 - See Phase 9 of the plan.

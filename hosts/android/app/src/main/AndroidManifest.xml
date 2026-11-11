@@ -11,6 +11,8 @@
     <!-- usesCleartextTraffic: the spike plays synthetic HLS from a local server (10.0.2.2). -->
     <application
         android:label="iptv-rs"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
         android:banner="@drawable/banner"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
         android:supportsRtl="true"
