@@ -10,6 +10,7 @@ directories' name.
 
 Plan and decisions: [`.plans/2026-11-09-tivimate-ux-replication.md`](.plans/2026-11-09-tivimate-ux-replication.md).
 Android video/input research: [`docs/research/android-video-and-input.md`](docs/research/android-video-and-input.md).
+Feature backlog: [Playlist, settings and channel/group gaps](docs/missing-features-2026-11-11.md).
 
 ## Layout
 
