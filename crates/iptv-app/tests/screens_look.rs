@@ -85,6 +85,27 @@ fn secondary_screens_use_the_shared_type() {
         assert!(has(&mut app, "Settings", 22.0 * scale), "title {w}x{h}");
         assert!(has(&mut app, "General", 20.0 * scale), "a page {w}x{h}");
     }
+
+    // A button in a row reads on the row's light pill: the wizard's link
+    // form by keys (the focus shows), its link row focused: that row's
+    // Paste in the pill's text colour, another row's in the list's.
+    step(app.press_key("escape"));
+    step(app.press("text:+ Add playlist"));
+    step(app.wait_for("text:Playlist link"));
+    step(app.press_key("down"));
+    step(app.press_key("up"));
+    step(app.press_key("enter"));
+    step(app.wait_for("text:Paste"));
+    let paste = |app: &mut Headless, nth: usize| {
+        app.screen()
+            .span_style(&format!("text:Paste >> nth={nth}"))
+            .unwrap()
+            .color
+    };
+    let dark = nsh_core::Color((iptv_app::theme::FOCUSED_TEXT << 8) | 0xff);
+    let light = nsh_core::Color((iptv_app::theme::LIST_TEXT << 8) | 0xff);
+    assert_eq!(paste(&mut app, 0), dark, "Paste on the focused row");
+    assert_eq!(paste(&mut app, 1), light, "Paste on another row");
 }
 
 /// The groups, then the rail beside them (Left), its labels shown.

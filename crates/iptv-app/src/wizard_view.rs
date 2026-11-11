@@ -373,13 +373,9 @@ fn field_row(ui: Ui, size: Scale, field: Field) -> impl IntoElement {
     let error = move || read(ui, |w| w.error(field)).flatten();
     let mark = move || mark(ui, target);
     let paste = field.accepts_paste().then(|| {
-        ui_kit::button(
-            ui,
-            size,
-            "Paste",
-            || false,
-            move || send(ui, WizardEvent::PasteInto(field)),
-        )
+        ui_kit::row_button(ui, size, "Paste", mark, move || {
+            send(ui, WizardEvent::PasteInto(field))
+        })
     });
     list_rows::row(size, ROW, mark)
         .flex_row()
