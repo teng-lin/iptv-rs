@@ -384,3 +384,17 @@ fn confirm(ui: Ui) -> impl IntoElement {
                 ),
         )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::question;
+
+    #[test]
+    fn a_confirmation_says_what_goes() {
+        assert!(question("epg.clear").contains("stored programmes are deleted"));
+        assert_eq!(
+            question("general.reset_watch_time"),
+            "This cannot be undone."
+        );
+    }
+}

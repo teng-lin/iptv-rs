@@ -159,5 +159,45 @@ mod tests {
             series: 2,
         };
         assert_eq!(counts(c), "1 channel in 3 groups · 2 series");
+        let films = ImportCounts {
+            channels: 2,
+            groups: 1,
+            movies: 1,
+            series: 0,
+        };
+        assert_eq!(counts(films), "2 channels in 1 group · 1 film");
+    }
+
+    #[test]
+    fn progress_and_field_errors_read_plainly() {
+        assert_eq!(stage(None), "Starting…");
+        let saving = ImportProgress {
+            stage: ImportStage::Saving,
+            done: 0,
+            total: None,
+        };
+        assert_eq!(stage(Some(saving)), "Saving…");
+        let half = ImportProgress {
+            stage: ImportStage::Downloading,
+            done: 50,
+            total: Some(100),
+        };
+        assert_eq!(stage(Some(half)), "Downloading… 50%");
+        let errors = [
+            FieldError::Required,
+            FieldError::ContainsWhitespace,
+            FieldError::MissingScheme,
+            FieldError::UnsupportedScheme,
+            FieldError::InvalidHost,
+            FieldError::InvalidPort,
+            FieldError::InvalidMac,
+        ];
+        let texts: std::collections::BTreeSet<_> = errors.iter().map(|e| field_error(*e)).collect();
+        assert_eq!(texts.len(), errors.len());
+        // A file that cannot be read, and refused access to a playlist.
+        let network = ImportFailure::new(FailureKind::Network);
+        assert!(failure(PlaylistKind::M3uFile, network).contains("file"));
+        let auth = ImportFailure::new(FailureKind::Auth);
+        assert!(failure(PlaylistKind::M3uUrl, auth).contains("refused access"));
     }
 }

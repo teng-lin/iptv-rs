@@ -351,3 +351,28 @@ pub fn layer(ui: Ui) -> impl IntoElement {
                 ),
         )
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::*;
+
+    #[test]
+    fn every_chooser_and_picture_size_has_its_own_name() {
+        let kinds = [
+            Kind::Picture,
+            Kind::Sleep,
+            Kind::Track(Track::Video),
+            Kind::Track(Track::Audio),
+            Kind::Track(Track::Text),
+            Kind::AudioDelay,
+            Kind::History,
+        ];
+        let titles: BTreeSet<_> = kinds.iter().map(|k| title(*k)).collect();
+        assert_eq!(titles.len(), kinds.len());
+        assert_eq!(title(Kind::Track(Track::Text)), "Subtitles");
+        let sizes: BTreeSet<_> = PictureSize::ALL.iter().map(|p| picture_label(*p)).collect();
+        assert_eq!(sizes.len(), PictureSize::ALL.len());
+    }
+}

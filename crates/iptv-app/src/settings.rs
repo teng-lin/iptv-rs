@@ -440,4 +440,23 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(dir);
     }
+
+    #[test]
+    fn unknown_entries_are_skipped_and_an_unreadable_path_gives_defaults() {
+        let dir = std::env::temp_dir().join(format!("iptv-settings-extra-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(FILE);
+        let mut s = Settings::new();
+        s.set("catchup.forward_step", Value::secs(60)).unwrap();
+        let mut json = s.to_json();
+        json["global"]["synthetic.unknown"] = serde_json::Value::from(1);
+        std::fs::write(&path, json.to_string()).unwrap();
+        let read = read_file(&path);
+        assert_eq!(read.get("catchup.forward_step"), Ok(Value::secs(60)));
+        assert!(path.exists(), "a readable file stays");
+        // A directory where the file should be: defaults, nothing moved.
+        assert_eq!(read_file(&dir), Settings::new());
+        assert!(dir.exists());
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }
