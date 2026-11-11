@@ -11,10 +11,16 @@
 //! release (enlarge/reduce), Back. A pointer (desktop, tablet; never a TV)
 //! shows the pointer chrome while it moves or after a tap, on the play
 //! bar's timer (`ui.play_bar`, which does not show itself in multiview): a
-//! toolbar (add a channel, exit multiview) and each tile's remove and
+//! toolbar (Add screen, Exit multiview) and each tile's remove and
 //! enlarge buttons. A long press on a tile enlarges or reduces it.
 //!
-//! Watch full screen is a detour: the session waits (its other tiles keep
+//! The menu's Search and add opens the search screen over the grid to
+//! pick (`search_view/pick.rs`), as Add screen opens the channel list;
+//! Pause holds that tile's player alone (`video.rs`'s `paused`, and its
+//! stall checks), and a pause made full screen on a detour stays with
+//! the tile when the grid comes back.
+//!
+//! Full screen is a detour: the session waits (its other tiles keep
 //! playing, hidden and muted) while that tile plays full screen with the
 //! normal player panels and play bar; Back, or the play bar's / control
 //! row's Multiview, brings the grid back as it was. The session ends when
@@ -29,6 +35,7 @@
 //! asks first.
 
 mod lifecycle;
+mod pointer;
 
 use std::cell::Cell;
 
@@ -42,6 +49,9 @@ use nsh_core::prelude::*;
 use crate::{Playback, Ui, ViewMode};
 
 pub use lifecycle::{bind, follow};
+pub use pointer::{
+    add, choose, chrome_shows, dismiss, exit, long_press, remove, tap, toggle_enlarge,
+};
 
 pub type State = Multiview<usize>;
 
@@ -230,92 +240,36 @@ pub fn back(ui: Ui) -> bool {
     true
 }
 
-/// Back on a detour: the grid again, as it was.
+/// Back on a detour: the grid again, as it was; paused full screen, its
+/// tile stays paused (the grid's pause is the tile's own).
 pub fn resume(ui: Ui) -> bool {
     log::info!("iptv multiview: back to the grid");
     ui.panels.update(|p| p.hide());
-    ui.multiview
-        .update(|m| m.iter_mut().for_each(State::resume));
+    let paused = ui.paused.get_untracked();
+    ui.paused.set(false);
+    ui.multiview.update(|m| {
+        if let Some(m) = m.as_mut() {
+            if let Some(d) = m.detour() {
+                m.set_paused(d, paused);
+            }
+            m.resume();
+        }
+    });
     true
 }
 
-/// A tap (or click) on tile `index`; it also shows the pointer chrome.
-pub fn tap(ui: Ui, index: usize) {
-    ui.touched();
-    show_chrome(ui);
-    apply(ui, |m, failed| m.tap(index, failed));
+/// Whether the tile on `surface` is paused (the menu's Pause: that player
+/// alone holds).
+pub fn paused(ui: Ui, surface: usize) -> bool {
+    ui.multiview.with(|m| {
+        m.as_ref()
+            .and_then(|m| m.tile_on(surface).map(|t| m.tiles()[t].paused))
+            .unwrap_or(false)
+    })
 }
 
-/// A long press on tile `index`: enlarges or reduces it.
-pub fn long_press(ui: Ui, index: usize) {
-    ui.touched();
-    apply(ui, |m, _| {
-        m.toggle_enlarge(index);
-        Outcome::Stay
-    });
-}
-
-/// A tap on item `index` of the open dialog.
-pub fn choose(ui: Ui, index: usize) {
-    ui.touched();
-    apply(ui, |m, _| m.choose(index));
-}
-
-/// The toolbar's Add channel.
-pub fn add(ui: Ui) {
-    ui.touched();
-    apply(ui, |m, _| m.add());
-}
-
-/// The toolbar's Exit multiview: the active tile full screen.
-pub fn exit(ui: Ui) {
-    ui.touched();
-    apply(ui, |m, _| m.exit());
-}
-
-/// A tile's remove button.
-pub fn remove(ui: Ui, index: usize) {
-    ui.touched();
-    used_chrome(ui);
-    apply(ui, |m, _| {
-        m.remove_tile(index);
-        Outcome::Stay
-    });
-}
-
-/// A tile's enlarge (or reduce) button.
-pub fn toggle_enlarge(ui: Ui, index: usize) {
-    used_chrome(ui);
-    long_press(ui, index);
-}
-
-/// Whether the pointer chrome (toolbar, tile buttons) shows: the grid
-/// with nothing over it, a pointer that moved or tapped lately.
-pub fn chrome_shows(ui: Ui) -> bool {
-    ui.mode.get() == ViewMode::Fullscreen
-        && !ui.keys_shown()
-        && ui.play_bar.with(|b| b.shown)
-        && crate::play_bar::available()
-        && ui.multiview.with(|m| {
-            m.as_ref()
-                .is_some_and(|m| m.detour().is_none() && m.dialog().is_none() && m.pick().is_none())
-        })
-}
-
-/// A tap on a tile shows the chrome (a tablet has no moving pointer).
-fn show_chrome(ui: Ui) {
-    if crate::play_bar::available() {
-        crate::play_bar::pointer_moved(ui);
-    }
-}
-
-/// A button of the chrome acted: it stays a while longer.
-pub fn used_chrome(ui: Ui) {
-    crate::play_bar::used(ui);
-}
-
-/// The channel list chose `channel` for multiview; `false` when it was
-/// not picking for it.
+/// The channel list (or the search screen picking for multiview) chose
+/// `channel`; `false` when it was not picking for it.
 pub fn picked(ui: Ui, channel: usize) -> bool {
     if !picking(ui) {
         return false;
@@ -325,7 +279,8 @@ pub fn picked(ui: Ui, channel: usize) -> bool {
     true
 }
 
-/// The channel list closed (with or without a choice).
+/// The channel list (or the search screen picking for multiview) closed,
+/// with or without a choice.
 pub fn list_closed(ui: Ui) {
     if picking(ui) {
         ui.multiview
@@ -368,6 +323,10 @@ fn apply(ui: Ui, f: impl FnOnce(&mut State, &dyn Fn(usize) -> bool) -> Outcome<u
         Outcome::PickChannel => {
             ui.play_bar.update(PlayBar::hide);
             crate::channels_view::open(ui, ListMode::Overlay);
+        }
+        Outcome::SearchChannel => {
+            ui.play_bar.update(PlayBar::hide);
+            crate::search_view::open_to_pick(ui);
         }
         Outcome::Retry(surface) => crate::player::retry_surface(ui, surface),
         Outcome::FullScreen => {

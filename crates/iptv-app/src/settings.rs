@@ -108,13 +108,19 @@ const LATER: &[&str] = &["recordings.", "vod.", "parental."];
 static CURRENT: RwLock<Option<Arc<Settings>>> = RwLock::new(None);
 
 /// What the app does with the setting or command `key`. The long-press
-/// time matters only where keys report their release (Android).
+/// time matters only where keys report their release (Android), and
+/// picture in picture on leaving only on Android.
 pub fn offer(key: &str) -> Offer {
+    // Leaving the app into a picture-in-picture window: Android only.
+    let android = cfg!(target_os = "android");
     if WIRED.contains(&key)
         || COMMANDS.contains(&key)
         || (key == keys::LONG_PRESS.0 && crate::input::LONG_PRESS)
+        || (key == keys::PIP_ON_LEAVE.0 && android)
     {
         Offer::Active
+    } else if key == keys::PIP_ON_LEAVE.0 {
+        Offer::Hidden
     } else if READ_ONLY.contains(&key) {
         Offer::ReadOnly
     } else if NOT_OFFERED.contains(&key) {
@@ -364,6 +370,12 @@ mod tests {
         assert_eq!(offer("parental.live_enabled"), Offer::Later);
         assert_eq!(offer("history.keep_days"), Offer::NotYet);
         assert_eq!(offer("remote.key_overrides"), Offer::ReadOnly);
+        let pip = if cfg!(target_os = "android") {
+            Offer::Active
+        } else {
+            Offer::Hidden
+        };
+        assert_eq!(offer("player.pip_on_leave"), pip);
     }
 
     #[test]

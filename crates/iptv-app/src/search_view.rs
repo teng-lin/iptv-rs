@@ -13,6 +13,10 @@
 //! Programmes are searched over every day the store keeps
 //! (`programme_index.rs`), not only the guide days held in memory.
 //! Wording is iptv-rs's own.
+//!
+//! Multiview's Search and add opens the screen to pick (`pick.rs`): over
+//! the grid, without leaving full screen; a result adds its channel as a
+//! new tile and the screen closes, Back closes it without one.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -31,9 +35,11 @@ use iptv_settings::{Settings, Target, keys};
 use nsh_base::input;
 use nsh_core::prelude::*;
 
+mod pick;
 mod programme_index;
 mod view;
 
+pub use pick::open_to_pick;
 pub use view::layer;
 
 use crate::{Playback, Ui, ViewMode, channel_name, clock};
@@ -59,6 +65,8 @@ pub struct Screen {
     /// A result is playing full screen; the screen returns when it ends.
     pub suspended: bool,
     pub programmes: Programmes,
+    /// Picking a channel for multiview (Search and add).
+    pub pick: bool,
 }
 
 #[derive(Default)]
@@ -401,6 +409,7 @@ pub fn open(ui: Ui) {
                 }),
                 suspended: false,
                 programmes: Programmes::Building,
+                pick: false,
             }));
             prepare(ui);
         }
@@ -411,6 +420,12 @@ pub fn open(ui: Ui) {
 }
 
 pub fn close(ui: Ui) {
+    let picking = ui
+        .search
+        .with_untracked(|s| s.as_ref().is_some_and(|s| s.pick));
+    if picking {
+        crate::multiview::list_closed(ui);
+    }
     save_history(ui);
     INDEXES.with(|i| i.borrow_mut().programmes = None);
     ui.search.set(None);
@@ -462,6 +477,9 @@ fn resume(ui: Ui) {
 }
 
 fn choose(ui: Ui, id: ResultId) {
+    if pick::choose(ui, id) {
+        return;
+    }
     let hit = ui.search.with_untracked(|s| {
         s.as_ref().and_then(|s| {
             s.state

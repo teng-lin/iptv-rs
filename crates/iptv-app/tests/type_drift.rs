@@ -11,10 +11,8 @@ use std::path::{Path, PathBuf};
 
 /// Files that still set literal sizes, relative to `src/`.
 const LATER: &[&str] = &[
-    // Multiview and the play bar: another workstream is changing them;
-    // they get their own pass.
-    "multiview_view.rs",
-    "multiview_view/chrome.rs",
+    // The play bar: another workstream is changing it; it gets its own
+    // pass.
     "play_bar.rs",
     "play_bar/progress.rs",
     // The guide's header (the list button, the debug overlay) and the

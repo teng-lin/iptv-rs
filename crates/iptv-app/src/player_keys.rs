@@ -229,6 +229,7 @@ pub fn press_control(ui: Ui, control: Control) {
         Control::AudioTracks => crate::chooser::open(ui, Kind::Track(Track::Audio)),
         Control::Captions => crate::chooser::open(ui, Kind::Track(Track::Text)),
         Control::AudioOffset => crate::chooser::open(ui, Kind::AudioDelay),
+        Control::PictureInPicture => crate::pip::enter(ui),
         Control::Favorite => {
             if let Some(ch) = ui.playing.get() {
                 crate::favorites::toggle(ui, ch);

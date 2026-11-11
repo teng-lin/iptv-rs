@@ -128,6 +128,7 @@ fn the_device_caps_the_tiles() {
     assert_eq!(mv.tiles().len(), 2);
     mv.key(Key::Ok, ok);
     assert!(!items(&mv).contains(&TileAction::Add), "no Add at the cap");
+    assert!(!items(&mv).contains(&TileAction::SearchAdd));
     // A cap of one: the tile alone, nothing to add.
     let mut single = Multiview::open(
         1u32,
@@ -191,23 +192,39 @@ fn the_menu_offers_what_applies() {
     use TileAction::*;
     let mut mv = Multiview::open(10, DESKTOP);
     mv.key(Key::Ok, ok);
-    assert_eq!(items(&mv), vec![Add, Replace, FullScreen], "a single tile");
+    assert_eq!(
+        items(&mv),
+        vec![Add, SearchAdd, Replace, Pause, FullScreen],
+        "a single tile"
+    );
     mv.key(Key::Back, ok);
     assert!(mv.dialog().is_none(), "Back closes the dialog only");
     add(&mut mv, 11);
+    mv.key(Key::Menu, ok);
+    assert_eq!(
+        items(&mv),
+        vec![Add, SearchAdd, Replace, Pause, Enlarge, FullScreen, Remove],
+        "two tiles"
+    );
+    mv.key(Key::Back, ok);
+    // A failed tile offers Try again first.
     mv.key(Key::Menu, |s| s == 1);
     assert_eq!(
         items(&mv),
-        vec![Retry, Add, Replace, Enlarge, FullScreen, Remove]
+        vec![
+            Retry, Add, SearchAdd, Replace, Pause, Enlarge, FullScreen, Remove
+        ]
     );
     assert_eq!(mv.key(Key::Ok, ok), Outcome::Retry(1));
-    // The enlarged tile offers Reduce; full, no Add.
+    // The enlarged tile offers Reduce; full, no Add or Search and add; a
+    // paused one Play.
     mv.toggle_enlarge(1);
     add(&mut mv, 12);
     add(&mut mv, 13);
+    mv.set_paused(1, true);
     mv.tap(1, ok);
     mv.tap(1, ok);
-    assert_eq!(items(&mv), vec![Replace, Reduce, FullScreen, Remove]);
+    assert_eq!(items(&mv), vec![Replace, Play, Reduce, FullScreen, Remove]);
     // Add from the menu picks a channel.
     let mut two = Multiview::open(1u32, DESKTOP);
     two.key(Key::Ok, ok);
@@ -413,7 +430,8 @@ fn the_connection_limit_warns_before_adding() {
         mv.dialog(),
         Some(&Dialog::Warning {
             allowed: 2,
-            focus: 1
+            focus: 1,
+            search: false,
         })
     );
     assert_eq!(mv.key(Key::Ok, ok), Outcome::Stay, "Cancel");
@@ -460,4 +478,91 @@ fn data_changes_keep_or_drop_tiles() {
     assert_eq!(mv.enlarged(), Some(1), "the enlarged tile follows");
     assert!(!mv.retain(|_, _| false));
     assert!(mv.tiles().is_empty());
+}
+
+#[test]
+fn search_and_add_picks_a_new_tile_from_search() {
+    let mut mv = Multiview::open(10, DESKTOP);
+    mv.key(Key::Ok, ok);
+    let search = items(&mv).iter().position(|a| *a == TileAction::SearchAdd);
+    assert_eq!(mv.choose(search.unwrap()), Outcome::SearchChannel);
+    assert_eq!(mv.pick(), Some(Pick::Add), "it picks as the list does");
+    // The search screen's choice adds a tile, active.
+    assert_eq!(mv.picked(11), Outcome::Stay);
+    assert_eq!(surfaces(&mv), vec![(0, 10), (1, 11)]);
+    assert_eq!(mv.active().channel, 11);
+    // Back from the search screen: nothing added.
+    assert_eq!(mv.search_add(), Outcome::SearchChannel);
+    mv.cancel_pick();
+    assert_eq!(mv.picked(12), Outcome::Stay);
+    assert_eq!(mv.tiles().len(), 2);
+    // Past the account's limit it warns first, then opens the search.
+    let mut limited = Multiview::open(
+        1u32,
+        Limits {
+            decoders: 4,
+            connections: Some(1),
+        },
+    );
+    assert_eq!(limited.search_add(), Outcome::Stay);
+    assert_eq!(
+        limited.dialog(),
+        Some(&Dialog::Warning {
+            allowed: 1,
+            focus: 1,
+            search: true,
+        })
+    );
+    assert_eq!(limited.choose(0), Outcome::SearchChannel);
+    assert_eq!(limited.pick(), Some(Pick::Add));
+    // At the device's cap: nothing to search for.
+    let mut full = Multiview::open(1u32, BOX);
+    add(&mut full, 2);
+    assert_eq!(full.search_add(), Outcome::Stay);
+    assert!(full.pick().is_none());
+}
+
+#[test]
+fn pause_holds_one_tile_only() {
+    use TileAction::*;
+    let mut mv = Multiview::open(10, DESKTOP);
+    add(&mut mv, 11);
+    add(&mut mv, 12);
+    let choose = |mv: &mut Multiview<u32>, tile: usize, action: TileAction| {
+        mv.tap(tile, ok);
+        mv.tap(tile, ok);
+        let at = items(mv).iter().position(|a| *a == action);
+        mv.choose(at.unwrap())
+    };
+    let paused = |mv: &Multiview<u32>| mv.tiles().iter().map(|t| t.paused).collect::<Vec<_>>();
+    assert_eq!(choose(&mut mv, 1, Pause), Outcome::Stay);
+    assert_eq!(paused(&mv), vec![false, true, false]);
+    assert!(mv.dialog().is_none());
+    // Its menu now offers Play; the others still Pause.
+    mv.key(Key::Ok, ok);
+    assert!(items(&mv).contains(&Play) && !items(&mv).contains(&Pause));
+    mv.key(Key::Back, ok);
+    mv.tap(0, ok);
+    mv.tap(0, ok);
+    assert!(items(&mv).contains(&Pause));
+    mv.key(Key::Back, ok);
+    // Pausing moves nothing: the sound stays where it was chosen.
+    assert_eq!(mv.active_index(), 0);
+    assert_eq!(choose(&mut mv, 1, Play), Outcome::Stay);
+    assert_eq!(paused(&mv), vec![false, false, false]);
+    // A new channel on a paused tile plays; so does a tile watched full
+    // screen.
+    mv.set_paused(2, true);
+    assert_eq!(choose(&mut mv, 2, Replace), Outcome::PickChannel);
+    mv.picked(20);
+    assert_eq!(paused(&mv), vec![false, false, false]);
+    mv.set_paused(1, true);
+    assert_eq!(choose(&mut mv, 1, FullScreen), Outcome::FullScreen);
+    assert!(!mv.tiles()[1].paused);
+    mv.resume();
+    // Removing a paused tile keeps the others' state.
+    mv.set_paused(0, true);
+    assert!(mv.remove_tile(1));
+    assert_eq!(paused(&mv), vec![true, false]);
+    mv.set_paused(9, true);
 }

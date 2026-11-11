@@ -8,8 +8,8 @@
 //! Multiview (`multiview.rs`) lays surface 0 out in its tile and mounts one
 //! more `tv.player` per further tile (surfaces 1–3), each made when its
 //! tile comes and dropped when it goes; all but the active tile's get
-//! `muted`. A surface 0 without a tile shrinks to nothing (it is never
-//! hidden or detached).
+//! `muted`, and a paused tile's `paused`. A surface 0 without a tile
+//! shrinks to nothing (it is never hidden or detached).
 //!
 //! The `tv.player` contract (both hosts; every instance is independent: its
 //! own player, props and events, several playing at once):
@@ -29,6 +29,9 @@
 //!   bitrate}], audio: [{id, label, language, channels, codec}], text:
 //!   [{id, label, language}], selected: {video, audio, text}} whenever they
 //!   change; `format` {fps?, channels?} for what plays.
+//! - picture in picture (Android; surface 0): prop `pip` {auto, enter},
+//!   events `pip` {supported, tv, active} and `pipAction` {action}
+//!   (`pip.rs`).
 //!
 //! In the background (`lifecycle()` Background) Android's host stops every
 //! player, closing its connections, and reopens it when the app comes back
@@ -87,6 +90,14 @@ pub fn rect(ui: Ui) -> (f32, f32, f32, f32) {
 
 /// Surface `surface`'s rectangle; empty for a surface with nothing to show.
 pub fn surface_rect(ui: Ui, surface: usize) -> (f32, f32, f32, f32) {
+    // The picture-in-picture window: surface 0 fills it (`pip.rs`).
+    if crate::pip::active(ui) {
+        let w = window();
+        return match surface {
+            0 => (0.0, 0.0, w.width.0, w.height.0),
+            _ => (0.0, 0.0, 0.0, 0.0),
+        };
+    }
     if crate::multiview::is_open(ui) {
         return crate::multiview::surface_rect(ui, surface).unwrap_or((0.0, 0.0, 0.0, 0.0));
     }
@@ -174,8 +185,11 @@ pub fn layer(ui: Ui, surface: usize) -> impl IntoElement {
             count_open(surface, &sent, &value);
             value
         })
-        // Multiview's other surfaces play on.
-        .prop("paused", move || json!(surface == 0 && ui.paused.get()))
+        // Full screen's pause holds surface 0; in multiview each tile has
+        // its own (the menu's Pause).
+        .prop("paused", move || {
+            json!((surface == 0 && ui.paused.get()) || crate::multiview::paused(ui, surface))
+        })
         .prop("pictureSize", move || {
             let ch = if surface == 0 {
                 ui.playing.get()
@@ -198,6 +212,7 @@ pub fn layer(ui: Ui, surface: usize) -> impl IntoElement {
             json!(ui.media.volume.with(|v| v.muted) || !crate::multiview::audible(ui, surface))
         })
         .prop("audioDelay", move || json!(ui.media.delay_ms.get()))
+        .prop("pip", move || crate::pip::prop(ui, surface))
         .on_native_event(move |e: &NativeEvent| {
             match e.name.as_ref() {
                 // Once a second while playing: not logged.
@@ -209,6 +224,8 @@ pub fn layer(ui: Ui, surface: usize) -> impl IntoElement {
                 }
                 "tracks" => return crate::media::on_tracks(ui, surface, &e.data),
                 "format" => return crate::media::on_format(ui, surface, &e.data),
+                "pip" => return crate::pip::on_state(ui, &e.data),
+                "pipAction" => return crate::pip::on_action(ui, &e.data),
                 _ => {}
             }
             let status = match &*e.name {

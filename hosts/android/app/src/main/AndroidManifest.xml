@@ -27,10 +27,15 @@
             android:exported="false"
             android:grantUriPermissions="true" />
 
+        <!-- Picture in picture: the activity is resized, never recreated
+             (configChanges); singleTask, so the launcher's icon brings the
+             one in the window back instead of starting a second one in it. -->
         <activity
             android:name=".TvActivity"
             android:exported="true"
             android:supportsPictureInPicture="true"
+            android:resizeableActivity="true"
+            android:launchMode="singleTask"
             android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode|density|fontScale|layoutDirection|locale"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
