@@ -194,6 +194,14 @@ pub fn open_groups(ui: Ui) {
     ui.focus.update(Focus::open_groups);
 }
 
+/// Opens the rail with its names (an iPad's ‹ in the groups column).
+pub fn open_rail(ui: Ui) {
+    step(ui, |f, cols, _| {
+        f.open_rail(cols);
+        Outcome::Moved
+    });
+}
+
 /// A tap on a groups column entry.
 pub fn tap_entry(ui: Ui, entry: usize) {
     let o = step(ui, |f, cols, _| f.tap_entry(entry, cols));

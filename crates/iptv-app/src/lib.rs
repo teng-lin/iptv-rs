@@ -49,6 +49,10 @@ pub use time::clock;
 #[doc(hidden)]
 pub use video::opens as player_opens;
 
+/// iOS (an iPad): its touch ways back ([`Ui::touch_controls`], a tap
+/// beside the open columns or list closing them).
+pub(crate) const IOS: bool = cfg!(target_os = "ios");
+
 use std::time::{Duration, Instant};
 
 use guide::{Airing, Focus, Pane, Program, Schedule, SyntheticSchedule};
@@ -271,11 +275,12 @@ impl Ui {
         self.input.get() == Input::Keys
     }
 
-    /// Whether the buttons that stand in for a remote's keys show (a
-    /// wizard's Back, Settings' Close): on a phone or tablet being
-    /// touched. TVs and desktops have their keys.
+    /// Whether the buttons that stand in for a remote's Back show (the
+    /// full-screen player's ‹, a wizard's Back, Settings' Close): on an
+    /// iPad being touched, which has no Back key. Android's back button,
+    /// TVs' and desktops' keys keep their own ways.
     pub fn touch_controls(&self) -> bool {
-        !self.keys_shown() && !desktop::DESKTOP && play_bar::available()
+        IOS && !self.keys_shown()
     }
 
     /// A foreground UI surface colour. In guide mode the opaque colours are
@@ -571,8 +576,8 @@ pub fn App() -> impl IntoElement {
 /// else the card and its buttons; beside multiview's tiles, its pointer
 /// chrome (the tiles take their own taps).
 fn toggle_panels(ui: Ui) {
-    // A tablet's tap on the video beside the channel list closes it.
-    if !desktop::DESKTOP && untracked(|| channels_view::is_open(ui)) {
+    // An iPad's tap on the video beside the channel list closes it.
+    if IOS && untracked(|| channels_view::is_open(ui)) {
         channels_view::close(ui);
         return;
     }

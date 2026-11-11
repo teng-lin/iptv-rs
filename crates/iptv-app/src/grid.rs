@@ -18,6 +18,7 @@ pub(crate) use channel::no_logo;
 pub(crate) mod keys;
 mod pan;
 mod ruler;
+pub(crate) use ruler::{BACK, RULER_H};
 mod wheel;
 
 use iptv_core::timeline::BAND;
@@ -239,12 +240,12 @@ fn scroll_to_focus_on_new_list(ui: Ui, list: ElementRef) {
 /// The column's width, the panned timeline and the size scale.
 type Geometry = (fn() -> f32, Pan, Scale);
 
-/// A tap on the guide beside the open groups column (and rail) closes
-/// them, as a tap beside a side panel does on a tablet, and does nothing
-/// else (it plays nothing). Whether they were open. A desktop's click
-/// keeps acting at once.
+/// An iPad's tap on the guide beside the open groups column (and rail)
+/// closes them, as a tap beside a side panel does there, and does nothing
+/// else (it plays nothing). Whether they were open. Elsewhere a tap or
+/// click keeps acting at once.
 pub(crate) fn closed_columns(ui: Ui) -> bool {
-    if crate::desktop::DESKTOP || ui.focus.with_untracked(|f| f.pane) == Pane::Guide {
+    if !crate::IOS || ui.focus.with_untracked(|f| f.pane) == Pane::Guide {
         return false;
     }
     ui.focus.update(|f| f.close_columns());

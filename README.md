@@ -280,12 +280,16 @@ xcrun devicectl device process launch --device <id> com.hantekllc.iptvrs
   apple-tool:,apple:,codesign: -s ~/Library/Keychains/login.keychain-db`
   lets it use the key.
 - Touch: a tap previews, a second watches full screen; the timeline pans
-  and flings; ☰ opens the groups and the rail, and a tap beside them, or
-  on the video beside the channel list, closes them. Full-screen video
-  has a ‹ Guide chip top left (‹ Multiview for a tile watched full
-  screen) and the play bar; a swipe in from the left edge is Back.
-  Settings has a Close button and the wizard a ‹ Back button on touch;
-  the remote's key hints show only after a hardware keyboard's key.
+  and flings (Now returns). A round ‹ walks back the way a remote's Back
+  and Left do: full-screen video → the guide (or multiview's grid), the
+  guide (‹ before the date) → the groups, the groups (‹ at their top) →
+  the menu with Search, Live TV, Playlists and Settings named; a swipe in
+  from the left edge is Back too. The header's ☰ also opens the groups;
+  a tap beside them, or on the video beside the channel list, closes
+  them. Settings has a Close button and the wizard a ‹ Back button; the
+  remote's key hints show only after a hardware keyboard's key. These
+  touch controls are the iPad's only: Android tablets keep their back
+  button's model.
 - Leaving the app stops the streams, as on Android, and coming back opens
   them again.
 - Data lives in the app's `Library/Application Support/iptv-rs`.
