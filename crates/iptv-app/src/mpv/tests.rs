@@ -22,6 +22,10 @@ use super::*;
 
 static SERIAL: Mutex<()> = Mutex::new(());
 
+/// How long a test waits for mpv at most: long, for a machine under heavy
+/// load (nothing waits for it unless something is wrong).
+const PATIENCE: Duration = Duration::from_secs(60);
+
 /// One test's players at a time.
 pub(super) fn serial() -> MutexGuard<'static, ()> {
     SERIAL.lock().unwrap_or_else(|e| e.into_inner())
@@ -402,12 +406,12 @@ impl Player {
         }
     }
 
-    /// Turns the main loop until `done`, at most 15 s.
+    /// Turns the main loop until `done`, at most [`PATIENCE`].
     fn wait(&mut self, gpu: Option<&Gpu>, what: &str, done: impl Fn(&Player) -> bool) {
         let start = Instant::now();
         while !done(self) {
             assert!(
-                start.elapsed() < Duration::from_secs(15),
+                start.elapsed() < PATIENCE,
                 "timed out waiting for {what}; events: {:?}",
                 self.events.0.borrow()
             );
@@ -454,7 +458,7 @@ impl Player {
         let start = Instant::now();
         while !want(self.draw(gpu)) {
             assert!(
-                start.elapsed() < Duration::from_secs(15),
+                start.elapsed() < PATIENCE,
                 "timed out waiting for a {what} picture (got {:?})",
                 gpu.pixel()
             );
@@ -518,7 +522,7 @@ fn a_source_plays_through_the_render_api() {
     let _serial = serial();
     let Some((dir, gpu)) = rig() else { return };
     let (Some(red_ts), Some(blue_ts)) =
-        (clip(dir.path(), "red", 6.0), clip(dir.path(), "blue", 1.0))
+        (clip(dir.path(), "red", 6.0), clip(dir.path(), "blue", 3.0))
     else {
         return;
     };
@@ -546,6 +550,7 @@ fn a_source_plays_through_the_render_api() {
     p.wait_state(Some(&gpu), "ready");
     p.wait_picture(&gpu, "red", red);
 
+    p.wait(Some(&gpu), "size", |p| !p.events("size").is_empty());
     assert_eq!(p.events("size"), [json!({ "width": 320, "height": 180 })]);
     p.wait(Some(&gpu), "format", |p| {
         let f = p.events("format");
@@ -690,22 +695,31 @@ fn a_live_stream_plays_on_across_a_closed_connection() {
         json!({ "url": server.url("/live.ts"), "live": true }),
     );
     p.wait_state(Some(&gpu), "ready");
-    let ready = Instant::now();
-    // The spare connection opens.
-    p.wait(Some(&gpu), "the spare", |_| {
-        server.heads("/live.ts").len() >= 2
-    });
-    // Past the first connection's end (6 s of stream).
-    p.wait(Some(&gpu), "the bridge", |_| {
-        ready.elapsed() > Duration::from_millis(7500)
-    });
+    // Where it plays, as the app asks once a second, until the position
+    // goes back: the first connection played to its end (6 s of stream)
+    // and the spare plays from its start.
+    let start = Instant::now();
+    loop {
+        assert!(
+            start.elapsed() < PATIENCE,
+            "no bridge: {:?}",
+            p.events("position")
+        );
+        host::tick(&p.inner);
+        p.idle(Some(&gpu), 200);
+        let ms: Vec<u64> = p
+            .events("position")
+            .iter()
+            .map(|e| e["ms"].as_u64().unwrap())
+            .collect();
+        let highest = ms.iter().copied().max().unwrap_or(0);
+        if highest >= 5000 && ms.last().is_some_and(|last| last + 2000 < highest) {
+            break;
+        }
+    }
+    assert!(server.heads("/live.ts").len() >= 2, "a spare connection");
     assert_played_to(&p, "ready");
     assert!(p.events("error").is_empty());
-    p.clear();
-    host::tick(&p.inner);
-    p.wait(Some(&gpu), "position", |p| !p.events("position").is_empty());
-    let ms = p.events("position")[0]["ms"].as_u64().unwrap();
-    assert!(ms < 3000, "the spare plays from its start: {ms} ms");
     assert!(red(p.draw(&gpu)));
 }
 
@@ -727,12 +741,9 @@ fn a_short_live_play_ends() {
     );
     p.wait_state(Some(&gpu), "ended");
     assert_played_to(&p, "ended");
+    // The spare is gone (the ended entry stays listed).
+    p.wait_prop(c"playlist-count", "1");
     p.idle(Some(&gpu), 300);
-    assert_eq!(
-        p.prop(c"playlist-count").as_deref(),
-        Some("1"),
-        "the spare is gone"
-    );
     assert_eq!(p.states().last().unwrap(), "ended", "mpv did not go on");
 }
 

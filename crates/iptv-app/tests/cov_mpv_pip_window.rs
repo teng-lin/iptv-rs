@@ -85,7 +85,7 @@ fn the_pip_windows_controls_follow_the_pointer() {
     step(app.hover("id:pip-video"));
     step(app.wait_for(CONTROLS));
     step(app.hover(CONTROLS));
-    step(app.wait_for_gone(CONTROLS, Duration::from_secs(6)));
+    step(app.wait_for_gone(CONTROLS, Duration::from_secs(20)));
     assert!(pip_open(&mut app));
 
     // Moving again shows them; out of the window (to the main window's

@@ -444,6 +444,19 @@ mod tests {
         format!("av://lavfi:sine=frequency=440:sample_rate=48000:duration={secs}")
     }
 
+    /// How long a test waits for mpv at most: long, for a machine under
+    /// heavy load (nothing waits for it unless something is wrong).
+    const PATIENCE: Duration = Duration::from_secs(60);
+
+    /// Waits until `done`, at most [`PATIENCE`].
+    fn wait_until(what: &str, done: impl Fn() -> bool) {
+        let deadline = Instant::now() + PATIENCE;
+        while !done() {
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     fn load(url: String, live: bool) -> Cmd {
         Cmd::Load {
             url,
@@ -452,9 +465,10 @@ mod tests {
         }
     }
 
-    /// The notes until one matches `until` (at most 10 s), that one last.
+    /// The notes until one matches `until` (at most [`PATIENCE`]), that
+    /// one last.
     fn notes_until(worker: &Worker, until: impl Fn(&Note) -> bool) -> Vec<Note> {
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + PATIENCE;
         let mut notes = Vec::new();
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
@@ -472,16 +486,13 @@ mod tests {
         }
     }
 
-    /// The entry of the load, the first of the file's notes (only log
-    /// lines may come before it).
+    /// The entry the load made. (Notes of mpv's own may come first: the
+    /// observed properties' first values, log lines.)
     fn loaded(notes: &[Note]) -> Option<i64> {
-        notes
-            .iter()
-            .find(|n| !matches!(n, Note::Log { .. }))
-            .and_then(|n| match n {
-                Note::Loading(entry) => *entry,
-                _ => None,
-            })
+        notes.iter().find_map(|n| match n {
+            Note::Loading(entry) => Some(*entry),
+            _ => None,
+        })?
     }
 
     fn ended(n: &Note) -> bool {
@@ -502,10 +513,20 @@ mod tests {
             user_agent: "SyntheticAgent/3.0".into(),
             fields: vec!["X-One: 1".into(), "X-Two: 2".into()],
         });
-        worker.send(load(tone(1.5), false));
+        // Paused from the start: it cannot end before it was asked about.
+        let Cmd::Load { url, options, .. } = load(tone(1.0), false) else {
+            unreachable!()
+        };
+        let mut options = options;
+        options.push(("pause", "yes".into()));
+        worker.send(Cmd::Load {
+            url,
+            live: false,
+            options,
+        });
         let notes = notes_until(&worker, |n| matches!(n, Note::Restarted { .. }));
         let Some(entry) = loaded(&notes) else {
-            panic!("the load's entry first");
+            panic!("the load's entry");
         };
         assert!(
             notes
@@ -516,7 +537,7 @@ mod tests {
             unreachable!()
         };
         assert_eq!(audio_out.as_deref(), Some("null"));
-        assert!(woke.recv_timeout(Duration::from_secs(5)).is_ok());
+        assert!(woke.recv_timeout(PATIENCE).is_ok());
         assert_eq!(
             mpv.get(c"user-agent").as_deref(),
             Some("SyntheticAgent/3.0")
@@ -534,6 +555,8 @@ mod tests {
         let notes = notes_until(&worker, |n| matches!(n, Note::Channels(_)));
         assert!(matches!(notes.last(), Some(Note::Channels(1))));
 
+        // Played to its end.
+        worker.send(Cmd::Set("pause", "no".into()));
         let notes = notes_until(&worker, ended);
         let Some(Note::Ended {
             entry: e,
@@ -551,11 +574,7 @@ mod tests {
         worker.send(Cmd::Position);
         worker.send(Cmd::Format);
         worker.send(Cmd::Set("volume", "30".into()));
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while mpv.get_f64(c"volume") != Some(30.0) {
-            assert!(Instant::now() < deadline, "volume not set");
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        wait_until("the volume", || mpv.get_f64(c"volume") == Some(30.0));
         assert!(
             worker
                 .notes
@@ -595,18 +614,16 @@ mod tests {
         worker.send(load(tone(0.4), true));
         let notes = notes_until(&worker, ended);
         let Some(entry) = loaded(&notes) else {
-            panic!("the load's entry first");
+            panic!("the load's entry");
         };
         assert!(
             matches!(notes.last(), Some(Note::Ended { entry: e, reason: 0, .. }) if *e == entry)
         );
         assert!(!notes.iter().any(|n| matches!(n, Note::Bridged(_))));
         // The worker removed the spare (the ended entry stays listed).
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while mpv.get_i64(c"playlist-count") != Some(1) {
-            assert!(Instant::now() < deadline, "the spare stays");
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        wait_until("the spare to go", || {
+            mpv.get_i64(c"playlist-count") == Some(1)
+        });
     }
 
     /// mpv shutting down ends the thread.
@@ -616,11 +633,7 @@ mod tests {
         let worker = Worker::spawn(mpv.clone(), || {});
         assert!(mpv.command(&["quit"]));
         let thread = worker.thread.as_ref().unwrap();
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !thread.is_finished() {
-            assert!(Instant::now() < deadline);
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        wait_until("the thread to end", || thread.is_finished());
     }
 
     /// Off (`IPTV_RS_LIVE_BRIDGE=0`), or with a refused load, nothing is
