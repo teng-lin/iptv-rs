@@ -647,7 +647,7 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
                         channels: channels.clone(),
                         guide,
                         now,
-                        source: Some(id),
+                        source: id,
                         resume: context.is_some(),
                         playback: Streams::New(context, None),
                     }),
@@ -686,7 +686,7 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
                                         channels: channels.clone(),
                                         guide,
                                         now,
-                                        source: Some(id),
+                                        source: id,
                                         resume: false,
                                         playback: Streams::Current,
                                     })));
@@ -703,7 +703,7 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
                             channels: channels.clone(),
                             guide: GuideStore::default(),
                             now,
-                            source: Some(id),
+                            source: id,
                             resume: false,
                             playback: Streams::Current,
                         })));

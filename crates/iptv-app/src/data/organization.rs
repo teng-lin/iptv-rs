@@ -25,12 +25,10 @@ pub fn read(source: SourceId) -> Result<Organization, StoreError> {
         .collect();
     Ok(Organization { channels, groups })
 }
-pub fn apply(schedule: &EpgSchedule, source: Option<SourceId>) {
-    if let Some(source) = source {
-        match read(source) {
-            Ok(org) => schedule.set_organization(org),
-            Err(e) => log::warn!("iptv organization: store unavailable: {e}"),
-        }
+pub fn apply(schedule: &EpgSchedule, source: SourceId) {
+    match read(source) {
+        Ok(org) => schedule.set_organization(org),
+        Err(e) => log::warn!("iptv organization: store unavailable: {e}"),
     }
 }
 pub fn changed(ui: Ui, source: SourceId) {
@@ -44,7 +42,7 @@ pub fn changed(ui: Ui, source: SourceId) {
         .as_any()
         .and_then(|s| s.downcast_ref::<EpgSchedule>())
     {
-        apply(epg, Some(source));
+        apply(epg, source);
         crate::lists::restore(ui, kept);
         ui.data_version.update(|v| *v += 1);
     }
