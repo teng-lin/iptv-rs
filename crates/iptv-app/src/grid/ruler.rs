@@ -66,6 +66,12 @@ pub(super) fn ruler(
             let at = (first() + i * STEP - pan.band().base) as f32;
             px(at * pan.scale() + size.of(TICK_INSET))
         })
+        // Its slot's width, not its text's: sized to its text it would be
+        // fitted to the room between it and the right edge of this strip,
+        // which the slide does not move, and a time near the edge came out
+        // as "2" or "…" (CoreText, Pango) though it showed on screen. The
+        // strip's clip cuts what passes its edge, as the cells' titles.
+        .w(move || px((STEP as f32 * pan.scale() - size.of(TICK_INSET)).max(0.0)))
         .number_of_lines(1)
         .font_family(SANS)
         .text_size(move || size.px(RULER))
