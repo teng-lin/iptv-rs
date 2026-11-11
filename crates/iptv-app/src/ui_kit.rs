@@ -12,7 +12,7 @@ use nsh_core::prelude::*;
 use crate::fonts::{CAPTION, LIST_ITEM, LIST_SECONDARY, MEDIUM, SANS, SECTION, TITLE};
 use crate::list_rows::{self, Mark, ROW};
 use crate::scale::Scale;
-use crate::theme::{FOCUS_ALPHA, LIST_TEXT, RADIUS, RADIUS_LARGE, RESTING_ALPHA};
+use crate::theme::{FOCUS_ALPHA, FOCUSED_TEXT, LIST_TEXT, RADIUS, RADIUS_LARGE, RESTING_ALPHA};
 use crate::{Ui, tint};
 
 /// A button's or a tab's label: a list heading's size in Roboto Medium.
@@ -91,16 +91,57 @@ pub fn button(
     on_press: impl Fn() + 'static,
 ) -> View {
     let mark = move || Mark::of(focused() && ui.keys_shown(), false);
+    pill(
+        ui,
+        size,
+        label,
+        move || match mark() {
+            Mark::Focused => Mark::Focused.bg(),
+            _ => tint(WHITE, BUTTON_ALPHA),
+        },
+        move || mark().text(),
+        on_press,
+    )
+}
+
+/// A button inside a list row (a form field's Paste): on the row's light
+/// pill while it is focused, the pill's dark text on a dark tint, so it
+/// still reads there; otherwise as [`button`].
+pub fn row_button(
+    ui: Ui,
+    size: Scale,
+    label: impl IntoReactive<SharedString>,
+    row: impl Fn() -> Mark + Copy + 'static,
+    on_press: impl Fn() + 'static,
+) -> View {
+    pill(
+        ui,
+        size,
+        label,
+        move || match row() {
+            Mark::Focused => tint(FOCUSED_TEXT, BUTTON_ALPHA),
+            _ => tint(WHITE, BUTTON_ALPHA),
+        },
+        move || row().text(),
+        on_press,
+    )
+}
+
+fn pill(
+    ui: Ui,
+    size: Scale,
+    label: impl IntoReactive<SharedString>,
+    bg: impl Fn() -> Rgba + 'static,
+    text: impl Fn() -> Rgba + 'static,
+    on_press: impl Fn() + 'static,
+) -> View {
     view()
         .min_h(move || px(size.whole(TOUCH)))
         .px(move || size.px(20.0))
         .items_center()
         .justify_center()
         .rounded(px(RADIUS))
-        .bg(move || match mark() {
-            Mark::Focused => Mark::Focused.bg(),
-            _ => tint(WHITE, BUTTON_ALPHA),
-        })
+        .bg(bg)
         .on_press(move || {
             ui.touched();
             on_press();
@@ -109,7 +150,7 @@ pub fn button(
             styled(size, label, BUTTON)
                 .number_of_lines(1)
                 .font_weight(MEDIUM)
-                .text_color(move || mark().text()),
+                .text_color(text),
         )
 }
 

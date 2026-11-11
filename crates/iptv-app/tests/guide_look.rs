@@ -88,10 +88,12 @@ fn the_guide_uses_the_bundled_fonts_and_proportions() {
     // Full screen: the full sizes.
     check_sizes(&mut app, 1.0);
     assert_eq!(row_pitch(&mut app), 50.0);
+    check_ruler(&mut app);
     // A 1280 × 720 window: 7/8 of them, the rows in whole px.
     step(app.set_viewport(Size::new(px(1280.0), px(720.0))));
     check_sizes(&mut app, 0.875);
     assert_eq!(row_pitch(&mut app), 44.0);
+    check_ruler(&mut app);
     // Full screen again.
     step(app.set_viewport(Size::new(px(1920.0), px(1080.0))));
     check_sizes(&mut app, 1.0);
@@ -232,6 +234,46 @@ fn check_sizes(app: &mut Headless, scale: f32) {
     // Roboto Medium 22.
     assert!(has(app, "Quiet Harbour", CONDENSED, 20.0 * scale, 400));
     assert!(has(app, "Quiet Harbour", ROBOTO, 22.0 * scale, 500));
+}
+
+/// The ruler's half-hour times each span their slot (to the next one, but
+/// for the inset): they slide with the programmes in a strip as wide as
+/// the programme area, and a time sized to its text would be fitted to
+/// the room left between it and that strip's edge, which the slide does
+/// not move: near the right edge a platform's text engine (CoreText,
+/// Pango) cut it to "2" or "…" although it showed whole on screen.
+fn check_ruler(app: &mut Headless) {
+    let mut times: Vec<(String, f32, f32, f32)> = app
+        .screen()
+        .layout_nodes()
+        .into_iter()
+        .filter_map(|n| {
+            let t = n.text.as_ref()?.text.text.to_string();
+            let time = t.len() == 5
+                && t.as_bytes()[2] == b':'
+                && t.replace(':', "").parse::<u32>().is_ok();
+            time.then_some((
+                t,
+                n.bounds.origin.x.0,
+                n.bounds.origin.y.0,
+                n.bounds.size.width.0,
+            ))
+        })
+        .collect();
+    // The ruler's row: the highest of the times (lists below show times too).
+    let top = times.iter().map(|t| t.2).fold(f32::MAX, f32::min);
+    times.retain(|t| (t.2 - top).abs() < 0.5);
+    times.sort_by(|a, b| a.1.total_cmp(&b.1));
+    assert!(times.len() >= 5, "ruler times: {times:?}");
+    for pair in times.windows(2) {
+        let slot = pair[1].1 - pair[0].1;
+        let width = pair[0].3;
+        assert!(
+            width <= slot + 0.5 && width >= slot - 16.0,
+            "ruler time {} is {width} wide in a {slot} slot: {times:?}",
+            pair[0].0
+        );
+    }
 }
 
 /// Where row `row`'s channel number is (y), if it is mounted.
