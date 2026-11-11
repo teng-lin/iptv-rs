@@ -19,6 +19,7 @@ pub enum Icon {
     PictureSize,
     ChannelList,
     Multiview,
+    PictureInPicture,
     Guide,
     FullScreen,
     ExitFullScreen,
@@ -74,6 +75,9 @@ fn body(icon: Icon) -> &'static str {
         Icon::Multiview => {
             "<rect x='3' y='4' width='8' height='7' rx='1.5'/><rect x='13' y='4' width='8' height='7' rx='1.5'/>\
              <rect x='3' y='13' width='8' height='7' rx='1.5'/><rect x='13' y='13' width='8' height='7' rx='1.5'/>"
+        }
+        Icon::PictureInPicture => {
+            "<rect x='2' y='4' width='20' height='16' rx='2'/><rect x='12' y='11' width='8' height='7' rx='1' fill='currentColor'/>"
         }
         Icon::Guide => {
             "<rect x='3' y='4' width='18' height='16' rx='2'/>\

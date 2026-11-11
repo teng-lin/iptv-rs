@@ -492,6 +492,24 @@ fn right(ui: Ui) -> impl IntoElement {
                 }
             }),
         )
+        // Picture in picture, where the device has the window (the
+        // control strip has it too, but touch has no way to that strip).
+        .child(when(
+            move || crate::pip::supported(ui),
+            move || {
+                button(
+                    ui,
+                    "Picture in picture",
+                    || Icon::PictureInPicture,
+                    move || crate::pip::can_enter(ui),
+                    size,
+                    move || {
+                        ui.play_bar.update(PlayBar::hide);
+                        crate::pip::enter(ui);
+                    },
+                )
+            },
+        ))
         .child(button(
             ui,
             "TV guide",
