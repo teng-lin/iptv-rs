@@ -377,12 +377,17 @@ fn search_again(ui: Ui) {
     }
 }
 
+/// Searches `query` after [`DEBOUNCE`] unless a newer search came. The
+/// wait runs under the app's owner, not the caller's: a tap on a recent
+/// search hides the recent searches, and a timer owned by the tapped row
+/// would go with it (the search never ran).
 fn debounce(ui: Ui, query: String) {
     let ticket = PENDING.with(|p| {
         p.set(p.get() + 1);
         p.get()
     });
-    let _ = set_timeout(DEBOUNCE, move || {
+    crate::data::spawn_in_app(async move {
+        timer(DEBOUNCE).await;
         if PENDING.with(Cell::get) == ticket {
             run_search(ui, &query);
         }
