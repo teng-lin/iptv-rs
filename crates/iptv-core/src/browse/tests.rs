@@ -144,7 +144,7 @@ fn left_on_a_catch_up_row_walks_its_archive_before_the_groups() {
     s.mv(Move::Down);
     assert_eq!(s.channel(), Some(3), "a day of catch-up");
     let floor = s.focus.floor(&s.view);
-    assert!(floor < 0 && floor >= -24 * 60, "{floor}");
+    assert!((-24 * 60..0).contains(&floor), "{floor}");
     let mut steps = 0;
     while s.mv(Move::Left) == Outcome::Moved && s.focus.pane == Pane::Guide {
         steps += 1;
@@ -516,7 +516,7 @@ fn the_groups_back_button_opens_the_rail_as_back_does() {
     // An iPad's ‹ in the groups column: where Back from the groups goes.
     let mut s = Screen::new();
     s.focus.open_groups();
-    let mut by_back = s.focus.clone();
+    let mut by_back = s.focus;
     let rail = s.rail.clone();
     let cols = Columns {
         entries: entry_count(&*s.catalog),

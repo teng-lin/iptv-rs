@@ -170,7 +170,7 @@ impl Focus {
             Pane::Groups if list.channel_count() == 0 => Outcome::None,
             Pane::Groups => {
                 self.pane = Pane::Guide;
-                self.to_top();
+                self.go_to_top();
                 self.hint = true;
                 Outcome::Committed
             }
@@ -284,7 +284,7 @@ impl Focus {
             return Outcome::None;
         }
         self.group = entry;
-        self.to_top();
+        self.go_to_top();
         Outcome::Preview
     }
 

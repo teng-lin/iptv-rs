@@ -464,7 +464,7 @@ impl Focus {
     }
 
     /// The list's first row at now (a list just chosen or previewed).
-    pub(crate) fn to_top(&mut self) {
+    pub(crate) fn go_to_top(&mut self) {
         self.channel = 0;
         self.cursor = self.now;
         self.window = home_window(self.now);

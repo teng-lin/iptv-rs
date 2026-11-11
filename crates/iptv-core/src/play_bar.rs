@@ -100,7 +100,8 @@ impl PlayBar {
 /// to, in seconds into a programme `length` seconds long, no further than
 /// `limit` (what the archive holds so far).
 pub fn seek_target(x: f32, width: f32, length: i32, limit: i32) -> i32 {
-    if !(width > 0.0) || length <= 0 {
+    // A NaN width seeks nowhere too.
+    if width.is_nan() || width <= 0.0 || length <= 0 {
         return 0;
     }
     let fraction = (x / width).clamp(0.0, 1.0);
