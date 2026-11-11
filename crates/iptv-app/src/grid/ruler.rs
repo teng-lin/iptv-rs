@@ -17,10 +17,6 @@ use crate::{Ui, clock, tint};
 /// The ruler's height, the line under it and the now dot's diameter (the
 /// height, dot and inset at full size, scaled with the grid).
 pub const RULER_H: f32 = 36.0;
-/// An iPad's round ‹ in the ruler's row (and the groups column's beside
-/// it), its press reaching a finger's [`TOUCH`] around it.
-pub const BACK: f32 = 30.0;
-const TOUCH: f32 = crate::ui_kit::TOUCH;
 const SEPARATOR_H: f32 = 1.0;
 const DOT: f32 = 8.0;
 /// A slot time's inset from its half hour.
@@ -89,31 +85,15 @@ pub(super) fn ruler(
                 .flex_row()
                 .items_center()
                 .child(
-                    // An iPad's ‹ to the groups, the date and time, then
-                    // the touch steps of the window (an iPad drags and
-                    // flings it instead: its ‹ is the way back).
+                    // The date and time, then the touch steps of the window
+                    // (an iPad drags and flings it, Now returns: its ‹ top
+                    // left is the way back).
                     view()
                         .w(move || px(column()))
                         .flex_row()
                         .items_center()
                         .gap(move || size.px(6.0))
                         .px(move || size.px(16.0))
-                        .child(when(
-                            move || ui.touch_controls() && !crate::lists::columns_shown(ui),
-                            move || {
-                                crate::ui_kit::round_back(
-                                    size.of(BACK),
-                                    (TOUCH - size.of(BACK)) / 2.0,
-                                    || tint(WHITE, RESTING_ALPHA),
-                                    || "Groups",
-                                    move || {
-                                        ui.touched();
-                                        crate::lists::open_groups(ui);
-                                    },
-                                )
-                                .mr(move || size.px(4.0))
-                            },
-                        ))
                         .child(date_time(ui, size, pan).flex_1())
                         .child(now_button)
                         .children(

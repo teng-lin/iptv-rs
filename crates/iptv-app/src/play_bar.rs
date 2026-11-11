@@ -167,7 +167,6 @@ pub fn layer(ui: Ui) -> impl IntoElement {
 /// accessibility label says which; a remote's Back and an iPad's swipe
 /// from the left edge hide the bar first).
 fn back(ui: Ui) -> impl IntoElement {
-    let panel = move || tint(ui.theme.with(|t| t.background.panel), PANEL_ALPHA);
     let side = target();
     view()
         .absolute()
@@ -180,7 +179,7 @@ fn back(ui: Ui) -> impl IntoElement {
         .child(crate::ui_kit::round_back(
             side,
             0.0,
-            panel,
+            back_bg(ui),
             move || {
                 if crate::multiview::detour(ui) {
                     "Multiview"
@@ -196,6 +195,12 @@ fn back(ui: Ui) -> impl IntoElement {
                 crate::go_back(ui);
             },
         ))
+}
+
+/// The round ‹'s colour over video (the player's, the guide's over its
+/// preview): the bar's panel.
+pub(crate) fn back_bg(ui: Ui) -> impl Fn() -> Rgba + Copy + 'static {
+    move || tint(ui.theme.with(|t| t.background.panel), PANEL_ALPHA)
 }
 
 fn bar(ui: Ui) -> impl IntoElement {

@@ -18,7 +18,6 @@ pub(crate) use channel::no_logo;
 pub(crate) mod keys;
 mod pan;
 mod ruler;
-pub(crate) use ruler::{BACK, RULER_H};
 mod wheel;
 
 use iptv_core::timeline::BAND;

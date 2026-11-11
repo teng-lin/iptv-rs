@@ -280,11 +280,12 @@ xcrun devicectl device process launch --device <id> com.hantekllc.iptvrs
   apple-tool:,apple:,codesign: -s ~/Library/Keychains/login.keychain-db`
   lets it use the key.
 - Touch: a tap previews, a second watches full screen; the timeline pans
-  and flings (Now returns). A round ‹ walks back the way a remote's Back
-  and Left do: full-screen video → the guide (or multiview's grid), the
-  guide (‹ before the date) → the groups, the groups (‹ at their top) →
-  the menu with Search, Live TV, Playlists and Settings named; a swipe in
-  from the left edge is Back too. The header's ☰ also opens the groups;
+  and flings (Now returns). A round ‹ top left, over the video (the
+  full-screen picture or the guide's preview), walks back the way a
+  remote's Back and Left do: full-screen video → the guide (or
+  multiview's grid) → the groups → the menu with Search, Live TV,
+  Playlists and Settings named; a swipe in from the left edge is Back
+  too. The header's ☰ also opens the groups;
   a tap beside them, or on the video beside the channel list, closes
   them. Settings has a Close button and the wizard a ‹ Back button; the
   remote's key hints show only after a hardware keyboard's key. These

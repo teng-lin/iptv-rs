@@ -90,7 +90,7 @@ pub fn group_column(ui: Ui, groups: ElementRef) -> impl IntoElement {
         groups.scroll_to_index(group as u32, percentage(0.5), px(0.0), false);
     });
     let size = Scale::new();
-    let list = virtual_list(
+    virtual_list(
         move || {
             ui.guide_data();
             entry_count(&*crate::schedule())
@@ -121,38 +121,9 @@ pub fn group_column(ui: Ui, groups: ElementRef) -> impl IntoElement {
     )
     .estimated_item_size(list_rows::pitch(size, ROW))
     .element_ref(&groups)
-    .flex_1()
-    .py(px(6.0));
-    // An iPad's ‹ to the rail, in the ruler's row beside it (kept, empty,
-    // while the rail is open, so the groups stay where they were).
-    let back = move || {
-        view()
-            .h(move || px(size.whole(crate::grid::RULER_H)))
-            .px(px(16.0))
-            .flex_row()
-            .items_center()
-            .child(when(
-                move || ui.focus.with(|f| f.pane) == Pane::Groups,
-                move || {
-                    crate::ui_kit::round_back(
-                        size.of(crate::grid::BACK),
-                        (crate::ui_kit::TOUCH - size.of(crate::grid::BACK)) / 2.0,
-                        move || crate::tint(0xFFFFFF, crate::theme::RESTING_ALPHA),
-                        || "Menu",
-                        move || {
-                            ui.touched();
-                            crate::lists::open_rail(ui);
-                        },
-                    )
-                },
-            ))
-    };
-    view()
-        .w(move || px(groups_width(ui)))
-        .overflow_hidden()
-        .bg(move || ui.surface(ui.theme.with(|t| t.background.window)))
-        .child(when(move || ui.touch_controls(), back))
-        .child(list)
+    .w(move || px(groups_width(ui)))
+    .py(px(6.0))
+    .bg(move || ui.surface(ui.theme.with(|t| t.background.window)))
 }
 
 #[cfg(test)]
