@@ -266,6 +266,7 @@ pub fn placeholder(ui: Ui) -> impl IntoElement {
         move || crate::pip::in_window(ui),
         move || {
             let rect = move || crate::video::layout_rect(ui, 0);
+            let size = crate::scale::Scale::new();
             view()
                 .test_id("pip-placeholder")
                 .absolute()
@@ -282,24 +283,21 @@ pub fn placeholder(ui: Ui) -> impl IntoElement {
                         .size(px(32.0))
                         .text_color(tint(WHITE, 0xB0)),
                 )
+                .child(crate::ui_kit::caption(
+                    size,
+                    "Playing in picture-in-picture",
+                ))
                 .child(
-                    text("Playing in picture-in-picture")
-                        .text_size(px(14.0))
-                        .text_color(tint(WHITE, 0xD0)),
-                )
-                .child(
-                    text("Back to the app")
-                        .test_id("pip-return")
-                        .px(px(14.0))
-                        .py(px(6.0))
-                        .rounded(px(6.0))
-                        .text_size(px(13.0))
-                        .text_color(rgb(WHITE))
-                        .bg(tint(WHITE, 0x26))
-                        .hover(|s| s.bg(tint(WHITE, 0x40)))
-                        .on_press(move || {
+                    crate::ui_kit::button(
+                        ui,
+                        size,
+                        "Back to the app",
+                        || false,
+                        move || {
                             crate::pip::exit(ui, Exit::BackToApp);
-                        }),
+                        },
+                    )
+                    .test_id("pip-return"),
                 )
         },
     )
