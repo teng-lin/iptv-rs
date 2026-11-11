@@ -121,12 +121,40 @@ fn the_guide_opens_on_all_channels() {
 #[test]
 fn left_from_the_live_programme_opens_the_groups_and_the_rail() {
     let mut s = Screen::new();
-    s.mv(Move::Down);
+    // Row 4 is channel 4: even channels have no catch-up here.
+    for _ in 0..4 {
+        s.mv(Move::Down);
+    }
+    assert_eq!(s.channel(), Some(4));
     assert_eq!(s.mv(Move::Left), Outcome::Moved);
     assert_eq!(s.focus.pane, Pane::Groups);
     assert!(s.focus.columns_shown());
     assert_eq!(s.focus.group, ALL, "the current list is selected");
-    assert_eq!(s.focus.channel, 1, "the guide keeps its row meanwhile");
+    assert_eq!(s.focus.channel, 4, "the guide keeps its row meanwhile");
+    // Left again: the rail, on Search; OK searches.
+    assert_eq!(s.mv(Move::Left), Outcome::Moved);
+    assert_eq!(s.focus.pane, Pane::Rail);
+    assert_eq!(s.rail[s.focus.rail], RailItem::Search);
+    assert_eq!(s.ok(), Outcome::Open(RailItem::Search));
+}
+
+#[test]
+fn left_on_a_catch_up_row_walks_its_archive_before_the_groups() {
+    let mut s = Screen::new();
+    s.mv(Move::Down);
+    assert_eq!(s.channel(), Some(3), "a day of catch-up");
+    let floor = s.focus.floor(&s.view);
+    assert!(floor < 0 && floor >= -24 * 60, "{floor}");
+    let mut steps = 0;
+    while s.mv(Move::Left) == Outcome::Moved && s.focus.pane == Pane::Guide {
+        steps += 1;
+    }
+    assert!(steps > 0);
+    assert_eq!(s.focus.pane, Pane::Groups);
+    let oldest = s.focus.program(&s.view);
+    assert!(oldest.start >= floor, "from the oldest replay");
+    let before = s.view.program_at(s.focus.channel, oldest.start - 1);
+    assert!(before.start < floor);
 }
 
 #[test]
@@ -177,11 +205,12 @@ fn ok_chooses_the_group_and_focuses_its_first_channel() {
 #[test]
 fn right_from_the_groups_returns_to_the_same_row() {
     let mut s = Screen::new();
-    s.mv(Move::Down);
-    s.mv(Move::Down);
+    for _ in 0..4 {
+        s.mv(Move::Down);
+    }
     s.mv(Move::Left);
     assert_eq!(s.mv(Move::Right), Outcome::Committed);
-    assert_eq!((s.focus.pane, s.focus.channel), (Pane::Guide, 2));
+    assert_eq!((s.focus.pane, s.focus.channel), (Pane::Guide, 4));
     assert!(!s.focus.hint);
 }
 
@@ -260,6 +289,9 @@ fn the_rail_skips_items_without_a_screen() {
     s.focus.open_groups();
     assert_eq!(s.mv(Move::Left), Outcome::Moved);
     assert_eq!(s.focus.pane, Pane::Rail);
+    assert_eq!(s.rail[s.focus.rail], RailItem::Search);
+    assert_eq!(s.mv(Move::Down), Outcome::Moved);
+    assert_eq!(s.rail[s.focus.rail], RailItem::Tv);
     assert_eq!(s.mv(Move::Down), Outcome::Moved);
     assert_eq!(
         s.rail[s.focus.rail],
@@ -280,6 +312,7 @@ fn the_rail_skips_items_without_a_screen() {
     assert_eq!(s.focus.pane, Pane::Groups);
     // OK on TV goes back to the groups.
     s.mv(Move::Left);
+    s.mv(Move::Down);
     assert_eq!(s.ok(), Outcome::Moved);
     assert_eq!(s.focus.pane, Pane::Groups);
 }

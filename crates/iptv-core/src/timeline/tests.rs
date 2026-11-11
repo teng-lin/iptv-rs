@@ -222,3 +222,24 @@ fn a_grabbed_drag_pans_from_its_first_move() {
     assert_eq!(t.view(), from + 0.25);
     assert!(t.release(-800.0, PPM));
 }
+
+#[test]
+fn a_fling_travels_like_a_native_lists() {
+    // Released at 2000 dp/s: 0.6 × 2000 = 1200 dp (it was 2000 / 3.5 ≈
+    // 570 dp), a whole programme area of [`VISIBLE`] minutes here.
+    let mut t = Timeline::new(0, (-3 * 24 * 60, 3 * 24 * 60));
+    t.grab();
+    t.drag(-1.0, 0.0, PPM);
+    let start = t.view();
+    assert!(t.release(-2000.0, PPM));
+    let dp = (t.rest() - start) * PPM;
+    assert!((dp - 1200.0).abs() < 1.0, "{dp} dp");
+    while t.step(FRAME, PPM) {}
+    let travelled = (t.view() - start) * PPM;
+    assert!((travelled - 1200.0).abs() < 25.0, "{travelled} dp");
+    // A drag follows the finger 1:1: 120 dp is 15 minutes at 8 dp/min.
+    t.grab();
+    let from = t.view();
+    t.drag(120.0, 0.0, PPM);
+    assert_eq!(t.view(), from - 15.0);
+}

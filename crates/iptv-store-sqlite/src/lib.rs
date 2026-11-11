@@ -32,6 +32,7 @@ mod channels;
 mod codec;
 mod epg;
 mod epg_assign;
+mod epg_extent;
 mod epg_stage;
 mod epg_titles;
 mod error;

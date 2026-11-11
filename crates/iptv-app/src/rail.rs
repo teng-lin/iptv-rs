@@ -1,14 +1,18 @@
 //! The navigation rail left of the groups column, on the panel colour: icons while the groups
 //! have the focus, icons with labels while it has the focus itself. Items
 //! without a screen in this build are dimmed and never take the focus
-//! (`iptv_core::browse`). The icons are our own simple line drawings.
+//! (`iptv_core::browse`); the focused one is the light pill the guide's
+//! focused programme is. Left from the groups lands on Search. The icons
+//! are our own simple line drawings.
 
 use iptv_core::browse::RailItem;
 use iptv_core::guide::Pane;
 use nsh_core::element::ImageSrc;
 use nsh_core::prelude::*;
 
-use crate::theme::{FOCUS_ALPHA, RADIUS, TEXT_DISABLED_ALPHA, TEXT_SECONDARY_ALPHA, TEXT_SIZE};
+use crate::theme::{
+    FOCUSED_CELL, FOCUSED_TEXT, RADIUS, TEXT_DISABLED_ALPHA, TEXT_SECONDARY_ALPHA, TEXT_SIZE,
+};
 use crate::{Ui, tint};
 
 const WHITE: u32 = 0xFFFFFF;
@@ -77,10 +81,10 @@ fn item_view(ui: Ui, item: RailItem) -> impl IntoElement {
     let colour = move || {
         if !item.enabled() {
             tint(WHITE, TEXT_DISABLED_ALPHA / 2)
+        } else if focused() {
+            rgb(FOCUSED_TEXT)
         } else if item == RailItem::Tv {
             rgb(ui.theme.with(|t| t.accent.light))
-        } else if focused() {
-            rgb(WHITE)
         } else {
             tint(WHITE, TEXT_SECONDARY_ALPHA)
         }
@@ -97,7 +101,7 @@ fn item_view(ui: Ui, item: RailItem) -> impl IntoElement {
         .overflow_hidden()
         .bg(move || {
             if focused() {
-                tint(ui.theme.with(|t| t.accent.main), FOCUS_ALPHA)
+                rgb(FOCUSED_CELL)
             } else {
                 tint(WHITE, 0)
             }

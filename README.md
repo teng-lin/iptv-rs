@@ -109,9 +109,21 @@ from the guide's menu (Menu, `m`).
 | Rewind / fast-forward (catch-up) | `[`, `]` |
 | Stop (Long Back on a remote) | the Stop media key |
 | Long Left over video (channel list beside it) | Shift+Left |
+| Search | `/`, Ctrl+F (Cmd+F on macOS) |
+| Long Left in the guide (the groups) | Tab, Shift+Tab |
 | Volume up / down, mute (desktop only) | Ctrl+Up, Ctrl+Down, Ctrl+M |
 | Window full screen | F11, a double click on the video (Escape leaves it first) |
 | Overlay / full screen (development) | `o`, `f` |
+
+In the guide Left walks back through the programmes a channel can replay
+(catch-up: down to the oldest inside its archive and the stored guide;
+without catch-up: to the programme on air) and from there opens the
+groups; Left in the groups focuses the rail's Search. Right walks on to
+the end of the stored guide. Home goes back to now, Shift+Left/Right an
+hour, Ctrl (Cmd)+Left/Right a day, both stopping where Left and Right
+do. The timeline pans back as far as the list's catch-up goes (no
+further than now's half hour without catch-up); past programmes a row
+cannot replay are dimmed.
 
 Over full-screen video: OK shows the info card with TV guide and
 History, Down the control row (Up back), Menu the control row at once,

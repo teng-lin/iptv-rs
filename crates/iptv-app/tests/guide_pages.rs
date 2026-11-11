@@ -1,6 +1,7 @@
 //! The guide holds the stored guide's last day; older days are read in
 //! when the user browses back to them, and dropped back at now. Run
-//! headless: a playlist picked from a file whose guide is a local XMLTV
+//! headless: a playlist picked from a file (its channel replays three
+//! days, so the guide browses back that far) whose guide is a local XMLTV
 //! file covering three days back.
 //!
 //! Synthetic data only.
@@ -53,7 +54,7 @@ fn older_days_are_read_in_when_browsing_back() {
     let guide_path = home.path().join("guide.xml");
     std::fs::write(&guide_path, guide(now)).unwrap();
     let playlist = format!(
-        "#EXTM3U url-tvg=\"{}\"\n#EXTINF:-1 tvg-id=\"one\" group-title=\"News\",Test Channel One\nhttp://stream.example.test/one.m3u8\n",
+        "#EXTM3U url-tvg=\"{}\"\n#EXTINF:-1 tvg-id=\"one\" group-title=\"News\" catchup=\"shift\" catchup-days=\"3\",Test Channel One\nhttp://stream.example.test/one.m3u8\n",
         guide_path.display()
     );
 

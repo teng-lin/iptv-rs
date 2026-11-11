@@ -4,10 +4,13 @@
 //!
 //! A drag decides its axis once it moved [`SLOP`] (a tap's small wobble
 //! stays a tap; a vertical drag stays the channel list's), then moves the
-//! view with the finger; released fast enough it flings on and slows down
-//! ([`FRICTION`]). The view stays within what the schedule can browse
-//! ([`crate::guide::Schedule::browsable`]): back to the oldest day kept, on
-//! to a little past the last programme. Keys move the focus model's window
+//! view with the finger, 1:1 in dp (the platform's pan reports dp, and dp
+//! per minute is the programme area's width over [`VISIBLE`]); released
+//! fast enough it flings on and slows down ([`FLING_GAIN`], [`FRICTION`]),
+//! about as far as a native list's fling. The view stays within what the
+//! guide can show ([`crate::guide::view_range`]): back as far as the
+//! list's catch-up goes in the stored guide (only now's half hour without
+//! catch-up), on to a little past the last programme. Keys move the focus model's window
 //! ([`crate::guide::Focus`]); the view follows it while nothing pans, and a
 //! settled pan hands its window back ([`Timeline::window`]).
 //!
@@ -19,8 +22,17 @@ use crate::guide::{STEP, VISIBLE, home_window};
 
 /// How far (dp) a finger moves before its drag picks an axis.
 pub const SLOP: f32 = 10.0;
-/// A fling's speed falls by `e^(-FRICTION · seconds)`.
-pub const FRICTION: f32 = 3.5;
+/// A fling's speed falls by `e^(-FRICTION · seconds)`, so from `v` it
+/// travels `v / FRICTION`: with 2.0 about half a second's worth, as an iOS
+/// list's normal deceleration (0.998 per ms, `-ln 0.998 · 1000` ≈ 2.0)
+/// and an Android list's fling at everyday speeds. (It was 3.5: a third of
+/// a second's worth, so flings felt short and slow.)
+pub const FRICTION: f32 = 2.0;
+/// A fling starts this much faster than the finger lifted: the platform's
+/// velocity is smoothed over the last moves, which slow as the finger
+/// lifts, so a native list's fling reads it high too. With [`FRICTION`] a
+/// fling travels `0.6 v` (it was `0.29 v`).
+pub const FLING_GAIN: f32 = 1.2;
 /// Below this speed (dp per second) a release or a fling stops.
 pub const STOP_SPEED: f32 = 40.0;
 /// Minutes of programmes the grid holds beyond each edge of the view.
@@ -164,11 +176,11 @@ impl Timeline {
     }
 
     /// The finger lifted moving `vx` dp per second: a horizontal drag
-    /// flings on. Whether a fling started.
+    /// flings on ([`FLING_GAIN`] faster). Whether a fling started.
     pub fn release(&mut self, vx: f32, ppm: f32) -> bool {
         let horizontal = matches!(self.drag.take(), Some((_, Lock::Horizontal)));
         self.speed = if horizontal && vx.abs() >= STOP_SPEED && ppm > 0.0 {
-            -vx / ppm
+            -vx * FLING_GAIN / ppm
         } else {
             0.0
         };

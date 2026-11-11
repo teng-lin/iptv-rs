@@ -47,6 +47,10 @@ const CHANNEL_MIN: f32 = 234.0;
 const CHANNEL_MAX: f32 = 576.0;
 /// The now line's width.
 const NOW_W: f32 = 2.0;
+/// A past programme the row cannot replay (no catch-up, or before its
+/// archive): shown when the view is panned back for rows that can, dimmed
+/// to this opacity, and never focused by the keys (`guide::floor`).
+const PAST_DIM: f32 = 0.4;
 
 /// Cells a row can hold: about 12 per window of programmes, across the
 /// band.
@@ -192,17 +196,25 @@ fn hint_card(ui: Ui) -> impl IntoElement {
 
 /// What the keys do in the guide: a remote's, or a desktop keyboard's
 /// (`iptv_nav::Profile`).
-fn hint_lines() -> [&'static str; 3] {
+fn hint_lines() -> [&'static str; 4] {
     match crate::input::PROFILE {
         iptv_nav::Profile::Remote => [
+            "◀  ·  replays (catch-up), then groups",
+            "◀ in the groups  ·  search",
+            "Hold ◀  ·  groups      Search  ·  search",
             "Hold OK  ·  menu",
-            "◀  ·  groups",
-            "Hold ◀  ·  earlier programmes",
+        ],
+        iptv_nav::Profile::Keyboard if cfg!(target_os = "macos") => [
+            "◀  ·  replays (catch-up), then groups",
+            "Tab  ·  groups      / or ⌘F  ·  search",
+            "Home  ·  now      Shift ◀ ▶  ·  hours      ⌘ ◀ ▶  ·  days",
+            "◀ in the groups  ·  search      m  ·  menu",
         ],
         iptv_nav::Profile::Keyboard => [
-            "Tab  ·  groups      Home  ·  now",
-            "◀ ▶  ·  programmes      Shift  ·  hours",
-            "Ctrl ◀ ▶  ·  days      m  ·  menu",
+            "◀  ·  replays (catch-up), then groups",
+            "Tab  ·  groups      / or Ctrl+F  ·  search",
+            "Home  ·  now      Shift ◀ ▶  ·  hours      Ctrl ◀ ▶  ·  days",
+            "◀ in the groups  ·  search      m  ·  menu",
         ],
     }
 }
@@ -245,6 +257,9 @@ fn row(
     });
     // The row with the focus: lighter cells, white titles.
     let lit = computed(move || focused.get().is_some_and(|(row, _)| row == at.index()));
+    // Now, for the past cells the row cannot replay (a memo: keys move
+    // the focus without the cells' dimming running again).
+    let now = computed(move || ui.focus.with(|f| f.now));
     let cell = move |i: usize| {
         let program = move || programs.with(|ps| ps.get(i).copied());
         let geometry = move || {
@@ -264,13 +279,21 @@ fn row(
             program().is_some_and(|p| focused.get() == Some((at.index(), p.start)))
                 && ui.keys_shown()
         };
+        let opacity = move || match (program(), channel.get()) {
+            (None, _) | (_, None) => 0.0_f32,
+            (Some(p), Some(ch)) => {
+                let now = now.get();
+                let gone = p.end <= now && !crate::in_archive(ch, p, now);
+                if gone { PAST_DIM } else { 1.0 }
+            }
+        };
         view()
             .absolute()
             .top(move || px(((size.whole(ROW_H) - size.whole(CELL_H)) / 2.0).floor()))
             .h(move || px(size.whole(CELL_H)))
             .left(move || px(geometry().0 + size.of(CELL_GAP) / 2.0))
             .w(move || px((geometry().1 - size.of(CELL_GAP)).max(0.0)))
-            .opacity(move || if program().is_some() { 1.0_f32 } else { 0.0 })
+            .opacity(opacity)
             .rounded(move || size.px(CELL_RADIUS))
             .px(move || size.px(CELL_INSET))
             .justify_center()

@@ -2,15 +2,19 @@
 //! groups column and the guide grid ([`Focus`] owns the remote's place in
 //! all three).
 //!
-//! - Left from the guide's live programme shows the groups column and,
-//!   beside it, the rail (collapsed to icons); the guide shifts right.
+//! - Left from the guide's floor programme (the oldest replay on a
+//!   catch-up channel, now's programme on one without:
+//!   [`crate::guide::floor`]) shows the groups column and, beside it, the
+//!   rail (collapsed to icons); the guide shifts right. Hold Left (Tab on a
+//!   keyboard) shows them from anywhere in the grid ([`Focus::open_groups`]).
 //! - Moving over the groups previews each one: the guide shows that list
 //!   at once, from its first row ([`Outcome::Preview`]). OK chooses it: the
 //!   columns close and the list's first channel has the focus, with a hint
 //!   card. Right goes to the guide without moving the row. A tap selects a
 //!   group as moving onto it does.
-//! - Left from the groups focuses the rail (it expands with labels).
-//!   Items without a screen in this build are dimmed and skipped.
+//! - Left from the groups focuses the rail (it expands with labels) on
+//!   Search: Left, Left, OK searches. Items without a screen in this
+//!   build are dimmed and skipped.
 //! - Back: hint card → guide (a past or future programme returns to now
 //!   first, unless [`Columns::back_to_now`] is off) → groups → rail →
 //!   leave the app.
@@ -67,9 +71,17 @@ pub fn rail_items(has_vod: bool) -> Vec<RailItem> {
     items
 }
 
-/// The rail's current item (TV): where its focus starts.
+/// The rail's current item (TV): where Back from the groups focuses it.
 pub fn rail_home(items: &[RailItem]) -> usize {
     items.iter().position(|&i| i == RailItem::Tv).unwrap_or(0)
+}
+
+/// The rail's Search: where Left from the groups focuses it.
+pub fn rail_search(items: &[RailItem]) -> usize {
+    items
+        .iter()
+        .position(|&i| i == RailItem::Search)
+        .unwrap_or_else(|| rail_home(items))
 }
 
 /// What the columns hold.
@@ -124,7 +136,8 @@ impl Focus {
                 self.select(to)
             }
             (Pane::Groups, Move::Left) => {
-                self.focus_rail(cols);
+                self.pane = Pane::Rail;
+                self.rail = rail_search(cols.rail);
                 Outcome::Moved
             }
             (Pane::Groups, Move::Right) if list.channel_count() > 0 => {
@@ -194,9 +207,9 @@ impl Focus {
     }
 
     /// Shows the groups column (and the rail beside it) with the focus on
-    /// the selected group: Left from a live programme does it in
-    /// [`Focus::navigate`]; this is the Groups key or a tap on the list's
-    /// name.
+    /// the selected group: Left from the floor programme does it in
+    /// [`Focus::navigate`]; this is Hold Left, the Groups key or a tap on
+    /// the list's name.
     pub fn open_groups(&mut self) {
         self.hint = false;
         self.pane = Pane::Groups;

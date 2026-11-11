@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
+import android.view.KeyEvent
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
@@ -92,6 +93,20 @@ class TvActivity : Activity() {
         nsh.handleUrlSchemeIntent(intent)
     }
 
+    /**
+     * A remote's Search key: NSH has no key for `KEYCODE_SEARCH` (and the
+     * system would start its own search), so it goes on as F12, which no
+     * remote sends; the app binds F12 to its search on Android (`input.rs`).
+     */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.keyCode != KeyEvent.KEYCODE_SEARCH) return super.dispatchKeyEvent(event)
+        val search = KeyEvent(
+            event.downTime, event.eventTime, event.action, SEARCH_AS, event.repeatCount,
+            event.metaState, event.deviceId, event.scanCode, event.flags, event.source,
+        )
+        return super.dispatchKeyEvent(search)
+    }
+
     @Deprecated("Back is also handled by NshView's OnBackInvokedCallback on API 33+")
     override fun onBackPressed() {
         if (!nsh.handleBack()) super.onBackPressed()
@@ -100,5 +115,10 @@ class TvActivity : Activity() {
     override fun onDestroy() {
         nsh.destroy()
         super.onDestroy()
+    }
+
+    private companion object {
+        /** What the remote's Search key is handed on as. */
+        const val SEARCH_AS = KeyEvent.KEYCODE_F12
     }
 }
