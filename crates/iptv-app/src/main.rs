@@ -11,7 +11,7 @@ fn main() -> impl std::process::Termination {
     platform::run_app(
         platform::AppSource::Rust(platform::Root::of::<iptv_app::App>()),
         platform::AppOptions {
-            title: "iptv-rs".to_owned(),
+            title: "Patina".to_owned(),
             app_id: "com.hantekllc.iptvrs".to_owned(),
             size: (960, 540),
             ..Default::default()
@@ -27,7 +27,7 @@ fn main() -> impl std::process::Termination {
     platform::run_app(
         platform::AppSource::Rust(platform::Root::of::<iptv_app::App>()),
         platform::AppOptions {
-            title: "iptv-rs".to_owned(),
+            title: "Patina".to_owned(),
             app_id: "com.hantekllc.iptvrs".to_owned(),
             size: (1280, 720),
             ..Default::default()

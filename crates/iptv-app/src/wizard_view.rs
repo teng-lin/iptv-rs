@@ -348,7 +348,7 @@ fn empty(ui: Ui) -> impl IntoElement {
         .child(ui_kit::title(size, "No playlists yet"))
         .child(ui_kit::body(
             size,
-            "iptv-rs has no channels of its own. Add the playlist or account \
+            "Patina has no channels of its own. Add the playlist or account \
              your TV provider gave you, and the guide fills with its channels.",
         ))
         .child(button(ui, size, "Add playlist", Target::AddPlaylist))

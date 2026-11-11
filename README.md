@@ -4,8 +4,9 @@ Codename for an IPTV player for Android TV and Android tablets, written in Rust
 with [Native Shell (NSH)](https://github.com/longbridge/nsh). The UX targets
 parity with the reference TV player described in `~/src/tivimate/docs` (remote
 first, guide over live video, touch as a first-class second input). The
-product is Patina IPTV Player ("Patina" on the Android launcher); `iptv-rs`
-stays the codename, the crate names and the desktop name.
+product is Patina IPTV Player ("Patina" on the launchers, the menu bar and
+the packages); `iptv-rs` stays the codename, the crate names and the data
+directories' name.
 
 Plan and decisions: [`.plans/2026-11-09-tivimate-ux-replication.md`](.plans/2026-11-09-tivimate-ux-replication.md).
 Android video/input research: [`docs/research/android-video-and-input.md`](docs/research/android-video-and-input.md).
@@ -234,7 +235,7 @@ result (about 100 MB) runs on a Mac without Homebrew:
 
 ```sh
 brew install mpv                     # the libmpv the app links and bundles
-tools/package-macos.sh               # target/package/iptv-rs.app
+tools/package-macos.sh               # target/package/Patina.app
 ```
 
 Limits of this package, and what a public one needs:
@@ -252,9 +253,9 @@ Limits of this package, and what a public one needs:
   timestamp (`codesign --force --options runtime --timestamp --sign
   "Developer ID Application: …"`; mpv's scripts are off, so no JIT
   entitlement should be needed, to be confirmed under the hardened
-  runtime); then `ditto -c -k --keepParent iptv-rs.app iptv-rs.zip`,
-  `xcrun notarytool submit iptv-rs.zip --keychain-profile <profile>
-  --wait` and `xcrun stapler staple iptv-rs.app`.
+  runtime); then `ditto -c -k --keepParent Patina.app Patina.zip`,
+  `xcrun notarytool submit Patina.zip --keychain-profile <profile>
+  --wait` and `xcrun stapler staple Patina.app`.
 
 ### iPad
 
@@ -267,11 +268,11 @@ guide keeps its full sizes, as on an Android tablet.
 ```sh
 tools/fetch-mpvkit.sh                # MPVKit 1.0.0's xcframeworks into target/mpvkit (checksums pinned)
 cd crates/iptv-app
-nsh package . --target ios-simulator -o ../../target/ios-sim   # iptv-rs.app for the simulator
+nsh package . --target ios-simulator -o ../../target/ios-sim   # Patina.app for the simulator
 nsh package . --target ios -o ../../target/ios \
   --sign <signing identity SHA-1> --profile <app.mobileprovision>
 xcrun devicectl list devices
-xcrun devicectl device install app --device <id> ../../target/ios/iptv-rs.app
+xcrun devicectl device install app --device <id> ../../target/ios/Patina.app
 xcrun devicectl device process launch --device <id> com.hantekllc.iptvrs
 ```
 
@@ -312,10 +313,7 @@ xcrun devicectl device process launch --device <id> com.hantekllc.iptvrs
 ## Before any public release
 
 - Replace `crates/iptv-app/src/theme.rs` (placeholder palette) with our own design.
-- The desktop name: `nsh.json` `"name"` is still `iptv-rs`, and the
-  desktop data directories are named after it, so renaming it to Patina
-  moves them (or needs a migration). The application id
-  `com.hantekllc.iptvrs` is final once uploaded to Play. The icon, TV
-  banner and Android label are in place (`art/icon`,
+- The application id `com.hantekllc.iptvrs` is final once uploaded to
+  Play. The name (Patina), icon and TV banner are in place (`art/icon`,
   `tools/make-icons.py`).
 - See Phase 9 of the plan.

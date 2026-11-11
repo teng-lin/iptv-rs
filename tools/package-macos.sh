@@ -9,8 +9,8 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 nsh=${NSH:-$root/../nsh/target/release/nsh}
 out=$(mkdir -p "${1:-$root/target/package}" && cd "${1:-$root/target/package}" && pwd)
-rm -rf "$out/iptv-rs.app"
+rm -rf "$out/Patina.app"
 (cd "$root/crates/iptv-app" && "$nsh" package --target macos -o "$out" .)
-python3 -I "$root/tools/bundle-macos.py" "$out/iptv-rs.app"
-codesign --verify --deep --strict "$out/iptv-rs.app"
-echo "$out/iptv-rs.app"
+python3 -I "$root/tools/bundle-macos.py" "$out/Patina.app"
+codesign --verify --deep --strict "$out/Patina.app"
+echo "$out/Patina.app"

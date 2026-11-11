@@ -63,7 +63,7 @@ pub fn menus(ui: Ui) {
     set_application_menu(vec![
         // The app menu (AppKit titles it with the app's name).
         MenuItem::submenu(
-            "iptv-rs",
+            "Patina",
             [
                 role(MenuRole::About),
                 MenuItem::separator(),

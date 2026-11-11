@@ -7,7 +7,7 @@ reference at them (@rpath/<name>, the executable's rpath
 that lead back to Homebrew, and signs it all again ad hoc (`codesign -s -`).
 
 Usage (after `nsh package --target macos`):
-  python3 -I tools/bundle-macos.py target/package/iptv-rs.app
+  python3 -I tools/bundle-macos.py target/package/Patina.app
 
 Needs Xcode's command line tools (otool, install_name_tool, codesign). It
 fails when a dependency cannot be found, and checks at the end that no
