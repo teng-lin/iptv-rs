@@ -190,18 +190,8 @@ fn run(
     }
 }
 
+/// Runs `cmd`; what it answers.
 fn execute(mpv: &Mpv, cmd: Cmd, bridge: &mut Bridge) -> Vec<Note> {
-    if let Cmd::Format = cmd {
-        let fps = mpv.get_f64(c"container-fps").map(Note::Fps);
-        let channels = mpv
-            .get_i64(c"audio-params/channel-count")
-            .map(Note::Channels);
-        return fps.into_iter().chain(channels).collect();
-    }
-    execute_one(mpv, cmd, bridge).into_iter().collect()
-}
-
-fn execute_one(mpv: &Mpv, cmd: Cmd, bridge: &mut Bridge) -> Option<Note> {
     match cmd {
         Cmd::Load { url, live, options } => {
             // Track choices are options: they would carry over to this file.
@@ -217,16 +207,16 @@ fn execute_one(mpv: &Mpv, cmd: Cmd, bridge: &mut Bridge) -> Option<Note> {
             // stopping one until it ends).
             let id = ok.then(|| last_entry(mpv)).flatten();
             bridge.load(url, live, id);
-            Some(Note::Loading(id))
+            vec![Note::Loading(id)]
         }
         Cmd::Stop => {
             mpv.command(&["stop"]);
             bridge.load(String::new(), false, None);
-            None
+            Vec::new()
         }
         Cmd::Set(name, value) => {
             mpv.set(name, &value);
-            None
+            Vec::new()
         }
         Cmd::Http { user_agent, fields } => {
             mpv.set("user-agent", &user_agent);
@@ -234,10 +224,20 @@ fn execute_one(mpv: &Mpv, cmd: Cmd, bridge: &mut Bridge) -> Option<Note> {
             for field in &fields {
                 mpv.command(&["change-list", "http-header-fields", "append", field]);
             }
-            None
+            Vec::new()
         }
-        Cmd::Position => mpv.get_f64(c"time-pos").map(Note::Position),
-        Cmd::Format => None,
+        Cmd::Position => mpv
+            .get_f64(c"time-pos")
+            .map(Note::Position)
+            .into_iter()
+            .collect(),
+        Cmd::Format => {
+            let fps = mpv.get_f64(c"container-fps").map(Note::Fps);
+            let channels = mpv
+                .get_i64(c"audio-params/channel-count")
+                .map(Note::Channels);
+            fps.into_iter().chain(channels).collect()
+        }
     }
 }
 
