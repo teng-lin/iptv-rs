@@ -81,6 +81,7 @@ impl Editor {
                 .get(at.min(self.items.len().saturating_sub(1)))
                 .map(|i| i.id.clone());
             self.action = None;
+            self.text = None; // A draft belongs to the removed identity, never its neighbor.
         }
         self.selected
             .retain(|id| self.items.iter().any(|i| &i.id == id));
@@ -165,5 +166,71 @@ mod tests {
         assert!(e.action.is_some());
         assert!(e.back());
         assert!(!e.back());
+    }
+}
+
+#[cfg(test)]
+mod coverage_tests {
+    use super::*;
+    fn item(id: &str) -> Item {
+        Item {
+            id: id.into(),
+            name: format!("Name {id}"),
+            hidden: false,
+        }
+    }
+    #[test]
+    fn remote_navigation_clamps_and_a_name_draft_keeps_its_identity() {
+        let mut editor = Editor::new(
+            vec![item("a"), item("b"), item("c")],
+            Some("missing".into()),
+        );
+        assert_eq!(editor.focus.as_deref(), Some("a"));
+        editor.step(1);
+        assert_eq!(editor.focus.as_deref(), Some("b"));
+        editor.step(100);
+        assert_eq!(editor.focus.as_deref(), Some("c"));
+        editor.step(-100);
+        assert_eq!(editor.focus.as_deref(), Some("a"));
+        editor.open_actions("missing".into());
+        assert_eq!(editor.action, None);
+        editor.open_actions("b".into());
+        editor.step(1);
+        assert_eq!(editor.action, Some(Action::Rename));
+        editor.text = Some("Draft".into());
+        editor.step(100);
+        assert_eq!(editor.focus.as_deref(), Some("b"));
+        assert_eq!(editor.action, Some(Action::Rename));
+        assert!(editor.back());
+        editor.step(100);
+        assert_eq!(editor.action, Some(Action::ShowAll));
+        editor.step(-100);
+        assert_eq!(editor.action, Some(Action::Visibility));
+        editor.toggle_selection();
+        assert!(editor.selected.contains("b"));
+        assert_eq!(editor.action, None);
+        editor.toggle_selection();
+        assert!(editor.selected.is_empty());
+        editor.reload(Vec::new());
+        editor.toggle_selection();
+        assert!(editor.selected.is_empty());
+    }
+    #[test]
+    fn removing_a_channel_during_rename_cannot_rename_its_neighbor() {
+        let mut editor = Editor::new(vec![item("a"), item("b"), item("c")], Some("c".into()));
+        editor.open_actions("c".into());
+        editor.text = Some("Only for C".into());
+        editor.selected.insert("c".into());
+        editor.reload(vec![item("a"), item("b")]);
+        assert_eq!(editor.focus.as_deref(), Some("b"));
+        assert_eq!(editor.action, None);
+        assert_eq!(
+            editor.text, None,
+            "cancel a draft whose content identity disappeared"
+        );
+        assert!(editor.selected.is_empty());
+        editor.reload(vec![]);
+        assert!(editor.focused().is_none());
+        assert!(!editor.back());
     }
 }

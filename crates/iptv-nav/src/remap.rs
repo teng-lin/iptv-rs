@@ -400,3 +400,76 @@ mod editor_tests {
         assert!(!e.back());
     }
 }
+
+#[cfg(test)]
+mod coverage_tests {
+    use super::*;
+    #[test]
+    fn persisted_tokens_round_trip_and_unknown_data_is_rejected() {
+        for context in
+            CONTEXTS
+                .iter()
+                .copied()
+                .chain([Context::Menu, Context::Editor, Context::Multiview])
+        {
+            assert_eq!(Context::from_token(context.token()), Some(context));
+            assert!(!allowed(
+                context,
+                RemoteKey::Back,
+                Press::Short,
+                Action::Ignore
+            ));
+        }
+        for action in ACTIONS.iter().copied() {
+            assert_eq!(Action::from_token(action.token()), Some(action));
+        }
+        assert_eq!(Action::Digit(2).token(), "digit");
+        assert_eq!(Action::from_token("digit"), None);
+        assert_eq!(Context::from_token("unsupported"), None);
+        assert_eq!(Action::from_token("unsupported"), None);
+        for (context, action) in [
+            ("player", "seek_forward"),
+            ("controls", "move_right"),
+            ("channel_list", "select"),
+            ("search", "move_left"),
+            ("groups", "show_groups"),
+            ("guide", "day_back"),
+        ] {
+            let binding = checked_binding(context, "green", true, action).unwrap();
+            assert_eq!(binding.press, Press::Long);
+            assert_eq!(binding.key, RemoteKey::Green);
+        }
+        assert!(checked_binding("menu", "green", true, "select").is_none());
+        assert!(checked_binding("multiview", "green", true, "select").is_none());
+        assert!(checked_binding("search", "green", true, "stop").is_none());
+        assert!(checked_binding("channel_list", "green", false, "stop").is_none());
+        assert!(checked_binding("player", "back", true, "stop").is_some());
+        assert!(checked_binding("unknown", "green", false, "stop").is_none());
+        assert!(checked_binding("player", "green", false, "unknown").is_none());
+    }
+    #[test]
+    fn editor_boundaries_confirmation_and_capture_keep_saved_bindings_separate() {
+        let mut editor = Editor::default();
+        let draft = editor.binding().unwrap();
+        editor.step(-100);
+        assert_eq!(editor.focus, Field::Context);
+        editor.step(100);
+        assert_eq!(editor.focus, Field::Reset);
+        editor.step(-1);
+        assert_eq!(editor.focus, Field::Clear);
+        editor.confirm = Some(Confirm::Reset);
+        assert!(!editor.accept);
+        editor.step(1);
+        assert!(editor.accept);
+        editor.step(-1);
+        assert!(!editor.accept);
+        assert!(editor.back());
+        assert_eq!(editor.binding(), Some(draft));
+        editor.capturing = true;
+        assert!(editor.back());
+        assert!(!editor.capturing);
+        assert!(!editor.back());
+        assert!(editor.actions().contains(&Action::ToggleFavorite));
+        assert!(!editor.actions().contains(&Action::Stop));
+    }
+}

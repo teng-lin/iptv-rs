@@ -469,3 +469,57 @@ fn organization_filters_lists_but_preserves_playback_and_group_identity() {
     assert_eq!(s.group_count(), 2);
     assert_eq!(ChannelList::build(ALL, &s, &[], &[]).channels(), [0, 2, 1]);
 }
+
+#[test]
+fn returning_and_new_channels_keep_provider_identity_and_fill_missing_preferences() {
+    let m = parse_m3u(
+        "#EXTM3U\n#EXTINF:-1 group-title=\"News\",A\nhttp://example.test/a\n#EXTINF:-1 group-title=\"Sport\",B\nhttp://example.test/b\n#EXTINF:-1 group-title=\"News\",C\nhttp://example.test/c\n",
+    );
+    let schedule = EpgSchedule::from_catalog(&m.groups, &m.channels.items, GuideStore::new(), NOW);
+    let a = m.channels.items[0].id.as_str().to_owned();
+    let b = m.channels.items[1].id.as_str().to_owned();
+    let c = m.channels.items[2].id.as_str().to_owned();
+    let preferences = super::Organization {
+        channels: vec![
+            ("temporarily-absent".into(), "Orphan".into(), true),
+            (c.clone(), "Local C".into(), true),
+            (a.clone(), "Local A".into(), false),
+        ],
+        groups: Vec::new(),
+    };
+    schedule.set_organization(preferences.clone());
+    let list = iptv_core::lists::ChannelList::build(iptv_core::lists::ALL, &schedule, &[], &[]);
+    assert_eq!(
+        list.channels()
+            .iter()
+            .map(|&c| schedule.channel_name(c))
+            .collect::<Vec<_>>(),
+        ["Local A", "B"]
+    );
+    assert_eq!(
+        schedule.channel_name(schedule.find_channel(&b).unwrap()),
+        "B",
+        "missing customization falls back to provider name"
+    );
+    let added = parse_m3u(
+        "#EXTM3U\n#EXTINF:-1 group-title=\"News\",D\nhttp://example.test/d\n#EXTINF:-1 group-title=\"News\",A\nhttp://example.test/a\n#EXTINF:-1 group-title=\"Sport\",B\nhttp://example.test/b\n#EXTINF:-1 group-title=\"News\",C\nhttp://example.test/c\n",
+    );
+    let refreshed =
+        EpgSchedule::from_catalog(&added.groups, &added.channels.items, GuideStore::new(), NOW);
+    refreshed.set_organization(preferences);
+    let visible = iptv_core::lists::ChannelList::build(iptv_core::lists::ALL, &refreshed, &[], &[]);
+    assert_eq!(
+        visible
+            .channels()
+            .iter()
+            .map(|&c| refreshed.channel_name(c))
+            .collect::<Vec<_>>(),
+        ["Local A", "D", "B"]
+    );
+    assert!(refreshed.channel_hidden(refreshed.find_channel(&c).unwrap()));
+    assert!(
+        refreshed
+            .stream_url(refreshed.find_channel(&a).unwrap())
+            .is_some()
+    );
+}

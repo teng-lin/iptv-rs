@@ -103,3 +103,7 @@ The existing fresh-install player test also passes.
 Logs: `~/analysis/iptv-rs-parity/2026-11-11/library-management/`.
 Builds used one Cargo worker and one native linker thread to limit pressure
 on the shared machine. No emulator or USB tablet has been driven.
+
+## Follow-up coverage pass
+
+See [feature coverage and regression tests](library-management-coverage.md) for the scoped line measurements, expanded workflow tests, rename-draft regression fix and current validation.

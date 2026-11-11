@@ -228,7 +228,7 @@ pub fn layer(ui: Ui) -> impl IntoElement {
     when(
         move || is_open(ui),
         move || {
-            ui_kit::screen(ui,size)
+            ui_kit::screen(ui,size).test_id("remote-editor-screen")
         .child(ui_kit::header(ui,size,"Remote bindings",close))
         .child(ui_kit::caption(size,"Up/Down chooses a row; Left/Right or tap changes it. Save applies immediately. Back remains available."))
         .child(ui_kit::body(size,move||{
@@ -250,4 +250,61 @@ pub fn layer(ui: Ui) -> impl IntoElement {
         }))
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn persisted_overrides_cannot_take_editor_input_or_short_back() {
+        assert!(validated(&KeyBinding::new(None, "red", PressKind::Short, "stop")).is_none());
+        assert!(
+            validated(&KeyBinding::new(
+                Some("editor"),
+                "ok",
+                PressKind::Short,
+                "stop"
+            ))
+            .is_none()
+        );
+        assert!(
+            validated(&KeyBinding::new(
+                Some("guide"),
+                "back",
+                PressKind::Short,
+                "ignore"
+            ))
+            .is_none()
+        );
+        let binding = KeyBinding::new(Some("player"), "green", PressKind::Long, "show_controls");
+        let parsed = validated(&binding).unwrap();
+        assert_eq!(
+            (parsed.context, parsed.key, parsed.press, parsed.action),
+            (
+                Some(Context::Player),
+                RemoteKey::Green,
+                Press::Long,
+                Action::ShowControls
+            )
+        );
+    }
+    #[test]
+    fn override_conflicts_are_scoped_to_context_key_and_press() {
+        let editor = Editor::default();
+        assert!(same(
+            &editor,
+            &KeyBinding::new(Some("guide"), "red", PressKind::Short, "ignore")
+        ));
+        for other in [
+            KeyBinding::new(Some("groups"), "red", PressKind::Short, "ignore"),
+            KeyBinding::new(Some("guide"), "green", PressKind::Short, "ignore"),
+            KeyBinding::new(Some("guide"), "red", PressKind::Long, "ignore"),
+        ] {
+            assert!(!same(&editor, &other));
+        }
+        assert_eq!(cycle(2, &[1, 2, 3], 1), 3);
+        assert_eq!(cycle(1, &[1, 2, 3], -1), 3);
+        assert_eq!(cycle(3, &[1, 2, 3], 1), 1);
+        assert_eq!(cycle(4, &[], 1), 4);
+    }
 }
