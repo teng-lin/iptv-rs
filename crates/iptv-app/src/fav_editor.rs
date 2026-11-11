@@ -105,7 +105,7 @@ pub fn layer(ui: Ui) -> impl IntoElement {
             .child(
                 text(move || if starred() { "★" } else { "☆" })
                     .w(move || size.px(LIST_ITEM + 4.0))
-                    .text_size(move || size.px(LIST_ITEM))
+                    .text_size(move || size.text_px(LIST_ITEM))
                     .text_color(move || {
                         if starred() && mark() != Mark::Focused {
                             rgb(ui.theme.with(|t| t.accent.light))
@@ -148,7 +148,7 @@ pub fn layer(ui: Ui) -> impl IntoElement {
                     text(title)
                         .flex_1()
                         .font_family(SANS)
-                        .text_size(move || size.px(TITLE))
+                        .text_size(move || size.text_px(TITLE))
                         .text_color(rgb(LIST_TEXT)),
                 )
                 .child(button("Add all", set_group))
@@ -164,7 +164,7 @@ pub fn layer(ui: Ui) -> impl IntoElement {
                 }
             })
             .font_family(SANS)
-            .text_size(move || size.px(CAPTION))
+            .text_size(move || size.text_px(CAPTION))
             .text_color(Mark::Plain.secondary()),
         )
         .child(

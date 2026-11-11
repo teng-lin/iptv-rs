@@ -169,6 +169,8 @@ pub fn label(key: &str) -> &'static str {
         "appearance.animated_transitions" => "Animated transitions",
         "guide.browse_mode" => "Guide layout",
         "guide.list_browse_mode" => "Channel list layout",
+        "guide.visible_minutes" => "Visible guide minutes",
+        "guide.show_logos" => "Channel logos",
         "guide.show_channel_names" => "Channel names",
         "guide.show_channel_numbers" => "Channel numbers",
         "guide.show_now_playing" => "Programme on air in the list",

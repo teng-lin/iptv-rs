@@ -19,7 +19,7 @@ use crate::list_rows::{self, INSET, Mark, ROW, ROW_TWO};
 use crate::panels::GROUPS_W;
 use crate::scale::Scale;
 use crate::theme::BRIGHT_TEXT;
-use crate::{Playback, Ui, ViewMode, clock, tint};
+use crate::{Ui, ViewMode, clock, tint};
 
 /// The list's width at full size (scaled with the guide, as is the groups
 /// column's, `panels::GROUPS_W`).
@@ -33,6 +33,14 @@ pub fn is_open(ui: Ui) -> bool {
 
 /// Opens the list over (or beside) full-screen video.
 pub fn open(ui: Ui, mode: ListMode) {
+    let mode = if mode == ListMode::Overlay
+        && crate::settings::choice(iptv_settings::keys::EnumKey("guide.list_browse_mode"))
+            == "preview"
+    {
+        ListMode::Preview
+    } else {
+        mode
+    };
     if ui.mode.get_untracked() != ViewMode::Fullscreen {
         return;
     }
@@ -109,7 +117,7 @@ fn update(ui: Ui, f: impl FnOnce(&mut ChannelList, &Rows, usize) -> Outcome) {
         Outcome::Play(channel) => {
             log::info!("iptv channel list: play {channel}");
             crate::lists::show_channel(ui, channel);
-            ui.play(channel, Playback::Live);
+            crate::browse_playback::select(ui);
         }
         Outcome::Preview(entry) => {
             crate::lists::preview(ui, entry);
@@ -412,13 +420,13 @@ fn preview_info(ui: Ui, size: Scale) -> impl IntoElement {
             text(move || info().map_or(String::new(), |i| i.1))
                 .font_family(SANS)
                 .font_weight(MEDIUM)
-                .text_size(move || size.px(TITLE))
+                .text_size(move || size.text_px(TITLE))
                 .text_color(rgb(BRIGHT_TEXT)),
         )
         .child(
             text(move || info().map_or(String::new(), |i| i.2))
                 .font_family(SANS)
-                .text_size(move || size.px(HEADER_TIMES))
+                .text_size(move || size.text_px(HEADER_TIMES))
                 .text_color(rgb(BRIGHT_TEXT)),
         )
 }

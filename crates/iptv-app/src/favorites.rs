@@ -34,6 +34,11 @@ struct State {
 
 /// A store write, in the order made.
 enum Write {
+    MoveFavourite {
+        source: SourceId,
+        key: String,
+        index: usize,
+    },
     Favourite {
         source: SourceId,
         key: String,
@@ -245,6 +250,9 @@ fn write_all(rx: Receiver<Write>) {
             continue;
         };
         let result = match write {
+            Write::MoveFavourite { source, key, index } => store
+                .move_favourite(source, &ContentId::from_stored(key), index)
+                .map(|_| ()),
             Write::Favourite { source, key, on } => {
                 store.set_favourite(source, &ContentId::from_stored(key), on)
             }
@@ -260,4 +268,28 @@ fn write_all(rx: Receiver<Write>) {
             log::warn!("iptv favourites: could not save ({e})");
         }
     }
+}
+
+/// Ordered keys of the displayed source. Reorders use the same writer queue
+/// as membership changes, so rapid add/move/remove cannot race persistence.
+pub fn ordered_keys() -> Vec<String> {
+    STATE.with(|s| s.borrow().favorites.keys().to_vec())
+}
+pub fn reorder(ui: Ui, key: &str, index: usize) {
+    let source = STATE.with(|s| {
+        let mut s = s.borrow_mut();
+        s.favorites
+            .move_key(key, index)
+            .then_some(s.source)
+            .flatten()
+    });
+    if let Some(source) = source {
+        send(Write::MoveFavourite {
+            source,
+            key: key.into(),
+            index,
+        });
+    }
+    publish(ui);
+    crate::lists::favorites_changed(ui);
 }

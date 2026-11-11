@@ -136,6 +136,13 @@ fn documented() -> Vec<(&'static str, ValueType, Scope, &'static str)> {
         ("appearance.animated_transitions", boolean(true), GL, ""),
         // Guide.
         (
+            "guide.visible_minutes",
+            int(60, 360, 30, IntUnit::None, 150),
+            GL,
+            "",
+        ),
+        ("guide.show_logos", boolean(true), GL, ""),
+        (
             "guide.browse_mode",
             choice(&c::BROWSE_MODE, "preview"),
             GL,

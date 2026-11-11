@@ -346,6 +346,8 @@ pub struct Focus {
     pub cursor: i32,
     /// The first minute shown across the guide.
     pub window: i32,
+    /// Minutes visible across the grid, independent of navigation step size.
+    pub visible: i32,
     /// The guide minute it is now; [`Focus::tick`] advances it.
     pub now: i32,
 }
@@ -380,6 +382,7 @@ impl Focus {
             hint: false,
             cursor: now,
             window: home_window(now),
+            visible: VISIBLE,
             now,
         }
     }
@@ -389,7 +392,13 @@ impl Focus {
     /// focused row's [`Focus::floor`].
     pub(crate) fn bounds(&self, s: &dyn Schedule) -> (i32, i32) {
         let (first, end) = view_range(s, self.now);
-        (first, (end - 1).max(first + VISIBLE - 1))
+        (first, (end - 1).max(first + self.visible - 1))
+    }
+
+    /// Resize the time window while retaining focused content.
+    pub fn set_visible(&mut self, minutes: i32, s: &dyn Schedule) {
+        self.visible = minutes.clamp(60, 360);
+        self.keep_cursor_visible(s);
     }
 
     /// Now moved to `now`. A focus on the live programme follows the
@@ -416,7 +425,7 @@ impl Focus {
         if following {
             self.keep_cursor_visible(s);
         } else {
-            self.window = self.window.clamp(lo, (hi + 1 - VISIBLE).max(lo));
+            self.window = self.window.clamp(lo, (hi + 1 - self.visible).max(lo));
         }
         true
     }
@@ -515,9 +524,11 @@ impl Focus {
     /// before the focused row's floor (the next key brings it on screen).
     pub fn shift_window(&mut self, minutes: i32, s: &dyn Schedule) {
         let (lo, hi) = self.bounds(s);
-        self.window = (self.window + minutes).clamp(lo, hi + 1 - VISIBLE);
+        self.window = (self.window + minutes).clamp(lo, hi + 1 - self.visible);
         let lo = self.window;
-        self.cursor = self.cursor.clamp(lo, (self.window + VISIBLE - 1).max(lo));
+        self.cursor = self
+            .cursor
+            .clamp(lo, (self.window + self.visible - 1).max(lo));
         self.cursor = self.cursor.max(self.floor(s));
     }
 
@@ -548,11 +559,11 @@ impl Focus {
         if anchor < self.window + STEP {
             self.window = (anchor - STEP).div_euclid(STEP) * STEP;
         }
-        while anchor >= self.window + VISIBLE - STEP {
+        while anchor >= self.window + self.visible - STEP {
             self.window += STEP;
         }
         let (lo, hi) = self.bounds(s);
-        self.window = self.window.clamp(lo, hi + 1 - VISIBLE);
+        self.window = self.window.clamp(lo, hi + 1 - self.visible);
     }
 }
 

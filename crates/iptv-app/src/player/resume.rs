@@ -101,7 +101,7 @@ pub fn adopt(ui: Ui) -> bool {
         log::info!("iptv player: the early channel is not in the guide; stopping");
         ui.player.early.set(None);
         super::stop(ui);
-        ui.mode.set(ViewMode::Guide);
+        ui.mode.set(crate::settings::browse_mode());
         return true;
     };
     let open = main.source.with_untracked(Option::is_some);

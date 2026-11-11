@@ -71,6 +71,7 @@ impl Lock {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Timeline {
     view: f32,
+    span: i32,
     /// The view's range: the first browsable minute, the last first one.
     lo: f32,
     hi: f32,
@@ -85,6 +86,7 @@ impl Timeline {
     pub fn new(window: i32, (first, end): (i32, i32)) -> Self {
         let mut t = Timeline {
             view: window as f32,
+            span: VISIBLE,
             lo: 0.0,
             hi: 0.0,
             drag: None,
@@ -98,8 +100,13 @@ impl Timeline {
     /// to `end - VISIBLE`.
     pub fn set_bounds(&mut self, (first, end): (i32, i32)) {
         self.lo = first as f32;
-        self.hi = (end - VISIBLE).max(first) as f32;
+        self.hi = (end - self.span).max(first) as f32;
         self.view = self.clamp(self.view);
+    }
+
+    /// Change visible minutes; callers set bounds again afterwards.
+    pub fn set_span(&mut self, minutes: i32) {
+        self.span = minutes.clamp(60, 360);
     }
 
     fn clamp(&self, view: f32) -> f32 {

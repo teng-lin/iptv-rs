@@ -119,6 +119,7 @@ pub fn group_column(ui: Ui, groups: ElementRef) -> impl IntoElement {
                 )
         },
     )
+    .test_id("guide-groups")
     .estimated_item_size(list_rows::pitch(size, ROW))
     .element_ref(&groups)
     .w(move || px(groups_width(ui)))

@@ -128,6 +128,90 @@ fn write_members(tx: &Transaction<'_>, group: CustomGroupId, list: &[String]) ->
 }
 
 impl Store {
+    /// Atomically copy selected present channels into `to`. A move removes
+    /// membership from `from` only; it never removes channels or provider
+    /// membership. Both custom groups must belong to `source`. Duplicate
+    /// destination membership is retained in place; new members append in
+    /// the supplied order. Any stale/foreign selection rejects the whole edit.
+    pub fn transfer_custom_members(
+        &mut self,
+        source: SourceId,
+        from: Option<CustomGroupId>,
+        to: CustomGroupId,
+        selection: &[ContentId],
+        move_members: bool,
+    ) -> Result<usize> {
+        let tx = self.conn.transaction()?;
+        ensure_source(&tx, source)?;
+        if group_source(&tx, to)? != source
+            || from
+                .map(|g| group_source(&tx, g))
+                .transpose()?
+                .is_some_and(|s| s != source)
+        {
+            return Err(StoreError::InvalidData(
+                "custom group source mismatch".into(),
+            ));
+        }
+        if move_members && from.is_none() {
+            return Err(StoreError::InvalidData(
+                "move requires a custom source group".into(),
+            ));
+        }
+        let present = present_ids(&tx, source)?;
+        let origin: HashSet<_> = from
+            .map(|g| members(&tx, g))
+            .transpose()?
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+        let mut seen = HashSet::new();
+        let selected: Vec<_> = selection
+            .iter()
+            .filter(|id| seen.insert(id.as_str()))
+            .collect();
+        if selected.iter().any(|id| {
+            !present.contains(id.as_str()) || (from.is_some() && !origin.contains(id.as_str()))
+        }) {
+            return Err(StoreError::InvalidData(
+                "selection is no longer in its source list".into(),
+            ));
+        }
+        if from == Some(to) {
+            return Ok(0);
+        }
+        for id in &selected {
+            tx.execute("INSERT OR IGNORE INTO custom_group_members (group_id, channel_id, position)
+                VALUES (?1, ?2, (SELECT COALESCE(MAX(position)+1,0) FROM custom_group_members WHERE group_id=?1))",
+                params![to.0,id.as_str()])?;
+            if move_members {
+                tx.execute(
+                    "DELETE FROM custom_group_members WHERE group_id=?1 AND channel_id=?2",
+                    params![from.unwrap().0, id.as_str()],
+                )?;
+            }
+        }
+        tx.commit()?;
+        Ok(selected.len())
+    }
+
+    /// Atomic removal of selected custom memberships, keeping provider data.
+    pub fn remove_custom_members(
+        &mut self,
+        group: CustomGroupId,
+        selection: &[ContentId],
+    ) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        group_source(&tx, group)?;
+        for id in selection {
+            tx.execute(
+                "DELETE FROM custom_group_members WHERE group_id=?1 AND channel_id=?2",
+                params![group.0, id.as_str()],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
     /// Moves a channel to `index` in a list as shown in effective order
     /// (hidden channels included). The first move materialises the list's
     /// current order. Returns `false` if the channel is not in the list.

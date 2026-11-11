@@ -4,7 +4,8 @@
 //! (grey) over the programmes and the now line's dot, sliding with them
 //! (`pan.rs`); and a thin line under it all.
 
-use iptv_core::timeline::{BAND, MARGIN};
+use super::BAND;
+use iptv_core::timeline::MARGIN;
 use nsh_core::prelude::*;
 
 use super::{NOW_W, Pan, fill};
@@ -38,7 +39,7 @@ pub(super) fn ruler(
             .bg(tint(WHITE, RESTING_ALPHA))
             .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA))
             .font_family(SANS)
-            .text_size(move || size.px(RULER))
+            .text_size(move || size.text_px(RULER))
     };
     let shift = move |label: &'static str, minutes: i32| {
         button(label).on_press(move || {
@@ -74,7 +75,7 @@ pub(super) fn ruler(
         .w(move || px((STEP as f32 * pan.scale() - size.of(TICK_INSET)).max(0.0)))
         .number_of_lines(1)
         .font_family(SANS)
-        .text_size(move || size.px(RULER))
+        .text_size(move || size.text_px(RULER))
         .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA))
     };
     let separator = move || fill(ui, ui.theme.with(|t| t.guide().separator));
@@ -176,6 +177,6 @@ fn date_time(ui: Ui, size: Scale, pan: Pan) -> Text {
     })
     .number_of_lines(1)
     .font_family(SANS)
-    .text_size(move || size.px(RULER))
+    .text_size(move || size.text_px(RULER))
     .text_color(move || rgb(ui.theme.with(|t| t.guide().ruler_date)))
 }

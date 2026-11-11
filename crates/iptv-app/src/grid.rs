@@ -22,7 +22,7 @@ mod pan;
 mod ruler;
 mod wheel;
 
-use iptv_core::timeline::BAND;
+const BAND: i32 = 360 + 2 * iptv_core::timeline::MARGIN;
 use pan::Pan;
 
 use iptv_core::lists::{FAVORITES, RECENT};
@@ -56,7 +56,7 @@ const PAST_DIM: f32 = 0.4;
 
 /// Cells a row can hold: about 12 per window of programmes, across the
 /// band.
-const MAX_CELLS: usize = 17;
+const MAX_CELLS: usize = 40;
 const WHITE: u32 = 0xFFFFFF;
 
 /// The channel column's width now (reactive: the window's size).
@@ -90,8 +90,17 @@ pub fn guide(ui: Ui, rows: ElementRef) -> impl IntoElement {
     // Read where used: a memo of it went stale on window resizes.
     let column: fn() -> f32 = channel_width;
     // Rows are numbered by place: the list's length is its widest number.
-    let number_w =
-        computed(move || crate::numbers::column_width(ui.list.with(|l| l.len()), size.of(CHANNEL)));
+    let number_w = computed(move || {
+        crate::settings::read(ui);
+        if crate::settings::flag(iptv_settings::keys::BoolKey("guide.show_channel_numbers")) {
+            crate::numbers::column_width(
+                ui.list.with(|l| l.len()),
+                size.of(CHANNEL) * crate::settings::font_factor(),
+            )
+        } else {
+            0.0
+        }
+    });
     // Now in the band (the slide brings it on screen or past the edge).
     let now_x = computed(move || {
         let at = now.get() - pan.band().base;
@@ -266,7 +275,7 @@ fn row(
         ui.guide_data();
         let base = pan.band().base;
         channel.get().map_or_else(Vec::new, |ch| {
-            crate::schedule().programs_between(ch, base, BAND)
+            crate::schedule().programs_between(ch, base, pan.minutes())
         })
     });
     // The focused programme's start when this row has the focus (a memo
@@ -285,6 +294,7 @@ fn row(
     let focus = RowFocus { start: focus, lit };
     let cell = move |i| cell::cell(ui, (at, i), (programs, channel), focus, now, (pan, size));
     view()
+        .test_id("guide-row")
         .h(move || px(size.whole(ROW_H)))
         .flex_row()
         .child(channel::cell(ui, at, channel, (column, size), number_w))
@@ -294,7 +304,17 @@ fn row(
                     .absolute()
                     .inset_0()
                     .bind_translate_x(&pan.offset())
-                    .children((0..MAX_CELLS).map(cell)),
+                    .children((0..17).map(cell))
+                    .child(when(
+                        move || pan.minutes() > iptv_core::timeline::BAND,
+                        move || {
+                            view()
+                                .absolute()
+                                .inset_0()
+                                .pointer_events(PointerEvents::BoxNone)
+                                .children((17..MAX_CELLS).map(cell))
+                        },
+                    )),
             ),
         )
 }

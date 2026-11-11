@@ -3,7 +3,9 @@
 //! touch or wheel pan settled at ([`crate::timeline`]). None goes before
 //! the focused row's floor ([`super::floor`]).
 
-use super::{Focus, Pane, Schedule, VISIBLE, home_window};
+#[cfg(test)]
+use super::VISIBLE;
+use super::{Focus, Pane, Schedule, home_window};
 
 /// Minutes in a day (Ctrl + Left/Right).
 pub const DAY: i32 = 24 * 60;
@@ -23,9 +25,11 @@ impl Focus {
             return;
         }
         let (lo, hi) = self.bounds(s);
-        self.window = (self.window + minutes).clamp(lo, hi + 1 - VISIBLE);
+        self.window = (self.window + minutes).clamp(lo, hi + 1 - self.visible);
         self.cursor = (self.cursor + minutes).clamp(lo, hi);
-        self.cursor = self.cursor.clamp(self.window, self.window + VISIBLE - 1);
+        self.cursor = self
+            .cursor
+            .clamp(self.window, self.window + self.visible - 1);
         self.lift_to_floor(s);
     }
 

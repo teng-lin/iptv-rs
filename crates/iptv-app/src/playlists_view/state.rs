@@ -29,6 +29,7 @@ pub enum Act {
     RefreshOnStart,
     Channels,
     Groups,
+    CustomGroups,
     Refresh,
     Rename,
     /// Link, server and login, or portal and MAC address.
@@ -100,6 +101,7 @@ pub enum Effect {
     Show(SourceId),
     Policy(SourceId, iptv_store_sqlite::SourcePolicy),
     Organize(SourceId, bool),
+    CustomGroups(SourceId),
     Refresh(SourceId),
     Rename(SourceId, String),
     /// Open the guide sources screen of `id`.
@@ -214,6 +216,7 @@ impl Screen {
             acts.push(Act::UserAgent);
         }
         acts.push(Act::Guides);
+        acts.push(Act::CustomGroups);
         acts.push(Act::Delete);
         acts
     }
@@ -339,6 +342,7 @@ impl Screen {
                 }
                 Some(Effect::Policy(id, policy))
             }
+            Act::CustomGroups => Some(Effect::CustomGroups(id)),
             Act::Channels | Act::Groups => Some(Effect::Organize(id, act == Act::Groups)),
             Act::Show => to_list(self, Effect::Show(id)),
             Act::Refresh => to_list(self, Effect::Refresh(id)),
@@ -627,6 +631,7 @@ mod tests {
                 Act::Details,
                 Act::UserAgent,
                 Act::Guides,
+                Act::CustomGroups,
                 Act::Delete
             ]
         );

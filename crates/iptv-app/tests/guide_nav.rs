@@ -10,6 +10,8 @@
 //! Synthetic data only: a two-channel playlist picked from a file, its
 //! guide a local XMLTV file from three days back to a day ahead.
 
+mod browse_fixture;
+
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use iptv_epg::format_xmltv_time;
@@ -56,6 +58,7 @@ fn the_timeline_pans_by_touch_and_left_goes_from_replays_to_groups_and_search() 
     // SAFETY: the only test of this binary, before anything reads the
     // environment.
     unsafe { std::env::set_var("HOME", home.path()) };
+    browse_fixture::two_step_preview(home.path());
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
