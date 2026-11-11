@@ -1,6 +1,52 @@
-//! The player's words for waiting and failures: short, no addresses.
+//! The player's words: waiting and failures (short, no addresses), the
+//! action cards' labels and the keys' hints over the video.
 
+use iptv_core::panels::{QuickAction, Shown};
 use iptv_core::playback::{Cause, ErrorKind, Waiting};
+use iptv_nav::Profile;
+
+/// An action card's label (ours); the favourite's shows its state.
+pub(crate) fn quick_label(action: QuickAction, favorite: bool, detour: bool) -> &'static str {
+    match action {
+        QuickAction::Guide => "TV guide",
+        QuickAction::History => "History",
+        QuickAction::Channels => "Channels",
+        QuickAction::Favorite if favorite => "★ Favourite",
+        QuickAction::Favorite => "☆ Favourite",
+        QuickAction::Multiview if detour => "Back to multiview",
+        QuickAction::Multiview => "Multiview",
+        QuickAction::Controls => "More controls",
+    }
+}
+
+/// What the keys do over the video now, for `profile`'s keys: over the
+/// card (`card_focused`: one of its actions has the focus), the strip, or
+/// a replay's card alone (`seek`: the `catchup.seek_keys` choice).
+pub(crate) fn hint(
+    profile: Profile,
+    shown: Shown,
+    card_focused: bool,
+    seek: Option<&str>,
+) -> &'static str {
+    let remote = profile == Profile::Remote;
+    match (shown, card_focused) {
+        (Shown::Card, false) if remote => "◀ ▶ actions   OK hide   Hold OK more controls",
+        (Shown::Card, false) => "◀ ▶ actions   Enter hide   M more controls",
+        (Shown::Card, true) if remote => "◀ ▶ move   OK choose   Back hide",
+        (Shown::Card, true) => "◀ ▶ move   Enter choose   Esc hide",
+        (Shown::Controls, _) if remote => "◀ ▶ move   OK choose   Menu or Back hide",
+        (Shown::Controls, _) => "◀ ▶ move   Enter choose   M or Esc hide",
+        (Shown::Info, _) => match seek {
+            Some("left_right") if remote => "◀ ▶ seek (hold: faster)   OK play or pause",
+            Some("left_right") => "◀ ▶ seek   Enter play or pause",
+            Some("down_up") if remote => "▼ ▲ seek (hold: faster)   OK play or pause",
+            Some("down_up") => "▼ ▲ seek   Enter play or pause",
+            Some(_) => "⏪ ⏩ seek",
+            None => "",
+        },
+        _ => "",
+    }
+}
 
 /// Our own wording for a failure.
 pub(crate) fn failure_message(kind: &ErrorKind, catch_up: bool) -> String {
@@ -45,6 +91,30 @@ pub(crate) fn waiting_text(waiting: &Waiting) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hints_name_the_keys_that_act_now() {
+        let r = Profile::Remote;
+        assert!(hint(r, Shown::Card, false, None).contains("OK hide"));
+        assert!(hint(r, Shown::Card, false, None).contains("Hold OK"));
+        assert!(hint(r, Shown::Card, true, None).contains("OK choose"));
+        assert!(hint(r, Shown::Controls, false, None).contains("Menu or Back"));
+        let k = Profile::Keyboard;
+        assert!(
+            !hint(k, Shown::Card, false, None).contains("Hold"),
+            "no long presses"
+        );
+        assert!(hint(k, Shown::Card, false, None).contains("M more controls"));
+        // A replay's card alone names its seek keys; nothing over the banner.
+        assert!(hint(r, Shown::Info, false, Some("left_right")).starts_with("◀ ▶ seek"));
+        assert!(hint(r, Shown::Info, false, Some("down_up")).starts_with("▼ ▲ seek"));
+        assert_eq!(hint(r, Shown::Info, false, None), "");
+        assert_eq!(hint(r, Shown::Banner, false, None), "");
+        assert_eq!(
+            quick_label(QuickAction::Favorite, true, false),
+            "★ Favourite"
+        );
+    }
 
     #[test]
     fn a_refusal_names_the_accounts_streams_when_known() {

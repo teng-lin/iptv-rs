@@ -54,6 +54,7 @@ pub const WIRED: &[&str] = &[
     "player.controls_panel_timeout",
     "player.info_on_switch",
     "catchup.seek_keys",
+    "remote.player_up_down",
     "catchup.forward_step",
     "catchup.rewind_step",
     "catchup.timebar_step",

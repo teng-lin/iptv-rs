@@ -245,6 +245,13 @@ pub static REMOTE: &[Setting] = &[
         dur(TimeUnit::Millis, 500, 5_000, 100, 1_500),
         "Typed channel numbers are committed after this pause.",
     ),
+    // default: the reference's (Up/Down switch channels in full screen)
+    remote(
+        "mapping",
+        "remote.player_up_down",
+        choice(&PLAYER_UP_DOWN, "switch_channels"),
+        "What Up and Down do over full-screen video: switch channels or open the channel list.",
+    ),
     // default: ours — empty: only the built-in map applies
     remote(
         "mapping",

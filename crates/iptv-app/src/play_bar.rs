@@ -126,8 +126,12 @@ fn show(ui: Ui, f: impl FnOnce(&mut PlayBar, u64)) {
     update(ui, f);
 }
 
-/// The mouse moved over full-screen video.
+/// The mouse moved over full-screen video (a TV's air mouse leaves the
+/// remote's panels as they are: no bar there).
 pub fn pointer_moved(ui: Ui) {
+    if !available() {
+        return;
+    }
     show(ui, PlayBar::pointer_moved);
 }
 
@@ -494,7 +498,7 @@ fn right(ui: Ui) -> impl IntoElement {
             || Icon::Guide,
             always,
             size,
-            move || crate::input::press_quick(ui, QuickAction::Guide),
+            move || crate::player_keys::press_quick(ui, QuickAction::Guide),
         ))
         .child(when(
             || DESKTOP,

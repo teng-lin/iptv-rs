@@ -143,7 +143,7 @@ pub fn key(ui: Ui, action: Action) {
         Action::ChannelUp | Action::ChannelDown | Action::PlayPause
             if crate::multiview::picking(ui) => {}
         Action::ChannelUp | Action::ChannelDown => {
-            crate::input::zap(ui, if action == Action::ChannelUp { -1 } else { 1 });
+            crate::player_keys::zap(ui, if action == Action::ChannelUp { -1 } else { 1 });
             if let Some(ch) = ui.playing.get_untracked() {
                 update(ui, |c, l, _| {
                     c.follow(ch, l);

@@ -223,7 +223,7 @@ fn play_recent(ui: Ui, key: &str) {
     ui.mode.set(ViewMode::Fullscreen);
     ui.update_panels(|p, now| {
         p.hide();
-        p.show_info(now);
+        p.show_banner(now);
     });
 }
 

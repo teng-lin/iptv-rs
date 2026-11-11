@@ -11,9 +11,8 @@ use std::path::{Path, PathBuf};
 
 /// Files that still set literal sizes, relative to `src/`.
 const LATER: &[&str] = &[
-    // The player's panels, multiview and the play bar: another workstream
-    // is changing them; they get their own pass.
-    "player_panels.rs",
+    // Multiview and the play bar: another workstream is changing them;
+    // they get their own pass.
     "multiview_view.rs",
     "multiview_view/chrome.rs",
     "play_bar.rs",
