@@ -55,6 +55,41 @@ fn reader_sees_the_last_commit_while_a_write_is_pending() {
     assert_eq!(reader.channel_count(src, &all).unwrap(), 4);
 }
 
+/// Two refreshes save at once: a write that reads first (whether the
+/// source exists) waits for the other writer's commit and goes on, instead
+/// of failing as "database is locked" on a snapshot that commit made
+/// stale (WAL's `SQLITE_BUSY_SNAPSHOT`, which no busy timeout waits out).
+#[test]
+fn writes_that_read_first_wait_for_another_writers_commit() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.db");
+    let mut first = Store::open(&path).unwrap();
+    let src = first.add_source(&xtream_source("Xt")).unwrap();
+    let mut second = Store::open(&path).unwrap();
+    // Another writer holds the lock and commits a change a moment later.
+    let hold = |path: &std::path::Path| {
+        let raw = rusqlite::Connection::open(path).unwrap();
+        raw.execute_batch(
+            "BEGIN IMMEDIATE;
+             UPDATE sources SET updated_at = updated_at + 1;",
+        )
+        .unwrap();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(200));
+            raw.execute_batch("COMMIT").unwrap();
+        })
+    };
+    let other = hold(&path);
+    second
+        .update_source(src, &xtream_source("Renamed"))
+        .unwrap();
+    other.join().unwrap();
+    let other = hold(&path);
+    second.set_guide_sources(src, &[]).unwrap();
+    other.join().unwrap();
+    assert_eq!(first.source(src).unwrap().unwrap().source.name, "Renamed");
+}
+
 #[test]
 fn concurrent_reads_never_see_a_partial_catalog() {
     let dir = tempfile::tempdir().unwrap();

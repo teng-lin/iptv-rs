@@ -8,7 +8,7 @@ use iptv_providers::model::{
     XtreamCredentials,
 };
 use iptv_providers::{ProviderError, Secret, SecretUrl, StalkerErrorKind};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::{Value, json};
 
 use crate::codec::{source_kind_from, source_kind_slug};
@@ -278,7 +278,12 @@ impl Store {
     /// become orphans until the next import produces matching ids.
     pub fn update_source(&mut self, id: SourceId, source: &Source) -> Result<()> {
         let now = self.now();
-        let tx = self.conn.transaction()?;
+        // Immediate: it reads before it writes, and in WAL mode a deferred
+        // transaction whose snapshot another writer's commit made stale
+        // fails at once ("database is locked") instead of waiting.
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         ensure_source(&tx, id)?;
         let config = write_credentials(&tx, id, &source.config)?;
         tx.execute(

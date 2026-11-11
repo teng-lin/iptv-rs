@@ -14,7 +14,7 @@
 mod state;
 
 use iptv_nav::Action;
-use iptv_store_sqlite::GuideChannel;
+use iptv_store_sqlite::{GuideChannel, SourceId};
 use nsh_core::element::input;
 use nsh_core::prelude::*;
 
@@ -86,11 +86,13 @@ fn update(ui: Ui, f: impl FnOnce(&mut Picker) -> Option<Effect>) {
     let mut effect = None;
     ui.guide_assign.update(|s| {
         if let Some(s) = s {
-            effect = f(s);
+            let subject = s.subject();
+            let (playlist, key) = (subject.playlist, subject.key.clone());
+            effect = f(s).map(|e| (playlist, key, e));
         }
     });
-    if let Some(effect) = effect {
-        perform(ui, effect);
+    if let Some((playlist, key, effect)) = effect {
+        perform(ui, playlist, key, effect);
     }
 }
 
@@ -114,16 +116,12 @@ pub fn back(ui: Ui) -> bool {
     true
 }
 
-fn perform(ui: Ui, effect: Effect) {
+/// Carries out `effect` of the chooser of channel `key` of `playlist`.
+fn perform(ui: Ui, playlist: SourceId, key: String, effect: Effect) {
     match effect {
         Effect::Type => {}
         Effect::Close => close(ui),
         Effect::Choose(choice) => {
-            let Some((playlist, key)) =
-                state(ui, |s| (s.subject().playlist, s.subject().key.clone()))
-            else {
-                return;
-            };
             log::info!("iptv guide choice: {}", choice_name(&choice));
             assign::choose(ui, playlist, key, choice, move |applied| {
                 crate::settings_view::notify(applied_words(applied));
@@ -364,4 +362,25 @@ fn search_field(ui: Ui, size: Scale, focused: Memo<Option<usize>>) -> impl IntoE
                 }
             }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_log_names_no_channel_and_every_outcome_has_words() {
+        let chosen = assign::Choice::Channel {
+            feed: iptv_epg::SourceId(1),
+            epg_channel: "private.id".into(),
+        };
+        assert_eq!(choice_name(&chosen), "a guide channel");
+        assert_eq!(choice_name(&assign::Choice::Automatic), "automatic");
+        assert_eq!(choice_name(&assign::Choice::NoGuide), "no guide");
+        assert_eq!(applied_words(Applied::Now), "Guide data changed");
+        assert_eq!(
+            applied_words(Applied::Failed),
+            "The choice could not be saved"
+        );
+    }
 }

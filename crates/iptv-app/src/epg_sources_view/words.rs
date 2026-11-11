@@ -181,6 +181,74 @@ mod tests {
     }
 
     #[test]
+    fn names_actions_notices_and_sheets() {
+        use iptv_core::wizard::FieldError;
+        let mut l = line(true, None);
+        // The provider's second guide, a named source.
+        let urls = [
+            SecretUrl::new("http://p.example.test/a"),
+            SecretUrl::new("http://p.example.test/b"),
+        ];
+        let p = guides::sync_provider(&[], &urls);
+        assert_eq!(title(&p[1]), "The provider's guide 2");
+        assert_eq!(origin(&p[1]), "From the provider · http://p.example.test/b");
+        l.source.name = Some("Synthetic Guide".into());
+        assert_eq!(title(&l.source), "Synthetic Guide");
+        assert_eq!(
+            remove_consequences(&l.source),
+            "“Synthetic Guide” will no longer be downloaded. \
+             Its programmes go away at the next guide update."
+        );
+        assert_eq!(shift(30), "Times +0:30 h");
+        assert_eq!(act(Act::Switch, &l.source), "Switch off");
+        l.source.enabled = false;
+        assert_eq!(act(Act::Switch, &l.source), "Switch on");
+        assert_eq!(act(Act::Up, &l.source), "Move up (used first)");
+        assert_eq!(act(Act::Down, &l.source), "Move down");
+        assert_eq!(act(Act::Shift, &l.source), "Times −1:30 h");
+        assert_eq!(act(Act::Rename, &l.source), "Name");
+        assert_eq!(act(Act::Relink, &l.source), "Change the link");
+        assert_eq!(act(Act::Remove, &l.source), "Remove");
+        assert_eq!(
+            notice(Notice::Link(FieldError::Required)),
+            "Type the guide's link (XMLTV)."
+        );
+        assert_eq!(
+            notice(Notice::Link(FieldError::MissingScheme)),
+            "Start with http:// or https://"
+        );
+        assert_eq!(
+            notice(Notice::Duplicate),
+            "This playlist has that guide already."
+        );
+        assert_eq!(
+            sheet(&EditKind::AddLink).0,
+            "New guide source: link (XMLTV)"
+        );
+        let name = EditKind::AddName { url: String::new() };
+        assert_eq!(sheet(&name).0, "Its name (optional)");
+        let feed = guides::FIRST_USER_FEED;
+        assert_eq!(sheet(&EditKind::Rename(feed)).0, "Name");
+        assert_eq!(sheet(&EditKind::Relink(feed)).0, "New link (XMLTV)");
+        let kinds = [
+            ImportErrorKind::Network,
+            ImportErrorKind::Timeout,
+            ImportErrorKind::HttpStatus,
+            ImportErrorKind::InvalidBody,
+            ImportErrorKind::InvalidConfig,
+            ImportErrorKind::Cancelled,
+            ImportErrorKind::Other,
+        ];
+        let words: Vec<_> = kinds.into_iter().map(failure).collect();
+        assert_eq!(words[0], "no answer from the server");
+        assert_eq!(words[6], "something went wrong");
+        let mut distinct = words.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(distinct.len(), words.len());
+    }
+
+    #[test]
     fn the_status_says_how_its_last_download_went() {
         let when = |_| "14:05".to_owned();
         assert_eq!(

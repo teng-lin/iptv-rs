@@ -74,11 +74,11 @@ fn update(ui: Ui, f: impl FnOnce(&mut Screen) -> Option<Effect>) {
     let mut effect = None;
     ui.guide_sources.update(|s| {
         if let Some(s) = s {
-            effect = f(s);
+            effect = f(s).map(|e| (s.playlist(), e));
         }
     });
-    if let Some(effect) = effect {
-        perform(ui, effect);
+    if let Some((playlist, effect)) = effect {
+        perform(ui, playlist, effect);
     }
 }
 
@@ -126,10 +126,8 @@ fn cancel(ui: Ui) {
     });
 }
 
-fn perform(ui: Ui, effect: Effect) {
-    let Some(playlist) = state(ui, Screen::playlist) else {
-        return;
-    };
+/// Carries out `effect` of the screen of `playlist`.
+fn perform(ui: Ui, playlist: SourceId, effect: Effect) {
     match effect {
         Effect::Edit(edit) => {
             log::info!("iptv guide sources of {}: {}", playlist.0, edit_name(&edit));
@@ -597,4 +595,38 @@ fn edit_sheet(ui: Ui, size: Scale) -> impl IntoElement {
             )
             .child(entry::sheet_buttons(ui, size, cancel, commit)),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use iptv_providers::SecretUrl;
+
+    use super::*;
+    use crate::data::guides::{Edit, FIRST_USER_FEED as F};
+
+    #[test]
+    fn the_log_never_names_sources_or_links() {
+        let link = || SecretUrl::new("http://private.example.test/e.xml?token=secret");
+        let named = Edit::Add {
+            url: link(),
+            name: Some("Private".into()),
+        };
+        assert_eq!(edit_name(&named), "add (named true)");
+        let feed = F.0;
+        let all = [
+            (Edit::Remove(F), format!("remove {feed}")),
+            (Edit::SetEnabled(F, true), format!("switch {feed} on")),
+            (Edit::SetEnabled(F, false), format!("switch {feed} off")),
+            (Edit::Move(F, -1), format!("move {feed} by -1")),
+            (Edit::Shift(F, 90), format!("shift {feed} to 90 min")),
+            (
+                Edit::Rename(F, Some("Private".into())),
+                format!("rename {feed}"),
+            ),
+            (Edit::Relink(F, link()), format!("new link for {feed}")),
+        ];
+        for (edit, text) in all {
+            assert_eq!(edit_name(&edit), text);
+        }
+    }
 }

@@ -46,7 +46,7 @@ fn applied(s: &mut Screen, effect: Option<Effect>) {
     let Some(Effect::Edit(edit)) = effect else {
         panic!("no edit: {effect:?}");
     };
-    let now: Vec<GuideSource> = s.lines().iter().map(|l| l.source.clone()).collect();
+    let now: Vec<GuideSource> = s.lines.iter().map(|l| l.source.clone()).collect();
     s.set_lines(lines(&guides::apply(&now, &edit).unwrap()));
 }
 

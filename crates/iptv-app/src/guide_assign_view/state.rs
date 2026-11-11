@@ -152,19 +152,18 @@ impl Picker {
     }
 
     pub fn index_of(&self, row: &Row) -> Option<usize> {
-        if let Some(i) = FIXED.iter().position(|r| r == row) {
-            return Some(i);
+        match row {
+            Row::Channel(feed, id) => self
+                .shown
+                .iter()
+                .position(|&c| {
+                    let c = &self.subject.channels[c];
+                    c.feed == *feed && c.epg_channel == *id
+                })
+                .map(|i| i + FIXED.len()),
+            // Every other row is one of the fixed ones.
+            _ => FIXED.iter().position(|r| r == row),
         }
-        let Row::Channel(feed, id) = row else {
-            return None;
-        };
-        self.shown
-            .iter()
-            .position(|&c| {
-                let c = &self.subject.channels[c];
-                c.feed == *feed && c.epg_channel == *id
-            })
-            .map(|i| i + FIXED.len())
     }
 
     fn rows_contain(&self, row: &Row) -> bool {
@@ -178,15 +177,6 @@ impl Picker {
     /// The row is the channel's current choice.
     pub fn is_current(&self, row: &Row) -> bool {
         self.subject.current.choice.as_ref().map(Row::of).as_ref() == Some(row)
-    }
-
-    /// The guide channel the channel's stored programmes come from.
-    pub fn is_bound(&self, c: &GuideChannel) -> bool {
-        self.subject
-            .current
-            .bound
-            .as_ref()
-            .is_some_and(|(feed, id, _)| *feed == c.feed && *id == c.epg_channel)
     }
 
     pub fn feed_name(&self, feed: Feed) -> &str {
@@ -220,10 +210,8 @@ impl Picker {
     }
 
     /// Typed text: the list shows what matches; focus stays on the field.
+    /// (The view hands only a changed text.)
     pub fn set_query(&mut self, text: &str) {
-        if self.query == text {
-            return;
-        }
         self.query = text.to_owned();
         self.filter();
         self.focus = Row::Search;
@@ -247,10 +235,6 @@ impl Picker {
         self.all = !self.all;
         self.filter();
         self.focus = Row::Filter;
-    }
-
-    pub fn set_busy(&mut self, busy: bool) {
-        self.busy = busy;
     }
 
     pub fn key(&mut self, key: Key) -> Option<Effect> {

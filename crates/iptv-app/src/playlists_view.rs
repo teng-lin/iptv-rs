@@ -242,7 +242,10 @@ pub fn layer(ui: Ui) -> impl IntoElement {
             });
         });
     });
-    let editing = computed(move || editing(ui));
+    // What is typed into, if anything: the text sheet is made when it
+    // changes (not as the text does).
+    let entry =
+        computed(move || state(ui, |s| s.editing().map(|e| (e.kind, e.prefilled))).flatten());
     let size = Scale::new();
     when(
         move || is_open(ui),
@@ -252,7 +255,13 @@ pub fn layer(ui: Ui) -> impl IntoElement {
                 .child(ui_kit::caption(size, move || hint(ui)))
                 .child(list(ui, size))
                 .child(sheet(ui, size))
-                .child(when(move || editing.get(), move || edit_sheet(ui)))
+                .child(dynamic(move || {
+                    let shown = entry.get();
+                    untracked(move || match shown {
+                        Some((kind, prefilled)) => edit_sheet(ui, kind, prefilled),
+                        None => view(),
+                    })
+                }))
         },
     )
 }
@@ -532,13 +541,7 @@ fn set_edit_text(ui: Ui, text: &str) {
 
 /// The text sheet for a rename, a User-Agent or a provider detail; made
 /// when entry starts.
-fn edit_sheet(ui: Ui) -> impl IntoElement {
-    let Some((kind, prefilled)) = ui.playlists.with_untracked(|s| {
-        let e = s.as_ref()?.editing()?;
-        Some((e.kind, e.prefilled))
-    }) else {
-        return view();
-    };
+fn edit_sheet(ui: Ui, kind: EditKind, prefilled: bool) -> View {
     let mut masked = false;
     let (label, placeholder, url) = match kind {
         EditKind::Rename => ("Playlist name", "How the playlist is listed", false),
@@ -581,5 +584,35 @@ mod tests {
         assert_eq!(text, "guide sources of 3");
         let text = effect_name(&Effect::Rename(SourceId(3), "Private name".into()));
         assert!(!text.contains("Private"));
+        let agent = Effect::SetUserAgent(SourceId(3), Some("Private/1".into()));
+        assert_eq!(effect_name(&agent), "User-Agent of 3: set true");
+        let source = iptv_providers::model::Source {
+            name: "Private name".into(),
+            config: iptv_providers::model::SourceConfig::M3u(
+                iptv_providers::model::M3uSourceConfig {
+                    location: iptv_providers::SecretUrl::new(
+                        "http://private.example.test/list.m3u?token=secret",
+                    ),
+                    user_agent: None,
+                    referrer: None,
+                },
+            ),
+        };
+        let all = [
+            (Effect::Add, "add"),
+            (Effect::Show(SourceId(1)), "show 1"),
+            (Effect::Refresh(SourceId(1)), "refresh 1"),
+            (Effect::Delete(SourceId(1)), "delete 1"),
+            (Effect::RefreshAll, "refresh all"),
+            (Effect::OpenDetails(SourceId(1)), "details of 1"),
+            (
+                Effect::TryDetails(SourceId(1), source),
+                "try new details of 1",
+            ),
+            (Effect::Close, "close"),
+        ];
+        for (effect, text) in all {
+            assert_eq!(effect_name(&effect), text);
+        }
     }
 }

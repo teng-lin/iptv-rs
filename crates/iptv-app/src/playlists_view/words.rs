@@ -330,6 +330,129 @@ mod tests {
     }
 
     #[test]
+    fn every_failure_has_its_words() {
+        use ImportErrorKind as K;
+        let stored: Vec<_> = [
+            K::Network,
+            K::Timeout,
+            K::HttpStatus,
+            K::InvalidBody,
+            K::InvalidConfig,
+            K::AccountRejected,
+            K::AuthFailed,
+            K::Blocked,
+            K::Cancelled,
+            K::Other,
+        ]
+        .into_iter()
+        .map(stored_failure)
+        .collect();
+        assert_eq!(stored[5], "the provider refused the login");
+        assert_eq!(stored[9], "something went wrong");
+        let mut all = stored.clone();
+        all.sort_unstable();
+        all.dedup();
+        assert_eq!(all.len(), stored.len(), "each kind its own words");
+        let session: Vec<_> = [
+            FailureKind::Network,
+            FailureKind::Auth,
+            FailureKind::Parse,
+            FailureKind::EmptyPlaylist,
+            FailureKind::Unsupported,
+            FailureKind::Cancelled,
+        ]
+        .into_iter()
+        .map(|k| failure(ImportFailure::new(k)))
+        .collect();
+        assert_eq!(session[1], "access was refused");
+        assert_eq!(session[3], "the playlist had nothing to watch in it");
+        assert_eq!(
+            rejected(ImportFailure::new(FailureKind::Unsupported)),
+            "New details not saved: the server is not a service of this type. The old ones stay."
+        );
+    }
+
+    #[test]
+    fn checks_rejections_and_updates_read_in_the_status() {
+        let mut p = playlist();
+        let checking = Activity::Checking(None);
+        let (text, error) = status(&p, Some(&checking), 0);
+        assert!(!error && text.starts_with("Checking the new details: "));
+        let rejected = Activity::Rejected(ImportFailure::new(FailureKind::Auth));
+        let (text, error) = status(&p, Some(&rejected), 0);
+        assert!(error && text.contains("access was refused"));
+        // A failure keeps the channels of the last success.
+        p.updated_at = Some(1_800_000_000);
+        p.failed = Some((ImportErrorKind::Other, None));
+        let done = Activity::Done(Err(ImportFailure::new(FailureKind::Parse)));
+        let (text, error) = status(&p, Some(&done), 1_800_000_000);
+        assert!(error && text.starts_with("Refresh failed: the answer was not a playlist"));
+        assert!(text.contains(" · showing the channels from "), "{text}");
+        p.failed = None;
+        let (text, error) = status(&p, None, 1_800_000_000);
+        assert!(!error && text.starts_with("Updated "), "{text}");
+    }
+
+    #[test]
+    fn actions_notices_and_details() {
+        use super::super::details::Form;
+        use iptv_providers::Secret;
+        use iptv_providers::model::{Source, SourceConfig, XtreamCredentials};
+        assert_eq!(kind(SourceKind::M3u), "M3U playlist");
+        assert_eq!(kind(SourceKind::Stalker), "Stalker portal");
+        assert_eq!(channels(2), "2 channels");
+        assert_eq!(
+            act(Act::Show, None, true, false),
+            "On screen now: back to the guide"
+        );
+        assert_eq!(act(Act::Show, None, false, false), "Show this playlist");
+        assert_eq!(act(Act::Refresh, None, false, true), "Refreshing…");
+        assert_eq!(act(Act::Refresh, None, false, false), "Refresh now");
+        assert_eq!(act(Act::Details, None, false, false), "Provider details");
+        assert_eq!(
+            act(Act::Details, Some(SourceKind::Stalker), false, false),
+            "Portal and MAC address"
+        );
+        assert_eq!(act(Act::UserAgent, None, false, false), "User-Agent");
+        assert_eq!(act(Act::Guides, None, false, false), "Guide sources");
+        assert_eq!(act(Act::Delete, None, false, false), "Delete");
+        assert_eq!(act(Act::Rename, None, false, false), "Rename");
+        assert!(notice(Notice::NameEmpty).starts_with("A playlist needs a name"));
+        assert_eq!(notice(Notice::Unchanged), "Nothing was changed.");
+        assert_eq!(refreshing(0), "");
+        assert_eq!(refreshing(1), "Refreshing 1 playlist…");
+        assert_eq!(refreshing(3), "Refreshing 3 playlists…");
+        assert_eq!(details_title(SourceKind::Xtream), "Server and login");
+        assert_eq!(param(Param::Server), "Server");
+        assert_eq!(param_placeholder(Param::Server, true), "http://server:port");
+        assert!(param_placeholder(Param::Password, false).contains("current one stays"));
+        // Logins never show; links without their accounts.
+        let form = Form::new(
+            SourceId(1),
+            Source {
+                name: "Synthetic".into(),
+                config: SourceConfig::Xtream(XtreamCredentials {
+                    server_url: "http://u:p@panel.example.test:8080/".into(),
+                    username: Secret::new("synthetic-user"),
+                    password: Secret::new("synthetic-pass"),
+                    user_agent: None,
+                }),
+            },
+        );
+        assert_eq!(param_value(&form, Param::Username), "••••••••");
+        assert_eq!(param_value(&form, Param::Password), "••••••••");
+        assert_eq!(
+            param_value(&form, Param::Server),
+            "http://panel.example.test:8080/"
+        );
+        // A link without a scheme keeps its host and path.
+        assert_eq!(
+            masked_link("panel.example.test/x?a=1&&b"),
+            "panel.example.test/x?a=•••&•••"
+        );
+    }
+
+    #[test]
     fn deleting_states_its_consequences() {
         let p = playlist();
         let text = delete_consequences(&p, Some("Other"), true);

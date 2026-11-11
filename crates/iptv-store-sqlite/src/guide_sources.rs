@@ -8,7 +8,7 @@
 //! download.
 
 use iptv_providers::SecretUrl;
-use rusqlite::params;
+use rusqlite::{TransactionBehavior, params};
 
 use crate::error::Result;
 use crate::sources::ensure_source;
@@ -62,7 +62,10 @@ impl Store {
     /// Replaces `source`'s guide sources with `sources`, in that order.
     pub fn set_guide_sources(&mut self, source: SourceId, sources: &[GuideSource]) -> Result<()> {
         let now = self.now();
-        let tx = self.conn.transaction()?;
+        // Immediate: it reads before it writes (see `update_source`).
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         ensure_source(&tx, source)?;
         tx.execute("DELETE FROM guide_sources WHERE source_id = ?1", [source.0])?;
         {

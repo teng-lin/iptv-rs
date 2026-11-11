@@ -132,10 +132,6 @@ impl Screen {
         self.playlist
     }
 
-    pub fn lines(&self) -> &[SourceLine] {
-        &self.lines
-    }
-
     pub fn line(&self, feed: Feed) -> Option<&SourceLine> {
         self.lines.iter().find(|l| l.source.feed == feed)
     }
