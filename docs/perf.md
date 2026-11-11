@@ -373,6 +373,100 @@ fixture's local HLS, ten zaps each, the same optimized test host): median
 776 ms (679–845) before the cache options (`8ac1309`), 770 ms (695–878)
 after: unchanged.
 
+## 2026-11-10, Android TV box, cold start to the stored guide (branch `tv-cold-start`)
+
+Chromecast with Google TV 4K (Amlogic S905D3, 4 cores, 2 GB, Android 14,
+32-bit `armeabi-v7a`), with the user's own provider (counts only: 7258
+channels, 6081 with guide data, about 257k programmes stored; the guide
+window held is ≈ 5 MiB). Resume of the last channel on. `tools/perf-android.sh
+<serial> --cold` (three cold starts: force-stop, `am start -W`); every run
+prints the phase marks (`iptv startup: <phase> +ms`, ms since the process
+started; `crates/iptv-app/src/startup.rs`). "Guide on screen" is the
+script's measure (`guide switched` in the log, from the `am start`).
+
+**Debuggable APKs.** A profile (simpleperf) of the debug APK showed the
+Rust side nearly idle: the cost was the host's, NSH's and Media3's Java
+running in ART's slow interpreter, which a debuggable app gets (drawing,
+`Mounter.apply`, player creation on the main thread; the player's thread).
+`assembleRelease` now builds a non-debuggable, `profileable` APK signed
+with the debug key, so it installs over a debug build and keeps the data:
+
+```sh
+ABIS=armeabi-v7a tools/sync-host.sh --release
+cd hosts/android && ./gradlew assembleRelease
+adb -s <serial> install -r app/build/outputs/apk/release/app-release.apk
+```
+
+Compiling the app with its profile afterwards (`cmd package compile -m
+speed-profile -f`) changed nothing measurable (the Java side is no
+longer on the critical path).
+
+Phases, three runs each (ranges; ms since the process started):
+
+| Phase | Debug APK, master code | Release APK, master code | Release APK, this branch |
+| --- | --- | --- | --- |
+| First frame (`am start` TotalTime) | 1209–1237 | 343–399 | 359–587 |
+| Rust root component runs | 1064–1109 | 237–261 | 234–456 |
+| Store open, startup source read (time on the UI thread) | 1241–1268 (118–183) | 369–446 (110–167; 1739 on the first start after the install) | 255–489 (8–10) |
+| Last channel resolved, player opened | 5382–5487 / 5589–5666 | 2328–3388 / 2357–3418 | 260–494 (from its stored row) |
+| Fonts registered | 4087–4252 (≈ 3 s after asking) | 1020–2280 (0.78–2.0 s) | 499–766 (unpacked off the UI thread in 0.23–0.29 s) |
+| Channels read (import thread) | 1470–1528 | 558–1950 | 578–804 |
+| First screen read (61 channels × 7 h) | – | – | 607–909 (29–103 ms) |
+| Guide window read (6081 channels) | 2715–3044 (1.19–1.54 s) | 1980–3049 (1.1–1.55 s) | 2481–2706 (1.8–2.1 s, after the guide is shown, beside the video) |
+| Guide shown (schedule swapped in) | 5381–5486 | 2327–3387 | 778–1114 |
+| Next display frame after it | 10034–10424 | 3007–4021 | 1434–1888 |
+| Resumed channel's first video frame | 11638–11926 | 4207–5284 | 2245–2730 |
+
+| Budget (from `am start`) | Before (debug APK, master) | After (release APK, this branch) |
+| --- | --- | --- |
+| Guide on screen, budget 2 s | 4414–4557 ms, median 4482 | 879–1196 ms, median 976 |
+| Resumed channel ready (`state: ready`) | 12130–12244 ms | 2420–2880 ms |
+
+What changed, each verified on the box:
+
+1. Release APK (above): Rust root 1.07 s → 0.25 s, first frame 1.2 → 0.36 s,
+   the player's first frame 1.5 s sooner after it opens.
+2. The last channel starts from its one stored row as soon as the store
+   is open (`player/resume.rs`), beside the catalog and guide reads, and
+   is found again by key when the guide arrives (not opened again;
+   `tests/cold_start.rs`): player opened 2.3–3.4 s → 0.26–0.49 s.
+3. The guide's empty shell replaces the synthetic guide at once (it was
+   on screen, made-up channels and all, until the stored guide came).
+4. The stored guide comes in two steps (`data/opening.rs`): the channels
+   with the first screen's programmes (30 channels either side of the
+   one the guide opens on, the hour before now to six hours on: 12 KiB,
+   29–103 ms), other channels and times showing "Loading…"
+   (`EpgSchedule::held_only`, `held_channels`); then the whole window,
+   which replaces it.
+5. Fonts are unpacked on their own thread (NSH unpacked each WOFF2 twice
+   on the UI thread).
+6. The window read seeks to the last programme starting at or before the
+   window instead of walking the older days kept (`epg_window.rs`), and
+   `from_catalog` finds group positions by hash.
+
+The script's `played`/zap lines matched no log line since the player's
+lines carry their surface (`iptv player 0 state: ready`); fixed.
+
+**Desktop** (synthetic store: 7258 channels in 100 groups, two days back
+and ahead, 804k programmes; `cargo run --release -p iptv-store-sqlite
+--example startup_bench -- <store dir>`, three runs): the guide window
+(a day back to the end, 597k programmes) 256–266 ms → 200–212 ms; the
+first screen over every channel 53–56 ms. The headless app tests
+(`cargo test -p iptv-app`) pass; the desktop app was not timed (no
+private display).
+
+Memory after the third run, the channel playing: PSS 199 MB (native heap
+99 MB); the 171 MB before was taken without video.
+
+Open: the guide window read takes 1.8–2.1 s beside the starting video
+(it is no longer on the guide's path; reading it with fewer, wider
+queries was no faster on the desktop). The startup refresh still reads
+the window again and rebuilds the schedule once the playlist downloaded
+(a few seconds in). The next display frame comes 0.6–0.9 s after the
+guide is swapped in; the engine thread is nearly idle then, so it is the
+host's apply and draw (or NSH's frame timing), not measured further.
+The tablet (Snapdragon 695) was not re-measured.
+
 ## Findings
 
 1. **Guide import peak memory** (≈ 570 MB for 2.45 M programmes on the
