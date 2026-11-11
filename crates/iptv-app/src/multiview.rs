@@ -218,7 +218,7 @@ pub fn key(ui: Ui, action: Action) {
         Action::ToggleEnlarge => Key::LongOk,
         Action::ShowMenu => Key::Menu,
         Action::Back => Key::Back,
-        Action::Stop => return crate::input::stop_playback(ui),
+        Action::Stop => return crate::player_keys::stop_playback(ui),
         _ => return,
     };
     apply(ui, |m, failed| m.key(key, failed));
@@ -373,7 +373,7 @@ fn apply(ui: Ui, f: impl FnOnce(&mut State, &dyn Fn(usize) -> bool) -> Outcome<u
         Outcome::FullScreen => {
             log::info!("iptv multiview: a tile full screen, the grid waits");
             if ui.keys_shown() {
-                ui.update_panels(|p, now| p.show_info(now));
+                ui.show_playing();
             }
         }
         Outcome::Leave { channel, surface } => leave(ui, channel, surface),
@@ -390,6 +390,6 @@ fn leave(ui: Ui, channel: usize, surface: usize) {
         ui.play(channel, Playback::Live);
     }
     if ui.mode.get_untracked() == ViewMode::Fullscreen && ui.keys_shown() {
-        ui.update_panels(|p, now| p.show_info(now));
+        ui.show_playing();
     }
 }

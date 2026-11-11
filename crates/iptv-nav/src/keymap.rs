@@ -22,9 +22,9 @@ pub enum Context {
     Groups,
     /// Full-screen playback.
     Player,
-    /// The buttons over full-screen video: the quick actions under the
-    /// info card and the control row (Left/Right/OK move and press them;
-    /// Up/Down move between the two rows).
+    /// The buttons over full-screen video: the action cards under the
+    /// info card, or the control strip (Left/Right/OK move and press them;
+    /// Up/Down still switch channels).
     Controls,
     /// The channel list over the video (Up/Down move, OK plays, Left shows
     /// the groups, Back closes).
@@ -65,8 +65,12 @@ pub enum Action {
     ShowGroups,
     ShowGuide,
     ShowInfo,
-    /// Info and control panels over full-screen video.
+    /// The info card and its action cards over full-screen video.
     ShowPanels,
+    /// The full control strip over full-screen video.
+    ShowControls,
+    /// The recently played channels.
+    ShowHistory,
     ChannelUp,
     ChannelDown,
     /// Back to the channel played before the current one (again: return).
@@ -184,25 +188,31 @@ impl Keymap {
             b(Some(Guide), K::ChannelUp, Short, A::PageUp),
             b(Some(Guide), K::ChannelDown, Short, A::PageDown),
             // Full screen, the reference's player defaults: OK shows the
-            // panels, Long OK the menu, Up/Down zap, Left the channel list
-            // over the video (Long Left beside the video), Right the most
-            // recent channel, Long Back stops playback.
+            // info card and its action cards, Long OK and Menu the control
+            // strip (observed, tivimate docs/08 E), Up/Down zap, Left the
+            // channel list over the video (Long Left beside the video),
+            // Right the most recent channel (Long Right the history), Long
+            // Back stops playback.
             b(Some(Player), K::Ok, Short, A::ShowPanels),
-            b(Some(Player), K::Ok, Long, A::ShowMenu),
+            b(Some(Player), K::Ok, Long, A::ShowControls),
+            b(Some(Player), K::Menu, Short, A::ShowControls),
             b(Some(Player), K::Up, Short, A::ChannelUp),
             b(Some(Player), K::Down, Short, A::ChannelDown),
             b(Some(Player), K::Left, Short, A::ShowChannels),
             b(Some(Player), K::Left, Long, A::ShowChannelsPreview),
             b(Some(Player), K::Right, Short, A::PreviousChannel),
+            b(Some(Player), K::Right, Long, A::ShowHistory),
             b(Some(Player), K::Back, Long, A::Stop),
-            // With the panels up too.
-            b(Some(Controls), K::Back, Long, A::Stop),
-            // Menu opens the control row (observed).
-            b(Some(Player), K::Menu, Short, A::ShowPanels),
             // Remotes without media keys: hold 0 for the last channel.
             b(Some(Player), K::Digit(0), Long, A::PreviousChannel),
-            // Buttons: directions/OK use the global moves (Up/Down between
-            // the quick actions and the control row).
+            // With the buttons up: Left/Right/OK move and press them (the
+            // global moves); Up/Down still zap, the card following; Long OK
+            // opens the strip, Menu opens or closes it.
+            b(Some(Controls), K::Up, Short, A::ChannelUp),
+            b(Some(Controls), K::Down, Short, A::ChannelDown),
+            b(Some(Controls), K::Ok, Long, A::ShowControls),
+            b(Some(Controls), K::Menu, Short, A::ShowControls),
+            b(Some(Controls), K::Back, Long, A::Stop),
             // Over video there is no list to page: Page Up/Down (CH+/CH- on
             // many remotes, and a PC keyboard's) zap, as in the guide's rows.
             b(Some(Player), K::PageUp, Short, A::ChannelUp),
@@ -225,8 +235,10 @@ impl Keymap {
             b(Some(Guide), K::ShiftTab, Short, A::ToggleGroups),
             b(Some(Groups), K::Tab, Short, A::ToggleGroups),
             b(Some(Groups), K::ShiftTab, Short, A::ToggleGroups),
-            // Shift + Left stands in for Long Left over video.
+            // Shift + Left/Right stand in for Long Left/Right over video
+            // (a keyboard has no long presses; Menu, `M`, for Long OK).
             b(Some(Player), K::ShiftLeft, Short, A::ShowChannelsPreview),
+            b(Some(Player), K::ShiftRight, Short, A::ShowHistory),
         ];
         defaults.extend((0..=9).map(|d| b(g, K::Digit(d), Short, A::Digit(d))));
         Keymap {
@@ -355,24 +367,46 @@ mod tests {
     fn the_players_remote_defaults() {
         let k = Keymap::defaults();
         let r = |key, press| k.resolve(Player, key, press);
-        assert_eq!(r(RemoteKey::Ok, Press::Short), Some(Action::ShowPanels));
-        assert_eq!(r(RemoteKey::Ok, Press::Long), Some(Action::ShowMenu));
-        assert_eq!(r(RemoteKey::Back, Press::Short), Some(Action::Back));
-        assert_eq!(r(RemoteKey::Back, Press::Long), Some(Action::Stop));
-        assert_eq!(r(RemoteKey::Left, Press::Short), Some(Action::ShowChannels));
+        use Press::{Long, Short};
+        // OK: the info card and its action cards; held, or Menu: the strip.
+        assert_eq!(r(RemoteKey::Ok, Short), Some(Action::ShowPanels));
+        assert_eq!(r(RemoteKey::Ok, Long), Some(Action::ShowControls));
+        assert_eq!(r(RemoteKey::Menu, Short), Some(Action::ShowControls));
+        assert_eq!(r(RemoteKey::Back, Short), Some(Action::Back));
+        assert_eq!(r(RemoteKey::Back, Long), Some(Action::Stop));
+        assert_eq!(r(RemoteKey::Left, Short), Some(Action::ShowChannels));
+        assert_eq!(r(RemoteKey::Left, Long), Some(Action::ShowChannelsPreview));
+        assert_eq!(r(RemoteKey::Right, Short), Some(Action::PreviousChannel));
+        assert_eq!(r(RemoteKey::Right, Long), Some(Action::ShowHistory));
+        assert_eq!(r(RemoteKey::Up, Short), Some(Action::ChannelUp));
+        assert_eq!(r(RemoteKey::Down, Short), Some(Action::ChannelDown));
+        assert_eq!(r(RemoteKey::ChannelUp, Short), Some(Action::ChannelUp));
+        assert_eq!(r(RemoteKey::ChannelDown, Short), Some(Action::ChannelDown));
+        // Held Up/Down zap on repeat: no long action defers them.
+        assert!(!k.has_long(Player, RemoteKey::Up));
+        assert!(!k.has_long(Player, RemoteKey::Down));
+        // OK, Left and Right tell a tap from a hold (they act on release).
+        for key in [
+            RemoteKey::Ok,
+            RemoteKey::Left,
+            RemoteKey::Right,
+            RemoteKey::Back,
+        ] {
+            assert!(k.has_long(Player, key), "{key:?}");
+        }
+    }
+
+    #[test]
+    fn a_keyboard_stands_in_for_the_players_long_presses() {
+        let k = Keymap::for_profile(Profile::Keyboard);
+        let r = |key| k.resolve(Player, key, Press::Short);
+        assert_eq!(r(RemoteKey::ShiftLeft), Some(Action::ShowChannelsPreview));
+        assert_eq!(r(RemoteKey::ShiftRight), Some(Action::ShowHistory));
+        assert_eq!(r(RemoteKey::Menu), Some(Action::ShowControls));
+        // In the guide Shift + arrows still move by the hour.
         assert_eq!(
-            r(RemoteKey::Left, Press::Long),
-            Some(Action::ShowChannelsPreview)
-        );
-        assert_eq!(
-            r(RemoteKey::Right, Press::Short),
-            Some(Action::PreviousChannel)
-        );
-        assert_eq!(r(RemoteKey::Up, Press::Short), Some(Action::ChannelUp));
-        assert_eq!(r(RemoteKey::Down, Press::Short), Some(Action::ChannelDown));
-        assert!(
-            !k.has_long(Player, RemoteKey::Right),
-            "the most recent channel comes at once"
+            k.resolve(Guide, RemoteKey::ShiftRight, Press::Short),
+            Some(Action::HourForward)
         );
     }
 
@@ -446,24 +480,20 @@ mod tests {
     }
 
     #[test]
-    fn the_buttons_move_with_the_directions() {
+    fn the_buttons_move_with_left_right_and_up_down_still_zap() {
         let k = Keymap::defaults();
-        assert_eq!(
-            k.resolve(Controls, RemoteKey::Left, Press::Short),
-            Some(Action::MoveLeft)
-        );
-        assert_eq!(
-            k.resolve(Controls, RemoteKey::Ok, Press::Short),
-            Some(Action::Select)
-        );
-        assert_eq!(
-            k.resolve(Controls, RemoteKey::Down, Press::Short),
-            Some(Action::MoveDown),
-            "Down goes from the quick actions to the control row"
-        );
+        let r = |key, press| k.resolve(Controls, key, press);
+        assert_eq!(r(RemoteKey::Left, Press::Short), Some(Action::MoveLeft));
+        assert_eq!(r(RemoteKey::Right, Press::Short), Some(Action::MoveRight));
+        assert_eq!(r(RemoteKey::Ok, Press::Short), Some(Action::Select));
+        assert_eq!(r(RemoteKey::Up, Press::Short), Some(Action::ChannelUp));
+        assert_eq!(r(RemoteKey::Down, Press::Short), Some(Action::ChannelDown));
+        // Long OK from the card, and Menu, open the strip.
+        assert_eq!(r(RemoteKey::Ok, Press::Long), Some(Action::ShowControls));
+        assert_eq!(r(RemoteKey::Menu, Press::Short), Some(Action::ShowControls));
         assert!(
-            !k.has_long(Controls, RemoteKey::Ok),
-            "OK presses the button at once"
+            !k.has_long(Controls, RemoteKey::Left),
+            "the focus moves at once, and on repeat"
         );
     }
 

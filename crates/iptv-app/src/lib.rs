@@ -31,6 +31,7 @@ mod numbers;
 mod panels;
 mod play_bar;
 mod player;
+mod player_keys;
 mod player_panels;
 mod playlists_view;
 mod rail;
@@ -225,7 +226,7 @@ impl Ui {
                 let live = self.playback.get() == Playback::Live;
                 if self.playing.get() == Some(channel) && live {
                     self.mode.set(ViewMode::Fullscreen);
-                    self.update_panels(|p, now| p.show_info(now));
+                    self.show_playing();
                 } else {
                     self.play(channel, Playback::Live);
                 }
@@ -241,7 +242,7 @@ impl Ui {
                     },
                 );
                 self.mode.set(ViewMode::Fullscreen);
-                self.update_panels(|p, now| p.show_info(now));
+                self.show_playing();
             }
             Airing::Ended | Airing::Upcoming => {}
         }
@@ -279,6 +280,19 @@ impl Ui {
 
     pub fn now_ms(&self) -> u64 {
         self.epoch.elapsed().as_millis() as u64
+    }
+
+    /// What just started playing over full-screen video: the banner for
+    /// a live channel, the card with its seek bar for a replay.
+    pub fn show_playing(&self) {
+        let live = self.playback.get_untracked() == Playback::Live;
+        self.update_panels(|p, now| {
+            if live {
+                p.show_banner(now);
+            } else {
+                p.show_info(now);
+            }
+        });
     }
 
     /// Changes the panels and (re)schedules their auto-hide.

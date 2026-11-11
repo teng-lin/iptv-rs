@@ -121,7 +121,7 @@ pub fn perform(ui: Ui, item: MenuItem) {
                 },
             );
             ui.mode.set(ViewMode::Fullscreen);
-            ui.update_panels(|p, now| p.show_info(now));
+            ui.show_playing();
         }
         MenuItem::ManageFavorites => {
             close(ui);

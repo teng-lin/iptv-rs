@@ -1,41 +1,36 @@
-//! Player panels over full-screen video, as observed in the reference UX: a
-//! top bar (the playing channel's group; live state, sleep timer, date and
-//! time), the info card (logo, programme, times, progress, minutes left,
-//! number and name, stream badges, next programme), a full-width time bar
-//! and the quick actions (TV guide, History); Down swaps the card for the
-//! control row. A pointer (desktop mouse, tablet touch) has the play bar
-//! instead (`play_bar.rs`). State lives in `iptv_core::panels`; this only
-//! draws it.
-//! Panels are views over the video SurfaceView (never alpha on the video).
-//! [`status`] draws the waiting and error states of `player.rs`.
+//! Player panels over full-screen video for the remote (and keys), as
+//! observed in the reference UX: OK shows a top bar (the playing channel's
+//! group; live state, sleep timer, date and time), the info card (`card`:
+//! logo, number and name, badges, programme, one time line, next
+//! programme) and the action cards beneath it; Long OK or Menu the control
+//! strip; a channel change a compact banner. The card's time line is the
+//! only one: a replay's card shows its seek bar there. A pointer (desktop
+//! mouse, tablet touch) has the play bar instead (`play_bar.rs`, never on
+//! a TV). State lives in `iptv_core::panels`; keys in `player_keys.rs`;
+//! this only draws them. Panels are views over the video SurfaceView
+//! (never alpha on the video). [`status`] draws the waiting and error
+//! states of `player.rs`.
 
-use iptv_core::panels::{CONTROLS, Control, QUICK_ACTIONS, QuickAction, Shown};
-use iptv_core::playback::Phase;
-use iptv_core::player_info::{StreamFormat, badges, date_time, minutes_left};
+use iptv_core::panels::{CONTROLS, Control, QUICK_ACTIONS, Shown};
+use iptv_core::player_info::date_time;
 use iptv_core::sound::delay_label;
 use iptv_core::tracks::{Kind as Track, audio_layout};
 use nsh_core::prelude::*;
 
-use crate::guide::Airing;
+use crate::fonts::{OSD_BADGE, OSD_DETAIL, OSD_TEXT};
 use crate::theme::{FOCUS_ALPHA, RADIUS, RADIUS_LARGE, RESTING_ALPHA, TEXT_SECONDARY_ALPHA};
-use crate::{Playback, Ui, ViewMode, channel_name, clock, input, tint};
+use crate::{Playback, Ui, ViewMode, tint};
 
+mod card;
+mod status;
 mod words;
 
+pub use status::status;
 pub(crate) use words::{failure_message, waiting_text};
 
 const WHITE: u32 = 0xFFFFFF;
 /// Panel fill over video: the theme's panel colour, mostly opaque.
 const PANEL_ALPHA: u8 = 0xE0;
-const LOGO_W: f32 = 112.0;
-const LOGO_H: f32 = 63.0;
-
-fn quick_label(action: QuickAction) -> &'static str {
-    match action {
-        QuickAction::Guide => "TV guide",
-        QuickAction::History => "History",
-    }
-}
 
 /// "Name · value", or the name alone.
 fn with(name: &str, value: Option<String>) -> String {
@@ -45,7 +40,7 @@ fn with(name: &str, value: Option<String>) -> String {
     }
 }
 
-/// The control row's labels (ours), with the current value where the
+/// The control strip's labels (ours), with the current value where the
 /// reference shows one.
 fn label(ui: Ui, control: Control) -> String {
     use Control::*;
@@ -134,38 +129,20 @@ fn shown(ui: Ui) -> Shown {
     }
 }
 
-/// The group the playing channel is in (groups start in ascending order).
-fn group_of(channel: usize) -> String {
-    let s = crate::schedule();
-    let n = s.group_count();
-    if n == 0 {
-        return String::new();
-    }
-    let (mut lo, mut hi) = (0, n);
-    while hi - lo > 1 {
-        let mid = (lo + hi) / 2;
-        if s.group_start(mid) <= channel {
-            lo = mid;
-        } else {
-            hi = mid;
-        }
-    }
-    s.group_name(lo)
-}
-
-/// The channel's logo address (imported channels with an http(s) logo).
-fn logo(channel: usize) -> Option<String> {
-    let s = crate::schedule();
-    let epg = s.as_any()?.downcast_ref::<iptv_guide::EpgSchedule>()?;
-    let logo = epg.source_channel(channel)?.logo.as_deref()?.trim();
-    (logo.starts_with("http://") || logo.starts_with("https://")).then(|| logo.to_owned())
+/// `PointerEvents::None` while hidden: nothing in a hidden layer may say
+/// `Auto` or `BoxNone` (NSH's pointer events inherit as CSS's, so either
+/// would take presses through it).
+fn events(hidden: bool, open: PointerEvents) -> PointerEvents {
+    if hidden { PointerEvents::None } else { open }
 }
 
 pub fn layer(ui: Ui) -> impl IntoElement {
     let shown = computed(move || shown(ui));
     let panel = move || tint(ui.theme.with(|t| t.background.panel), PANEL_ALPHA);
+    let hidden = move || shown.get() == Shown::Hidden;
+    let banner = move || shown.get() == Shown::Banner;
     let card = move || matches!(shown.get(), Shown::Info | Shown::Card);
-    let buttons = move || matches!(shown.get(), Shown::Card | Shown::Controls);
+    let cards = move || shown.get() == Shown::Card;
     let controls = move || shown.get() == Shown::Controls;
     view()
         .absolute()
@@ -173,62 +150,38 @@ pub fn layer(ui: Ui) -> impl IntoElement {
         .pt_safe_area()
         .px(px(32.0))
         .pb(px(24.0))
-        .opacity(move || {
-            if shown.get() == Shown::Hidden {
-                0.0_f32
-            } else {
-                1.0
-            }
-        })
-        .pointer_events(move || {
-            if shown.get() == Shown::Hidden {
-                PointerEvents::None
-            } else {
-                PointerEvents::BoxNone
-            }
-        })
-        .child(top_bar(ui, panel))
+        .opacity(move || if hidden() { 0.0_f32 } else { 1.0 })
+        .pointer_events(move || events(hidden(), PointerEvents::BoxNone))
+        // The banner is compact: no top bar over it.
+        .child(top_bar(ui, panel).opacity(move || if banner() { 0.0_f32 } else { 1.0 }))
         .child(view().flex_1().pointer_events(PointerEvents::None))
         .child(
             view()
                 .gap(px(10.0))
-                // Mounted while hidden: nothing in the layer says `Auto` or
-                // `BoxNone` then (NSH's pointer events inherit as CSS's,
-                // so either would take presses through the hidden layer).
-                .pointer_events(move || {
-                    if shown.get() == Shown::Hidden {
-                        PointerEvents::None
-                    } else {
-                        PointerEvents::BoxNone
-                    }
-                })
-                .child(when(card, move || info_card(ui, panel)))
-                .child(time_bar(ui, panel))
-                .child(when(buttons, move || quick_row(ui, panel)))
+                .pointer_events(move || events(hidden(), PointerEvents::BoxNone))
+                .child(when(banner, move || card::banner(ui, panel)))
+                .child(when(card, move || card::info_card(ui, panel)))
+                .child(when(cards, move || quick_row(ui, panel)))
                 .child(
+                    // Mounted while hidden: the strip keeps its scroll.
                     view()
                         .px(px(8.0))
                         .py(move || px(if controls() { 6.0 } else { 0.0 }))
                         .rounded(px(RADIUS_LARGE))
                         .bg(panel)
                         .opacity(move || if controls() { 1.0_f32 } else { 0.0 })
-                        .pointer_events(move || {
-                            if controls() {
-                                PointerEvents::Auto
-                            } else {
-                                PointerEvents::None
-                            }
-                        })
+                        .pointer_events(move || events(!controls(), PointerEvents::Auto))
                         .child(
                             strip(ui, controls).h(move || px(if controls() { 44.0 } else { 0.0 })),
                         ),
-                ),
+                )
+                .child(hint_line(ui, shown)),
         )
 }
 
 /// The playing channel's group at the left; live state, sleep timer, date
 /// and time at the right.
-fn top_bar(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> impl IntoElement {
+fn top_bar(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> View {
     let live = move || !ui.paused.get();
     view()
         .mt(px(16.0))
@@ -242,23 +195,23 @@ fn top_bar(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> impl IntoElemen
         .child(
             text(move || {
                 ui.guide_data();
-                ui.playing.get().map_or(String::new(), group_of)
+                ui.playing.get().map_or(String::new(), card::group_of)
             })
             .flex_1()
             .number_of_lines(1)
-            .text_size(px(16.0))
+            .text_size(px(OSD_TEXT))
             .text_color(rgb(WHITE)),
         )
         .child(
             text(move || match (ui.playback.get(), live()) {
-                (Playback::CatchUp { .. }, _) => "CATCH-UP",
+                (Playback::CatchUp { .. }, true) => "CATCH-UP",
                 (_, true) => "LIVE",
                 (_, false) => "PAUSED",
             })
             .px(px(8.0))
             .py(px(2.0))
             .rounded(px(4.0))
-            .text_size(px(12.0))
+            .text_size(px(OSD_BADGE))
             .font_weight(FontWeight::BOLD)
             .text_color(rgb(WHITE))
             .bg(move || {
@@ -276,7 +229,7 @@ fn top_bar(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> impl IntoElemen
                     .with(|t| t.remaining_minutes(ui.now_ms()))
                     .map_or(String::new(), |m| format!("Sleep {m} min"))
             })
-            .text_size(px(13.0))
+            .text_size(px(OSD_DETAIL))
             .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA)),
         )
         .child(
@@ -286,259 +239,8 @@ fn top_bar(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> impl IntoElemen
                 let unix = crate::guide::unix_of(&*s, ui.focus.with(|f| f.now));
                 date_time(unix, crate::time::offset_minutes(unix))
             })
-            .text_size(px(16.0))
+            .text_size(px(OSD_TEXT))
             .text_color(rgb(WHITE)),
-        )
-}
-
-/// The programme on screen: live now, or the replayed one.
-fn programme(ui: Ui) -> (usize, crate::guide::Program) {
-    ui.guide_data();
-    let channel = ui.playing.get().unwrap_or(0);
-    let minute = match ui.playback.get() {
-        Playback::Live => ui.focus.with(|f| f.now),
-        Playback::CatchUp { start, .. } => start,
-    };
-    (channel, crate::schedule().program_at(channel, minute))
-}
-
-/// How far the programme on screen is, 0–1: where the archive plays (or
-/// the seek being chosen), else now in the live programme.
-fn progress(ui: Ui) -> f32 {
-    if let Some((at, length)) = crate::seek::elapsed(ui) {
-        return at as f32 / length.max(1) as f32;
-    }
-    let (_, p) = programme(ui);
-    let now = ui.focus.with(|f| f.now);
-    if p.airing(now) == Airing::Live {
-        p.progress(now)
-    } else {
-        0.0
-    }
-}
-
-fn info_card(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> impl IntoElement {
-    let channel = move || programme(ui).0;
-    let now = move || programme(ui).1;
-    let next = move || crate::schedule().program_at(channel(), now().end);
-    let secondary = move || tint(WHITE, TEXT_SECONDARY_ALPHA);
-    let format = move || {
-        let main = ui.player.main();
-        let (width, height) = main.size.get().unwrap_or((0, 0));
-        let f = main.format.get();
-        StreamFormat { width, height, ..f }
-    };
-    view()
-        .flex_row()
-        .items_center()
-        .gap(px(20.0))
-        .px(px(22.0))
-        .py(px(16.0))
-        .rounded(px(RADIUS_LARGE))
-        .bg(panel)
-        .child(
-            // The logo slot stays when a channel has none.
-            view()
-                .w(px(LOGO_W))
-                .h(px(LOGO_H))
-                .rounded(px(RADIUS))
-                .bg(tint(WHITE, RESTING_ALPHA))
-                .child(
-                    image(move || logo(channel()).unwrap_or_else(crate::grid::no_logo))
-                        .w_full()
-                        .h_full()
-                        .object_fit(ResizeMode::Contain),
-                ),
-        )
-        .child(
-            view()
-                .flex_1()
-                .gap(px(5.0))
-                .child(
-                    view()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(8.0))
-                        .child(
-                            text(move || {
-                                let ch = channel();
-                                // As in the guide: its place in the list on screen.
-                                format!("{}  {}", crate::lists::number(ui, ch), channel_name(ch))
-                            })
-                            .flex_1()
-                            .number_of_lines(1)
-                            .text_size(px(14.0))
-                            .text_color(secondary()),
-                        )
-                        .child(badge(ui, format, 0))
-                        .child(badge(ui, format, 1))
-                        .child(badge(ui, format, 2)),
-                )
-                .child(
-                    text(move || crate::schedule().title(channel(), now()))
-                        .number_of_lines(1)
-                        .text_size(px(22.0))
-                        .font_weight(FontWeight::BOLD)
-                        .text_color(rgb(WHITE)),
-                )
-                .child(
-                    view()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(12.0))
-                        .child(
-                            text(move || {
-                                let p = now();
-                                format!("{}–{}", clock(p.start), clock(p.end))
-                            })
-                            .text_size(px(14.0))
-                            .text_color(rgb(WHITE)),
-                        )
-                        .child(
-                            view()
-                                .flex_1()
-                                .h(px(4.0))
-                                .rounded(px(2.0))
-                                .bg(tint(WHITE, RESTING_ALPHA * 2))
-                                .child(
-                                    view()
-                                        .h_full()
-                                        .rounded(px(2.0))
-                                        .w(move || percentage(progress(ui)))
-                                        .bg(move || rgb(ui.theme.with(|t| t.accent.main))),
-                                ),
-                        )
-                        .child(
-                            text(move || {
-                                let p = now();
-                                let live = ui.playback.get() == Playback::Live;
-                                let at = ui.focus.with(|f| f.now);
-                                live.then(|| minutes_left(p.start, p.end, at))
-                                    .flatten()
-                                    .unwrap_or_default()
-                            })
-                            .text_size(px(14.0))
-                            .text_color(secondary()),
-                        ),
-                )
-                .child(
-                    text(move || {
-                        let p = next();
-                        format!(
-                            "Next  {}  {}",
-                            clock(p.start),
-                            crate::schedule().title(channel(), p)
-                        )
-                    })
-                    .number_of_lines(1)
-                    .text_size(px(14.0))
-                    .text_color(secondary()),
-                ),
-        )
-}
-
-/// Stream badge `index` (resolution class, frame rate, audio layout), once
-/// the player reported it.
-fn badge(
-    ui: Ui,
-    format: impl Fn() -> StreamFormat + Copy + 'static,
-    index: usize,
-) -> impl IntoElement {
-    let value = move || badges(&format()).get(index).cloned();
-    text(move || value().unwrap_or_default())
-        .px(move || px(if value().is_some() { 6.0 } else { 0.0 }))
-        .py(px(1.0))
-        .rounded(px(4.0))
-        .text_size(px(12.0))
-        .font_weight(FontWeight::BOLD)
-        .text_color(rgb(WHITE))
-        .bg(move || {
-            tint(
-                WHITE,
-                if value().is_some() {
-                    RESTING_ALPHA * 3
-                } else {
-                    0
-                },
-            )
-        })
-        .opacity(move || {
-            if ui.playing.get().is_some() {
-                1.0_f32
-            } else {
-                0.0
-            }
-        })
-}
-
-/// The full-width time bar: the programme's times (live) or position and
-/// length (catch-up), with a dot where playback is.
-fn time_bar(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> impl IntoElement {
-    let ends = move || match crate::seek::elapsed(ui) {
-        Some((at, length)) => {
-            let seeking = if ui.seek_target.get().is_some() {
-                "⇢ "
-            } else {
-                ""
-            };
-            (
-                format!("{seeking}{}", crate::seek::hms(at)),
-                crate::seek::hms(length),
-            )
-        }
-        None => {
-            let (_, p) = programme(ui);
-            (clock(p.start), clock(p.end))
-        }
-    };
-    let accent = move || rgb(ui.theme.with(|t| t.accent.main));
-    view()
-        .flex_row()
-        .items_center()
-        .gap(px(14.0))
-        .px(px(18.0))
-        .py(px(8.0))
-        .rounded(px(RADIUS_LARGE))
-        .bg(panel)
-        .child(
-            text(move || ends().0)
-                .text_size(px(13.0))
-                .text_color(rgb(WHITE)),
-        )
-        .child(
-            view()
-                .flex_1()
-                .h(px(12.0))
-                .justify_center()
-                .child(
-                    view()
-                        .h(px(4.0))
-                        .rounded(px(2.0))
-                        .bg(tint(WHITE, RESTING_ALPHA * 2))
-                        .child(
-                            view()
-                                .h_full()
-                                .rounded(px(2.0))
-                                .w(move || percentage(progress(ui)))
-                                .bg(accent),
-                        ),
-                )
-                .child(
-                    view()
-                        .absolute()
-                        .top(px(0.0))
-                        .left(move || percentage(progress(ui)))
-                        .ml(px(-6.0))
-                        .w(px(12.0))
-                        .h(px(12.0))
-                        .rounded(px(6.0))
-                        .bg(rgb(WHITE)),
-                ),
-        )
-        .child(
-            text(move || ends().1)
-                .text_size(px(13.0))
-                .text_color(rgb(WHITE)),
         )
 }
 
@@ -554,7 +256,7 @@ fn pill(
         .px(px(16.0))
         .py(px(10.0))
         .rounded(px(RADIUS))
-        .text_size(px(14.0))
+        .text_size(px(OSD_DETAIL))
         .text_color(move || tint(WHITE, if dim() { 0x60 } else { 0xFF }))
         .bg(move || {
             if focused() {
@@ -569,10 +271,13 @@ fn pill(
         })
 }
 
-/// TV guide and History (a pointer has the play bar, `play_bar.rs`).
+/// The action cards under the info card (a pointer has the play bar,
+/// `play_bar.rs`): none focused until Left or Right.
 fn quick_row(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> impl IntoElement {
     view()
+        .test_id("player-actions")
         .flex_row()
+        .flex_wrap()
         .items_center()
         .gap(px(10.0))
         .px(px(8.0))
@@ -582,24 +287,55 @@ fn quick_row(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> impl IntoElem
         .children(QUICK_ACTIONS.iter().enumerate().map(move |(i, action)| {
             let action = *action;
             let focused = move || {
-                ui.keys_shown() && ui.panels.with(|p| p.shown == Shown::Card && p.quick == i)
+                ui.keys_shown()
+                    && ui
+                        .panels
+                        .with(|p| p.shown == Shown::Card && p.quick == Some(i))
             };
             pill(
                 ui,
-                move || quick_label(action).to_owned(),
-                focused,
-                || false,
                 move || {
-                    ui.panels.update(|p| p.quick = i);
-                    input::press_quick(ui, action);
+                    let detour = crate::multiview::detour(ui);
+                    words::quick_label(action, is_favorite(ui), detour).to_owned()
+                },
+                focused,
+                move || {
+                    action == iptv_core::panels::QuickAction::Multiview
+                        && ui.playing.get().is_none()
+                },
+                move || {
+                    ui.panels.update(|p| p.quick = Some(i));
+                    crate::player_keys::press_quick(ui, action);
                 },
             )
         }))
         .self_start()
 }
 
-/// The control row: a horizontal list that keeps the focused control
-/// on screen.
+/// What the keys do now, under the panels (keys only).
+fn hint_line(ui: Ui, shown: Memo<Shown>) -> impl IntoElement {
+    let words = move || {
+        if !ui.keys_shown() {
+            return "";
+        }
+        let focused = ui.panels.with(|p| p.quick.is_some());
+        let replay = matches!(ui.playback.get(), Playback::CatchUp { .. });
+        let seek = replay.then(|| {
+            ui.settings.get();
+            crate::settings::choice(iptv_settings::keys::SEEK_KEYS)
+        });
+        words::hint(crate::input::PROFILE, shown.get(), focused, seek)
+    };
+    text(words)
+        .px(px(8.0))
+        .text_size(px(OSD_DETAIL))
+        .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA))
+        .opacity(move || if words().is_empty() { 0.0_f32 } else { 1.0 })
+        .pointer_events(PointerEvents::None)
+}
+
+/// The control strip: a horizontal list that keeps the focused control on
+/// screen.
 fn strip(ui: Ui, open: impl Fn() -> bool + Copy + 'static) -> VirtualList {
     let list = element_ref();
     let focus = computed(move || ui.panels.with(|p| p.focus));
@@ -625,7 +361,7 @@ fn strip(ui: Ui, open: impl Fn() -> bool + Copy + 'static) -> VirtualList {
             move || !enabled(ui, control),
             move || {
                 ui.panels.update(|p| p.focus = index);
-                input::press_control(ui, control);
+                crate::player_keys::press_control(ui, control);
             },
         )
         .mr(px(10.0))
@@ -633,149 +369,4 @@ fn strip(ui: Ui, open: impl Fn() -> bool + Copy + 'static) -> VirtualList {
     .horizontal()
     .estimated_item_size(px(170.0))
     .element_ref(&list)
-}
-
-/// What the status layer shows over the video.
-#[derive(Clone, Debug, PartialEq)]
-enum Status {
-    Hidden,
-    Waiting(String),
-    Failed {
-        title: String,
-        message: String,
-        detail: String,
-    },
-    /// A replayed programme reached its end.
-    Over,
-}
-
-fn status_of(ui: Ui) -> Status {
-    let Some(channel) = ui.playing.get() else {
-        return Status::Hidden;
-    };
-    if ui.mode.get() == ViewMode::Overlay {
-        return Status::Hidden; // the guide covers the video
-    }
-    if crate::multiview::is_open(ui) {
-        return Status::Hidden; // each tile shows its own
-    }
-    let catch_up = matches!(ui.playback.get(), Playback::CatchUp { .. });
-    let now = ui.now_ms();
-    ui.player
-        .main()
-        .health
-        .with(|h| match (h.phase(), h.failure()) {
-            (Phase::Idle, _) if catch_up => Status::Over,
-            // Retries may go on behind the card: it goes once the stream plays.
-            (_, Some(f)) => Status::Failed {
-                title: format!("Can't play {}", channel_name(channel)),
-                message: failure_message(&f.kind, catch_up),
-                detail: match (f.attempts, f.retrying) {
-                    (_, true) => format!("{} · still trying", f.detail),
-                    (0, false) => f.detail.clone(),
-                    (n, false) => format!("{} · tried {n} times", f.detail),
-                },
-            },
-            // A quick reconnect keeps the last frame without a pill.
-            _ => h
-                .indicator(now)
-                .map_or(Status::Hidden, |w| Status::Waiting(waiting_text(&w))),
-        })
-}
-
-/// Waiting and error states over the video, in the player's rectangle:
-/// a small pill while loading, buffering or reconnecting; a card with Retry
-/// once retries stopped (OK retries too). Compact in the guide's preview.
-pub fn status(ui: Ui) -> impl IntoElement {
-    let status = computed(move || status_of(ui));
-    let compact = move || ui.mode.get() == ViewMode::Guide;
-    let panel = move || tint(ui.theme.with(|t| t.background.panel), PANEL_ALPHA);
-    let size = move |full: f32| px(if compact() { full * 0.6 } else { full });
-    let waiting = move || matches!(status.get(), Status::Waiting(_));
-    let card = move || matches!(status.get(), Status::Failed { .. } | Status::Over);
-    view()
-        .absolute()
-        .left(move || px(crate::video::rect(ui).0))
-        .top(move || px(crate::video::rect(ui).1))
-        .w(move || px(crate::video::rect(ui).2))
-        .h(move || px(crate::video::rect(ui).3))
-        .items_center()
-        .justify_center()
-        .pointer_events(PointerEvents::BoxNone)
-        .child(when(waiting, move || {
-            text(move || match status.get() {
-                Status::Waiting(t) => t,
-                _ => String::new(),
-            })
-            .px(size(18.0))
-            .py(size(8.0))
-            .rounded(px(RADIUS_LARGE))
-            .bg(panel)
-            .text_size(size(16.0))
-            .text_color(rgb(WHITE))
-            // Taps go through to the video (the play bar).
-            .pointer_events(PointerEvents::None)
-        }))
-        .child(when(card, move || {
-            let failed = move || matches!(status.get(), Status::Failed { .. });
-            view()
-                .items_center()
-                .gap(size(10.0))
-                .px(size(28.0))
-                .py(size(20.0))
-                .rounded(px(RADIUS_LARGE))
-                .bg(panel)
-                .pointer_events(PointerEvents::Auto)
-                .child(
-                    text(move || match status.get() {
-                        Status::Failed { title, .. } => title,
-                        _ => "The programme has ended".to_owned(),
-                    })
-                    .text_size(size(22.0))
-                    .font_weight(FontWeight::BOLD)
-                    .text_color(rgb(WHITE)),
-                )
-                .child(
-                    text(move || match status.get() {
-                        Status::Failed { message, .. } => message,
-                        _ => "Next (⏭) returns to live.".to_owned(),
-                    })
-                    .text_size(size(16.0))
-                    .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA)),
-                )
-                .child(when(
-                    move || failed() && !compact(),
-                    move || {
-                        text(move || match status.get() {
-                            Status::Failed { detail, .. } => detail,
-                            _ => String::new(),
-                        })
-                        .text_size(px(12.0))
-                        .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA))
-                    },
-                ))
-                .child(when(
-                    move || failed() && !compact(),
-                    move || {
-                        text(move || {
-                            if ui.keys_shown() {
-                                "OK  Try again".to_owned()
-                            } else {
-                                "Try again".to_owned()
-                            }
-                        })
-                        .mt(px(6.0))
-                        .px(px(22.0))
-                        .py(px(10.0))
-                        .rounded(px(RADIUS))
-                        .text_size(px(16.0))
-                        .text_color(rgb(WHITE))
-                        .bg(move || tint(ui.theme.with(|t| t.accent.main), FOCUS_ALPHA))
-                        .on_press(move || {
-                            ui.touched();
-                            crate::player::retry(ui);
-                        })
-                    },
-                ))
-        }))
 }

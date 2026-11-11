@@ -43,6 +43,17 @@ pub const CAPTION: f32 = 15.0;
 /// A screen's title (Search, the favourites editor): the header's title.
 pub const TITLE: f32 = HEADER_TITLE;
 
+/// Over full-screen video (the player's panels and its status card), not
+/// scaled with the window: read from across the room. The programme's
+/// title on the info card: the header's title.
+pub const OSD_TITLE: f32 = HEADER_TITLE;
+/// The top bar, the banner's channel, a status card's message.
+pub const OSD_TEXT: f32 = HEADER_BODY;
+/// The card's lines (channel, times, next), its buttons and hints.
+pub const OSD_DETAIL: f32 = CAPTION;
+/// Badges over video (LIVE, FHD, 60 FPS) and a failure's detail line.
+pub const OSD_BADGE: f32 = 12.0;
+
 /// The font files, WOFF2 (NSH unpacks them when it registers them).
 pub const FILES: [(&str, &[u8]); 3] = [
     (

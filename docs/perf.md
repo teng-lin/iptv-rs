@@ -345,6 +345,34 @@ private display), and Android (compiled only: a 10 s minimum live
 offset, ~15 s of load retries, and the player's own reopen once per 30 s
 need a device).
 
+## 2026-11-10, macOS, live streams that fail for a while (branch `macos-5`)
+
+The recovery above (`resilient-live`) in the macOS app: Apple M4, macOS
+26.6, the app run by `nsh test --target macos` (a debug build; the zap
+runs on an optimized one), `IPTV_RS_AUDIO=null`,
+`tools/mock-live-cuts.py` with its defaults (HLS token 40 s, TS closed
+after 70 s), each outage started by the mock's `/control/drop` or
+`/control/refuse` while the channel played full screen. The screen was
+locked (no OpenGL layer drawn), so a temporary trace in the app (not in
+the repository) recorded the player's black shutter, failures, opens and
+every frame mpv offered; the pill and the card were read off the screen
+every 0.5 s.
+
+| Case | Black | Pill | Card | Opens | Plays again |
+| --- | --- | --- | --- | --- | --- |
+| HLS, network down 20 s | never | 8.8 s (the cache played 7 s) | – | 5 | 3.8 s after the network returned |
+| HLS, the token's 403 into a refusing account (403 for 45 s) | never | when it ran dry | – | 7 | 5.3 s after the refusals ended |
+| HLS, network down 200 s | never | 10.5 s | 172 s, "still trying" (the first failure past 150 s down) | 14 (1, 2, 4, 4 s, then 5, 10 and every 20 s) | 1.8 s after the network returned; the card went with it |
+| TS, closed into a full account (509 for 45 s) | never | at the close | – | 8 | 17.9 s after the account had a stream free |
+| TS, network down 60 s | never | 3.9 s | – | 9 | 18 s after the network returned |
+
+The TS cases came back later than on Linux (8 and 13 s) only because
+their outages ended early in a 20 s wait between tries. Zap to first
+picture (`state: ready`, Channel Up in the full-screen player, the
+fixture's local HLS, ten zaps each, the same optimized test host): median
+776 ms (679–845) before the cache options (`8ac1309`), 770 ms (695–878)
+after: unchanged.
+
 ## Findings
 
 1. **Guide import peak memory** (≈ 570 MB for 2.45 M programmes on the
