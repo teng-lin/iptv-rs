@@ -209,6 +209,7 @@ pub fn layer(ui: Ui) -> impl IntoElement {
             .number_of_lines(1)
     };
     let groups_column = view()
+        .test_id("channel-list-groups")
         .w(move || px(if groups() { size.whole(GROUPS_W) } else { 0.0 }))
         .opacity(move || if groups() { 1.0_f32 } else { 0.0 })
         .overflow_hidden()
@@ -229,6 +230,7 @@ pub fn layer(ui: Ui) -> impl IntoElement {
             .flex_1(),
         );
     let channels_column = view()
+        .test_id("channel-list")
         .w(move || px(size.whole(LIST_W)))
         .pt_safe_area()
         .px(px(12.0))
@@ -286,6 +288,7 @@ pub fn layer(ui: Ui) -> impl IntoElement {
             // the focused channel's programme; a tap on the preview goes
             // back to full screen.
             view()
+                .test_id("channel-list-beside")
                 .flex_1()
                 .on_press(move || {
                     ui.touched();

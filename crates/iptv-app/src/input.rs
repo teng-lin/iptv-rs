@@ -320,16 +320,6 @@ fn apply(ui: Ui, key: RemoteKey, action: Action, repeat: bool) {
         }),
         Action::ShowGroups => crate::lists::open_groups(ui),
         Action::OpenSearch => crate::search_view::open(ui),
-        Action::PastPrograms => {
-            let view = crate::lists::view(ui);
-            ui.focus.update(|f| f.enter_past(&view));
-        }
-        Action::ReturnToNow => {
-            let view = crate::lists::view(ui);
-            ui.focus.update(|f| {
-                f.return_to_now(&view);
-            });
-        }
         a @ (Action::JumpToNow
         | Action::HourBack
         | Action::HourForward

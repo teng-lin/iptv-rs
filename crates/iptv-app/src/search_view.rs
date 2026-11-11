@@ -292,9 +292,11 @@ fn prepare(ui: Ui) {
         return;
     }
     set_programmes(ui, Programmes::Building);
-    // Scheduled again by every prepare until built (a timer dies with its
-    // owner); a timer that finds the index built does nothing.
-    let _ = set_timeout(Duration::from_millis(30), move || {
+    // Under the app's owner: a timer dies with its owner, and multiview's
+    // Search and add opens the screen from a menu item that goes as it
+    // closes. A timer that finds the index built does nothing.
+    crate::data::spawn_in_app(async move {
+        timer(Duration::from_millis(30)).await;
         let wanted = INDEXES.with(|i| {
             let mut i = i.borrow_mut();
             let wanted = i.version == Some(version) && i.programmes.is_none();
