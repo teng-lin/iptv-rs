@@ -97,6 +97,14 @@ fn a_tablet_first_run_shows_whole_numbers_and_no_development_defaults() {
 
     // Row numbers share one column, sized for the list's widest number
     // (10000): it fits there as the headless text engine measures it.
+    widest_number_fits(&app);
+    // Also at a larger system text size (a tablet's default 1.15), which
+    // the platform applies to the numbers' text.
+    step(app.set_environment("larger text", |e| e.font_scale = 1.3));
+    widest_number_fits(&app);
+}
+
+fn widest_number_fits(app: &Headless) {
     let nodes = app.screen().layout_nodes();
     let first = nodes
         .iter()

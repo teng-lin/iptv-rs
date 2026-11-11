@@ -12,8 +12,11 @@ const DIGIT_EM: f32 = 0.6;
 const SLACK: f32 = 2.0;
 
 /// The width (px) of a number column for rows numbered up to `widest`,
-/// set at `size` sp.
+/// set at `size` sp. The platform draws text at the user's text size
+/// (Android's font scale, 1.15 on some tablets by default), so the column
+/// grows with it (reading subscribes).
 pub fn column_width(widest: usize, size: f32) -> f32 {
+    let size = size * font_scale();
     let digits = digits(widest).max(MIN_DIGITS);
     let measured = measure_text(&format!("{size}px Roboto"), &"0".repeat(digits)).0;
     width(digits, measured, size)
