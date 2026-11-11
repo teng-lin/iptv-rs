@@ -391,3 +391,16 @@ fn feed_rows_never_show_their_url_in_debug() {
     let shown = format!("{:?}", store.epg_guide(a).unwrap());
     assert!(!shown.contains(common::XT_PASSWORD), "{shown}");
 }
+
+#[test]
+fn the_first_programme_stored_bounds_the_guide() {
+    let (mut store, a, b) = store_with_sources();
+    assert_eq!(store.epg_first_start(a).unwrap(), None, "nothing stored");
+    let feeds = [meta(config(1, 9)), meta(config(2, 1))];
+    staged::replace_epg(&mut store, a, &two_feed_guide("a"), &feeds, 0).unwrap();
+    assert_eq!(store.epg_first_start(a).unwrap(), Some(NOW - 3 * H));
+    assert_eq!(store.epg_first_start(b).unwrap(), None, "per source");
+    // Pruned days go: the first programme left is now's.
+    store.prune_epg(NOW).unwrap();
+    assert_eq!(store.epg_first_start(a).unwrap(), Some(NOW));
+}

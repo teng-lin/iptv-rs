@@ -8,12 +8,18 @@
 //! past it vertically first the channel list scrolls); released moving, it
 //! flings on, one step per display frame. Taps stay taps. The view follows
 //! the focus model's window while nothing pans (keys, ‹ ›, Now), and a pan
-//! that came to rest hands its window back to it.
+//! that came to rest hands its window back to it. Its bounds are the
+//! guide's view ([`view_range`]: as far back as the list's catch-up goes).
+//!
+//! Units: NSH's pan reports the finger's movement and speed in dp (the
+//! Android view divides its pixels by the density, 1.5 on a 1920 × 1200
+//! tablet), the same unit as the programme area's laid-out width, so
+//! `delta / ppm` follows the finger 1:1 and nothing is scaled twice.
 
 use std::time::Instant;
 
-use iptv_core::guide::{Schedule, VISIBLE};
-use iptv_core::timeline::{Band, SLOP, Timeline};
+use iptv_core::guide::{VISIBLE, view_range};
+use iptv_core::timeline::{Band, MARGIN, SLOP, Timeline};
 use nsh_core::prelude::*;
 
 use crate::Ui;
@@ -46,7 +52,7 @@ pub(crate) struct Pan {
 impl Pan {
     pub(crate) fn new(ui: Ui, width: Signal<f32>) -> Pan {
         let (window, now) = ui.focus.with_untracked(|f| (f.window, f.now));
-        let bounds = crate::lists::view(ui).browsable(now);
+        let bounds = view_range(&crate::lists::view(ui), now);
         let model = Timeline::new(window, bounds);
         let band = Band::around(model.view());
         let pan = Pan {
@@ -101,7 +107,7 @@ impl Pan {
         effect(move || {
             ui.guide_data();
             let (window, now) = ui.focus.with(|f| (f.window, f.now));
-            let bounds = untracked(|| crate::lists::view(ui).browsable(now));
+            let bounds = untracked(|| view_range(&crate::lists::view(ui), now));
             self.model.with(|m| {
                 m.set_bounds(bounds);
                 m.follow(window);
@@ -167,9 +173,15 @@ impl Pan {
             self.settle();
             return;
         }
-        // Ask for the day it lands in now: it reads while the fling runs.
-        let (from, _) = self.model.with(|m| m.wanted());
-        crate::data::pages::want(&*crate::schedule(), from);
+        // Ask for the days it lands in now (both edges of the screen it
+        // stops at): they read while the fling runs, so its cells are
+        // there when it arrives. The days it passes are asked for as the
+        // rows show them.
+        let rest = self.model.with(|m| m.rest()).round() as i32;
+        let schedule = crate::schedule();
+        for minute in [rest - MARGIN, rest + VISIBLE + MARGIN] {
+            crate::data::pages::want(&*schedule, minute);
+        }
         let pan = *self;
         let generation = self.fling.with(|g| *g);
         spawn(async move {

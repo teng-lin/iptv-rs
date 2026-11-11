@@ -32,6 +32,9 @@ pub enum RemoteKey {
     Green,
     Yellow,
     Blue,
+    /// A remote's Search (Android's `KEYCODE_SEARCH`, which the host hands
+    /// on as F12), a keyboard's `/` and Ctrl + F (Cmd + F on macOS).
+    Search,
     /// 0–9.
     Digit(u8),
     // A desktop keyboard's own keys and chords (no remote has them).
@@ -45,7 +48,7 @@ pub enum RemoteKey {
     CtrlRight,
 }
 
-const NAMED: [(RemoteKey, &str); 33] = [
+const NAMED: [(RemoteKey, &str); 34] = [
     (RemoteKey::Up, "up"),
     (RemoteKey::Down, "down"),
     (RemoteKey::Left, "left"),
@@ -72,6 +75,7 @@ const NAMED: [(RemoteKey, &str); 33] = [
     (RemoteKey::Green, "green"),
     (RemoteKey::Yellow, "yellow"),
     (RemoteKey::Blue, "blue"),
+    (RemoteKey::Search, "search"),
     (RemoteKey::Home, "home"),
     (RemoteKey::Tab, "tab"),
     (RemoteKey::ShiftTab, "shift_tab"),

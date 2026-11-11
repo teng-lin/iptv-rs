@@ -10,7 +10,10 @@
 //! advances ([`Focus::now`], set by [`Focus::tick`] from [`now_minute`]).
 //! Every "live", "past" and window rule is relative to that now.
 
+pub mod floor;
 pub mod moves;
+
+pub use floor::{floor_of, view_range};
 
 /// Synthetic channels in the guide.
 pub const CHANNELS: usize = 5000;
@@ -27,8 +30,9 @@ pub const VISIBLE: i32 = 150;
 pub const STEP: i32 = 30;
 /// How far before "now" the guide can show (the window's lower bound).
 pub const PAST: i32 = 30;
-/// How far back the guide has data and can be browsed (Long Left). Not tied
-/// to catch-up: past programmes without an archive are shown too.
+/// How far back the synthetic guide has data (and a schedule's default
+/// [`Schedule::browsable`] reaches). The view and the keys go back only as
+/// far as catch-up does ([`floor`]).
 pub const HISTORY: i32 = 7 * 24 * 60;
 
 /// Where a programme sits relative to now.
@@ -94,6 +98,13 @@ pub trait Schedule {
     fn programs_between(&self, channel: usize, from: i32, minutes: i32) -> Vec<Program>;
     /// The channel's archive window in days (0: no catch-up).
     fn catchup_days(&self, channel: usize) -> u8;
+    /// The longest archive window of any channel ([`floor::view_range`]).
+    fn max_catchup_days(&self) -> u8 {
+        (0..self.channel_count())
+            .map(|c| self.catchup_days(c))
+            .max()
+            .unwrap_or(0)
+    }
     fn channel_name(&self, channel: usize) -> String;
     /// The provider's channel number when it has one, else the 1-based
     /// position. (The guide numbers rows by their place in the list it
@@ -198,6 +209,9 @@ impl Schedule for SyntheticSchedule {
     }
     fn catchup_days(&self, channel: usize) -> u8 {
         catchup_days(channel)
+    }
+    fn max_catchup_days(&self) -> u8 {
+        catchup_days(0)
     }
     fn channel_name(&self, channel: usize) -> String {
         format!("Channel {}", channel + 1)
@@ -348,9 +362,11 @@ impl Focus {
         }
     }
 
-    /// The earliest and latest minute the cursor can reach on `s`.
+    /// The earliest and latest minute the view shows on `s`
+    /// ([`view_range`]); the cursor stays within them and at or after the
+    /// focused row's [`Focus::floor`].
     pub(crate) fn bounds(&self, s: &dyn Schedule) -> (i32, i32) {
-        let (first, end) = s.browsable(self.now);
+        let (first, end) = view_range(s, self.now);
         (first, (end - 1).max(first + VISIBLE - 1))
     }
 
@@ -374,7 +390,7 @@ impl Focus {
             self.window = home_window(now);
         }
         let (lo, hi) = self.bounds(s);
-        self.cursor = self.cursor.clamp(lo, hi);
+        self.cursor = self.cursor.clamp(lo, hi).max(self.floor(s));
         if following {
             self.keep_cursor_visible(s);
         } else {
@@ -394,19 +410,23 @@ impl Focus {
     pub fn apply(&mut self, m: Move, s: &dyn Schedule) {
         match (self.pane, m) {
             (Pane::Rail | Pane::Groups, _) => return,
-            (Pane::Guide, Move::Up) => self.channel = self.channel.saturating_sub(1),
+            // Rows keep the time column, but not before a row's floor: on a
+            // row without catch-up the focus is on now's programme at least.
+            (Pane::Guide, Move::Up) => {
+                self.channel = self.channel.saturating_sub(1);
+                self.lift_to_floor(s);
+            }
             (Pane::Guide, Move::Down) => {
-                self.channel = (self.channel + 1).min(s.channel_count().saturating_sub(1))
+                self.channel = (self.channel + 1).min(s.channel_count().saturating_sub(1));
+                self.lift_to_floor(s);
             }
-            // Left on the live programme shows the groups; anywhere else it
-            // steps to the previous programme (the past is entered by Long Left).
-            (Pane::Guide, Move::Left) => {
-                if self.program(s).airing(self.now) == Airing::Live {
-                    self.pane = Pane::Groups;
-                } else {
-                    self.step_back(s);
-                }
-            }
+            // Left steps to the previous programme down to the row's floor
+            // (the oldest replay, or now's programme without catch-up);
+            // there it shows the groups.
+            (Pane::Guide, Move::Left) => match self.previous(s) {
+                Some(p) => self.cursor = p.start.max(self.floor(s)),
+                None => self.pane = Pane::Groups,
+            },
             (Pane::Guide, Move::Right) => {
                 let current = s.program_at(self.channel, self.cursor);
                 if current.end <= self.bounds(s).1 {
@@ -417,8 +437,8 @@ impl Focus {
         self.keep_cursor_visible(s);
     }
 
-    /// Long Left: into the past from the live programme (or one programme
-    /// back from anywhere else), never to the groups.
+    /// One programme back, down to the row's floor, never to the groups
+    /// (`Action::PastPrograms`).
     pub fn enter_past(&mut self, s: &dyn Schedule) {
         if self.pane == Pane::Guide {
             self.step_back(s);
@@ -438,10 +458,8 @@ impl Focus {
     }
 
     pub(crate) fn step_back(&mut self, s: &dyn Schedule) {
-        let current = self.program(s);
-        let lo = self.bounds(s).0;
-        if current.start > lo {
-            self.cursor = s.program_at(self.channel, current.start - 1).start.max(lo);
+        if let Some(p) = self.previous(s) {
+            self.cursor = p.start.max(self.floor(s));
         }
     }
 
@@ -462,20 +480,23 @@ impl Focus {
     }
 
     /// A tap on the programme of `channel` airing at `minute`: it gets the
-    /// focus where it is (the window does not move, the cell is on screen).
+    /// focus where it is (the window does not move, the cell is on screen);
+    /// a past one without a replay leaves it on the programme on air.
     pub fn tap(&mut self, channel: usize, minute: i32, s: &dyn Schedule) {
         self.pane = Pane::Guide;
         self.channel = channel.min(s.channel_count().saturating_sub(1));
         let (lo, hi) = self.bounds(s);
-        self.cursor = minute.clamp(lo, hi);
+        self.cursor = minute.clamp(lo, hi).max(self.floor(s));
     }
 
-    /// The time window moved by touch: the cursor follows into it.
+    /// The time window moved by touch: the cursor follows into it, but not
+    /// before the focused row's floor (the next key brings it on screen).
     pub fn shift_window(&mut self, minutes: i32, s: &dyn Schedule) {
         let (lo, hi) = self.bounds(s);
         self.window = (self.window + minutes).clamp(lo, hi + 1 - VISIBLE);
         let lo = self.window;
         self.cursor = self.cursor.clamp(lo, (self.window + VISIBLE - 1).max(lo));
+        self.cursor = self.cursor.max(self.floor(s));
     }
 
     /// After a touch scroll, the first key focuses a row on screen instead
@@ -636,8 +657,9 @@ mod tests {
         f.shift_window(-10 * STEP, &S);
         assert_eq!(f.window, 60 - 10 * STEP);
         assert!(f.cursor >= f.window && f.cursor < f.window + VISIBLE);
+        // The archive of the synthetic catch-up channels: three days.
         f.shift_window(-HISTORY * 2, &S);
-        assert_eq!(f.window, -HISTORY);
+        assert_eq!(f.window, -3 * 24 * 60);
         f.shift_window(HISTORY + HORIZON, &S);
         assert_eq!(f.window, HORIZON - VISIBLE);
     }
@@ -673,7 +695,7 @@ mod tests {
     #[test]
     fn right_then_left_into_the_groups_keeps_the_past_shown() {
         // The device sequence: Channel 15, Right x3, Left x4 (the last opens the groups).
-        for channel in [14, 0, 1, 2, 77] {
+        for channel in [15, 1, 3, 77] {
             let mut f = Focus {
                 channel,
                 ..Focus::default()
@@ -689,9 +711,9 @@ mod tests {
     }
 
     #[test]
-    fn long_left_enters_the_past_and_left_right_step_programmes() {
+    fn a_replay_row_enters_the_past_and_left_right_step_programmes() {
         let mut f = Focus {
-            channel: 3,
+            channel: 4,
             ..Focus::default()
         };
         let live = f.program(&S);
@@ -725,8 +747,10 @@ mod tests {
         }
         let cursor = f.cursor;
         assert!(cursor < 0);
-        f.apply(Move::Down, &S);
-        assert_eq!(f.cursor, cursor);
+        // Channel 12 replays too: the same time column.
+        f.channel = 13;
+        f.apply(Move::Up, &S);
+        assert_eq!((f.channel, f.cursor), (12, cursor));
         assert_eq!(f.program(&S).airing(0), Airing::Ended);
         assert!(f.return_to_now(&S));
         assert_eq!(
@@ -737,21 +761,30 @@ mod tests {
     }
 
     #[test]
-    fn the_past_reaches_the_history_limit_regardless_of_catchup() {
+    fn the_past_reaches_the_archive_and_never_without_catchup() {
+        // Odd: no catch-up. Earlier programmes stop at now's.
         let mut f = Focus {
             channel: 1,
             ..Focus::default()
-        }; // odd: no catch-up
+        };
         assert_eq!(catchup_days(1), 0);
+        let live = f.program(&S);
+        for _ in 0..20 {
+            f.enter_past(&S);
+        }
+        assert_eq!(f.program(&S), live);
+        // Even: three days back, no further.
+        f.channel = 2;
         for _ in 0..2000 {
             f.enter_past(&S);
         }
+        let start = f.program(&S).start;
         assert!(
-            f.program(&S).start <= -HISTORY + 120,
-            "a week back: {:?}",
+            (-3 * 24 * 60..-3 * 24 * 60 + 120).contains(&start),
+            "three days back: {:?}",
             f.program(&S)
         );
-        assert!(f.window >= -HISTORY);
+        assert!(f.window >= -3 * 24 * 60);
     }
 
     /// A small schedule with real-data time: the synthetic programmes, a
@@ -878,7 +911,7 @@ mod tests {
     fn bounds_move_with_now() {
         let mut f = Focus::at(10 * 60);
         f.shift_window(-HISTORY * 2, &S);
-        assert_eq!(f.window, 10 * 60 - HISTORY);
+        assert_eq!(f.window, 10 * 60 - 3 * 24 * 60);
         f.shift_window(HISTORY * 3, &S);
         assert_eq!(f.window, 10 * 60 + HORIZON - VISIBLE);
         f.tap(0, i32::MAX, &S);

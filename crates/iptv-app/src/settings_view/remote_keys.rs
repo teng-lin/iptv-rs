@@ -27,7 +27,7 @@ const CONTEXTS: [(Context, &str); 7] = [
     (Context::Multiview, "In multiview"),
 ];
 
-const KEYS: [RemoteKey; 26] = [
+const KEYS: [RemoteKey; 27] = [
     RemoteKey::Up,
     RemoteKey::Down,
     RemoteKey::Left,
@@ -54,6 +54,7 @@ const KEYS: [RemoteKey; 26] = [
     RemoteKey::Green,
     RemoteKey::Yellow,
     RemoteKey::Blue,
+    RemoteKey::Search,
 ];
 
 /// A desktop keyboard's own keys (`iptv_nav::Profile::Keyboard`).
@@ -95,6 +96,7 @@ fn key_name(key: RemoteKey) -> String {
         RemoteKey::Green => "Green",
         RemoteKey::Yellow => "Yellow",
         RemoteKey::Blue => "Blue",
+        RemoteKey::Search => "Search",
         RemoteKey::Digit(_) => "0–9",
         RemoteKey::Home => "Home",
         RemoteKey::Tab => "Tab",
@@ -118,6 +120,8 @@ fn key_name(key: RemoteKey) -> String {
         RemoteKey::PlayPause => "Space",
         RemoteKey::Next => "N",
         RemoteKey::Previous => "P",
+        RemoteKey::Search if cfg!(target_os = "macos") => "/ or Cmd+F",
+        RemoteKey::Search => "/ or Ctrl+F",
         _ => "",
     };
     if cfg!(target_os = "android") || keyboard.is_empty() {
@@ -137,6 +141,7 @@ fn action_name(action: Action) -> &'static str {
         Action::Back => "Back",
         Action::ShowMenu => "Menu",
         Action::ShowGroups => "Groups",
+        Action::OpenSearch => "Search",
         Action::ShowGuide => "Guide",
         Action::ShowChannels => "Channel list over the video",
         Action::ShowChannelsPreview => "Channel list beside the video",
@@ -282,8 +287,23 @@ mod tests {
                 .iter()
                 .any(|l| l.action.starts_with("Groups"))
         );
+        // Left moves on both (the focus model walks replays, then groups);
+        // Hold Left shows the groups on a remote.
         let left = find(&desk, "Left");
-        assert!(left.iter().any(|l| l.action == "Earlier programmes"));
+        assert!(left.iter().any(|l| l.action == "Move left"));
+        assert!(
+            find(&lines, "Hold Left")
+                .iter()
+                .any(|l| l.action == "Groups")
+        );
+        // Search is a key everywhere: the keyboard's `/` and Ctrl+F.
+        let search: Vec<_> = desk
+            .iter()
+            .filter(|l| l.key.starts_with("Search"))
+            .collect();
+        assert_eq!(search.len(), 1, "listed once, under Everywhere");
+        assert_eq!(search[0].action, "Search");
+        assert!(search[0].key.contains('/'));
         // Menu's Left/Right are bound to nothing: not listed as actions.
         assert!(!lines.iter().any(|l| l.action == "Nothing"));
     }

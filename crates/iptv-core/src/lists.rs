@@ -126,11 +126,19 @@ pub fn group_of(catalog: &dyn Schedule, channel: usize) -> Option<usize> {
 pub struct ChannelList {
     entry: usize,
     channels: Vec<usize>,
+    /// The longest archive window of its channels, in days (how far back
+    /// the guide can be panned: `guide::floor::view_range`).
+    archive_days: u8,
 }
 
 impl ChannelList {
+    /// `channels` without catch-up ([`ChannelList::build`] reads theirs).
     pub fn new(entry: usize, channels: Vec<usize>) -> Self {
-        ChannelList { entry, channels }
+        ChannelList {
+            entry,
+            channels,
+            archive_days: 0,
+        }
     }
 
     /// The list of `entry` on `catalog`. `favorites` and `recent` are the
@@ -157,7 +165,16 @@ impl ChannelList {
             }
             Entry::Group(_) => Vec::new(),
         };
-        ChannelList { entry, channels }
+        let archive_days = channels
+            .iter()
+            .map(|&c| catalog.catchup_days(c))
+            .max()
+            .unwrap_or(0);
+        ChannelList {
+            entry,
+            channels,
+            archive_days,
+        }
     }
 
     /// The groups column entry this list belongs to.
@@ -279,6 +296,9 @@ impl Schedule for ListView {
     fn catchup_days(&self, row: usize) -> u8 {
         self.channel(row)
             .map_or(0, |c| self.catalog.catchup_days(c))
+    }
+    fn max_catchup_days(&self) -> u8 {
+        self.list.archive_days
     }
     fn channel_name(&self, row: usize) -> String {
         self.channel(row)

@@ -1,6 +1,7 @@
-//! The guide's moves along time beyond the remote's programme steps: a
-//! desktop keyboard's hour and day jumps and its key back to now, and the
-//! window a touch or wheel pan settled at ([`crate::timeline`]).
+//! The guide's moves along time beyond the programme steps: a desktop
+//! keyboard's hour and day jumps and its key back to now, and the window a
+//! touch or wheel pan settled at ([`crate::timeline`]). None goes before
+//! the focused row's floor ([`super::floor`]).
 
 use super::{Focus, Pane, Schedule, VISIBLE, home_window};
 
@@ -11,10 +12,12 @@ pub const HOUR: i32 = 60;
 
 impl Focus {
     /// The time column and the window `minutes` later (earlier when
-    /// negative), within what `s` can browse: Shift + Left/Right (an hour)
-    /// and Ctrl + Left/Right (a day). The focus lands on the programme
-    /// airing at the new cursor; the window keeps its place relative to it
-    /// (a long programme does not pull it back to its start).
+    /// negative): Shift + Left/Right (an hour) and Ctrl + Left/Right (a
+    /// day). The cursor stays between the row's floor and the end of the
+    /// guide, as Left and Right do ([`super::floor`]), and lands on the
+    /// programme airing there; the window keeps its place relative to it (a
+    /// long programme does not pull it back to its start) and comes along
+    /// when the floor held the cursor back.
     pub fn step_time(&mut self, minutes: i32, s: &dyn Schedule) {
         if self.pane != Pane::Guide {
             return;
@@ -23,6 +26,7 @@ impl Focus {
         self.window = (self.window + minutes).clamp(lo, hi + 1 - VISIBLE);
         self.cursor = (self.cursor + minutes).clamp(lo, hi);
         self.cursor = self.cursor.clamp(self.window, self.window + VISIBLE - 1);
+        self.lift_to_floor(s);
     }
 
     /// Home: the focused channel's live programme in the default window,
@@ -67,7 +71,7 @@ mod tests {
         for _ in 0..20 {
             f.step_time(-DAY, &S);
         }
-        assert_eq!(f.window, lo, "the oldest minute kept");
+        assert_eq!(f.window, lo, "the oldest replay's day");
         assert!(f.cursor >= lo && f.cursor < lo + VISIBLE);
         for _ in 0..20 {
             f.step_time(DAY, &S);
@@ -116,10 +120,11 @@ mod tests {
     }
 
     #[test]
-    fn the_remotes_left_walks_back_from_a_later_programme_to_the_live_one() {
+    fn left_walks_back_from_a_later_programme_to_the_live_one() {
         // TiviMate's model: Right steps later, Left walks back through every
-        // programme to the live one, and only there opens the groups.
-        for channel in [0, 3, 14, 77] {
+        // programme to the live one and, on a channel without catch-up
+        // (odd ones), only there opens the groups.
+        for channel in [1, 3, 15, 77] {
             let mut f = Focus {
                 channel,
                 ..Focus::at(0)
@@ -143,8 +148,8 @@ mod tests {
     }
 
     #[test]
-    fn earlier_programmes_continue_into_earlier_days() {
-        // The desktop's Left (Long Left on a remote) never opens the groups.
+    fn replays_continue_into_earlier_days() {
+        // Channel 0 replays three days: Left walks back past a day.
         let mut f = Focus::at(0);
         for _ in 0..40 {
             f.enter_past(&S);

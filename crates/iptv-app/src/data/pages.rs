@@ -60,11 +60,29 @@ pub fn store_window(window: PagedWindow) -> EpgWindow<'static> {
     }
 }
 
+/// [`window`] with its oldest time at the first programme stored (`None`:
+/// none is), when that is later than what the store would keep: the guide
+/// can be browsed back to it and no further (`EpgSchedule::browsable`).
+pub fn kept_from(window: PagedWindow, first: Option<UnixTime>, now: UnixTime) -> PagedWindow {
+    PagedWindow {
+        oldest: window.oldest.max(first.unwrap_or(now)),
+        ..window
+    }
+}
+
 /// `schedule` (source `source`'s stored guide, as [`window`] at `now`
-/// read it) with its older days paged in on demand.
+/// read it) with its older days paged in on demand, back to the first
+/// programme stored.
 pub fn paged(ui: Ui, schedule: EpgSchedule, source: SourceId, now: UnixTime) -> EpgSchedule {
     let keep = super::stored::keep_past_days(&crate::settings::get());
-    schedule.with_pages(window(now, keep), loader(ui, source))
+    let first = super::open_store()
+        .and_then(|s| s.epg_first_start(source))
+        .unwrap_or_else(|e| {
+            log::warn!("iptv data: the stored guide's first day: {e}");
+            None
+        });
+    let window = kept_from(window(now, keep), first, now);
+    schedule.with_pages(window, loader(ui, source))
 }
 
 /// Reads a page on its own thread and puts it in the schedule on screen.
@@ -203,5 +221,22 @@ mod tests {
         assert_eq!(window(NOW, 0).loaded_from, 1_800_000_000);
         // Keeping everything (`u32::MAX`): no oldest day.
         assert!(window(NOW, u32::MAX).oldest < NOW - 1000 * DAY);
+    }
+
+    #[test]
+    fn the_guide_goes_back_to_its_first_programme_stored() {
+        let w = window(NOW, 7);
+        // Two days stored of the seven kept: back to the first programme.
+        let first = NOW - 2 * DAY + 600;
+        assert_eq!(kept_from(w, Some(first), NOW).oldest, first);
+        // Older programmes than the store keeps (not pruned yet): no
+        // further back than it keeps.
+        assert_eq!(kept_from(w, Some(NOW - 9 * DAY), NOW).oldest, w.oldest);
+        // Keeping everything: the first programme bounds it.
+        let all = window(NOW, u32::MAX);
+        assert_eq!(kept_from(all, Some(first), NOW).oldest, first);
+        // Nothing stored: no past at all.
+        let none = kept_from(w, None, NOW);
+        assert_eq!((none.oldest, none.loaded_from), (NOW, w.loaded_from));
     }
 }

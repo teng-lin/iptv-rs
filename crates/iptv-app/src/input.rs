@@ -23,7 +23,7 @@ use crate::{Input, Ui, ViewMode};
 pub(crate) const LONG_PRESS: bool = cfg!(target_os = "android");
 
 /// Whose keys: a TV remote's on Android, a keyboard's on the desktops
-/// (`iptv_nav::Profile`: Left walks back through the programmes there).
+/// (`iptv_nav::Profile`: one map; the hints name their keys).
 pub(crate) const PROFILE: Profile = if LONG_PRESS {
     Profile::Remote
 } else {
@@ -83,7 +83,14 @@ const KEYS: &[(&str, RemoteKey)] = &[
     ("shift+right", RemoteKey::ShiftRight),
     ("mod+left", RemoteKey::CtrlLeft),
     ("mod+right", RemoteKey::CtrlRight),
+    ("/", RemoteKey::Search),
+    ("mod+f", RemoteKey::Search),
 ];
+
+/// A remote's Search (`KEYCODE_SEARCH`): NSH has no key for it, so the
+/// Android host hands it on as F12, which no remote sends
+/// (`TvActivity.dispatchKeyEvent`).
+const ANDROID_SEARCH: &str = "f12";
 
 struct Nav {
     keymap: Keymap,
@@ -145,6 +152,9 @@ pub fn bind(ui: Ui) {
     let mut bindings: Vec<(String, RemoteKey)> =
         KEYS.iter().map(|(n, k)| ((*n).to_owned(), *k)).collect();
     bindings.extend(digits.map(|(d, k)| (d.to_string(), k)));
+    if cfg!(target_os = "android") {
+        bindings.push((ANDROID_SEARCH.to_owned(), RemoteKey::Search));
+    }
     for (name, key) in bindings {
         let nav = nav.clone();
         on_key_event(&name, repeat, move |e: &KeyCommand| {
@@ -478,6 +488,7 @@ fn apply(ui: Ui, key: RemoteKey, action: Action) {
             _ => ViewMode::Guide,
         }),
         Action::ShowGroups => crate::lists::open_groups(ui),
+        Action::OpenSearch => crate::search_view::open(ui),
         Action::PastPrograms => {
             let view = crate::lists::view(ui);
             ui.focus.update(|f| f.enter_past(&view));

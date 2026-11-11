@@ -797,6 +797,15 @@ impl GuideStore {
             .max()
     }
 
+    /// When the first programme held starts (any source, bound or not).
+    pub fn first_start(&self) -> Option<UnixTime> {
+        self.sources
+            .iter()
+            .flat_map(|src| &src.schedules)
+            .filter_map(|s| s.slots.first().map(|slot| s.start(slot)))
+            .min()
+    }
+
     /// Rough heap usage of all sources in bytes.
     pub fn heap_bytes(&self) -> usize {
         self.sources.iter().map(EpgSource::heap_bytes).sum()

@@ -267,11 +267,20 @@ fn the_guide_browses_from_the_oldest_day_kept_to_past_its_last_programme() {
         s.browsable(now),
         (minute_of(&s, NOW - 3 * DAY), end + super::PAST_END)
     );
-    // Without guide data: the default horizon; without pages: a week back.
+    // Without guide data: no past (now's default window) and the default
+    // horizon.
     let bare = EpgSchedule::new(vec![], GuideStore::new(), NOW);
     let horizon = iptv_core::guide::HORIZON;
-    let history = iptv_core::guide::HISTORY;
-    assert_eq!(bare.browsable(0), (-history, horizon));
+    let home = iptv_core::guide::home_window(0);
+    assert_eq!(bare.browsable(0), (home, horizon));
+    // Without pages (the whole guide in memory): its first programme.
+    let whole = EpgSchedule::new(vec![], store_between(NOW - 2 * DAY, NOW + DAY), NOW);
+    let first = whole.browsable(minute_of(&whole, NOW)).0;
+    let held = minute_of(&whole, NOW - 2 * DAY);
+    assert!(
+        first <= held && first > held - LEN as i32 / 60,
+        "{first} {held}"
+    );
     // Data ending before now still leaves a screen ahead to browse.
     let late = end + 500;
     let (first, last) = s.browsable(late);

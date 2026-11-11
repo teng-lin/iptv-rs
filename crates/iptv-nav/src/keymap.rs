@@ -1,13 +1,15 @@
 //! The layered key → action map: user overrides, then the context's
 //! defaults, then global defaults. Defaults are iptv-rs's own choices; the
 //! context-specific ones follow the reference UX's documented instructions
-//! (Long OK opens the menu in the guide, Left shows groups, Long Left browses
-//! past programmes, Long Back returns to the player).
+//! (Long OK opens the menu in the guide, Left goes programme → groups →
+//! search, Long Back returns to the player).
 //!
-//! Two profiles ([`Profile`]): a TV remote keeps that model; a desktop
-//! keyboard (no long presses) walks Left into earlier programmes and days
-//! instead, and opens the groups with Tab. The keyboard's own keys (Home,
-//! Tab, Shift/Ctrl + arrows) are bound in both: a remote never sends them.
+//! One model for a TV remote and a desktop keyboard ([`Profile`]): Left
+//! walks back through the programmes a channel can replay and then opens
+//! the groups (`iptv_core::guide::floor`); Hold Left (a remote: it has the
+//! long presses) or Tab (a keyboard) opens them from anywhere in the grid;
+//! Search, `/` and Ctrl + F search. The keyboard's own keys (Home, Tab,
+//! Shift/Ctrl + arrows) are bound for both: a remote never sends them.
 
 use crate::{Press, RemoteKey};
 
@@ -38,14 +40,14 @@ pub enum Context {
     Multiview,
 }
 
-/// Whose keys: a TV remote's (Android) or a desktop keyboard's.
+/// Whose keys: a TV remote's (Android) or a desktop keyboard's. The map
+/// is the same; they differ in the long presses only a remote reports and
+/// in the keys the hints name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Profile {
-    /// Left on the live programme shows the groups, Long Left goes back
-    /// in time (the reference UX).
+    /// Hold Left shows the groups.
     Remote,
-    /// Left and Right always move through the programmes, into earlier
-    /// days too; Tab shows the groups.
+    /// Tab shows the groups; Home, Shift and Ctrl + arrows move in time.
     Keyboard,
 }
 
@@ -79,6 +81,8 @@ pub enum Action {
     PageDown,
     PastPrograms,
     ReturnToNow,
+    /// The search screen (Search, `/`, Ctrl + F).
+    OpenSearch,
     /// The focused channel's live programme in the default window (Home).
     JumpToNow,
     /// The time column an hour back/forward (Shift + Left/Right).
@@ -131,21 +135,9 @@ pub struct Keymap {
 }
 
 impl Keymap {
-    /// The map of `profile`'s keys.
-    pub fn for_profile(profile: Profile) -> Keymap {
-        let mut map = Keymap::defaults();
-        if profile == Profile::Keyboard {
-            // Left steps to the previous programme wherever the focus is
-            // (into earlier days), never to the groups.
-            let left = b(
-                Some(Context::Guide),
-                RemoteKey::Left,
-                Press::Short,
-                Action::PastPrograms,
-            );
-            map.defaults.insert(0, left);
-        }
-        map
+    /// The map of `profile`'s keys: the same for both ([`Profile`]).
+    pub fn for_profile(_profile: Profile) -> Keymap {
+        Keymap::defaults()
     }
 
     /// iptv-rs's default map: the remote's ([`Profile::Remote`]).
@@ -177,13 +169,15 @@ impl Keymap {
             b(g, K::FastForward, Short, A::SeekForward),
             b(g, K::Record, Short, A::Record),
             b(g, K::Red, Short, A::ToggleFavorite),
+            b(g, K::Search, Short, A::OpenSearch),
             // Previous/Next (⏮/⏭): last channel and back to live. Free on
             // every remote with media keys; no seeking uses them yet.
             b(g, K::Previous, Short, A::PreviousChannel),
             b(g, K::Next, Short, A::GoLive),
-            // Guide: the reference UX's documented long presses.
+            // Guide: the reference UX's documented long presses; Hold Left
+            // shows the groups from anywhere in the grid.
             b(Some(Guide), K::Ok, Long, A::ShowMenu),
-            b(Some(Guide), K::Left, Long, A::PastPrograms),
+            b(Some(Guide), K::Left, Long, A::ShowGroups),
             b(Some(Guide), K::Back, Long, A::ReturnToPlayer),
             b(Some(Groups), K::Back, Long, A::ReturnToPlayer),
             // Ch+/Ch- page the guide's channel list (observed); over video they zap.
@@ -285,25 +279,22 @@ mod tests {
     use Context::{ChannelList, Controls, Groups, Guide, Menu, Player};
 
     #[test]
-    fn the_keyboards_left_walks_back_where_the_remotes_opens_the_groups() {
+    fn the_keyboard_and_the_remote_share_one_left() {
         let remote = Keymap::for_profile(Profile::Remote);
         let keyboard = Keymap::for_profile(Profile::Keyboard);
         let left = |k: &Keymap, ctx| k.resolve(ctx, RemoteKey::Left, Press::Short);
-        // The remote: Left is a move (the focus model opens the groups on
-        // the live programme), Long Left the earlier programmes.
-        assert_eq!(left(&remote, Guide), Some(Action::MoveLeft));
-        assert_eq!(
-            remote.resolve(Guide, RemoteKey::Left, Press::Long),
-            Some(Action::PastPrograms)
-        );
-        // The keyboard: always the previous programme.
-        assert_eq!(left(&keyboard, Guide), Some(Action::PastPrograms));
-        // Elsewhere both move as before.
-        for ctx in [Groups, ChannelList, Controls, Context::Editor] {
-            assert_eq!(left(&keyboard, ctx), left(&remote, ctx), "{ctx:?}");
-        }
-        assert_eq!(left(&keyboard, Player), Some(Action::ShowChannels));
+        // Left is a move everywhere in the guide screen: the focus model
+        // walks the replays, then opens the groups, then the rail.
         for k in [&remote, &keyboard] {
+            for ctx in [Guide, Groups, ChannelList, Controls, Context::Editor] {
+                assert_eq!(left(k, ctx), Some(Action::MoveLeft), "{ctx:?}");
+            }
+            assert_eq!(left(k, Player), Some(Action::ShowChannels));
+            // Hold Left: the groups from anywhere in the grid.
+            assert_eq!(
+                k.resolve(Guide, RemoteKey::Left, Press::Long),
+                Some(Action::ShowGroups)
+            );
             assert_eq!(
                 k.resolve(Guide, RemoteKey::Right, Press::Short),
                 Some(Action::MoveRight)
@@ -313,6 +304,19 @@ mod tests {
                 Some(Action::Back)
             );
         }
+    }
+
+    #[test]
+    fn search_opens_from_everywhere() {
+        let k = Keymap::defaults();
+        for ctx in [Guide, Groups, Player, Controls, ChannelList, Menu] {
+            assert_eq!(
+                k.resolve(ctx, RemoteKey::Search, Press::Short),
+                Some(Action::OpenSearch),
+                "{ctx:?}"
+            );
+        }
+        assert!(!k.has_long(Guide, RemoteKey::Search));
     }
 
     #[test]
