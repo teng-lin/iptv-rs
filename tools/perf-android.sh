@@ -11,7 +11,9 @@
 #
 # Reports: cold start to the stored guide on screen, zap to first picture
 # (channel down in full screen), guide key handling and frame times during
-# a burst of Down keys, and memory. Mutes the device first. Emulator numbers
+# a burst of Down keys and a held Down key, and memory. Mutes the device
+# first. Frame times depend on the display's refresh rate, which the video
+# in the preview can lower (29.97 Hz for a 30 fps channel). Emulator numbers
 # are not the budget: run it on a real low-end TV box for that.
 set -uo pipefail
 export PATH="${ANDROID_HOME:-$HOME/Android/Sdk}/platform-tools:$PATH"
@@ -89,6 +91,22 @@ handler=$($adb logcat -d | sed -n 's/.*iptv key=down phase=Down.*handler_us=\([0
 echo "key handler: median $(printf '%s\n' $handler | median) us, max $(printf '%s\n' $handler | sort -n | tail -1) us"
 $adb shell dumpsys gfxinfo $pkg | grep -E "Total frames rendered|Janky frames|50th percentile|90th percentile|99th percentile" | sed 's/^ *//'
 echo "(budget: key to frame under 50 ms)"
+
+echo "== guide keys, held (60 x Down about 58 ms apart, as a remote repeats)"
+# One monkey script: adb's input spawns a process per key (~0.25 s apart).
+keys=$(mktemp)
+{ echo "type= raw events"; echo "count= 60"; echo "speed= 1.0"; echo "start data >>"
+  for _ in $(seq 1 60); do echo "DispatchPress(KEYCODE_DPAD_DOWN)"; echo "UserWait(50)"; done; } > "$keys"
+$adb push "$keys" /data/local/tmp/iptv-keys.txt >/dev/null && rm -f "$keys"
+pause 2
+$adb shell dumpsys gfxinfo $pkg reset >/dev/null
+$adb logcat -c
+focused || { echo "ABORT: the app does not have the focus" >&2; exit 2; }
+$adb shell monkey -f /data/local/tmp/iptv-keys.txt 1 >/dev/null 2>&1
+pause 2
+handler=$($adb logcat -d | sed -n 's/.*iptv key=down phase=Down.*handler_us=\([0-9]*\).*/\1/p')
+echo "key handler: median $(printf '%s\n' $handler | median) us, max $(printf '%s\n' $handler | sort -n | tail -1) us"
+$adb shell dumpsys gfxinfo $pkg | grep -E "Total frames rendered|Janky frames|50th percentile|90th percentile|99th percentile" | sed 's/^ *//'
 
 echo "== memory"
 $adb shell dumpsys meminfo $pkg | grep -E "TOTAL PSS|Native Heap:" | sed 's/^ *//' | head -2

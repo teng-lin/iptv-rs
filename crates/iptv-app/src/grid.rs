@@ -13,7 +13,9 @@
 //! the programmes of a band a little wider than the window and slide them,
 //! with the ruler's times and the now line, by one animated offset.
 
+mod cell;
 mod channel;
+use cell::RowFocus;
 pub(crate) use channel::no_logo;
 pub(crate) mod keys;
 mod pan;
@@ -26,10 +28,10 @@ use pan::Pan;
 use iptv_core::lists::{FAVORITES, RECENT};
 use nsh_core::prelude::*;
 
-use crate::fonts::{CELL_TITLE, CHANNEL, CONDENSED};
-use crate::guide::{Pane, Program};
+use crate::fonts::CHANNEL;
+use crate::guide::Pane;
 use crate::scale::Scale;
-use crate::theme::{BRIGHT_TEXT, FOCUSED_CELL, FOCUSED_TEXT, RADIUS, TEXT_SECONDARY_ALPHA};
+use crate::theme::{RADIUS, TEXT_SECONDARY_ALPHA};
 use crate::{Ui, ViewMode, tint};
 
 /// Row pitch; a programme's height (the rest is the gap between rows), the
@@ -255,90 +257,21 @@ fn row(
             crate::schedule().programs_between(ch, base, BAND)
         })
     });
+    // The focused programme's start when this row has the focus (a memo
+    // per row: a key moving the focus re-runs the cells of the two rows
+    // it leaves and enters only, not every row's).
+    let focus = computed(move || {
+        focused
+            .get()
+            .and_then(|(row, start)| (row == at.index()).then_some(start))
+    });
     // The row with the focus: lighter cells, white titles.
-    let lit = computed(move || focused.get().is_some_and(|(row, _)| row == at.index()));
+    let lit = computed(move || focus.get().is_some());
     // Now, for the past cells the row cannot replay (a memo: keys move
     // the focus without the cells' dimming running again).
     let now = computed(move || ui.focus.with(|f| f.now));
-    let cell = move |i: usize| {
-        let program = move || programs.with(|ps| ps.get(i).copied());
-        let geometry = move || {
-            program().map_or((0.0, 0.0), |p: Program| {
-                // At rest a cell starts at the window's edge, so its title
-                // shows; its place is in the band, which slides.
-                let base = pan.band().base;
-                let (start, end) = (p.start.max(pan.clip()), p.end.min(base + BAND));
-                let scale = pan.scale();
-                (
-                    (start - base) as f32 * scale,
-                    (end - start).max(0) as f32 * scale,
-                )
-            })
-        };
-        let is_focused = move || {
-            program().is_some_and(|p| focused.get() == Some((at.index(), p.start)))
-                && ui.keys_shown()
-        };
-        let opacity = move || match (program(), channel.get()) {
-            (None, _) | (_, None) => 0.0_f32,
-            (Some(p), Some(ch)) => {
-                let now = now.get();
-                let gone = p.end <= now && !crate::in_archive(ch, p, now);
-                if gone { PAST_DIM } else { 1.0 }
-            }
-        };
-        view()
-            .absolute()
-            .top(move || px(((size.whole(ROW_H) - size.whole(CELL_H)) / 2.0).floor()))
-            .h(move || px(size.whole(CELL_H)))
-            .left(move || px(geometry().0 + size.of(CELL_GAP) / 2.0))
-            .w(move || px((geometry().1 - size.of(CELL_GAP)).max(0.0)))
-            .opacity(opacity)
-            .rounded(move || size.px(CELL_RADIUS))
-            .px(move || size.px(CELL_INSET))
-            .justify_center()
-            .overflow_hidden()
-            .bg(move || {
-                let g = ui.theme.with(|t| t.guide());
-                if is_focused() {
-                    fill(ui, FOCUSED_CELL)
-                } else if lit.get() {
-                    fill(ui, g.row_cell)
-                } else {
-                    fill(ui, g.cell)
-                }
-            })
-            .on_press(move || {
-                let Some(p) = program() else { return };
-                ui.touched();
-                let view = crate::lists::view(ui);
-                ui.focus.update(|f| f.tap(at.index(), p.start, &view));
-                ui.watch();
-            })
-            .child(
-                text(move || {
-                    // Equal programme minutes on new data still re-read the title.
-                    ui.guide_data();
-                    match (channel.get(), program()) {
-                        (Some(ch), Some(p)) => crate::schedule().title(ch, p),
-                        _ => String::new(),
-                    }
-                })
-                .number_of_lines(1)
-                .text_overflow(nsh_core::EllipsizeMode::Clip)
-                .font_family(CONDENSED)
-                .text_size(move || size.px(CELL_TITLE))
-                .text_color(move || {
-                    if is_focused() {
-                        rgb(FOCUSED_TEXT)
-                    } else if lit.get() {
-                        rgb(BRIGHT_TEXT)
-                    } else {
-                        tint(WHITE, TEXT_SECONDARY_ALPHA)
-                    }
-                }),
-            )
-    };
+    let focus = RowFocus { start: focus, lit };
+    let cell = move |i| cell::cell(ui, (at, i), (programs, channel), focus, now, (pan, size));
     view()
         .h(move || px(size.whole(ROW_H)))
         .flex_row()

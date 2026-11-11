@@ -39,8 +39,10 @@ pub(crate) struct Pan {
     /// start while panning).
     band: Signal<Band>,
     clip: Signal<i32>,
-    /// The cells' slide (dp): minus the view's offset into the band.
+    /// The cells' slide (dp): minus the view's offset into the band, and
+    /// the last value set (a key that keeps the window sends nothing).
     offset: AnimatedValue,
+    slid: Stored<f32>,
     /// The view is away from now: the Now button shows.
     away: Signal<bool>,
     /// Bumped by each fling: an older one's frames stop.
@@ -62,6 +64,7 @@ impl Pan {
             band: signal(band),
             clip: signal(window),
             offset: animated_value(0.0),
+            slid: stored(0.0),
             away: signal(false),
             fling: stored(0),
             wheeling: stored(false),
@@ -133,7 +136,10 @@ impl Pan {
         if self.clip.get_untracked() != clip {
             self.clip.set(clip);
         }
-        self.offset.set(-band.offset(view) * self.ppm());
+        let slide = -band.offset(view) * self.ppm();
+        if self.slid.with(|s| std::mem::replace(s, slide)) != slide {
+            self.offset.set(slide);
+        }
         let now = self.ui.focus.with_untracked(|f| f.now);
         let away = self.model.with(|m| m.away_from_now(now));
         if self.away.get_untracked() != away {

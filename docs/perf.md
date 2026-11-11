@@ -467,6 +467,114 @@ guide is swapped in; the engine thread is nearly idle then, so it is the
 host's apply and draw (or NSH's frame timing), not measured further.
 The tablet (Snapdragon 695) was not re-measured.
 
+## 2026-11-10, Android TV box, guide scrolling with the remote (branch `tv-guide-scroll`)
+
+The same box as above (Amlogic S905D3, Android 14, 32-bit; the user's
+provider, counts only: 7258 channels in "All channels"), release APKs.
+Each run starts the app afresh (force-stop, start, 12 s, Back to the
+guide, which opens on the resumed channel: a block of dense rows, half-hour
+programmes, logos), then one burst: 30 × Down every 0.1 s and 60 × Down
+every 0.15 s with `adb shell input` (which itself takes ~0.25 s a key), and
+a **held key**: 60 presses ~58 ms apart from one `monkey` script, as a
+remote repeats (now in `tools/perf-android.sh`). `dumpsys gfxinfo`
+percentiles; CPU from `/proc` over the burst, all of the app's threads
+(of which the preview's video, its decoder and player threads, take
+35–40 % of a core), and per thread: RenderThread, the NSH engine thread
+(Rust, text layout over JNI), the UI thread.
+
+**The display runs at 29.97 Hz.** Media3 asks the preview's surface for the
+channel's frame rate (`VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS`),
+and SurfaceFlinger switches the whole display to it: the guide draws at
+30 fps (a vsync every 33 ms) while a 30 fps channel plays, at 25 fps for a
+25 fps one. The ~40 ms floor of every percentile below (and TiviMate's 44 ms
+50th) is that refresh rate. Runs taken with different channels playing, or
+in another part of the list, are not comparable; the user's earlier
+numbers (90th 57–150 ms, 99th 77–350 ms, 189 % CPU) were not reproduced
+with the master build in these conditions (73–113 %), so before and after
+alternate below in the same conditions.
+
+Profile (simpleperf on the profileable release APK, held key, master):
+
+- RenderThread: `RenderNode::prepareTreeImpl` a third of its time (1573
+  attached views: 24–32 rows rendered, a viewport of overscan either side,
+  17 cell slots each, empty ones drawn while transparent), the rest
+  issuing draw commands; framestats: sync 8–9 ms and issue 13–17 ms a frame.
+- Past programmes a row cannot replay were dimmed by the view's opacity:
+  Android draws each through an offscreen layer (`hasOverlappingRendering`):
+  64–85 such views in the headless count.
+- Engine thread: 41 % text over JNI (`PrecomputedText`, `StaticLayout`):
+  a quarter of it fitting the channel name of each row scrolled in (a
+  binary search of ~6 measures with two dots), the rest the titles of the
+  two rows whose colour changes and the header (four lines of
+  description per move).
+- An animated logo in a row of the overscan, off screen, kept the guide
+  redrawing at ~13 fps (60 × Down bursts: 270 frames in 21 s, 145 elsewhere).
+
+What changed (look and behaviour the same):
+
+1. A cell reads its row's focus (a memo per row): a move re-runs the cells
+   of two rows, not of every row (`grid/cell.rs`).
+2. An empty slot is invisible, so Android does not draw it.
+3. A dimmed past programme gets colours mixed with the window colour (what
+   the dimmed group showed on the opaque guide, to the rounding); over
+   full-screen video, where the guide is translucent, the opacity stays.
+4. The description waits for a held key to pause (blank while keys repeat
+   under 160 ms apart, then the programme the keys stopped on); a single
+   move shows it at once.
+5. Channel names are fitted with a guess from the measured widths (3–4
+   measures, the same cut) and kept by name, width and size.
+6. The timeline's slide is set only when it changes.
+7. NSH (`tv-keys` `755c38cb`, `ScrollBox.Content`): a scroll view's content draws only
+   the children within its viewport and a quarter viewport around it, and
+   draws again when the scroll moves half that or a child moves. The rows
+   of a virtualized list's overscan stay laid out and attached, but the
+   render thread no longer walks or records them, and what is off screen
+   no longer animates.
+
+| Burst | Master `8aba237` (3 runs) | This branch (6 runs, two rounds) |
+| --- | --- | --- |
+| 30 × Down, frame 50th / 90th / 99th | 44 / 53–57 / 65–77 ms | 38–40 / 42–48 / 48–65 ms (one 89) |
+| 30 × Down, app CPU (RenderThread) | 74–77 % (14–15 %) | 69–72 % (10–11 %) |
+| 60 × Down, frame 50th / 90th / 99th | 42 / 53–57 / 61–81 ms | 38–40 / 46–48 / 53–69 ms |
+| 60 × Down, app CPU (RenderThread) | 93 % (28–30 %) | 75 % (13–14 %) |
+| Held key, frame 50th / 90th / 99th | 48–53 / 65–77 / 85–101 ms | 42–44 / 44–65 / 53–77 ms |
+| Held key, app CPU (RenderThread, engine, UI) | 112–113 % (30–31, 24–25, 12 %) | 99–100 % (21–22, 20–21, 12–13 %) |
+| Key handler, median | 1.2–1.7 ms | 2.4–3.0 ms |
+
+The NSH change alone (the same app build with and without it, 60 ×
+Down): RenderThread 23–24 → 13–14 %, app 87 → 75 %, frames drawn 270 →
+122–157 in 21 s. TiviMate on the same box (earlier, its own conditions):
+44 / 53 / 77 ms, 116 %.
+
+The key handler's own time rose (its log line times the signal update,
+in which the per-row focus memos and the two rows' cell memos now run);
+the engine thread's total per burst fell. Janky frames (gfxinfo's count against its
+deadline) stay 40–50 % for the `adb` bursts in both: at 29.97 Hz each key
+lands between vsyncs.
+
+Before the merge of master (master `09d08a6` against items 1–4 and 6,
+another channel playing): held key 50th / 90th / 99th 42 / 57–61 / 69–85 →
+42–57 / 44–69 / 53–73 ms, RenderThread 26–27 → 18–20 %, engine 24–25 →
+18–22 %.
+
+`tests/guide_scroll_cost.rs` (headless, 300 synthetic channels): a Down
+press lays out 31 texts and mounts 35 styles and 16–21 frames (unchanged:
+NSH mounts only what differs), the guide has 1121 views drawn instead of
+1719 and none through a layer instead of 64–85; it fails on layers, on
+empty slots drawn, or on a press mounting or laying out much more.
+
+Open: the 29.97 Hz display while a 30 fps channel plays in the preview
+(the frame-rate strategy belongs in `PlayerComponent.kt`: off in guide
+mode, matching only in full screen; not changed here, the file was being
+changed for picture in picture). Text whose colour alone changes is
+typeset again on Android (NSH's Android engine does not draw colours from
+the mounted text, as the desktop and Apple engines do): the two rows'
+titles on every move, half of the 31 texts a press lays out, roughly a
+tenth of the engine thread. The NSH list keeps a viewport of rows bound
+either side (`OVERSCAN`), now only bound, not drawn. The box goes to its
+screensaver after 10 minutes in the guide with the preview playing (no
+keep-awake there).
+
 ## Findings
 
 1. **Guide import peak memory** (≈ 570 MB for 2.45 M programmes on the
@@ -476,7 +584,8 @@ The tablet (Snapdragon 695) was not re-measured.
    (7 days: +82 → +58 MiB on the desktop), and the app holds only the
    last day (emulator steady RSS 394 → 319 MB, PSS 277 → 202 MB; guide
    window section). Re-measure on a TV box with `tools/perf-android.sh`.
-2. **Guide frame times** exceed the budget on the emulator under load; key
-   handling itself is sub-millisecond, so the cost is layout/draw of the grid.
-   Needs a real-device run (gfxinfo) before optimising.
+2. **Guide frame times** on the TV box: 50th 38–44 ms, 90th 42–65 ms, 99th
+   48–73 ms while a 30 fps channel plays in the preview (display at
+   29.97 Hz; guide scrolling section). The render thread and text layout
+   over JNI were the cost, not key handling.
 3. Cold start and zap are within budget on the emulator.

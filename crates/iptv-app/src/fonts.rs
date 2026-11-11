@@ -100,6 +100,7 @@ pub fn register() {
                 log::warn!("iptv font {family} not registered: {e}");
             }
         }
+        FONTS_IN.store(true, std::sync::atomic::Ordering::Relaxed);
         let ms = started.elapsed().as_millis();
         crate::startup::mark_with(
             "fonts registered",
@@ -113,18 +114,52 @@ pub fn register() {
 
 /// `name` cut to fit `width` with two dots ("Long chann.."), as measured by
 /// `measure`; whole when it fits.
+///
+/// Each measure is a text typeset by the platform (on Android a JNI call
+/// that shapes it), and a guide row scrolled in fits its channel's name:
+/// the cut is guessed from the whole name's width (widths grow about with
+/// the length), so a name usually takes three or four measures where a
+/// binary search took six; the result is the binary search's.
 pub fn two_dots(name: &str, width: f32, measure: impl Fn(&str) -> f32) -> String {
-    if width <= 0.0 || measure(name) <= width {
+    if width <= 0.0 {
+        return name.to_owned();
+    }
+    let whole = measure(name);
+    if whole <= width {
         return name.to_owned();
     }
     let ends: Vec<usize> = name.char_indices().map(|(i, _)| i).skip(1).collect();
-    // The longest start that fits with the dots (binary search: widths grow
-    // with the length).
-    let (mut lo, mut hi) = (0, ends.len());
+    let cut = |k: usize| format!("{}..", name[..ends[k - 1]].trim_end());
+    let fits = |k: usize| measure(&cut(k)) <= width;
+    // The longest start that fits with the dots, `k` of `n` characters
+    // kept (0: none fits): in `lo..=hi`. Up to two guesses, each scaled
+    // from the last width measured, and the one after a guess that fits.
+    let n = ends.len();
+    let (mut lo, mut hi) = (0, n);
+    let (mut at, mut measured) = (n + 1, whole);
+    for _ in 0..2 {
+        if lo >= hi {
+            break;
+        }
+        let guess = ((at as f32 * width / measured) as usize).clamp(lo + 1, hi);
+        let w = measure(&cut(guess));
+        if w <= width {
+            lo = guess;
+            if guess < hi {
+                if fits(guess + 1) {
+                    lo = guess + 1;
+                } else {
+                    hi = guess;
+                }
+            }
+            break;
+        }
+        hi = guess - 1;
+        (at, measured) = (guess, w);
+    }
     while lo < hi {
         let mid = (lo + hi).div_ceil(2);
-        let cut = format!("{}..", name[..ends[mid - 1]].trim_end());
-        if measure(&cut) <= width {
+        if fits(mid) {
             lo = mid;
         } else {
             hi = mid - 1;
@@ -132,14 +167,41 @@ pub fn two_dots(name: &str, width: f32, measure: impl Fn(&str) -> f32) -> String
     }
     match lo {
         0 => "..".to_owned(),
-        n => format!("{}..", name[..ends[n - 1]].trim_end()),
+        k => cut(k),
     }
 }
 
+/// Names fitted once the bundled fonts are in, by name, width and size:
+/// rows scrolled back into view fit theirs without measuring.
+type Fitted = std::collections::HashMap<(String, u32, u32), String>;
+
+thread_local! {
+    static FITTED: std::cell::RefCell<Fitted> = Default::default();
+}
+
+/// Whether the bundled fonts are registered (names fitted before measure
+/// with the system's and are not kept).
+static FONTS_IN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// [`two_dots`] with the platform's text engine, in `size` sp Roboto.
 pub fn fit(name: &str, width: f32, size: f32) -> String {
+    let key = (name.to_owned(), width.to_bits(), size.to_bits());
+    if let Some(hit) = FITTED.with(|f| f.borrow().get(&key).cloned()) {
+        return hit;
+    }
     let font = format!("{size}px Roboto");
-    two_dots(name, width, |s| measure_text(&font, s).0)
+    let fitted = two_dots(name, width, |s| measure_text(&font, s).0);
+    if FONTS_IN.load(std::sync::atomic::Ordering::Relaxed) {
+        FITTED.with(|f| {
+            let mut f = f.borrow_mut();
+            // A few thousand channels' names; a new window size starts over.
+            if f.len() >= 8192 {
+                f.clear();
+            }
+            f.insert(key, fitted.clone());
+        });
+    }
+    fitted
 }
 
 #[cfg(test)]
@@ -168,5 +230,84 @@ mod tests {
         assert_eq!(two_dots("Ελληνικό κανάλι", 80.0, measure), "Ελληνι..");
         assert_eq!(two_dots("Name", 25.0, measure), "..");
         assert_eq!(two_dots("Name", 0.0, measure), "Name");
+    }
+
+    /// The binary search `two_dots` replaced, for its results.
+    fn searched(name: &str, width: f32, measure: impl Fn(&str) -> f32) -> String {
+        if width <= 0.0 || measure(name) <= width {
+            return name.to_owned();
+        }
+        let ends: Vec<usize> = name.char_indices().map(|(i, _)| i).skip(1).collect();
+        let cut = |k: usize| format!("{}..", name[..ends[k - 1]].trim_end());
+        let (mut lo, mut hi) = (0, ends.len());
+        while lo < hi {
+            let mid = (lo + hi).div_ceil(2);
+            if measure(&cut(mid)) <= width {
+                lo = mid;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        if lo == 0 { "..".to_owned() } else { cut(lo) }
+    }
+
+    #[test]
+    fn names_are_cut_as_a_binary_search_cut_them_with_fewer_measures() {
+        // Uneven widths: narrow i and l, wide W and M, a space, dots.
+        let width_of: fn(char) -> f32 = |c| match c {
+            'i' | 'l' | '.' | ' ' | ':' => 4.0,
+            'W' | 'M' => 16.0,
+            c if c.is_uppercase() => 12.0,
+            _ => 9.0,
+        };
+        let names = [
+            "US : COMEDY CENTRAL FHD 1080",
+            "AU: 10 NICKELODEON (BRISBANE)",
+            "Wide MMMM WWWW name with milli illi",
+            "Ελληνικό κανάλι ενημέρωσης",
+            "Short",
+        ];
+        let (mut ours, mut theirs) = (0, 0);
+        for name in names {
+            for width in (0..=300).step_by(7).map(|w| w as f32) {
+                fn counted(
+                    calls: &std::cell::Cell<usize>,
+                    width_of: fn(char) -> f32,
+                ) -> impl Fn(&str) -> f32 + '_ {
+                    move |s: &str| {
+                        calls.set(calls.get() + 1);
+                        s.chars().map(width_of).sum::<f32>()
+                    }
+                }
+                let (a, b) = (std::cell::Cell::new(0), std::cell::Cell::new(0));
+                assert_eq!(
+                    two_dots(name, width, counted(&a, width_of)),
+                    searched(name, width, counted(&b, width_of)),
+                    "{name} in {width}"
+                );
+                assert!(
+                    a.get() <= b.get() + 4,
+                    "{name} in {width}: {} measures",
+                    a.get()
+                );
+                (ours, theirs) = (ours + a.get(), theirs + b.get());
+            }
+        }
+        assert!(
+            ours * 4 < theirs * 3,
+            "{ours} measures, the binary search {theirs}"
+        );
+        // A usual cut: the whole name, two guesses and a neighbour (the
+        // binary search: six).
+        let calls = std::cell::Cell::new(0);
+        let measure = |s: &str| {
+            calls.set(calls.get() + 1);
+            s.chars().count() as f32 * 10.0
+        };
+        assert_eq!(
+            two_dots("A rather long channel name", 120.0, measure),
+            "A rather l.."
+        );
+        assert!(calls.get() <= 4, "{} measures", calls.get());
     }
 }
