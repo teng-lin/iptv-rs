@@ -51,16 +51,23 @@ mod map;
 mod pip;
 mod worker;
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(test)))]
 mod gtk;
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(test)))]
 mod gtk_pip;
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(test)))]
 use gtk as platform;
+// The unit tests run the player without a display (`test_host`).
+#[cfg(all(target_os = "linux", test))]
+mod test_host;
+#[cfg(all(target_os = "linux", test))]
+use test_host as platform;
 #[cfg(target_os = "macos")]
 mod mac;
 #[cfg(target_os = "macos")]
 mod mac_pip;
+#[cfg(all(target_os = "linux", test))]
+mod tests;
 #[cfg(target_os = "macos")]
 use mac as platform;
 #[cfg(target_os = "ios")]
@@ -82,6 +89,7 @@ pub use platform::register;
 use platform::{ComponentContext, Video};
 use worker::{Cmd, Note, Worker};
 
+#[cfg_attr(test, allow(dead_code))] // GTK's (`test_host` registers nothing)
 pub const NAME: &str = "tv.player";
 pub(crate) const DEFAULT_UA: &str = "iptv-rs/0.1 (mpv)";
 

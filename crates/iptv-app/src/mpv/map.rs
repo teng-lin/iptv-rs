@@ -411,6 +411,7 @@ mod tests {
         assert!(!picture("full", None).keepaspect);
         assert_eq!(picture("zoom", None).panscan, 1.0);
         assert_eq!(picture("4:3", None).aspect, "4:3");
+        assert_eq!(picture("16:9", None).aspect, "16:9");
         assert_eq!(picture("2.35:1", None).aspect, "2.35:1");
         assert!((picture("reduced", None).zoom.exp2() - 0.85).abs() < 1e-9);
         // Cinema zooms a 16:9 picture by 2.35 / (16/9); never shrinks.

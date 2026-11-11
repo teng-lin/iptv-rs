@@ -18,6 +18,7 @@ use serde_json::Value;
 
 /// The window's video view: what the app mounts in it (no props).
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg_attr(test, allow(unused_imports))] // GTK's (`test_host` registers nothing)
 pub use crate::desktop::pip_window::VIEW;
 
 thread_local! {

@@ -173,3 +173,62 @@ impl Drop for Mpv {
         unsafe { ffi::mpv_terminate_destroy(self.0) };
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mpv() -> Mpv {
+        let mpv = Mpv::new().expect("libmpv");
+        mpv.set("ao", "null");
+        mpv
+    }
+
+    /// The instance renders through the app (no window of its own), stays
+    /// idle between files, reads no user configuration and prefetches the
+    /// next entry (the live bridge's spare).
+    #[test]
+    fn a_new_instance_has_the_players_options() {
+        let mpv = mpv();
+        for (name, want) in [
+            (c"vo", "libmpv"),
+            (c"idle", "yes"),
+            (c"keep-open", "no"),
+            (c"load-scripts", "no"),
+            (c"input-default-bindings", "no"),
+            (c"osd-level", "0"),
+            (c"audio-display", "no"),
+            (c"prefetch-playlist", "yes"),
+            (c"ytdl", "no"),
+            (c"user-agent", DEFAULT_UA),
+        ] {
+            assert_eq!(mpv.get(name).as_deref(), Some(want), "{name:?}");
+        }
+        assert_eq!(mpv.get_f64(c"network-timeout"), Some(15.0));
+        if std::env::var_os("IPTV_RS_HWDEC").is_none() {
+            assert_eq!(mpv.get(c"hwdec").as_deref(), Some("auto-copy-safe"));
+        }
+        // Numbers parse as C's whatever the user's locale.
+        assert!(mpv.command(&["set", "volume", "50.5"]));
+        assert_eq!(mpv.get_f64(c"volume"), Some(50.5));
+    }
+
+    /// Unknown names and strings C cannot carry fail without effect.
+    #[test]
+    fn bad_names_are_refused() {
+        let mpv = mpv();
+        mpv.set("no-such-property", "1");
+        mpv.set("volume\0", "1");
+        mpv.option("no-such-option", "1");
+        mpv.option("volume", "1\0");
+        assert_eq!(mpv.get_f64(c"volume"), Some(100.0));
+        assert!(!mpv.command(&["no-such-command"]));
+        assert!(!mpv.command(&["set", "volume\0", "1"]));
+        assert_eq!(mpv.get(c"no-such-property"), None);
+        assert_eq!(mpv.get_i64(c"no-such-property"), None);
+        // Unavailable without a file.
+        assert_eq!(mpv.get_f64(c"time-pos"), None);
+        assert_eq!(mpv.get_i64(c"playlist-count"), Some(0));
+        mpv.wakeup();
+    }
+}

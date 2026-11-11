@@ -13,7 +13,9 @@ use nsh_core::element::desktop::{MenuItem, WindowRef, current_window, set_applic
 use crate::Ui;
 
 pub mod pip_window;
-#[cfg(target_os = "linux")]
+// GTK's picture-in-picture view uses it; the unit tests have no GTK
+// (`mpv/test_host.rs`).
+#[cfg(all(target_os = "linux", not(test)))]
 pub mod x11;
 
 /// The desktop backends, where the app owns the window and the sound:
