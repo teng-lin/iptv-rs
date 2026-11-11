@@ -31,7 +31,9 @@
 //! The picture is black from a new source until the stream plays; a
 //! reopen of the same stream (`reconnect`, or a new token for the same
 //! url: [`map::keeps_frame`]) keeps the last frame, and so does a live
-//! stream's error (the app reconnects it; other errors go black). Each
+//! stream's error (the app reconnects it; other errors go black): the
+//! player holds it itself until the new first frame ([`held`]), as mpv's
+//! render API draws black meanwhile. Each
 //! load sets its cache options first ([`map::load_options`]). mpv
 //! sends a stream's headers with all of its requests ([`map::http`]).
 //! `IPTV_RS_AUDIO` names mpv's audio output (`null` mutes, for tests);
@@ -47,6 +49,7 @@
 mod ffi;
 mod gl;
 mod handle;
+mod held;
 mod map;
 mod pip;
 mod worker;
@@ -191,6 +194,8 @@ struct Inner {
     worker: Option<Worker>,
     render: Cell<*mut ffi::mpv_render_context>,
     gl: Cell<Option<gl::Gl>>,
+    /// The last picture, shown while mpv has none of the stream.
+    held: RefCell<held::Held>,
     state: RefCell<State>,
     waker: Arc<Waker>,
 }
@@ -253,6 +258,7 @@ impl Inner {
             worker,
             render: Cell::new(std::ptr::null_mut()),
             gl: Cell::new(None),
+            held: RefCell::default(),
             state: RefCell::new(State {
                 url: None,
                 token: 0,
@@ -549,23 +555,47 @@ impl Inner {
             ffi::mpv_render_context_set_update_callback(render, None, std::ptr::null_mut());
             ffi::mpv_render_context_free(render);
         }
+        self.held.borrow_mut().clear();
         self.gl.set(None);
         let mut st = self.state.borrow_mut();
         st.deferred = st.url.is_some();
     }
 
     /// Draws into the bound framebuffer, `width`×`height` pixels: the
-    /// stream's picture, or black behind the shutter. The platform's GL
-    /// context is current.
+    /// stream's picture; black behind the shutter; while mpv has no
+    /// picture of the stream (a live stream dropped, a reopen of the same
+    /// stream waiting for its first frame, the end), the last one
+    /// ([`held`]). The platform's GL context is current.
     fn draw(&self, width: i32, height: i32) {
         let Some(gl) = self.gl.get() else { return };
         let render = self.render.get();
-        if render.is_null() || self.state.borrow().shutter {
+        let (shutter, playing) = {
+            let st = self.state.borrow();
+            (st.shutter, st.playing)
+        };
+        if render.is_null() || shutter {
             gl.black();
             return;
         }
+        let view = gl.framebuffer();
+        let mut held = self.held.borrow_mut();
+        if !playing {
+            if !held.show(view, width, height) {
+                gl.black();
+            }
+            return;
+        }
+        let target = held.target(view, width, height);
+        Self::render_into(render, target.unwrap_or(view), width, height);
+        if target.is_some() {
+            held.show(view, width, height);
+        }
+    }
+
+    /// mpv draws its current frame into framebuffer `fbo`.
+    fn render_into(render: *mut ffi::mpv_render_context, fbo: i32, width: i32, height: i32) {
         let mut fbo = ffi::mpv_opengl_fbo {
-            fbo: gl.framebuffer(),
+            fbo,
             w: width,
             h: height,
             internal_format: 0,

@@ -62,7 +62,7 @@ fn loaders() -> &'static Loaders {
 
 /// `name`'s address in the current GL context (null if unknown).
 #[cfg(target_os = "linux")]
-fn address(name: &CStr) -> *mut c_void {
+pub(super) fn address(name: &CStr) -> *mut c_void {
     let l = loaders();
     // SAFETY: loader functions called with a NUL-terminated name.
     unsafe {
@@ -86,7 +86,7 @@ fn address(name: &CStr) -> *mut c_void {
 /// `name`'s address in OpenGL.framework (null if unknown): macOS has one
 /// OpenGL implementation, whatever the context.
 #[cfg(target_os = "macos")]
-fn address(name: &CStr) -> *mut c_void {
+pub(super) fn address(name: &CStr) -> *mut c_void {
     static FRAMEWORK: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     let handle = *FRAMEWORK.get_or_init(|| {
         // SAFETY: dlopen with a NUL-terminated path; never closed.
@@ -106,7 +106,7 @@ fn address(name: &CStr) -> *mut c_void {
 
 /// `name`'s address in OpenGLES.framework (null if unknown).
 #[cfg(target_os = "ios")]
-fn address(name: &CStr) -> *mut c_void {
+pub(super) fn address(name: &CStr) -> *mut c_void {
     super::ios::address(name)
 }
 

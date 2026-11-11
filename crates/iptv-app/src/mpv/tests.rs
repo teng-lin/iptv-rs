@@ -267,6 +267,8 @@ fn clip(dir: &Path, color: &str, secs: f32) -> Option<Vec<u8>> {
 enum Answer {
     Body(Vec<u8>),
     Status(u16),
+    /// The first body until the flag is set, then the second.
+    Switch(Arc<AtomicBool>, Vec<u8>, Vec<u8>),
 }
 
 /// A mock server on 127.0.0.1: each path answers a body or a status; the
@@ -324,7 +326,18 @@ fn answer(mut conn: TcpStream, routes: &[(&'static str, Answer)], heads: &Mutex<
         .iter()
         .find(|(p, _)| *p == path)
         .map(|(_, a)| a.clone());
+    let found = match found {
+        Some(Answer::Switch(switched, before, after)) => {
+            Some(Answer::Body(if switched.load(Ordering::Acquire) {
+                after
+            } else {
+                before
+            }))
+        }
+        other => other,
+    };
     let _ = match found.unwrap_or(Answer::Status(404)) {
+        Answer::Switch(..) => unreachable!("answered above"),
         Answer::Body(body) => conn
             .write_all(
                 format!(
@@ -592,10 +605,8 @@ fn a_source_plays_through_the_render_api() {
         json!({ "url": server.url("/red.ts"), "token": 1 }),
     );
     assert_eq!(p.inner.state.borrow().last_state, "buffering");
-    // No shutter: what mpv draws stays up. (Once the control thread ran
-    // the `loadfile`, mpv's render API itself draws black until the new
-    // file's first frame, so the picture is not checked here.)
     assert!(!p.inner.state.borrow().shutter, "the last frame stays");
+    assert!(red(p.draw(&gpu)), "the last frame stays");
     p.wait_state(Some(&gpu), "ready");
     let head = server.heads("/red.ts").pop().unwrap();
     assert!(head.contains("User-Agent: SyntheticAgent/1.0"), "{head}");
@@ -721,6 +732,68 @@ fn a_live_stream_plays_on_across_a_closed_connection() {
     assert_played_to(&p, "ready");
     assert!(p.events("error").is_empty());
     assert!(red(p.draw(&gpu)));
+}
+
+/// A live stream the server drops keeps its last picture, and so does the
+/// app's retry of it, until the new stream's first frame: never black in
+/// between, in the view or at the picture-in-picture window's size.
+#[test]
+fn a_dropped_live_stream_keeps_its_picture_until_the_retry_plays() {
+    let _serial = serial();
+    let Some((dir, gpu)) = rig() else { return };
+    let (Some(red_ts), Some(blue_ts)) =
+        (clip(dir.path(), "red", 1.5), clip(dir.path(), "blue", 3.0))
+    else {
+        return;
+    };
+    let switched = Arc::new(AtomicBool::new(false));
+    let server = Server::start(vec![(
+        "/live.ts",
+        Answer::Switch(switched.clone(), red_ts, blue_ts),
+    )]);
+    let mut p = Player::new();
+    assert!(p.inner.create_render());
+    let source =
+        |token: i64| json!({ "url": server.url("/live.ts"), "live": true, "token": token });
+    p.set("source", source(0));
+    p.wait_state(Some(&gpu), "ready");
+    p.wait_picture(&gpu, "red", red);
+    // The view and the picture-in-picture window draw it at two sizes.
+    p.inner.draw(W / 2, H / 2);
+    assert!(red(p.draw(&gpu)));
+
+    // The server drops it (a live end the app retries).
+    p.wait_state(Some(&gpu), "ended");
+    p.idle(Some(&gpu), 300);
+    assert!(red(p.draw(&gpu)), "the picture stays after the drop");
+    p.inner.draw(W / 2, H / 2);
+    assert!(red(p.draw(&gpu)), "at either size");
+
+    // The retry: the same stream, now blue; red until its first frame.
+    switched.store(true, Ordering::Release);
+    p.set("source", source(1));
+    let start = Instant::now();
+    loop {
+        assert!(start.elapsed() < PATIENCE, "the retry never played");
+        p.turn(Some(&gpu));
+        let px = p.draw(&gpu);
+        if blue(px) {
+            break;
+        }
+        assert!(
+            red(px),
+            "the last picture until the retry plays, not {px:?}"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    p.wait_state(Some(&gpu), "ready");
+
+    // Another channel still starts black.
+    p.set(
+        "source",
+        json!({ "url": server.url("/other.ts"), "live": true }),
+    );
+    assert!(black(p.draw(&gpu)), "a new channel starts black");
 }
 
 /// A live stream that ends soon after it started is an end the app sees
