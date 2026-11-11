@@ -13,7 +13,8 @@ use nsh_engine::EngineConfig;
 use nsh_testing::Headless;
 
 const IMPORT: Duration = Duration::from_secs(30);
-const RESULTS: Duration = Duration::from_secs(3);
+/// Generous: a loaded machine (an instrumented coverage run) is slow.
+const RESULTS: Duration = Duration::from_secs(10);
 
 #[test]
 fn a_recent_search_shows_its_matches_again() {

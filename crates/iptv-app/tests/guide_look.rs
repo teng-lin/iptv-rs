@@ -130,10 +130,11 @@ fn the_guide_uses_the_bundled_fonts_and_proportions() {
         for _ in 0..17 {
             step(app.press_key("down"));
             focus += 1;
-            let y = number_y(&mut app, focus).expect("the focused row is mounted");
-            // Below the header (a third of the window) and the ruler.
-            let shown = y >= h / 3.0 && y + pitch <= h;
-            assert!(shown, "row {focus} at {y} in {w}x{h}");
+            // Below the header (a third of the window) and the ruler, once
+            // the list has followed the key (a later frame under load).
+            let shown = |y: f32| y >= h / 3.0 && y + pitch <= h;
+            let y = number_y_when(&mut app, focus, shown);
+            assert!(y.is_some_and(shown), "row {focus} at {y:?} in {w}x{h}");
         }
         let (above, at) = (number_y(&mut app, focus - 1), number_y(&mut app, focus));
         assert_eq!((at.unwrap() - above.unwrap()).round(), pitch, "{w}x{h}");
@@ -297,6 +298,20 @@ fn number_y(app: &mut Headless, row: usize) -> Option<f32> {
         .collect();
     assert!(found.len() <= 1, "row {row}: {found:?}");
     found.first().copied()
+}
+
+/// [`number_y`] once `ok` holds for it, or after 3 s (applying the
+/// screen's batches meanwhile).
+fn number_y_when(app: &mut Headless, row: usize, ok: impl Fn(f32) -> bool) -> Option<f32> {
+    let start = std::time::Instant::now();
+    loop {
+        app.catch_up();
+        let y = number_y(app, row);
+        if y.is_some_and(&ok) || start.elapsed() > std::time::Duration::from_secs(3) {
+            return y;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
 }
 
 /// The distance between the first two rows: their channel numbers.
