@@ -6,6 +6,8 @@
 //! the list on screen (a tap opens the groups) and Add playlist.
 
 use iptv_core::lists::group_of;
+use std::time::Duration;
+
 use nsh_core::prelude::*;
 
 use crate::fonts::{HEADER_BODY, HEADER_TIMES, HEADER_TITLE, MEDIUM, SANS};
@@ -99,10 +101,50 @@ fn preview_ring(ui: Ui) -> impl IntoElement {
         .pointer_events(PointerEvents::None)
 }
 
+/// Keys closer together than this are a held key: the description waits
+/// for them to pause.
+const SETTLE: Duration = Duration::from_millis(160);
+
+/// The focused programme as the description shows it: at once after a
+/// pause, blank while keys repeat (a held key moves the focus 15–20 times a
+/// second, and laying out four lines of description each time costs a TV
+/// box more than the rest of the move), then the programme the keys
+/// stopped on.
+fn settled(ui: Ui, program: Memo<Focused>) -> Signal<Focused> {
+    let shown = signal(program.get_untracked());
+    let last = stored(None::<u64>);
+    let generation = stored(0_u32);
+    effect(move || {
+        let p = program.get();
+        let now = ui.now_ms();
+        let held = last
+            .with(|l| l.replace(now))
+            .is_some_and(|t| now.saturating_sub(t) < SETTLE.as_millis() as u64);
+        let g = generation.with(|g| {
+            *g += 1;
+            *g
+        });
+        if !held {
+            shown.set(p);
+            return;
+        }
+        if shown.with_untracked(Option::is_some) {
+            shown.set(None);
+        }
+        let _ = set_timeout(SETTLE, move || {
+            if generation.with(|now| *now == g) {
+                shown.set(program.get_untracked());
+            }
+        });
+    });
+    shown
+}
+
 fn details(ui: Ui, program: Memo<Focused>, size: Scale) -> impl IntoElement {
+    let settled = settled(ui, program);
     // Read once per focused programme (a stored guide reads it from disk).
     let description = computed(move || {
-        program.with(|p| {
+        settled.with(|p| {
             let (_, _, _, ch, p) = (*p)?;
             crate::schedule()
                 .as_any()
