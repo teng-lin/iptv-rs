@@ -132,6 +132,7 @@ fn process_age() -> Option<Duration> {
 
 /// Field 22 of a `/proc/<pid>/stat` line (after the command in
 /// parentheses, which may hold spaces and parentheses itself).
+#[cfg(any(target_os = "linux", target_os = "android", test))]
 fn start_ticks(stat: &str) -> Option<u64> {
     let after = &stat[stat.rfind(')')? + 1..];
     // Fields 3.. follow; the start time is the 20th of them.

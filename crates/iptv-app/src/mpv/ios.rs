@@ -46,6 +46,10 @@ pub(super) fn on_main(f: impl FnOnce() + Send + 'static) {
     DispatchQueue::main().exec_async(f);
 }
 
+/// The desktops' picture-in-picture window (`desktop/pip_window.rs`)
+/// has no iPad counterpart: no player moves anywhere ([`super::pip`]).
+pub(super) fn pip_sync() {}
+
 /// Calls `f` once a second while player `id` lives.
 pub(super) fn every_second(id: u64, f: fn(&Inner)) {
     let when = DispatchTime::NOW.time(1_000_000_000);
