@@ -132,6 +132,12 @@ pub static EXTERNAL_PLAYER: Choices = Choices {
     variants: &["never", "vod_only", "always"],
 };
 
+/// `player.pip_on_leave`: `auto` is on phones and tablets, off on a TV.
+pub static PIP_ON_LEAVE: Choices = Choices {
+    family: "pip_on_leave",
+    variants: &["auto", "always", "never"],
+};
+
 pub static CATCHUP_SCHEME: Choices = Choices {
     family: "catchup_scheme",
     variants: &["auto", "shift", "append", "flussonic", "xtream", "disabled"],
@@ -218,6 +224,7 @@ pub static ALL: &[&Choices] = &[
     &LOGO_SOURCE,
     &DECODER,
     &EXTERNAL_PLAYER,
+    &PIP_ON_LEAVE,
     &CATCHUP_SCHEME,
     &REWIND_LIVE_KEY,
     &SEEK_KEYS,

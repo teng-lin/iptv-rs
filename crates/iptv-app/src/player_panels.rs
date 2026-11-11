@@ -113,10 +113,8 @@ pub fn enabled(ui: Ui, control: Control) -> bool {
         Control::AudioTracks => choice(Track::Audio),
         Control::Captions => choice(Track::Text),
         Control::AudioOffset => crate::media::AUDIO_DELAY && ui.playing.get().is_some(),
-        Control::Recordings
-        | Control::PictureInPicture
-        | Control::ChannelOptions
-        | Control::Settings => false,
+        Control::PictureInPicture => crate::pip::can_enter(ui),
+        Control::Recordings | Control::ChannelOptions | Control::Settings => false,
     }
 }
 

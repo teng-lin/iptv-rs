@@ -22,6 +22,10 @@ import com.longbridge.nsh.NshView
  * it starts again ([PlayerComponent.background]); nothing plays in the
  * background. It runs full screen (immersive): no status or navigation bar
  * until a swipe from the edge shows them for a moment.
+ *
+ * Picture in picture ([PipHost]) only pauses the activity, so the main
+ * player plays on in the window; closing the window stops the activity,
+ * which stops it as above.
  */
 class TvActivity : Activity() {
     private lateinit var nsh: NshView
@@ -29,6 +33,7 @@ class TvActivity : Activity() {
     private val players = LinkedHashSet<PlayerComponent>()
     /** Between onStart and onStop. */
     private var started = false
+    private lateinit var pip: PipHost
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
@@ -37,8 +42,13 @@ class TvActivity : Activity() {
         nsh = NshView(this)
         mark("library loaded")
         nsh.useStandaloneLimits()
+        pip = PipHost(this)
+        val gone = { p: PlayerComponent ->
+            players.remove(p)
+            pip.destroyed(p)
+        }
         nsh.registerComponent(PlayerComponent.NAME) { context ->
-            PlayerComponent(this, context) { players.remove(it) }.also {
+            PlayerComponent(this, context, gone, pip).also {
                 players.add(it)
                 if (!started) it.background()
             }
@@ -67,6 +77,16 @@ class TvActivity : Activity() {
         started = false
         for (p in players.toList()) p.background()
         super.onStop()
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        pip.userLeaving()
+    }
+
+    override fun onPictureInPictureModeChanged(inPip: Boolean, config: Configuration) {
+        super.onPictureInPictureModeChanged(inPip, config)
+        pip.modeChanged(inPip)
     }
 
     override fun onConfigurationChanged(config: Configuration) {
@@ -125,6 +145,7 @@ class TvActivity : Activity() {
     }
 
     override fun onDestroy() {
+        pip.destroy()
         nsh.destroy()
         super.onDestroy()
     }

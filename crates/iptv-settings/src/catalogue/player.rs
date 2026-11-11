@@ -133,6 +133,14 @@ pub static PLAYER: &[Setting] = &[
         boolean(true),
         "Offer a guide shortcut in the control panel.",
     ),
+    // default: ours (iptv-core pip::OnLeave::Auto: on phones and tablets,
+    // off on a TV)
+    player(
+        "pip",
+        "player.pip_on_leave",
+        choice(&PIP_ON_LEAVE, "auto"),
+        "Keep a channel playing full screen in a small window when you leave the app.",
+    ),
 ];
 
 pub static PLAYBACK: &[Setting] = &[

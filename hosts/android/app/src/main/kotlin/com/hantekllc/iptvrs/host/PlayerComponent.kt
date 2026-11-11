@@ -57,6 +57,8 @@ import com.longbridge.nsh.NshComponentContext
  *   stream ([PlayerTracks]; a new source starts again from auto/auto/off).
  * - `muted` (bool; the volume is the system's: `volume` is ignored here),
  *   `audioDelay` (ms, positive: the sound later; [DelayedAudioSink]).
+ * - `pip` (the main player only): picture in picture, [PipHost], which
+ *   also emits its `pip` and `pipAction` events through this component.
  *
  * Events: `state` {state: idle|buffering|ready|ended}, `error` {code, http?}
  * (code is Media3's error code name; no URLs or messages), `size` {width,
@@ -98,6 +100,8 @@ class PlayerComponent(
     private val nsh: NshComponentContext,
     /** Called once the component is destroyed (the activity's list of players). */
     private val onDestroyed: (PlayerComponent) -> Unit = {},
+    /** The activity's picture in picture (props `pip`, `paused`; the video's aspect). */
+    private val pip: PipHost? = null,
 ) : NshComponent {
     companion object {
         const val NAME = "tv.player"
@@ -306,6 +310,7 @@ class PlayerComponent(
         override fun onVideoSizeChanged(size: VideoSize) {
             if (size.width > 0 && size.height > 0) {
                 root.videoAspect = size.width * size.pixelWidthHeightRatio / size.height
+                pip?.videoAspect(this@PlayerComponent, root.videoAspect)
                 nsh.emit("size", mapOf("width" to size.width, "height" to size.height))
             }
         }
@@ -381,10 +386,20 @@ class PlayerComponent(
 
     override fun view(): View = root
 
+    /** The picture itself (the window's start for picture in picture). */
+    internal val picture: View get() = surface
+
+    /** Emits `event` to the app ([PipHost]'s events). */
+    internal fun emit(event: String, data: Any?) = nsh.emit(event, data)
+
     override fun setProp(name: String, value: Any?) {
         when (name) {
             "source" -> setSource(value as? Map<*, *>)
-            "paused" -> player.playWhenReady = value != true
+            "paused" -> {
+                player.playWhenReady = value != true
+                pip?.paused(this, value == true)
+            }
+            "pip" -> pip?.setProp(this, value)
             "pictureSize" -> root.mode = (value as? String) ?: "normal"
             "videoTrack" -> choose(choice.copy(video = (value as? String) ?: PlayerTracks.AUTO))
             "audioTrack" -> choose(choice.copy(audio = (value as? String) ?: PlayerTracks.AUTO))

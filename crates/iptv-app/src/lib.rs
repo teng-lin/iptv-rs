@@ -29,6 +29,7 @@ mod multiview;
 mod multiview_view;
 mod numbers;
 mod panels;
+mod pip;
 mod play_bar;
 mod player;
 mod player_keys;
@@ -200,6 +201,8 @@ pub struct Ui {
     pub multiview: Signal<Option<multiview::State>>,
     /// The channel list over full-screen video, while open.
     pub channels: Signal<Option<iptv_core::channel_list::ChannelList>>,
+    /// The picture-in-picture window, as the host reports it (`pip.rs`).
+    pub pip: Signal<iptv_core::pip::Pip>,
     /// A Long Back acted: the platform's Back on its release is swallowed
     /// (`input.rs`).
     pub back_guard: Signal<iptv_nav::BackGuard>,
@@ -425,6 +428,7 @@ pub fn App() -> impl IntoElement {
         media: media::Media::new(),
         multiview: signal(None),
         channels: signal(None),
+        pip: signal(Default::default()),
         back_guard: signal(iptv_nav::BackGuard::default()),
     };
     settings::bind(ui);
@@ -445,6 +449,7 @@ pub fn App() -> impl IntoElement {
     data::pages::bind(ui);
     play_bar::bind(ui);
     multiview::bind(ui);
+    pip::bind(ui);
     bind_back(ui);
 
     let rows = element_ref();
@@ -483,7 +488,6 @@ pub fn App() -> impl IntoElement {
         }
     });
 
-    let fullscreen = move || ui.mode.get() == ViewMode::Fullscreen;
     view()
         .flex_1()
         .bg(move || rgb(ui.theme.with(|t| t.background.window)))
@@ -491,6 +495,7 @@ pub fn App() -> impl IntoElement {
         .on_mouse_move(move |e: &MouseEvent| pointer_moved(ui, e))
         // Layers, bottom to top: opaque backdrop, video (multiview's other
         // surfaces while their tiles play), UI, full-screen tap catcher.
+        // The picture-in-picture window shows only the video (`pip.rs`).
         .child(panels::backdrop(ui))
         .child(video::layer(ui, 0))
         .children((1..player::SURFACES).map(move |s| {
@@ -499,6 +504,26 @@ pub fn App() -> impl IntoElement {
                 move || video::layer(ui, s),
             )
         }))
+        .child(ui_layers(ui, groups, rows))
+}
+
+/// Everything over the video: the guide, the full-screen tap catcher,
+/// the player panels and every screen and popup. None of it shows in the
+/// picture-in-picture window.
+fn ui_layers(ui: Ui, groups: ElementRef, rows: ElementRef) -> View {
+    let fullscreen = move || ui.mode.get() == ViewMode::Fullscreen;
+    let shown = move || pip::ui_shown(ui);
+    view()
+        .absolute()
+        .inset_0()
+        .opacity(move || if shown() { 1.0_f32 } else { 0.0 })
+        .pointer_events(move || {
+            if shown() {
+                PointerEvents::BoxNone
+            } else {
+                PointerEvents::None
+            }
+        })
         .child(
             view()
                 .flex_1()
@@ -536,6 +561,14 @@ pub fn App() -> impl IntoElement {
                 })
                 .label("Video")
                 .on_press(move |e: &PressEvent| {
+                    // The desktop's picture in picture: video only, a
+                    // double click brings the window back.
+                    if !pip::ui_shown(ui) {
+                        if e.clicks == 2 {
+                            pip::leave(ui);
+                        }
+                        return;
+                    }
                     ui.touched();
                     toggle_panels(ui);
                     // A double click on the desktop: window full screen (the
@@ -669,6 +702,8 @@ pub(crate) fn go_back(ui: Ui) -> bool {
             || ui.chooser.with(Option::is_some)
             || ui.editor.with(Option::is_some);
         match (ui.mode.get(), ui.focus.with(|f| f.pane), panels || menu) {
+            // The desktop's picture-in-picture window: back as it was.
+            _ if pip::leave(ui) => true,
             _ if ui.wizard.with(Option::is_some) => wizard_view::back(ui),
             _ if epg_sources_view::is_open(ui) => epg_sources_view::back(ui),
             _ if playlists_view::is_open(ui) => playlists_view::back(ui),

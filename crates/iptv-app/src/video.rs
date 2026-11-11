@@ -29,6 +29,9 @@
 //!   bitrate}], audio: [{id, label, language, channels, codec}], text:
 //!   [{id, label, language}], selected: {video, audio, text}} whenever they
 //!   change; `format` {fps?, channels?} for what plays.
+//! - picture in picture (Android; surface 0): prop `pip` {auto, enter},
+//!   events `pip` {supported, tv, active} and `pipAction` {action}
+//!   (`pip.rs`).
 //!
 //! In the background (`lifecycle()` Background) Android's host stops every
 //! player, closing its connections, and reopens it when the app comes back
@@ -87,6 +90,14 @@ pub fn rect(ui: Ui) -> (f32, f32, f32, f32) {
 
 /// Surface `surface`'s rectangle; empty for a surface with nothing to show.
 pub fn surface_rect(ui: Ui, surface: usize) -> (f32, f32, f32, f32) {
+    // The picture-in-picture window: surface 0 fills it (`pip.rs`).
+    if crate::pip::active(ui) {
+        let w = window();
+        return match surface {
+            0 => (0.0, 0.0, w.width.0, w.height.0),
+            _ => (0.0, 0.0, 0.0, 0.0),
+        };
+    }
     if crate::multiview::is_open(ui) {
         return crate::multiview::surface_rect(ui, surface).unwrap_or((0.0, 0.0, 0.0, 0.0));
     }
@@ -198,6 +209,7 @@ pub fn layer(ui: Ui, surface: usize) -> impl IntoElement {
             json!(ui.media.volume.with(|v| v.muted) || !crate::multiview::audible(ui, surface))
         })
         .prop("audioDelay", move || json!(ui.media.delay_ms.get()))
+        .prop("pip", move || crate::pip::prop(ui, surface))
         .on_native_event(move |e: &NativeEvent| {
             match e.name.as_ref() {
                 // Once a second while playing: not logged.
@@ -209,6 +221,8 @@ pub fn layer(ui: Ui, surface: usize) -> impl IntoElement {
                 }
                 "tracks" => return crate::media::on_tracks(ui, surface, &e.data),
                 "format" => return crate::media::on_format(ui, surface, &e.data),
+                "pip" => return crate::pip::on_state(ui, &e.data),
+                "pipAction" => return crate::pip::on_action(ui, &e.data),
                 _ => {}
             }
             let status = match &*e.name {

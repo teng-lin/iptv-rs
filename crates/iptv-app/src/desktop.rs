@@ -12,6 +12,8 @@ use nsh_core::element::desktop::{MenuItem, WindowRef, current_window, set_applic
 
 use crate::Ui;
 
+pub mod pip_window;
+
 /// The desktop backends, where the app owns the window and the sound:
 /// Linux and macOS.
 pub const DESKTOP: bool = cfg!(any(target_os = "linux", target_os = "macos"));
@@ -25,6 +27,11 @@ thread_local! {
 /// Keeps the app's window; call while the app renders.
 pub fn bind() {
     WINDOW.with(|w| *w.borrow_mut() = Some(current_window()));
+}
+
+/// Runs `f` on the app's window; `None` off desktops.
+fn with_window<T>(f: impl FnOnce(&WindowRef) -> T) -> Option<T> {
+    WINDOW.with(|w| w.borrow().as_ref().map(f))
 }
 
 /// Whether the window is in full screen (reading subscribes).
