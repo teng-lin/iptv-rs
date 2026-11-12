@@ -2,7 +2,7 @@
 //! row's band with its title, coloured by the focus.
 //!
 //! Kept cheap for the keys, which move the focus many times a second on a
-//! TV box (`tests/guide_scroll_cost.rs`):
+//! TV box (`tests/app/guide_scroll_cost.rs`):
 //!
 //! - a cell reads its row's focus only ([`RowFocus`]): a move re-runs the
 //!   cells of the two rows it leaves and enters;

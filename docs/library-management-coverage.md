@@ -82,6 +82,10 @@ Run from the feature worktree:
 CARGO_BUILD_JOBS=1 cargo llvm-cov -j 1 -p iptv-core -p iptv-guide -p iptv-nav -p iptv-store-sqlite -p iptv-search -p iptv-app --lib --test library_preferences --test migrations --test library_management --test library_refresh --test library_cached_epg --test tv_player --test type_drift --lcov --output-path target/library-management.lcov
 ```
 
+(That run predates one test binary per crate: those integration tests are
+now modules of `iptv-store-sqlite`'s `--test it` and `iptv-app`'s
+`--test app`.)
+
 Raw reports, logs, reproduction/filter scripts and threshold results are
 under `~/analysis/iptv-rs-parity/2026-11-11/library-management/coverage/`:
 `coverage.lcov`, `summary.json`, `results.json`, `gates.json`, `tests.log`,

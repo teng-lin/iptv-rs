@@ -312,6 +312,38 @@ xcrun devicectl device process launch --device <id> com.hantekllc.iptvrs
 - Size: the signed device app is about 69 MB (the executable 72 MB,
   59 MB stripped), the IPA about 26 MB.
 
+## Tests
+
+`tools/check.sh` runs every host-side check (formatting, the crates'
+tests, the wasm builds, the app's build and tests); run it before
+committing.
+
+Every test binary is a link of its own, and the app's link NSH, GTK and
+libmpv, so each crate's integration tests are one binary: `tests/it/`
+(`tests/app/` in `iptv-app`), a module per topic, `main.rs` listing them.
+A test that needs process-wide state of its own stays a separate file in
+`tests/` (`iptv-store-sqlite`'s `epg_memory` and `epg_stream_memory`
+count allocations with a global allocator).
+
+The app's scenarios (`crates/iptv-app/tests/app/`) are headless runs of
+the whole app, and the app keeps its data under `$HOME` and holds
+process-wide state, so each still runs in a process of its own: its
+`#[test]` starts with
+
+```rust
+let Some(home) = isolated!() else { return };
+```
+
+which, under `cargo test`, runs the test binary again for just that test
+with a fresh, empty `$HOME`, forwards its output (shown when it fails, or
+with `--nocapture`) and fails if it fails (`tests/app/isolated.rs`). At
+most four scenario processes run at once; `IPTV_RS_TEST_JOBS=N` changes
+that. Under cargo-nextest, which runs every test in a process of its own,
+the scenario runs directly. To add a scenario, write
+`tests/app/<name>.rs` with such a test and add `mod <name>;` to
+`tests/app/main.rs`. `cargo test -p iptv-app guide_look` runs one
+scenario (`-- --nocapture` shows its log).
+
 ## Before any public release
 
 - Replace `crates/iptv-app/src/theme.rs` (placeholder palette) with our own design.

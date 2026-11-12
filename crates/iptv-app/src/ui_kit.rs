@@ -5,7 +5,7 @@
 //! buttons, tabs, action rows, text fields and cards, all in the lists'
 //! type (`fonts.rs`), pitch and focus pill (`list_rows.rs`), scaled with
 //! the desktop window (`scale.rs`). Sizes live here and in `fonts.rs`
-//! only: `tests/type_drift.rs` fails on a literal text size elsewhere.
+//! only: `tests/app/type_drift.rs` fails on a literal text size elsewhere.
 
 use nsh_core::element::ImageSrc;
 use nsh_core::prelude::*;

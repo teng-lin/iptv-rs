@@ -429,7 +429,7 @@ What changed, each verified on the box:
 2. The last channel starts from its one stored row as soon as the store
    is open (`player/resume.rs`), beside the catalog and guide reads, and
    is found again by key when the guide arrives (not opened again;
-   `tests/cold_start.rs`): player opened 2.3–3.4 s → 0.26–0.49 s.
+   `tests/app/cold_start.rs`): player opened 2.3–3.4 s → 0.26–0.49 s.
 3. The guide's empty shell replaces the synthetic guide at once (it was
    on screen, made-up channels and all, until the stored guide came).
 4. The stored guide comes in two steps (`data/opening.rs`): the channels
@@ -557,7 +557,7 @@ another channel playing): held key 50th / 90th / 99th 42 / 57–61 / 69–85 →
 42–57 / 44–69 / 53–73 ms, RenderThread 26–27 → 18–20 %, engine 24–25 →
 18–22 %.
 
-`tests/guide_scroll_cost.rs` (headless, 300 synthetic channels): a Down
+`tests/app/guide_scroll_cost.rs` (headless, 300 synthetic channels): a Down
 press lays out 31 texts and mounts 35 styles and 16–21 frames (unchanged:
 NSH mounts only what differs), the guide has 1121 views drawn instead of
 1719 and none through a layer instead of 64–85; it fails on layers, on
