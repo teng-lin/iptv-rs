@@ -16,7 +16,8 @@ underneath. Tap a header or press OK on it to expand/collapse its categories;
 Right enters that playlist's channels. Select a category to narrow the guide.
 Sections retain expansion by source ID across refreshes, renames and restart.
 Collapsing a section hides only its categories: the playlist's channels remain
-available in its header, All playlists, favorites and search.
+available in its header, All playlists, favorites and search. Channel zapping
+keeps the owning category's boundaries even when its section is collapsed.
 
 The Favourites entry combines the enabled playlists' favorites; membership is
 stored independently in each source. There is not a separate favorites row
@@ -40,7 +41,10 @@ custom-group creation are outside this implementation; use an individual
 playlist's organization editors. Those unsupported aggregate menu actions
 are disabled. Per-channel guide assignment remains available in either mode.
 
-Each constituent loads its cached channels and guide before refreshing.
+Adding a playlist keeps its successful import's playback context and guide
+work when the browser automatically joins it with the other sources. It does
+not require another login or playlist download to enter the combined view.
+Each constituent otherwise loads its cached channels and guide before refreshing.
 Refresh failures retain its cache and leave other sources available. Source
 refresh/status/guide-source management stays accessible in Playlists.
 Disabling or deleting a source removes only its rows from the aggregate;
@@ -91,7 +95,7 @@ platform smoke testing. No Android or iOS host code changes are required.
 Earlier aggregate-mode Android validation on an owned `tab36` emulator showed six channels
 from two generated playlists, retained All playlists after process restart,
 and restored the same combined view through a whole-app backup round trip.
-The browser change passes 177 Linux app unit tests and 41 UI scenarios, plus
+The browser change passes 177 Linux app unit tests and 43 UI scenarios, plus
 core, guide and store tests and the core/guide WebAssembly builds. A fresh
 `tab36` smoke run with two generated cached M3U sources showed all six channels
 by default, touch collapse of one playlist, remote Down/Right selection of the
