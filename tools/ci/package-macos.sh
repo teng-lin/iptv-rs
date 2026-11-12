@@ -24,7 +24,7 @@ import sys
 app = Path(sys.argv[1])
 info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
 executable = app / "Contents/MacOS" / info["CFBundleExecutable"]
-subprocess.run(["lipo", "-verify_arch", "arm64", str(executable)], check=True)
+subprocess.run(["lipo", str(executable), "-verify_arch", "arm64"], check=True)
 print("Minimum macOS:", info["LSMinimumSystemVersion"])
 subprocess.run(["python3", "tools/ci/smoke-desktop.py", str(executable)], check=True)
 PY

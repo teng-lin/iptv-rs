@@ -1,5 +1,9 @@
 name: Build prerequisites
 description: Check out the pinned NSH fork alongside this repository
+inputs:
+  cache-on-failure:
+    description: Preserve compiled dependencies when a package validation fails
+    default: 'false'
 runs:
   using: composite
   steps:
@@ -26,6 +30,7 @@ runs:
         targets: wasm32-unknown-unknown
     - uses: Swatinem/rust-cache@v2
       with:
+        cache-on-failure: ${{ inputs.cache-on-failure }}
         workspaces: |
           .
           ../nsh

@@ -11,6 +11,7 @@ mkdir -p "$out" target/linux
 (cd crates/iptv-app && "$NSH" package --target linux -o "$root/target/linux" .)
 native="$root/target/linux/Patina"
 cp LICENSE "$native/LICENSE"
+cp crates/iptv-app/fonts/OFL.txt "$native/OFL.txt"
 license=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["license"])')
 mapfile -t executables < <(find "$native" -maxdepth 1 -type f -executable -printf '%f\n')
 test "${#executables[@]}" -eq 1
