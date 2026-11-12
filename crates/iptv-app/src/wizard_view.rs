@@ -458,6 +458,29 @@ fn form(ui: Ui, kind: PlaylistKind) -> impl IntoElement {
                 .h(move || size.px(if banner().is_some() { 22.0 } else { 0.0 })),
         )
         .children(kind.fields().iter().map(|f| field_row(ui, size, *f)))
+        .child(when(
+            move || {
+                read(ui, |w| {
+                    kind.fields().iter().any(|field| {
+                        matches!(
+                            field,
+                            Field::PlaylistUrl | Field::Server | Field::PortalUrl | Field::EpgUrl
+                        ) && w
+                            .value(*field)
+                            .trim()
+                            .to_ascii_lowercase()
+                            .starts_with("http://")
+                    })
+                })
+                .unwrap_or(false)
+            },
+            move || {
+                ui_kit::caption(
+                    size,
+                    "Not encrypted: HTTP can expose your login and viewing activity.",
+                )
+            },
+        ))
         .child(button(ui, size, "Add playlist", Target::Submit))
         .child(hint_or_back(
             ui,

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- IPTV endpoints are user supplied, so their domains cannot be enumerated.
+     Explicit HTTP sources are supported with a visible not-encrypted hint.
+     The shared native transport refuses HTTPS downgrades (including manifests).
+     The loopback player connection carries no identity headers. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors><certificates src="system" /></trust-anchors>
+    </base-config>
+</network-security-config>

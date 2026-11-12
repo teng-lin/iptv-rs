@@ -8,7 +8,6 @@
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
-    <!-- usesCleartextTraffic: the spike plays synthetic HLS from a local server (10.0.2.2). -->
     <application
         android:allowBackup="false"
         android:fullBackupContent="@xml/backup_rules"
@@ -21,7 +20,7 @@
         android:supportsRtl="true"
         android:extractNativeLibs="false"
         android:enableOnBackInvokedCallback="true"
-        android:usesCleartextTraffic="true">
+        android:networkSecurityConfig="@xml/network_security_config">
 
         <!-- simpleperf from adb on a release (non-debuggable) build. -->
         <profileable android:shell="true" />
