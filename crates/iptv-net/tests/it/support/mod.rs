@@ -8,7 +8,7 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpListener;
 
-#[path = "../../../iptv-import/tests/common/synth.rs"]
+#[path = "../../../../iptv-import/tests/it/common/synth.rs"]
 pub mod synth;
 
 use synth::SimRequest;

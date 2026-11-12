@@ -1,5 +1,5 @@
 //! Atomic custom membership and independent ordering, using generated data.
-mod common;
+use crate::common;
 use common::*;
 use iptv_providers::ContentId;
 use iptv_store_sqlite::{ChannelQuery, ChannelScope, OrderScope, Store};

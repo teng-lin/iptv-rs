@@ -1,6 +1,6 @@
 //! Secrets stay out of Debug output, error messages and the config column.
 
-mod common;
+use crate::common;
 
 use common::*;
 use iptv_store_sqlite::{ChannelQuery, Store, StoreError};

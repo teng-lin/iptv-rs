@@ -1,6 +1,6 @@
 //! Manual order, custom groups, EPG override and watch history.
 
-mod common;
+use crate::common;
 
 use common::*;
 use iptv_providers::ContentId;

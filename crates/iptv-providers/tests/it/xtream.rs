@@ -1,6 +1,6 @@
 //! Xtream client tests against synthetic fixtures.
 
-mod common;
+use crate::common;
 
 use common::{fixture, for_each_type_mutation};
 use iptv_providers::model::{CatchUpKind, ContentKind, StreamLocator, WarningLocation};

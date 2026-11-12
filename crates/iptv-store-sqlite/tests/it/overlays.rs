@@ -1,6 +1,6 @@
 //! User overlays: survive refreshes, merge at read time, orphans return.
 
-mod common;
+use crate::common;
 
 use common::*;
 use iptv_providers::ContentId;

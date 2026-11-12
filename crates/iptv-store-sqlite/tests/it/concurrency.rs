@@ -1,6 +1,6 @@
 //! Readers on a second connection while a writer replaces a catalog (WAL).
 
-mod common;
+use crate::common;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Barrier};

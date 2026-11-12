@@ -1,7 +1,7 @@
 //! Scale test: ~2,000 channels x 7 days generated on the fly and fed in
 //! chunks, so the whole document never exists in memory.
 //!
-//! `cargo test -p iptv-epg --release --test large -- --nocapture` prints
+//! `cargo test -p iptv-epg --release --test it large -- --nocapture` prints
 //! throughput and memory figures.
 
 use std::fmt::Write as _;

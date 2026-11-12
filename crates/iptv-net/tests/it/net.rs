@@ -1,6 +1,6 @@
 //! Transport behaviour against a local server.
 
-mod support;
+use crate::support;
 
 use std::io::Write as _;
 use std::time::Duration;

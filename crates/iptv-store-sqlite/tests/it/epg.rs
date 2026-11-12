@@ -1,8 +1,8 @@
 //! Stored guide data: replace, windows, lazy descriptions, prune, delete.
 
-mod common;
-mod epg_synth;
-mod staged;
+use crate::common;
+use crate::epg_synth;
+use crate::staged;
 
 use epg_synth::{NOW, Shape};
 use iptv_epg::{

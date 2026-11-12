@@ -10,8 +10,7 @@
 //! (writes `schema_vN+1.sql`, never overwrites), write `data_vN+1.sql` with
 //! synthetic data in the new shape, and add it to `HISTORY` below.
 
-mod common;
-mod staged;
+use crate::staged;
 
 use std::path::Path;
 

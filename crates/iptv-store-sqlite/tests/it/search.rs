@@ -1,6 +1,6 @@
 //! Name search with FTS5 and with the LIKE fallback.
 
-mod common;
+use crate::common;
 
 use common::*;
 use iptv_providers::model::Channel;

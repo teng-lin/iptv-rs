@@ -1,7 +1,7 @@
 //! What the playlists screen keeps: the shown source, each source's guide
 //! sources, and what deleting a source takes with it.
 
-mod common;
+use crate::common;
 
 use common::*;
 use iptv_providers::SecretUrl;

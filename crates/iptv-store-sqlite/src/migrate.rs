@@ -13,7 +13,7 @@
 //! `tests/fixtures/schema_vN.sql` with
 //! `cargo test -p iptv-store-sqlite --lib -- --ignored write_missing_schema_snapshots`,
 //! and add a seed-data fixture for the previous version (see
-//! `tests/migrations.rs`). A migration that rebuilds a
+//! `tests/it/migrations.rs`). A migration that rebuilds a
 //! table must not rely on `PRAGMA foreign_keys` (it cannot change inside a
 //! transaction): copy rows explicitly and keep ids stable.
 

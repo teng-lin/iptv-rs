@@ -1,6 +1,6 @@
 //! Sources, catalog replace, provider-order reads.
 
-mod common;
+use crate::common;
 
 use common::*;
 use iptv_providers::model::{ContentKind, SourceKind};

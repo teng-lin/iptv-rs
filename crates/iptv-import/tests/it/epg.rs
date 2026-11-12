@@ -1,4 +1,4 @@
-mod common;
+use crate::common;
 
 use common::synth::{self, NOW, SimResponse};
 use common::{Events, FakeFetch, Reply, block_on};

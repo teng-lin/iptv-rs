@@ -1,4 +1,4 @@
-mod common;
+use crate::common;
 
 use common::synth::{self, SimResponse, XT_PASS, XT_USER, XtreamSim};
 use common::{FakeFetch, Reply, block_on, connect_error};

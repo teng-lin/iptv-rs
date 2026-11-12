@@ -2,8 +2,8 @@
 //! [`Store::replace_epg`]) against the in-memory import it replaced, and
 //! what a failed or cancelled download leaves. Synthetic data only.
 
-mod common;
-mod stream_support;
+use crate::common;
+use crate::stream_support;
 
 use std::collections::{HashMap, HashSet};
 

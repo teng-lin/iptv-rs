@@ -1,14 +1,14 @@
 //! Large-catalog timings. Run in release:
 //!
 //! ```sh
-//! cargo test --release -p iptv-store-sqlite --test perf -- --ignored --nocapture
+//! cargo test --release -p iptv-store-sqlite --test it perf -- --ignored --nocapture
 //! ```
 //!
 //! Budget (release, desktop-class CPU): replacing 50k channels in one
 //! transaction well under 3 s. Debug builds compile SQLite unoptimised, so
 //! the budget is only asserted in release.
 
-mod common;
+use crate::common;
 
 use std::time::{Duration, Instant};
 

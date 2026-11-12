@@ -309,7 +309,7 @@ fn input_and_appearance_defaults_match_the_other_crates() {
 /// theme (read at compile time; no dependency on the NSH crate).
 #[test]
 fn palettes_mirror_the_theme_names() {
-    let theme = include_str!("../../iptv-app/src/theme.rs");
+    let theme = include_str!("../../../iptv-app/src/theme.rs");
     let names = |ctor: &str| -> Vec<String> {
         theme
             .lines()

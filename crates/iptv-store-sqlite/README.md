@@ -22,7 +22,7 @@ the NDK. A web store is a later, separate adapter.
   every start. A file from a newer build is refused (`SchemaTooNew`). Never
   edit a shipped migration. Each version's exact DDL is kept as
   `tests/fixtures/schema_vN.sql` with synthetic data `data_vN.sql`;
-  `tests/migrations.rs` builds a file at every historical version, opens it
+  `tests/it/migrations.rs` builds a file at every historical version, opens it
   and checks the data through the API (users skip releases). The steps for
   adding a migration are in that file.
 - **Secrets.** Source settings without secrets are JSON in `sources.config`;
@@ -126,7 +126,7 @@ busy error.
 
 ## Performance
 
-`cargo test --release -p iptv-store-sqlite --test perf -- --ignored --nocapture`
+`cargo test --release -p iptv-store-sqlite --test it perf -- --ignored --nocapture`
 replaces a synthetic 50k-channel catalog in a file-backed store and times
 the common reads. On a desktop CPU (2026-11): replace 0.5–0.9 s (fresh and
 refresh), first page of 50 under 1 ms, visible count ~14 ms, a group with

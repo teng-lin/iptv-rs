@@ -1,7 +1,7 @@
 //! The whole import pipeline (iptv-import over iptv-net) against a local
 //! server serving synthetic M3U, XMLTV, Xtream and Stalker endpoints.
 
-mod support;
+use crate::support;
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};

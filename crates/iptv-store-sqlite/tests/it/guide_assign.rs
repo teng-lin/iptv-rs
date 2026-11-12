@@ -1,8 +1,8 @@
 //! Schema v6 guide data: the channels each stored feed lists, how each
 //! feed's last download went, and a channel's guide chosen by hand.
 
-mod common;
-mod staged;
+use crate::common;
+use crate::staged;
 
 use iptv_epg::{
     ChannelKey, EpgRef, GuideStore, MatchKind, SourceBuilder, StoreOptions, XmltvChannel,
