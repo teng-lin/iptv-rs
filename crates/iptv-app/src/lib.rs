@@ -428,6 +428,17 @@ pub fn App() -> impl IntoElement {
     startup::mark("rust root");
     startup::log_library_base();
     fonts::register();
+    if let Err(error) = platform_data::initialize() {
+        log::error!("iptv storage initialization failed: {error}");
+        return view()
+            .flex_1()
+            .items_center()
+            .justify_center()
+            .child(text("Private app storage is unavailable"))
+            .child(text(
+                "Check your home directory and file permissions, then reopen Patina.",
+            ));
+    }
     if let Err(message) = backup::lock() {
         return view()
             .flex_1()
