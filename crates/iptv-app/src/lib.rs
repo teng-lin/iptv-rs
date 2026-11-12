@@ -35,6 +35,7 @@ mod numbers;
 mod organization_view;
 mod panels;
 mod pip;
+mod platform_data;
 mod play_bar;
 mod player;
 mod player_keys;

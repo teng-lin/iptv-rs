@@ -31,6 +31,9 @@ env_logger.workspace = true
 log.workspace = true
 serde_json.workspace = true
 
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+
 [target.'cfg(unix)'.dependencies]
 # localtime_r for the device's UTC offset (time.rs).
 libc = "0.2"

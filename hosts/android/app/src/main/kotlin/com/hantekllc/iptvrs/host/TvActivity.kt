@@ -42,6 +42,7 @@ class TvActivity : Activity() {
         DevActivity.edgeToEdge(this)
         nsh = NshView(this)
         mark("library loaded")
+        initializeDataDirectory(filesDir.absolutePath)
         nsh.useStandaloneLimits()
         pip = PipHost(this)
         backups = BackupHost(this)
@@ -65,6 +66,9 @@ class TvActivity : Activity() {
         nsh.runRustApp("nsh")
         mark("rust app started")
     }
+
+    /** Called after loading the Rust library, before mounting any app state. */
+    private external fun initializeDataDirectory(path: String)
 
     /** A cold-start phase mark, as the Rust side logs them (`startup.rs`). */
     private fun mark(phase: String) {

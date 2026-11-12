@@ -197,30 +197,7 @@ fn now_unix() -> i64 {
 /// container, or
 /// `~/.local/share/iptv-rs` on the other desktops.
 pub fn data_dir() -> PathBuf {
-    #[cfg(target_os = "android")]
-    {
-        let cmdline = std::fs::read("/proc/self/cmdline").unwrap_or_default();
-        let package = cmdline
-            .split(|b| *b == 0)
-            .next()
-            .map(|p| String::from_utf8_lossy(p).into_owned());
-        let package = package.unwrap_or_else(|| "com.hantekllc.iptvrs".to_owned());
-        PathBuf::from(format!(
-            "/data/data/{}/files",
-            package.split(':').next().unwrap_or_default()
-        ))
-    }
-    #[cfg(not(target_os = "android"))]
-    {
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(std::env::temp_dir);
-        if cfg!(any(target_os = "macos", target_os = "ios")) {
-            home.join("Library/Application Support/iptv-rs")
-        } else {
-            home.join(".local/share/iptv-rs")
-        }
-    }
+    crate::platform_data::data_dir()
 }
 
 pub(crate) fn open_store() -> Result<Store, StoreError> {
