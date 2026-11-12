@@ -3,29 +3,50 @@ on:
   push:
     tags: ['v[0-9]*']
   workflow_dispatch:
+    inputs:
+      platforms:
+        description: Platforms to package (all requires Apple signing secrets)
+        type: choice
+        default: android
+        options: [android, all]
 permissions:
   contents: read
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.platforms.outputs.matrix }}
+    steps:
+      - id: platforms
+        env:
+          PLATFORMS: ${{ inputs.platforms || 'android' }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          platforms = [{"platform": "android", "os": "ubuntu-24.04"}]
+          if os.environ["PLATFORMS"] == "all":
+              platforms += [
+                  {"platform": "linux", "os": "ubuntu-24.04"},
+                  {"platform": "macos", "os": "macos-15"},
+                  {"platform": "ios", "os": "macos-15"},
+              ]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write("matrix=" + json.dumps({"include": platforms}) + "\n")
+          PY
   tests:
     uses: ./.github/workflows/ci.yml
+    with:
+      skip_android: true
   package:
-    needs: tests
+    needs: plan
     environment: release
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - platform: linux
-            os: ubuntu-24.04
-          - platform: android
-            os: ubuntu-24.04
-          - platform: macos
-            os: macos-15
-          - platform: ios
-            os: macos-15
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     steps:
@@ -39,13 +60,14 @@ jobs:
           python3 tools/ci/version.py
           echo "NSH=$(cd ../nsh && pwd)/target/release/nsh" >> "$GITHUB_ENV"
       - run: cargo build --release --locked --manifest-path ../nsh/Cargo.toml -p nsh-cli
-      - uses: actions/setup-java@v4
+        if: matrix.platform != 'android'
+      - uses: ./.github/actions/android
         if: matrix.platform == 'android'
-        with:
-          distribution: temurin
-          java-version: '21'
-      - uses: android-actions/setup-android@v3
+      - name: Build Android native library
         if: matrix.platform == 'android'
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+        run: bash tools/sync-host.sh --release
       - name: Linux packages
         if: matrix.platform == 'linux'
         run: |
@@ -63,17 +85,11 @@ jobs:
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
+          umask 077
           test -n "$KEYSTORE"
-          sdkmanager "platforms;android-35" "build-tools;35.0.1" "ndk;30.0.16248370"
-          rustup target add aarch64-linux-android
-          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/30.0.16248370"
-          bash tools/sync-host.sh --release
           printf '%s' "$KEYSTORE" | base64 --decode > "$RUNNER_TEMP/release.jks"
           export KEYSTORE_PATH="$RUNNER_TEMP/release.jks"
-          (cd hosts/android && ./gradlew assembleRelease bundleRelease)
-          mkdir -p dist
-          cp hosts/android/app/build/outputs/apk/release/*.apk "dist/Patina-$VERSION-android-tablet-tv.apk"
-          cp hosts/android/app/build/outputs/bundle/release/*.aab "dist/Patina-$VERSION-android-tablet-tv.aab"
+          bash tools/ci/package-android.sh
       - name: macOS disk image
         if: matrix.platform == 'macos'
         run: |
@@ -104,8 +120,8 @@ jobs:
           path: dist/*
           if-no-files-found: error
   publish:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: package
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [tests, package]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

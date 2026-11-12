@@ -3,6 +3,7 @@
 # app's NSH assets, into the Gradle host (hosts/android/app/build/nsh).
 # Usage: tools/sync-host.sh [--release] [--no-build]
 # --release: arm64-v8a only (ABIS=... to choose), smallest library.
+# ABIS also limits development builds (default x86_64,arm64-v8a).
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 app="$root/crates/iptv-app"
@@ -19,7 +20,7 @@ export CC_aarch64_linux_android=${CC_aarch64_linux_android:-$toolchain/aarch64-l
 export AR_aarch64_linux_android=${AR_aarch64_linux_android:-$toolchain/llvm-ar}
 # Development builds link fast; `--release` builds the smallest library
 # (arm64 only: 44 MB -> 17 MB stripped with these and nsh.json "features").
-abis=x86_64,arm64-v8a
+abis=${ABIS:-x86_64,arm64-v8a}
 if [ "${1:-}" = "--release" ]; then
   shift
   abis=${ABIS:-arm64-v8a}
