@@ -339,7 +339,11 @@ with a fresh, empty `$HOME`, forwards its output (shown when it fails, or
 with `--nocapture`) and fails if it fails (`tests/app/isolated.rs`). At
 most four scenario processes run at once; `IPTV_RS_TEST_JOBS=N` changes
 that. Under cargo-nextest, which runs every test in a process of its own,
-the scenario runs directly. To add a scenario, write
+the scenario runs directly. Every scenario's local time is noon (a
+fixed-offset `TZ` for its process; timestamps stay real), so no guide it
+builds crosses midnight whenever the suite runs;
+`IPTV_RS_TEST_LOCAL_TIME=HH:MM` picks another time, e.g. `23:50` to see
+what crosses it. To add a scenario, write
 `tests/app/<name>.rs` with such a test and add `mod <name>;` to
 `tests/app/main.rs`. `cargo test -p iptv-app guide_look` runs one
 scenario (`-- --nocapture` shows its log).

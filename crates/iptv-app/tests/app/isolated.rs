@@ -11,6 +11,11 @@
 //! cargo-nextest, whose processes run one test each, the scenario runs at
 //! once with a fresh `$HOME` of its own.
 //!
+//! Each scenario's local time is near noon ([`time_zone`]): its process
+//! gets a fixed-offset `TZ`, whatever the machine's clock and zone say, so
+//! no scenario's guide (a few hours either side of now) crosses midnight
+//! and no time shows a weekday prefix by chance of the hour it runs.
+//!
 //! At most [`JOBS`] scenario processes run at once (default 4: each is a
 //! headless app with threads of its own); other tests stay as parallel as
 //! the harness makes them.
@@ -29,6 +34,9 @@ const DEFAULT_JOBS: usize = 4;
 /// A file the child writes when it reaches the scenario: a name that
 /// selects no test exits successfully too.
 const RAN: &str = "IPTV_RS_TEST_RAN";
+/// `HH:MM`: the local time scenarios start at instead of noon (e.g. 23:50
+/// to see what crosses midnight).
+pub const LOCAL_TIME: &str = "IPTV_RS_TEST_LOCAL_TIME";
 
 /// `let Some(home) = isolated!() else { return };` first in a scenario:
 /// the rest runs in a process of its own, `home` its `$HOME`.
@@ -78,7 +86,10 @@ pub fn run(here: &str) -> Option<Home> {
         let home = tempfile::tempdir().unwrap();
         // SAFETY: this process runs this one test, which sets HOME before
         // anything reads the environment.
-        unsafe { std::env::set_var("HOME", home.path()) };
+        unsafe {
+            std::env::set_var("HOME", home.path());
+            std::env::set_var("TZ", time_zone());
+        }
         return Some(Home::Owned(home));
     }
     let _slot = Slot::take();
@@ -93,6 +104,7 @@ pub fn run(here: &str) -> Option<Home> {
         .env(CHILD, name)
         .env(RAN, &ran)
         .env("HOME", &home)
+        .env("TZ", time_zone())
         .output()
         .unwrap_or_else(|e| panic!("{name}: cannot run {}: {e}", exe.display()));
     // Through the test harness: shown when this test fails, or with
@@ -148,4 +160,48 @@ fn jobs() -> usize {
         .and_then(|v| v.trim().parse().ok())
         .filter(|&n| n > 0)
         .unwrap_or(DEFAULT_JOBS)
+}
+
+/// A POSIX `TZ` with a fixed offset (no daylight saving) that makes the
+/// local time now noon, or [`LOCAL_TIME`]: the app reads its offset
+/// through the C library, which follows `TZ`. Timestamps stay real; only
+/// the local wall clock moves.
+pub fn time_zone() -> String {
+    let wanted = std::env::var(LOCAL_TIME).ok().map_or(12 * 60, |t| {
+        let (h, m) = t
+            .split_once(':')
+            .and_then(|(h, m)| Some((h.parse::<i64>().ok()?, m.parse::<i64>().ok()?)))
+            .unwrap_or_else(|| panic!("{LOCAL_TIME} wants HH:MM, not {t:?}"));
+        h * 60 + m
+    });
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    posix_tz(wanted, now / 60 % (24 * 60))
+}
+
+/// The `TZ` whose local minute of the day is `wanted` when UTC's is
+/// `utc` (offsets kept within ±12 h: the date may differ, not the time).
+fn posix_tz(wanted: i64, utc: i64) -> String {
+    let mut east = (wanted - utc).rem_euclid(24 * 60);
+    if east > 12 * 60 {
+        east -= 24 * 60;
+    }
+    // POSIX counts west of Greenwich as positive.
+    let west = -east;
+    let sign = if west < 0 { '-' } else { '+' };
+    format!("IPT{sign}{:02}:{:02}", west.abs() / 60, west.abs() % 60)
+}
+
+#[test]
+fn the_time_zone_puts_local_time_where_wanted() {
+    // UTC 02:00, wanted 12:00: ten hours east.
+    assert_eq!(posix_tz(12 * 60, 2 * 60), "IPT-10:00");
+    // UTC 21:47, wanted 12:00: 9 h 47 min west.
+    assert_eq!(posix_tz(12 * 60, 21 * 60 + 47), "IPT+09:47");
+    // UTC 12:00: UTC itself.
+    assert_eq!(posix_tz(12 * 60, 12 * 60), "IPT+00:00");
+    // Wanted 23:50 at UTC 00:10: 23 h 40 min east is 20 min west.
+    assert_eq!(posix_tz(23 * 60 + 50, 10), "IPT+00:20");
 }
