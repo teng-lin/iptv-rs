@@ -2211,6 +2211,7 @@ dependencies = [
  "objc2-open-gl",
  "objc2-quartz-core",
  "objc2-ui-kit",
+ "rusqlite",
  "serde_json",
  "tempfile",
  "tokio",

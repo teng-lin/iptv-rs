@@ -156,8 +156,8 @@ fn snapshot_library(root: &Path, snapshot: &Path) -> Result<()> {
     if root != crate::data::data_dir() {
         return Err("Backup root does not match application storage");
     }
-    crate::credential_key::open_database(&root.join("iptv.sqlite"))
-        .and_then(|store| store.snapshot_to(snapshot))
+    let snapshot = snapshot.to_owned();
+    crate::store_service::blocking(move |store| store.snapshot_to(&snapshot))
         .map_err(|_| "Could not snapshot the library")
 }
 
@@ -178,8 +178,7 @@ fn document_reader(root: &Path, path: &Path) -> Result<(u64, Box<dyn Read>)> {
         return Err("Backup root does not match application storage");
     }
     let path = path.to_owned();
-    let reader = crate::credential_key::open_database(&root.join("iptv.sqlite"))
-        .and_then(|store| store.read_private_file(&path))
+    let reader = crate::store_service::blocking(move |store| store.read_private_file(&path))
         .map_err(|_| "Could not decrypt backup document")?;
     Ok((reader.len(), Box::new(reader)))
 }
@@ -198,8 +197,7 @@ fn seal_restore(_: &Path) -> Result<()> {
 #[cfg(not(test))]
 fn seal_restore(directory: &Path) -> Result<()> {
     let directory = directory.to_owned();
-    crate::credential_key::open_database(&crate::data::data_dir().join("iptv.sqlite"))
-        .and_then(|store| seal_restore_with_store(&store, &directory))
+    crate::store_service::blocking(move |store| seal_restore_with_store(store, &directory))
         .map_err(|_| "Could not encrypt the pending restore")
 }
 #[cfg(test)]
@@ -689,9 +687,9 @@ fn activate(root: &Path) -> Result<()> {
 
 async fn worker<T: Send + 'static>(job: impl FnOnce() -> Result<T> + Send + 'static) -> Result<T> {
     let (tx, rx) = futures_channel::oneshot::channel();
-    std::thread::spawn(move || {
+    std::thread::spawn(crate::store_service::scoped(move || {
         let _ = tx.send(job());
-    });
+    }));
     rx.await.map_err(|_| "The backup task stopped")?
 }
 

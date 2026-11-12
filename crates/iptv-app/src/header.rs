@@ -144,6 +144,7 @@ fn details(ui: Ui, program: Memo<Focused>, size: Scale) -> impl IntoElement {
     let settled = settled(ui, program);
     // Read once per focused programme (a stored guide reads it from disk).
     let description = computed(move || {
+        ui.guide_pages.get();
         settled.with(|p| {
             let (_, _, _, ch, p) = (*p)?;
             let schedule = crate::schedule();

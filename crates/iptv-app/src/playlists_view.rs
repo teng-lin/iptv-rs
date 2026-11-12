@@ -133,79 +133,81 @@ fn cancel(ui: Ui) {
 }
 
 fn perform(ui: Ui, effect: Effect) {
-    log::info!("iptv playlists: {}", effect_name(&effect));
-    let result = match effect {
-        Effect::AllPlaylists => {
-            close(ui);
-            data::switch_all(ui);
-            Ok(())
-        }
-        Effect::Add => {
-            crate::wizard_view::open_add(ui);
-            Ok(())
-        }
-        Effect::Show(id) => {
-            close(ui);
-            data::switch_to(ui, id);
-            Ok(())
-        }
-        Effect::Refresh(id) => {
-            data::refresh(ui, id);
-            Ok(())
-        }
-        Effect::Policy(id, policy) => data::set_policy(ui, id, policy),
-        Effect::CustomGroups(id) => {
-            crate::custom_groups::open(ui, id, false);
-            Ok(())
-        }
-        Effect::Organize(id, groups) => {
-            crate::organization_view::open(
-                ui,
-                id,
-                if groups {
-                    crate::organization_view::Kind::Groups
-                } else {
-                    crate::organization_view::Kind::Channels
-                },
-                None,
-            );
-            Ok(())
-        }
-        Effect::Rename(id, name) => data::rename(ui, id, &name),
-        Effect::Guides(id) => {
-            crate::epg_sources_view::open(ui, id);
-            Ok(())
-        }
-        Effect::Delete(id) => data::delete(ui, id),
-        Effect::RefreshAll => {
-            data::refresh_all(ui);
-            Ok(())
-        }
-        Effect::OpenDetails(id) => {
-            if let Some(source) = data::source_details(id) {
-                update(ui, |s| {
-                    s.open_details(source);
-                    None
-                });
+    data::spawn_in_app(async move {
+        log::info!("iptv playlists: {}", effect_name(&effect));
+        let result = match effect {
+            Effect::AllPlaylists => {
+                close(ui);
+                data::switch_all(ui);
+                Ok(())
             }
-            Ok(())
+            Effect::Add => {
+                crate::wizard_view::open_add(ui);
+                Ok(())
+            }
+            Effect::Show(id) => {
+                close(ui);
+                data::switch_to(ui, id);
+                Ok(())
+            }
+            Effect::Refresh(id) => {
+                data::refresh(ui, id);
+                Ok(())
+            }
+            Effect::Policy(id, policy) => data::set_policy(ui, id, policy).await,
+            Effect::CustomGroups(id) => {
+                crate::custom_groups::open(ui, id, false);
+                Ok(())
+            }
+            Effect::Organize(id, groups) => {
+                crate::organization_view::open(
+                    ui,
+                    id,
+                    if groups {
+                        crate::organization_view::Kind::Groups
+                    } else {
+                        crate::organization_view::Kind::Channels
+                    },
+                    None,
+                );
+                Ok(())
+            }
+            Effect::Rename(id, name) => data::rename(ui, id, &name).await,
+            Effect::Guides(id) => {
+                crate::epg_sources_view::open(ui, id);
+                Ok(())
+            }
+            Effect::Delete(id) => data::delete(ui, id).await,
+            Effect::RefreshAll => {
+                data::refresh_all(ui);
+                Ok(())
+            }
+            Effect::OpenDetails(id) => {
+                if let Some(source) = data::source_details(id) {
+                    update(ui, |s| {
+                        s.open_details(source);
+                        None
+                    });
+                }
+                Ok(())
+            }
+            Effect::TryDetails(id, source) => {
+                data::try_details(ui, id, *source);
+                Ok(())
+            }
+            Effect::SetUserAgent(id, agent) => {
+                data::set_user_agent(ui, id, agent);
+                Ok(())
+            }
+            Effect::Close => {
+                close(ui);
+                Ok(())
+            }
+        };
+        if let Err(e) = result {
+            log::warn!("iptv playlists: the store refused it: {e}");
         }
-        Effect::TryDetails(id, source) => {
-            data::try_details(ui, id, *source);
-            Ok(())
-        }
-        Effect::SetUserAgent(id, agent) => {
-            data::set_user_agent(ui, id, agent);
-            Ok(())
-        }
-        Effect::Close => {
-            close(ui);
-            Ok(())
-        }
-    };
-    if let Err(e) = result {
-        log::warn!("iptv playlists: the store refused it: {e}");
-    }
+    });
 }
 
 /// For the log: the effect without names or links.
@@ -242,6 +244,7 @@ pub fn layer(ui: Ui) -> impl IntoElement {
     // What is stored changed (refreshed, renamed, deleted, added): reload.
     effect(move || {
         ui.library.version.get();
+        ui.settings.get();
         if ui.playlists.with_untracked(Option::is_some) {
             let rows = load();
             ui.playlists.update(|s| {

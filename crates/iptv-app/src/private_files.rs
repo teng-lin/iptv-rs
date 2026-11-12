@@ -181,11 +181,10 @@ impl Client {
                 if !actual.starts_with(root) {
                     return Err(failure());
                 }
-                let reader = crate::credential_key::open_database(
-                    &crate::data::data_dir().join("iptv.sqlite"),
-                )
-                .and_then(|store| store.read_private_file(&actual))
-                .map_err(|_| failure())?;
+                let reader =
+                    crate::store_service::call(move |store| store.read_private_file(&actual))
+                        .await
+                        .map_err(|_| failure())?;
                 let remaining = self.net.config().max_streamed_bytes;
                 if reader.len() > remaining {
                     return Err(FetchError::new(
@@ -193,6 +192,7 @@ impl Client {
                         "document byte budget exceeded",
                     ));
                 }
+
                 return Ok(StreamingResponse {
                     status: 200,
                     content_length: Some(reader.len()),

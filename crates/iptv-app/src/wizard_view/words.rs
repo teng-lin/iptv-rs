@@ -81,6 +81,7 @@ pub fn failure(kind: PlaylistKind, failure: ImportFailure) -> &'static str {
         FailureKind::Parse => {
             "The server did not answer as this type of service does. Check the address."
         }
+        FailureKind::Busy => "Too many playlists are updating. Try again when an update finishes.",
         FailureKind::EmptyPlaylist => "The playlist loaded but has nothing to watch in it.",
         FailureKind::Unsupported => {
             "This server is not a service of the chosen type. Try another type."

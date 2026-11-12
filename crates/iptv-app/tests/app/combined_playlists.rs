@@ -1025,3 +1025,92 @@ fn deleting_guide_supersedes_a_retained_previous_download() {
     let Some(home) = isolated!() else { return };
     exercise_previous_guide_handoff(&home, PreviousGuideAction::DeletePending);
 }
+
+#[test]
+fn forty_cached_sources_open_while_both_network_workers_are_stalled() {
+    let Some(home) = isolated!() else { return };
+    let directory = home.data_dir();
+    std::fs::create_dir_all(&directory).unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/synthetic.m3u", listener.local_addr().unwrap());
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stopped = stop.clone();
+    let accepted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let server_accepted = accepted.clone();
+    listener.set_nonblocking(true).unwrap();
+    let server = std::thread::spawn(move || {
+        let mut connections = Vec::new();
+        while !stopped.load(std::sync::atomic::Ordering::Relaxed) {
+            if let Ok((stream, _)) = listener.accept() {
+                connections.push(stream);
+                server_accepted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        connections.len()
+    });
+    let mut settings = Settings::new();
+    settings
+        .set("general.resume_last_channel", Value::Bool(false))
+        .unwrap();
+    std::fs::write(directory.join("settings.json"), settings.to_json_string()).unwrap();
+    let mut store = crate::isolated::open_database(directory.join("iptv.sqlite")).unwrap();
+    for index in 0..40 {
+        let name = format!("Cached {index:02}");
+        let source = store
+            .add_source(&Source {
+                name: name.clone(),
+                config: SourceConfig::M3u(M3uSourceConfig {
+                    location: SecretUrl::new(&url),
+                    user_agent: None,
+                    referrer: None,
+                }),
+            })
+            .unwrap();
+        let parsed = iptv_providers::m3u::parse_m3u(&format!(
+            "#EXTM3U\n#EXTINF:-1,{name}\nhttps://media.example.test/{index}\n"
+        ));
+        store
+            .replace_catalog(source, &parsed.groups, &parsed.channels.items, &[], &[])
+            .unwrap();
+        store
+            .set_source_policy(
+                source,
+                SourcePolicy {
+                    refresh_on_start: index < 2,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+    }
+    store.set_all_playlists(true).unwrap();
+    drop(store);
+    let mut app = Headless::start(EngineConfig {
+        viewport: Size::new(px(1920.0), px(1080.0)),
+        ..EngineConfig::new(Root::of::<iptv_app::App>())
+    })
+    .unwrap();
+    step(app.wait_for_within("text:Cached 00", Duration::from_secs(10)));
+    step(app.wait_until(
+        "both refresh workers have outstanding requests",
+        Duration::from_secs(10),
+        |_| accepted.load(std::sync::atomic::Ordering::Relaxed) == 2,
+    ));
+    // Every cached constituent must reach the combined guide independently
+    // of the two blocked network requests, including sources beyond queue size.
+    step(app.press_key("right"));
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while app.screen().count("text:Cached 39 · Cached 39").unwrap() == 0
+        && std::time::Instant::now() < deadline
+    {
+        step(app.press_key("down"));
+        app.idle(Duration::from_millis(10)).unwrap();
+    }
+    assert!(
+        app.screen().count("text:Cached 39 · Cached 39").unwrap() > 0,
+        "the final cached source must hydrate while both refresh workers are stalled"
+    );
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let requests = server.join().unwrap();
+    assert!(requests <= 2, "cached-only sources must not make requests");
+}

@@ -16,7 +16,6 @@
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::sync::mpsc::{self, TryRecvError};
 use std::time::Duration;
 
 use iptv_epg::{DAY, GuideStore, UnixTime};
@@ -31,9 +30,6 @@ use crate::{Playback, Ui};
 /// Days of finished programmes held in memory with the guide (at most
 /// what `epg.keep_past` keeps). Older ones are paged in.
 pub const LOADED_PAST_DAYS: u32 = 1;
-
-/// A page usually takes a few hundred milliseconds: look often.
-const POLL: Duration = Duration::from_millis(30);
 
 thread_local! {
     /// What waits for a page (catch-up of an older programme): run after
@@ -73,10 +69,10 @@ pub fn kept_from(window: PagedWindow, first: Option<UnixTime>, now: UnixTime) ->
 /// `schedule` (source `source`'s stored guide, as [`window`] at `now`
 /// read it) with its older days paged in on demand, back to the first
 /// programme stored.
-pub fn paged(ui: Ui, schedule: EpgSchedule, source: SourceId, now: UnixTime) -> EpgSchedule {
+pub async fn paged(ui: Ui, schedule: EpgSchedule, source: SourceId, now: UnixTime) -> EpgSchedule {
     let keep = super::stored::keep_past_days(&crate::settings::get());
-    let first = super::open_store()
-        .and_then(|s| s.epg_first_start(source))
+    let first = crate::store_service::call(move |store| store.epg_first_start(source))
+        .await
         .unwrap_or_else(|e| {
             log::warn!("iptv data: the stored guide's first day: {e}");
             None
@@ -85,30 +81,23 @@ pub fn paged(ui: Ui, schedule: EpgSchedule, source: SourceId, now: UnixTime) -> 
     schedule.with_pages(window, loader(ui, source))
 }
 
-/// Reads a page on its own thread and puts it in the schedule on screen.
+/// Reads a page on the shared store worker and updates the visible schedule.
 /// Called from guide queries (maybe inside a view's computation): it only
 /// starts work.
 fn loader(ui: Ui, source: SourceId) -> impl Fn(PageRequest) + 'static {
     move |request: PageRequest| {
-        let (tx, rx) = mpsc::channel();
-        std::thread::spawn(move || {
+        let started = std::time::Instant::now();
+        let read = crate::store_service::call(move |store| {
             let window = EpgWindow {
                 from: request.from,
                 to: request.to,
                 ..EpgWindow::from(0, 0)
             };
-            let started = std::time::Instant::now();
-            let read = super::open_store().and_then(|s| s.load_epg(source, &window));
-            let _ = tx.send((read, started.elapsed()));
+            store.load_epg(source, &window)
         });
         super::spawn_in_app(async move {
-            let (read, took) = loop {
-                match rx.try_recv() {
-                    Ok(result) => break result,
-                    Err(TryRecvError::Empty) => timer(POLL).await,
-                    Err(TryRecvError::Disconnected) => return,
-                }
-            };
+            let read = read.await;
+            let took = started.elapsed();
             let store = read.unwrap_or_else(|e| {
                 log::warn!("iptv data: older guide day: {e}");
                 GuideStore::default()

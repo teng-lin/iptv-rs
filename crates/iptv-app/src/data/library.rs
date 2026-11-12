@@ -15,7 +15,7 @@ use iptv_providers::model::{Source, SourceConfig, SourceKind};
 use iptv_store_sqlite::{GuideSource, ImportErrorKind, SourceId, Store, StoreError, StoredSource};
 use nsh_core::prelude::*;
 
-use super::{Job, Purpose, Update, guides, open_store, start_import_with, stored};
+use super::{Job, Purpose, Update, guides, start_import_with, stored};
 use crate::Ui;
 
 /// What the data layer tells the screens about the stored playlists.
@@ -174,9 +174,71 @@ pub(super) fn reset_imports() {
     });
 }
 
+#[derive(Clone, Default, PartialEq, Eq)]
+pub(super) struct Snapshot {
+    playlists: Vec<Playlist>,
+    details: BTreeMap<SourceId, StoredSource>,
+    imports: BTreeMap<SourceId, iptv_store_sqlite::ImportStatus>,
+    active: Option<SourceId>,
+}
+thread_local! { static SNAPSHOT: RefCell<Option<Snapshot>> = const { RefCell::new(None) }; }
+
+pub(super) fn snapshot_in(store: &Store) -> Result<Snapshot, StoreError> {
+    let playlists = playlists_in(store)?;
+    let mut details = BTreeMap::new();
+    let mut imports = BTreeMap::new();
+    for playlist in &playlists {
+        imports.insert(playlist.id, store.import_status(playlist.id)?);
+        if let Some(source) = store.source(playlist.id)? {
+            details.insert(playlist.id, source);
+        }
+    }
+    Ok(Snapshot {
+        playlists,
+        details,
+        imports,
+        active: store.active_source()?,
+    })
+}
+pub(super) fn install(snapshot: Snapshot) -> bool {
+    SNAPSHOT.with(|current| {
+        let changed = current.borrow().as_ref() != Some(&snapshot);
+        *current.borrow_mut() = Some(snapshot);
+        changed
+    })
+}
+pub(super) async fn refresh_cache(ui: Ui) -> Result<(), StoreError> {
+    let snapshot = crate::store_service::call(|store| snapshot_in(store)).await?;
+    install(snapshot);
+    changed(ui);
+    Ok(())
+}
+
+/// A committed mutation must retain its cleanup even if a subsequent read fails.
+async fn refresh_after_commit(ui: Ui, patch: impl FnOnce(&mut Snapshot)) {
+    SNAPSHOT.with(|snapshot| {
+        if let Some(snapshot) = snapshot.borrow_mut().as_mut() {
+            patch(snapshot);
+        }
+    });
+    changed(ui);
+    if let Err(error) = refresh_cache(ui).await {
+        log::warn!("iptv library: change saved but metadata refresh failed: {error}");
+        crate::settings_view::notify("Change saved; library details could not be refreshed.");
+    }
+}
+
 /// The stored playlists in list order.
 pub fn playlists() -> Result<Vec<Playlist>, StoreError> {
-    let store = open_store()?;
+    SNAPSHOT.with(|snapshot| {
+        snapshot
+            .borrow()
+            .as_ref()
+            .map(|snapshot| snapshot.playlists.clone())
+            .ok_or(StoreError::Unavailable("library is loading"))
+    })
+}
+fn playlists_in(store: &Store) -> Result<Vec<Playlist>, StoreError> {
     store
         .sources()?
         .into_iter()
@@ -224,19 +286,48 @@ pub(super) fn startup_source(store: &Store) -> Result<Option<StoredSource>, Stor
 }
 
 fn newest() -> Result<Option<StoredSource>, StoreError> {
-    startup_source(&open_store()?)
+    SNAPSHOT.with(|snapshot| {
+        let snapshot = snapshot.borrow();
+        let snapshot = snapshot
+            .as_ref()
+            .ok_or(StoreError::Unavailable("library is loading"))?;
+        let active = snapshot.active.filter(|id| {
+            snapshot
+                .playlists
+                .iter()
+                .any(|p| p.id == *id && p.policy.enabled)
+        });
+        let selected = active.or_else(|| {
+            snapshot
+                .playlists
+                .iter()
+                .rev()
+                .find(|p| p.policy.enabled)
+                .map(|p| p.id)
+        });
+        Ok(selected.and_then(|id| snapshot.details.get(&id).cloned()))
+    })
 }
 
 pub fn policy(id: SourceId) -> Result<iptv_store_sqlite::SourcePolicy, StoreError> {
-    open_store()?.source_policy(id)
+    playlists()?
+        .into_iter()
+        .find(|source| source.id == id)
+        .map(|source| source.policy)
+        .ok_or(StoreError::SourceNotFound(id))
 }
-pub fn set_policy(
+pub async fn set_policy(
     ui: Ui,
     id: SourceId,
     policy: iptv_store_sqlite::SourcePolicy,
 ) -> Result<(), StoreError> {
-    open_store()?.set_source_policy(id, policy)?;
-    changed(ui);
+    crate::store_service::call(move |store| store.set_source_policy(id, policy)).await?;
+    refresh_after_commit(ui, |snapshot| {
+        if let Some(playlist) = snapshot.playlists.iter_mut().find(|p| p.id == id) {
+            playlist.policy = policy;
+        }
+    })
+    .await;
     if super::combined::active(ui) {
         if !policy.enabled {
             cancel_running(id);
@@ -270,17 +361,18 @@ pub(super) fn network_due(id: SourceId, purpose: Purpose) -> bool {
     ) {
         return true;
     }
-    open_store()
-        .and_then(|s| Ok((s.source_policy(id)?, s.import_status(id)?)))
-        .map(|(p, status)| {
-            status.last_success_at.is_none()
-                || p.due(
-                    super::now_unix(),
-                    status.last_attempt_at,
-                    matches!(purpose, Purpose::Startup | Purpose::Combined),
-                )
-        })
-        .unwrap_or(true)
+    crate::store_service::blocking(move |store| {
+        Ok((store.source_policy(id)?, store.import_status(id)?))
+    })
+    .map(|(p, status)| {
+        status.last_success_at.is_none()
+            || p.due(
+                super::now_unix(),
+                status.last_attempt_at,
+                matches!(purpose, Purpose::Startup | Purpose::Combined),
+            )
+    })
+    .unwrap_or(true)
 }
 /// UI-owned scheduler; never wakes the operating system or schedules disabled sources.
 pub fn start_scheduler(ui: Ui) {
@@ -291,13 +383,19 @@ pub fn start_scheduler(ui: Ui) {
                 timer(std::time::Duration::from_secs(60)).await;
                 continue;
             }
-            if let Ok(store) = open_store()
-                && let Ok(sources) = store.sources()
-            {
-                for source in sources {
-                    let Ok(policy) = store.source_policy(source.id) else {
-                        continue;
-                    };
+            let sources = crate::store_service::call(|store| {
+                store
+                    .sources()?
+                    .into_iter()
+                    .map(|source| {
+                        let policy = store.source_policy(source.id)?;
+                        Ok((source, policy))
+                    })
+                    .collect::<Result<Vec<_>, StoreError>>()
+            })
+            .await;
+            if let Ok(sources) = sources {
+                for (source, policy) in sources {
                     let attempted = ATTEMPTS
                         .with(|a| a.borrow().get(&source.id).copied())
                         .or(source.import.last_attempt_at);
@@ -312,21 +410,23 @@ pub fn start_scheduler(ui: Ui) {
     });
 }
 
-fn load(id: SourceId) -> Option<StoredSource> {
-    match open_store().and_then(|s| s.source(id)) {
-        Ok(found) => found,
-        Err(e) => {
-            log::warn!("iptv data: source {}: {e}", id.0);
-            None
-        }
-    }
+pub(super) fn load(id: SourceId) -> Option<StoredSource> {
+    SNAPSHOT.with(|snapshot| {
+        snapshot
+            .borrow()
+            .as_ref()
+            .and_then(|snapshot| snapshot.details.get(&id).cloned())
+    })
 }
 
-/// Remembers `id` as the playlist on screen (the next start opens it).
+/// Persists the shown identity without delaying navigation.
 pub(super) fn remember_shown(id: SourceId) {
-    if let Err(e) = open_store().and_then(|mut s| s.set_active_source(id)) {
-        log::warn!("iptv data: could not remember the shown playlist: {e}");
-    }
+    let saved = crate::store_service::call(move |store| store.set_active_source(id));
+    super::spawn_in_app(async move {
+        if let Err(error) = saved.await {
+            log::warn!("iptv data: could not remember the shown playlist: {error}");
+        }
+    });
 }
 
 fn changed(ui: Ui) {
@@ -355,7 +455,28 @@ pub(super) fn run(ui: Ui, stored: StoredSource, purpose: Purpose, edit: bool) {
     let id = stored.id;
     // A mode switch can replace a still-running job for this source.
     cancel_running(id);
-    if network_due(id, purpose) {
+    let due = !matches!(
+        purpose,
+        Purpose::Startup | Purpose::Switch | Purpose::Combined
+    ) || SNAPSHOT.with(|snapshot| {
+        let snapshot = snapshot.borrow();
+        let Some(snapshot) = snapshot.as_ref() else {
+            return true;
+        };
+        let Some(playlist) = snapshot.playlists.iter().find(|playlist| playlist.id == id) else {
+            return true;
+        };
+        let Some(status) = snapshot.imports.get(&id) else {
+            return true;
+        };
+        status.last_success_at.is_none()
+            || playlist.policy.due(
+                super::now_unix(),
+                status.last_attempt_at,
+                matches!(purpose, Purpose::Startup | Purpose::Combined),
+            )
+    });
+    if due {
         ATTEMPTS.with(|a| a.borrow_mut().insert(id, super::now_unix()));
     }
     log::info!(
@@ -516,9 +637,19 @@ pub fn set_user_agent(ui: Ui, id: SourceId, user_agent: Option<String>) {
     try_details(ui, id, source);
 }
 
-pub fn rename(ui: Ui, id: SourceId, name: &str) -> Result<(), StoreError> {
-    open_store()?.rename_source(id, name)?;
-    changed(ui);
+pub async fn rename(ui: Ui, id: SourceId, name: &str) -> Result<(), StoreError> {
+    let name = name.to_owned();
+    let saved_name = name.clone();
+    crate::store_service::call(move |store| store.rename_source(id, &name)).await?;
+    refresh_after_commit(ui, |snapshot| {
+        if let Some(playlist) = snapshot.playlists.iter_mut().find(|p| p.id == id) {
+            playlist.name = saved_name.clone();
+        }
+        if let Some(source) = snapshot.details.get_mut(&id) {
+            source.source.name = saved_name;
+        }
+    })
+    .await;
     if super::combined::active(ui) {
         super::combined::rebuild(ui);
     }
@@ -528,13 +659,20 @@ pub fn rename(ui: Ui, id: SourceId, name: &str) -> Result<(), StoreError> {
 /// Changes the guide sources of playlist `id`; false when `edit` changes
 /// nothing. The guide on screen is checked again once the edits settle
 /// (changed feeds are downloaded); another playlist's when it is shown.
-pub fn edit_guides(ui: Ui, id: SourceId, edit: &guides::Edit) -> Result<bool, StoreError> {
-    let mut store = open_store()?;
-    let Some(changed_sources) = guides::apply(&store.guide_sources(id)?, edit) else {
+pub async fn edit_guides(ui: Ui, id: SourceId, edit: &guides::Edit) -> Result<bool, StoreError> {
+    let edit = edit.clone();
+    let edited = crate::store_service::call(move |store| {
+        let Some(sources) = guides::apply(&store.guide_sources(id)?, &edit) else {
+            return Ok(false);
+        };
+        store.set_guide_sources(id, &sources)?;
+        Ok(true)
+    })
+    .await?;
+    if !edited {
         return Ok(false);
-    };
-    store.set_guide_sources(id, &changed_sources)?;
-    changed(ui);
+    }
+    refresh_after_commit(ui, |_| {}).await;
     revoke_import_handoff(id);
     stored::guides_changed(ui, id);
     Ok(true)
@@ -543,9 +681,18 @@ pub fn edit_guides(ui: Ui, id: SourceId, edit: &guides::Edit) -> Result<bool, St
 /// Deletes stored playlist `id` with its channels, guide and favourites.
 /// The shown one gives way to the newest other playlist, or to the
 /// first-run state when none is left.
-pub fn delete(ui: Ui, id: SourceId) -> Result<(), StoreError> {
+pub async fn delete(ui: Ui, id: SourceId) -> Result<(), StoreError> {
     cancel_running(id);
-    open_store()?.delete_source(id)?;
+    crate::store_service::call(move |store| store.delete_source(id)).await?;
+    refresh_after_commit(ui, |snapshot| {
+        snapshot.playlists.retain(|p| p.id != id);
+        snapshot.details.remove(&id);
+        snapshot.imports.remove(&id);
+        if snapshot.active == Some(id) {
+            snapshot.active = None;
+        }
+    })
+    .await;
     log::info!("iptv data: deleted source {}", id.0);
     crate::player::forget_source(id);
     ui.library.activity.update(|a| {
@@ -553,7 +700,15 @@ pub fn delete(ui: Ui, id: SourceId) -> Result<(), StoreError> {
     });
     changed(ui);
     if super::combined::active(ui) {
+        // Keep the explicitly selected aggregate usable when its last source
+        // is deleted; the playlist screen still offers Add playlist.
         super::combined::rebuild(ui);
+        return Ok(());
+    }
+    if playlists()?.is_empty() {
+        super::show_nothing(ui);
+        crate::playlists_view::close(ui);
+        crate::wizard_view::open_first_run(ui);
         return Ok(());
     }
     if ui.library.shown.get_untracked() != Some(id) {

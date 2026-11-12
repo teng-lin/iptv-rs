@@ -615,6 +615,7 @@ fn stored_playlists_switch_refresh_and_go() {
         "text:M3U link or file, Xtream Codes login, Stalker portal",
         IMPORT,
     ));
+    step(app.wait_for_gone("id:guide-channel-name", IMPORT));
     assert_eq!(app.screen().count("id:guide-channel-name").unwrap(), 0);
     assert!(store(&data).sources().unwrap().is_empty());
     assert!(!data.join(format!("last_channel-{}", first_id.0)).exists());

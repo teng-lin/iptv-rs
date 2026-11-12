@@ -26,6 +26,7 @@ pub(crate) mod organization;
 pub(crate) mod pages;
 pub(crate) mod stored;
 mod wizard_map;
+mod workers;
 
 use std::cell::Cell;
 use std::collections::BTreeSet;
@@ -77,6 +78,7 @@ const MAX_WAIT: Duration = Duration::from_secs(6 * 3600);
 const MIN_WAIT: Duration = Duration::from_secs(60);
 
 /// An import to run.
+#[derive(Clone)]
 pub struct Job {
     pub source: Source,
     /// A guide the user named, tried before the source's own guides. When
@@ -200,12 +202,6 @@ pub fn data_dir() -> PathBuf {
     crate::platform_data::data_dir()
 }
 
-pub(crate) fn open_store() -> Result<Store, StoreError> {
-    let dir = data_dir();
-    let _ = std::fs::create_dir_all(&dir);
-    crate::credential_key::open_database(&dir.join("iptv.sqlite"))
-}
-
 /// Runs `future` on the UI thread under the app's root owner.
 pub fn spawn_in_app(future: impl Future<Output = ()> + 'static) {
     let owner = APP_OWNER.with(Cell::get).unwrap_or_else(Owner::current);
@@ -218,54 +214,75 @@ pub fn spawn_in_app(future: impl Future<Output = ()> + 'static) {
 /// Startup: browse enabled playlists together when there is more than one,
 /// otherwise refresh the active source or open the wizard.
 pub fn start(ui: Ui) {
+    crate::store_service::register_ui_thread();
+    // NSH drops cleanup callbacks without invoking them when the entire Rust
+    // runtime exits. Capture an RAII guard so both owner disposal and runtime
+    // destruction drain accepted writes while the engine thread still exists.
+    struct Drain;
+    impl Drop for Drain {
+        fn drop(&mut self) {
+            if !crate::favorites::flush_on_shutdown() {
+                log::error!(
+                    "iptv persistence: queued favourite changes could not be saved at shutdown"
+                );
+            }
+            if !crate::store_service::drain_on_shutdown() {
+                log::error!("iptv persistence: store did not drain at shutdown");
+            }
+        }
+    }
+    let drain = Drain;
+    nsh_core::prelude::cleanup(move || drop(drain));
     APP_OWNER.with(|o| o.set(Some(Owner::current())));
     combined::reset_single();
     library::reset_imports();
-    // Guide downloads a crash interrupted (none runs yet).
-    EpgStage::remove_stale(data_dir());
-    CatalogStage::remove_stale(data_dir());
+    stored::bind(ui);
     let started = std::time::Instant::now();
-    let (store, source) = match open_store() {
-        Ok(store) => {
-            let source = library::startup_source(&store);
-            (Some(store), source)
+    let startup = crate::store_service::call(|store| {
+        EpgStage::remove_stale(data_dir());
+        CatalogStage::remove_stale(data_dir());
+        let sources = store.sources()?;
+        let mut enabled = 0;
+        for source in &sources {
+            enabled += usize::from(store.source_policy(source.id)?.enabled);
         }
-        Err(e) => (None, Err(e)),
-    };
-    let ms = started.elapsed().as_millis();
-    crate::startup::mark_with("store opened", format_args!("{ms} ms"));
-    if store
-        .as_ref()
-        .is_some_and(|s| s.all_playlists().unwrap_or(false))
-        || combined::has_multiple_enabled()
-    {
-        drop(store);
-        combined::start(ui);
-        library::start_scheduler(ui);
-        return;
-    }
-    match source {
-        Ok(Some(stored)) => {
-            if let Some(store) = &store {
-                opening::begin(ui, store, &stored);
+        Ok((
+            library::startup_source(store)?,
+            store.all_playlists()? || enabled > 1,
+            !sources.is_empty(),
+            library::snapshot_in(store)?,
+        ))
+    });
+    spawn_in_app(async move {
+        let startup = startup.await.map(|(source, combined, any, snapshot)| {
+            library::install(snapshot);
+            (source, combined, any)
+        });
+        crate::startup::mark_with(
+            "store opened",
+            format_args!("{} ms", started.elapsed().as_millis()),
+        );
+        match startup {
+            Ok((_, true, _)) => combined::start(ui),
+            Ok((Some(stored), false, _)) => {
+                opening::begin(ui, &stored).await;
+                library::run(ui, stored, Purpose::Startup, false);
             }
-            drop(store);
-            library::run(ui, stored, Purpose::Startup, false);
-        }
-        Ok(None) => {
-            if playlists().is_ok_and(|p| !p.is_empty()) {
+            Ok((None, false, true)) => {
                 show_nothing(ui);
                 crate::playlists_view::open(ui);
-            } else {
+            }
+            Ok((None, false, false)) => crate::wizard_view::open_first_run(ui),
+            Err(error) => {
+                log::warn!("iptv data: store unavailable ({error}); opening the wizard");
                 crate::wizard_view::open_first_run(ui);
+                crate::settings_view::notify(
+                    "The saved library could not be opened. Unlock the device and restart the app.",
+                );
             }
         }
-        Err(e) => {
-            log::warn!("iptv data: store unavailable ({e}); opening the wizard");
-            crate::wizard_view::open_first_run(ui);
-        }
-    }
-    library::start_scheduler(ui);
+        library::start_scheduler(ui);
+    });
 }
 
 /// A new generation owns the guide: older imports no longer show and
@@ -312,10 +329,32 @@ fn start_import_with(ui: Ui, job: Job, cancel: CancelToken, on_update: impl Fn(U
     let (tx, rx) = mpsc::channel();
     {
         let cancel = cancel.clone();
-        std::thread::spawn(move || run(job, &tx, &cancel));
+        let visible = job
+            .stored
+            .is_some_and(|source| source_is_visible(ui, source))
+            || matches!(
+                purpose,
+                Purpose::Add | Purpose::Startup | Purpose::Switch | Purpose::Refresh
+            );
+        spawn_in_app(async move {
+            if job.purpose.shows_stored_first()
+                && let Some(id) = job.stored
+                && opening::send_stored(&job, id, now_unix(), &tx).await
+            {
+                return;
+            }
+            if cancel.is_cancelled() {
+                return;
+            }
+            let failed = tx.clone();
+            if !workers::submit(visible, move || run(job, &tx, &cancel)) {
+                let _ = failed.send(Msg::Playlist(Err(ImportFailure::new(FailureKind::Busy))));
+            }
+        });
     }
     let merge_requested = Cell::new(false);
-    let show = move |imported: Box<Imported>, held: Option<opening::Held>| {
+    let show = async move |imported: Box<Imported>, held: Option<opening::Held>| {
+        let _ = library::refresh_cache(ui).await;
         if GENERATION.with(Cell::get) != generation {
             return;
         }
@@ -325,7 +364,7 @@ fn start_import_with(ui: Ui, job: Job, cancel: CancelToken, on_update: impl Fn(U
                 && !merge_requested.get()
                 && combined::has_multiple_enabled();
             let source = imported.source;
-            show_part(ui, imported, generation, resume, held);
+            show_part(ui, imported, generation, resume, held).await;
             if merge {
                 merge_requested.set(true);
                 combined::added(ui, source, generation, previous.take());
@@ -361,17 +400,21 @@ fn start_import_with(ui: Ui, job: Job, cancel: CancelToken, on_update: impl Fn(U
                             on_update(Update::Progress(p));
                         }
                         finished = true;
-                        on_update(Update::Done(result.map(|(counts, imported)| {
-                            show(imported, None);
-                            counts
-                        })));
+                        let result = match result {
+                            Ok((counts, imported)) => {
+                                show(imported, None).await;
+                                Ok(counts)
+                            }
+                            Err(error) => Err(error),
+                        };
+                        on_update(Update::Done(result));
                     }
                     Ok(Msg::Guide(imported)) => {
                         if library::import_is_current(imported.source, &completion) {
-                            show(imported, None);
+                            show(imported, None).await;
                         }
                     }
-                    Ok(Msg::FirstScreen(imported, held)) => show(imported, Some(held)),
+                    Ok(Msg::FirstScreen(imported, held)) => show(imported, Some(held)).await,
                     Ok(Msg::NextCheck { source, at })
                         if shows || combined::includes(ui, source) =>
                     {
@@ -402,13 +445,13 @@ fn start_import_with(ui: Ui, job: Job, cancel: CancelToken, on_update: impl Fn(U
 }
 
 /// Puts `imported` on screen unless a newer import owns the guide.
-fn show(ui: Ui, imported: Box<Imported>, generation: u64, resume: bool) {
-    show_part(ui, imported, generation, resume, None);
+async fn show(ui: Ui, imported: Box<Imported>, generation: u64, resume: bool) {
+    show_part(ui, imported, generation, resume, None).await;
 }
 
 /// [`show`]; with `held`, its guide holds only those programmes (a first
 /// screen, `opening.rs`).
-fn show_part(
+async fn show_part(
     ui: Ui,
     imported: Box<Imported>,
     generation: u64,
@@ -419,7 +462,7 @@ fn show_part(
         return;
     }
     if combined::active(ui) {
-        combined::show(ui, imported, held);
+        combined::show(ui, imported, held).await;
         if resume {
             combined::resume(ui);
         }
@@ -437,7 +480,11 @@ fn show_part(
         imported.guide,
         imported.now,
     );
-    organization::apply(&schedule, imported.source);
+    let mut organization_revision = organization::revision();
+    organization::apply(&schedule, imported.source).await;
+    if GENERATION.with(Cell::get) != generation || combined::active(ui) {
+        return;
+    }
     let built = started.elapsed();
     let mut schedule = match imported.playback {
         Streams::New(context, allowed) => {
@@ -453,7 +500,7 @@ fn show_part(
             schedule.with_shared_playback(shared)
         }
     };
-    if let Some(lookup) = stored::description_lookup(imported.source) {
+    if let Some(lookup) = stored::description_lookup(ui, imported.source) {
         schedule = schedule.with_description_lookup(lookup);
     }
     // Its guide is the stored one's recent part (`stored::load_guide`), or
@@ -462,12 +509,26 @@ fn show_part(
         Some(held) => schedule
             .held_only(held.from, held.to)
             .held_channels(held.keys),
-        None => pages::paged(ui, schedule, imported.source, imported.now),
+        None => pages::paged(ui, schedule, imported.source, imported.now).await,
     };
+    if GENERATION.with(Cell::get) != generation || combined::active(ui) {
+        return;
+    }
     let wrapped = started.elapsed();
     log::info!("iptv data: guide switched to {channels} imported channels");
-    crate::favorites::set_source(Some(imported.source));
+    let Some(install_favorites) = crate::favorites::prepare_source(Some(imported.source)).await
+    else {
+        return;
+    };
+    while organization::revision() != organization_revision {
+        organization_revision = organization::revision();
+        organization::apply(&schedule, imported.source).await;
+    }
+    if GENERATION.with(Cell::get) != generation || combined::active(ui) {
+        return;
+    }
     let favorites = started.elapsed();
+    install_favorites();
     let schedule = Rc::new(schedule);
     combined::remember_single(imported.source, schedule.clone());
     crate::set_schedule(&ui, schedule);
@@ -553,6 +614,20 @@ enum GuideRead {
     CacheOnly,
 }
 
+/// Prefer the source being browsed, including the focused child of All playlists.
+fn source_is_visible(ui: Ui, source: SourceId) -> bool {
+    if ui.library.shown.get_untracked() == Some(source) {
+        return true;
+    }
+    if !combined::active(ui) {
+        return false;
+    }
+    crate::lists::focused_channel(ui)
+        .and_then(|channel| crate::schedule().channel_key(channel))
+        .and_then(|key| combined::owner(ui, &key))
+        .is_some_and(|(owner, _)| owner == source)
+}
+
 async fn read_guide(
     ui: Ui,
     source: SourceId,
@@ -561,9 +636,12 @@ async fn read_guide(
     handoff: Option<library::ImportCompletion>,
 ) {
     let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
+    if !workers::submit(source_is_visible(ui, source), move || {
         with_runtime(|| guide_pipeline(source, &tx, read));
-    });
+    }) {
+        crate::settings_view::notify("Too many playlists are updating. Try again shortly.");
+        return;
+    }
     loop {
         if handoff
             .as_ref()
@@ -572,7 +650,7 @@ async fn read_guide(
             return;
         }
         match rx.try_recv() {
-            Ok(Msg::Guide(imported)) => show(ui, imported, generation, false),
+            Ok(Msg::Guide(imported)) => show(ui, imported, generation, false).await,
             Ok(Msg::NextCheck { source, at }) => schedule_check(ui, source, at, generation),
             Ok(_) => {}
             Err(TryRecvError::Empty) => timer(POLL).await,
@@ -721,13 +799,6 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
         let _ = tx.send(Msg::Playlist(Err(failure)));
     };
     let now = now_unix();
-    // Opening a stored source: what the store has is on screen before any
-    // network.
-    if job.purpose.shows_stored_first()
-        && let Some(id) = job.stored
-    {
-        opening::send_stored(&job, id, now, tx);
-    }
     if let Some(id) = job
         .stored
         .filter(|id| !library::network_due(*id, job.purpose))
@@ -828,7 +899,8 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
     }
     let _ = std::fs::create_dir_all(data_dir());
     let mut stage = match CatalogStage::create_in_with(data_dir(), |path| {
-        open_store()?.open_staging_connection(path)
+        let path = path.to_owned();
+        crate::store_service::blocking(move |store| store.open_staging_connection(&path))
     }) {
         Ok(stage) => stage,
         Err(error) => {
@@ -939,6 +1011,10 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
             return fail(ImportFailure::new(FailureKind::Network));
         }
     };
+    let matching = stored::Matching {
+        channels: &catalog.channels,
+        overrides: &overrides,
+    };
     let counts = ImportCounts {
         channels: counts.channels,
         groups: counts.groups,
@@ -1029,15 +1105,14 @@ pub(crate) struct Downloaded {
 /// stored one, if any, when the store fails).
 fn keep_guide(
     id: SourceId,
-    mut guide: Downloaded,
+    guide: Downloaded,
     guides: &[EpgSourceConfig],
     matching: stored::Matching<'_>,
     now: i64,
 ) -> GuideStore {
-    if let Err(e) = stored::replace(id, &mut guide, guides, matching, now) {
+    if let Err(e) = stored::replace(id, guide, guides, matching, now) {
         log::warn!("iptv data: could not store the guide: {e}");
     }
-    drop(guide);
     stored::load_guide(id, now).unwrap_or_default()
 }
 
@@ -1054,9 +1129,10 @@ async fn download_guide<P: ProgressSink>(
     cancel: &CancelToken,
     must_load: Option<iptv_epg::SourceId>,
 ) -> Result<Downloaded, ImportError> {
-    let store = open_store().map_err(|e| ImportError::Storage(e.to_string()))?;
-    let mut stage = EpgStage::create_in_store(&store, data_dir())
-        .map_err(|e| ImportError::Storage(e.to_string()))?;
+    let mut stage =
+        crate::store_service::call(|store| EpgStage::create_in_store(store, data_dir()))
+            .await
+            .map_err(|e| ImportError::Storage(e.to_string()))?;
     let epg = import_epg(
         net,
         guides,
@@ -1088,14 +1164,10 @@ fn save(
     planned: &[GuideSource],
     stage: CatalogStage,
 ) -> Result<(SourceId, CatalogCounts, Vec<GuideSource>), StoreError> {
-    let mut store = open_store()?;
-    save_in(
-        &mut store,
-        job,
-        catalog.guide_urls(),
-        planned.to_vec(),
-        stage,
-    )
+    let job = job.clone();
+    let guide_urls = catalog.guide_urls();
+    let planned = planned.to_vec();
+    crate::store_service::blocking(move |store| save_in(store, &job, guide_urls, planned, stage))
 }
 
 fn save_in(
@@ -1138,14 +1210,16 @@ fn record_failure(stored: Option<SourceId>, kind: ImportErrorKind) {
     let Some(id) = stored else {
         return;
     };
-    if let Err(e) = open_store().and_then(|mut s| s.record_import_failure(id, kind)) {
+    if let Err(e) =
+        crate::store_service::blocking(move |store| store.record_import_failure(id, kind))
+    {
         log::warn!("iptv data: could not record the failure: {e}");
     }
 }
 
 /// Keeps a picked playlist file in the app's files (a picked document is
 /// only readable now; a refresh reads the copy). Returns its path.
-pub fn keep_picked_file(name: &str, bytes: &[u8]) -> std::io::Result<String> {
+pub async fn keep_picked_file(name: &str, bytes: &[u8]) -> std::io::Result<String> {
     let name: String = name
         .chars()
         .map(|c| {
@@ -1170,9 +1244,7 @@ pub fn keep_picked_file(name: &str, bytes: &[u8]) -> std::io::Result<String> {
         .join(format!("{:016x}", u64::from_le_bytes(random)));
     let path = dir.join(name);
     let bytes = bytes.to_vec();
-    let store = crate::credential_key::open_database(&data_dir().join("iptv.sqlite"))
-        .map_err(|_| std::io::Error::other("private document cannot be saved"))?;
-    (|| -> Result<String, iptv_store_sqlite::StoreError> {
+    crate::store_service::call(move |store| {
         let mut builder = std::fs::DirBuilder::new();
         builder.recursive(true);
         #[cfg(unix)]
@@ -1185,6 +1257,12 @@ pub fn keep_picked_file(name: &str, bytes: &[u8]) -> std::io::Result<String> {
         })?;
         crate::private_files::write_atomic(store, &path, &mut bytes.as_slice())?;
         Ok(path.to_string_lossy().into_owned())
-    })()
+    })
+    .await
     .map_err(|_| std::io::Error::other("private document cannot be saved"))
+}
+
+/// Current browser generation for async state installation guards.
+pub(crate) fn generation() -> u64 {
+    GENERATION.with(Cell::get)
 }

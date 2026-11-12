@@ -45,7 +45,7 @@ use iptv_store_sqlite::{
 
 use nsh_core::prelude::timer;
 
-use super::{Downloaded, GENERATION, Imported, Msg, POLL, Streams, guides, open_store};
+use super::{Downloaded, GENERATION, Imported, Msg, POLL, Streams, guides};
 use crate::Ui;
 
 thread_local! {
@@ -56,6 +56,73 @@ thread_local! {
     /// Edits of guide sources since the app started: a check waits for
     /// the last one.
     static EDITS: RefCell<BTreeMap<SourceId, u64>> = const { RefCell::new(BTreeMap::new()) };
+}
+
+#[derive(Default)]
+struct StatusSnapshot {
+    library: Option<super::library::Snapshot>,
+    combined: bool,
+    enabled: Vec<SourceId>,
+    guides: BTreeMap<SourceId, StoredGuide>,
+    lines: BTreeMap<SourceId, Vec<SourceLine>>,
+}
+thread_local! { static STATUS: RefCell<StatusSnapshot> = RefCell::default(); }
+
+/// Refresh small UI metadata after imports/edits without querying SQLite in views.
+pub fn bind(ui: Ui) {
+    let revision = std::rc::Rc::new(Cell::new(0_u64));
+    nsh_core::prelude::effect(move || {
+        ui.library.version.get();
+        ui.data_version.get();
+        revision.set(revision.get().wrapping_add(1));
+        let expected = revision.get();
+        let revision = revision.clone();
+        let loaded = crate::store_service::call(|store| {
+            let mut snapshot = StatusSnapshot {
+                library: Some(super::library::snapshot_in(store)?),
+                combined: store.all_playlists()?,
+                ..Default::default()
+            };
+            for source in store.sources()? {
+                if store.source_policy(source.id)?.enabled {
+                    snapshot.enabled.push(source.id);
+                }
+                if let Some(guide) = store.epg_guide(source.id)? {
+                    snapshot.guides.insert(source.id, guide);
+                }
+                let results = store.epg_feed_results(source.id)?;
+                let lines = store
+                    .guide_sources(source.id)?
+                    .into_iter()
+                    .map(|source| SourceLine {
+                        result: results
+                            .iter()
+                            .find(|result| result.feed == source.feed)
+                            .cloned(),
+                        source,
+                    })
+                    .collect();
+                snapshot.lines.insert(source.id, lines);
+            }
+            Ok(snapshot)
+        });
+        super::spawn_in_app(async move {
+            if let Ok(mut snapshot) = loaded.await
+                && revision.get() == expected
+            {
+                let library_changed = snapshot.library.take().is_some_and(super::library::install);
+                STATUS.with(|status| *status.borrow_mut() = snapshot);
+                if library_changed && super::combined::active(ui) {
+                    super::combined::rebuild(ui);
+                }
+                ui.settings.update(|version| *version += 1);
+            }
+        });
+    });
+}
+
+pub fn cached_guide_state(source: SourceId) -> Option<StoredGuide> {
+    STATUS.with(|status| status.borrow().guides.get(&source).cloned())
 }
 
 /// How long a guide check waits after the guide sources changed (more
@@ -82,7 +149,7 @@ fn with_storage(mut configs: Vec<EpgSourceConfig>, settings: &Settings) -> Vec<E
 
 /// A stored source's live groups and channels, in provider order.
 pub fn catalog(source: SourceId) -> Result<(Vec<Group>, Vec<Channel>), StoreError> {
-    catalog_in(&open_store()?, source)
+    crate::store_service::blocking(move |store| catalog_in(store, source))
 }
 
 /// [`catalog`] from an open store.
@@ -106,7 +173,7 @@ pub fn catalog_in(
 
 /// What is stored about `source`'s guide.
 pub fn guide_state(source: SourceId) -> Option<StoredGuide> {
-    match open_store().and_then(|s| s.epg_guide(source)) {
+    match crate::store_service::blocking(move |store| store.epg_guide(source)) {
         Ok(guide) => guide,
         Err(e) => {
             log::warn!("iptv data: stored guide state: {e}");
@@ -125,7 +192,19 @@ pub fn load_guide(source: SourceId, now: UnixTime) -> Option<GuideStore> {
 
 /// `window` of `source`'s stored guide; `None` when nothing is stored.
 pub fn read_guide(source: SourceId, window: &EpgWindow<'_>) -> Option<GuideStore> {
-    match open_store().and_then(|s| s.load_epg(source, window)) {
+    let (from, to, descriptions) = (window.from, window.to, window.descriptions);
+    let keys = window.keys.map(<[ChannelKey]>::to_vec);
+    match crate::store_service::blocking(move |store| {
+        store.load_epg(
+            source,
+            &EpgWindow {
+                from,
+                to,
+                keys: keys.as_deref(),
+                descriptions,
+            },
+        )
+    }) {
         Ok(guide) if guide.bound_count() > 0 => Some(guide),
         Ok(_) => None,
         Err(e) => {
@@ -137,12 +216,10 @@ pub fn read_guide(source: SourceId, window: &EpgWindow<'_>) -> Option<GuideStore
 
 /// `source`'s guide sources in the user's order (empty when unreadable).
 pub fn guide_sources(source: SourceId) -> Vec<GuideSource> {
-    open_store()
-        .and_then(|s| s.guide_sources(source))
-        .unwrap_or_else(|e| {
-            log::warn!("iptv data: guide sources: {e}");
-            Vec::new()
-        })
+    crate::store_service::blocking(move |store| store.guide_sources(source)).unwrap_or_else(|e| {
+        log::warn!("iptv data: guide sources: {e}");
+        Vec::new()
+    })
 }
 
 /// The download configs of `sources` (those switched on), with the storage
@@ -178,19 +255,30 @@ pub fn configs_for(
 /// guide.
 pub fn current_configs(source: SourceId, state: Option<&StoredGuide>) -> Vec<EpgSourceConfig> {
     let sources = guide_sources(source);
+    let source = crate::store_service::blocking(move |store| store.source(source))
+        .ok()
+        .flatten();
+    configs_from_sources(&sources, state, source.as_ref().map(|s| &s.source.config))
+}
+
+pub(super) fn configs_from_sources(
+    sources: &[GuideSource],
+    state: Option<&StoredGuide>,
+    source: Option<&iptv_providers::model::SourceConfig>,
+) -> Vec<EpgSourceConfig> {
     if sources.is_empty() {
         let stored = state.map(StoredGuide::configs).unwrap_or_default();
         return with_storage(stored, &crate::settings::get());
     }
-    match open_store().and_then(|s| s.source(source)) {
-        Ok(Some(stored)) => configs_for(&sources, &stored.source.config),
-        _ => configs(&sources),
+    match source {
+        Some(source) => configs_for(sources, source),
+        None => configs(sources),
     }
 }
 
 /// The channels of `source` whose guide the user chose by hand.
 pub fn overrides(source: SourceId) -> Overrides {
-    match open_store().and_then(|s| s.epg_overrides(source)) {
+    match crate::store_service::blocking(move |store| store.epg_overrides(source)) {
         Ok(rows) => rows
             .into_iter()
             .map(|(id, epg)| (ChannelKey::new(id.as_str()), epg.to_override()))
@@ -271,7 +359,7 @@ pub fn next_check(
 }
 
 /// The time a guide check is due after `decision`.
-fn check_at(decision: Decision, now: UnixTime) -> Option<UnixTime> {
+pub(super) fn check_at(decision: Decision, now: UnixTime) -> Option<UnixTime> {
     match decision {
         Decision::Keep { next_check } => next_check,
         Decision::Backoff { retry_at } => Some(retry_at),
@@ -290,44 +378,42 @@ const RETRY_DUE: i64 = 3600;
 /// kept for the guide sources screen.
 pub fn replace(
     source: SourceId,
-    guide: &mut Downloaded,
+    mut guide: Downloaded,
     configs: &[EpgSourceConfig],
     matching: Matching<'_>,
     now: UnixTime,
 ) -> Result<EpgCounts, StoreError> {
-    let mut store = open_store()?;
-    let import = &guide.import;
-    let feeds = EpgFeedMeta::from_import(import, configs, now);
-    let counts = store.replace_epg(
-        source,
-        &mut guide.stage,
-        import,
-        &feeds,
-        matching.fingerprint(),
-    )?;
-    let results: Vec<_> = import
-        .sources
-        .iter()
-        .map(|o| (o.id, o.result.as_ref().err().map(error_kind)))
-        .collect();
-    store.record_epg_feed_results(source, &results)?;
+    let feeds = EpgFeedMeta::from_import(&guide.import, configs, now);
+    let fingerprint = matching.fingerprint();
     let keep = keep_past_days(&crate::settings::get());
-    let pruned = store.prune_epg(now.saturating_sub(i64::from(keep).saturating_mul(DAY)))?;
-    if let Some(Err(e)) = import
-        .sources
-        .iter()
-        .map(|o| &o.result)
-        .find(|r| r.is_err())
-    {
-        store.record_epg_failure(source, error_kind(e))?;
-    }
-    log::info!(
-        "iptv data: stored the guide of source {}: {} channels, {} programmes ({pruned} old ones pruned)",
-        source.0,
-        counts.bindings,
-        counts.programmes
-    );
-    Ok(counts)
+    crate::store_service::blocking(move |store| {
+        let import = &guide.import;
+
+        let counts = store.replace_epg(source, &mut guide.stage, import, &feeds, fingerprint)?;
+        let results: Vec<_> = import
+            .sources
+            .iter()
+            .map(|o| (o.id, o.result.as_ref().err().map(error_kind)))
+            .collect();
+        store.record_epg_feed_results(source, &results)?;
+
+        let pruned = store.prune_epg(now.saturating_sub(i64::from(keep).saturating_mul(DAY)))?;
+        if let Some(Err(e)) = import
+            .sources
+            .iter()
+            .map(|o| &o.result)
+            .find(|r| r.is_err())
+        {
+            store.record_epg_failure(source, error_kind(e))?;
+        }
+        log::info!(
+            "iptv data: stored the guide of source {}: {} channels, {} programmes ({pruned} old ones pruned)",
+            source.0,
+            counts.bindings,
+            counts.programmes
+        );
+        Ok(counts)
+    })
 }
 
 /// Notes a failed guide download (every source in `configs` failed); the
@@ -335,7 +421,7 @@ pub fn replace(
 pub fn record_failure(source: SourceId, error: &ImportError, configs: &[EpgSourceConfig]) {
     let kind = error_kind(error);
     let results: Vec<_> = configs.iter().map(|c| (c.id, Some(kind))).collect();
-    let recorded = open_store().and_then(|mut s| {
+    let recorded = crate::store_service::blocking(move |s| {
         s.record_epg_failure(source, kind)?;
         s.record_epg_feed_results(source, &results)
     });
@@ -346,32 +432,55 @@ pub fn record_failure(source: SourceId, error: &ImportError, configs: &[EpgSourc
 
 /// Deletes `source`'s stored guide (no guide is configured any more).
 pub fn discard(source: SourceId) {
-    match open_store().and_then(|mut s| s.delete_epg(source)) {
+    match crate::store_service::blocking(move |store| store.delete_epg(source)) {
         Ok(true) => log::info!("iptv data: no guide configured; deleted the stored one"),
         Ok(false) => {}
         Err(e) => log::warn!("iptv data: could not delete the stored guide: {e}"),
     }
 }
 
-/// Reads descriptions of `source`'s stored guide on demand (on the UI
-/// thread: one indexed row).
+/// Fetch descriptions on the shared worker; a bounded cache makes later renders synchronous.
 pub fn description_lookup(
+    ui: Ui,
     source: SourceId,
 ) -> Option<impl Fn(&ChannelKey, UnixTime) -> Option<String> + 'static> {
-    let store = match open_store() {
-        Ok(store) => store,
-        Err(e) => {
-            log::warn!("iptv data: descriptions unavailable: {e}");
-            return None;
-        }
-    };
+    let cache = std::rc::Rc::new(RefCell::new(
+        BTreeMap::<(String, UnixTime), Option<String>>::new(),
+    ));
     Some(move |key: &ChannelKey, start| {
-        store
-            .epg_description(source, key, start)
-            .unwrap_or_else(|e| {
-                log::warn!("iptv data: description: {e}");
-                None
-            })
+        let identity = (key.to_string(), start);
+        if let Some(description) = cache.borrow().get(&identity) {
+            return description.clone();
+        }
+        if cache.borrow().len() >= 128 {
+            cache.borrow_mut().pop_first();
+        }
+        cache.borrow_mut().insert(identity.clone(), None);
+        let key = key.clone();
+        let read =
+            crate::store_service::call(move |store| store.epg_description(source, &key, start));
+        let cache = cache.clone();
+        super::spawn_in_app(async move {
+            match read.await {
+                Ok(description) => {
+                    let mut cache = cache.borrow_mut();
+                    let Some(entry) = cache.get_mut(&identity) else {
+                        return;
+                    };
+                    *entry = description;
+                }
+                Err(error) => {
+                    log::warn!("iptv data: description: {error}");
+                    // A transient read failure is not a cached absence. Retry
+                    // on the next user-driven lookup without causing a render
+                    // loop while the database remains unavailable.
+                    cache.borrow_mut().remove(&identity);
+                    return;
+                }
+            }
+            ui.guide_pages.update(|version| *version += 1);
+        });
+        None
     })
 }
 
@@ -402,7 +511,7 @@ pub enum GuideStatus {
 pub fn guide_status() -> GuideStatus {
     let sources = shown_sources();
     if sources.is_empty() {
-        return if open_store().is_ok_and(|s| s.all_playlists().unwrap_or(false)) {
+        return if STATUS.with(|status| status.borrow().combined) {
             GuideStatus::Empty
         } else {
             GuideStatus::NoSource
@@ -414,7 +523,7 @@ pub fn guide_status() -> GuideStatus {
     let mut updated = None;
     let mut channels = 0;
     for source in sources {
-        match status_of(guide_state(source).as_ref()) {
+        match status_of(cached_guide_state(source).as_ref()) {
             failed @ GuideStatus::Failed { .. } => return failed,
             GuideStatus::Updated { at, channels: n } => {
                 updated = Some(updated.map_or(at, |old: i64| old.min(at)));
@@ -435,19 +544,14 @@ pub fn shown_sources() -> Vec<SourceId> {
     if let Some(source) = SHOWN.with(Cell::get) {
         return vec![source];
     }
-    let Ok(store) = open_store() else {
-        return Vec::new();
-    };
-    if !store.all_playlists().unwrap_or(false) {
-        return Vec::new();
-    }
-    store
-        .sources()
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|s| store.source_policy(s.id).is_ok_and(|p| p.enabled))
-        .map(|s| s.id)
-        .collect()
+    STATUS.with(|status| {
+        let status = status.borrow();
+        if status.combined {
+            status.enabled.clone()
+        } else {
+            Vec::new()
+        }
+    })
 }
 
 /// The source whose guide is on screen.
@@ -470,16 +574,14 @@ pub struct SourceLine {
 /// `source`'s guide sources in order, each with its last result (one
 /// short read of the store).
 pub fn source_lines(source: SourceId) -> Vec<SourceLine> {
-    let results = open_store()
-        .and_then(|s| s.epg_feed_results(source))
-        .unwrap_or_default();
-    guide_sources(source)
-        .into_iter()
-        .map(|s| SourceLine {
-            result: results.iter().find(|r| r.feed == s.feed).cloned(),
-            source: s,
-        })
-        .collect()
+    STATUS.with(|status| {
+        status
+            .borrow()
+            .lines
+            .get(&source)
+            .cloned()
+            .unwrap_or_default()
+    })
 }
 
 pub fn status_of(stored: Option<&StoredGuide>) -> GuideStatus {
@@ -521,7 +623,7 @@ pub fn update_now(ui: Ui, done: impl FnOnce() + 'static) -> bool {
             started = true;
             continue;
         }
-        if update_source(ui, source, finish) {
+        if update_source(ui, source, move |_| finish()) {
             started = true;
         } else {
             remaining.set(remaining.get() - 1);
@@ -540,54 +642,97 @@ pub fn update_now(ui: Ui, done: impl FnOnce() + 'static) -> bool {
 /// the storage settings and guide choices of now); the guide on screen
 /// changes when it is `source`'s. `done` runs on the UI thread when it
 /// finished. False when there is no guide to download.
-pub fn update_source(ui: Ui, source: SourceId, done: impl FnOnce() + 'static) -> bool {
+pub fn update_source(ui: Ui, source: SourceId, done: impl FnOnce(bool) + 'static) -> bool {
     if updating(source) {
         return true;
     }
-    let stored = guide_state(source);
-    let guides = current_configs(source, stored.as_ref());
-    if guides.is_empty() {
+    let has_guides = STATUS.with(|status| {
+        let status = status.borrow();
+        match status.lines.get(&source) {
+            Some(lines) if !lines.is_empty() => lines.iter().any(|line| line.source.enabled),
+            _ => status
+                .guides
+                .get(&source)
+                .is_some_and(|guide| !guide.configs().is_empty()),
+        }
+    });
+    if !has_guides {
         return false;
     }
-    super::library::revoke_import_handoff(source);
-    let cancel = CancelToken::new();
-    let completion = super::library::import_completion(cancel.clone());
-    completion.playlist_done(); // This worker owns guide work only.
-    super::library::track_import(source, &completion);
-    // Without a stored guide the periodic checks stopped: start them again.
-    let restart_checks = stored.is_none();
-    UPDATING.with(|u| u.borrow_mut().push(source));
-    let generation = GENERATION.with(Cell::get);
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        super::with_runtime(|| download_now(source, guides, restart_checks, &tx, &cancel));
+    let loaded = crate::store_service::call(move |store| {
+        Ok((store.epg_guide(source)?, store.guide_sources(source)?))
     });
+    UPDATING.with(|updating| updating.borrow_mut().push(source));
     super::spawn_in_app(async move {
-        loop {
-            match rx.try_recv() {
-                Ok(Msg::Guide(imported))
-                    if (SHOWN.with(Cell::get) == Some(source)
-                        || super::combined::includes(ui, source))
-                        && super::library::import_is_current(source, &completion) =>
-                {
-                    super::show(ui, imported, generation, false)
-                }
-                Ok(Msg::NextCheck { source, at })
-                    if (SHOWN.with(Cell::get) == Some(source)
-                        || super::combined::includes(ui, source))
-                        && super::library::import_is_current(source, &completion) =>
-                {
-                    super::schedule_check(ui, source, at, generation);
-                }
-                Ok(_) => {}
-                Err(TryRecvError::Empty) => timer(POLL).await,
-                Err(TryRecvError::Disconnected) => break,
+        let (stored, sources) = match loaded.await {
+            Ok(loaded) => loaded,
+            Err(error) => {
+                log::warn!("iptv data: cannot load guide sources: {error}");
+                UPDATING.with(|updating| updating.borrow_mut().retain(|id| *id != source));
+                done(false);
+                return;
             }
+        };
+        let guides = if sources.is_empty() {
+            with_storage(
+                stored
+                    .as_ref()
+                    .map(StoredGuide::configs)
+                    .unwrap_or_default(),
+                &crate::settings::get(),
+            )
+        } else {
+            configs(&sources)
+        };
+        if guides.is_empty() {
+            UPDATING.with(|updating| updating.borrow_mut().retain(|id| *id != source));
+            crate::settings_view::notify("No guide sources are configured");
+            done(false);
+            return;
         }
-        completion.finish();
-        UPDATING.with(|u| u.borrow_mut().retain(|id| *id != source));
-        ui.library.version.update(|v| *v += 1);
-        done();
+        super::library::revoke_import_handoff(source);
+        let cancel = CancelToken::new();
+        let completion = super::library::import_completion(cancel.clone());
+        completion.playlist_done(); // This worker owns guide work only.
+        super::library::track_import(source, &completion);
+        // Without a stored guide the periodic checks stopped: start them again.
+        let restart_checks = stored.is_none();
+
+        let generation = GENERATION.with(Cell::get);
+        let (tx, rx) = mpsc::channel();
+        let accepted = super::workers::submit(super::source_is_visible(ui, source), move || {
+            super::with_runtime(|| download_now(source, guides, restart_checks, &tx, &cancel));
+        });
+        if !accepted {
+            crate::settings_view::notify("Too many playlists are updating. Try again shortly.");
+        }
+        super::spawn_in_app(async move {
+            loop {
+                match rx.try_recv() {
+                    Ok(Msg::Guide(imported))
+                        if (SHOWN.with(Cell::get) == Some(source)
+                            || super::combined::includes(ui, source))
+                            && super::library::import_is_current(source, &completion) =>
+                    {
+                        super::show(ui, imported, generation, false).await
+                    }
+                    Ok(Msg::NextCheck { source, at })
+                        if (SHOWN.with(Cell::get) == Some(source)
+                            || super::combined::includes(ui, source))
+                            && super::library::import_is_current(source, &completion) =>
+                    {
+                        super::schedule_check(ui, source, at, generation);
+                    }
+                    Ok(_) => {}
+                    Err(TryRecvError::Empty) => timer(POLL).await,
+                    Err(TryRecvError::Disconnected) => break,
+                }
+            }
+            completion.finish();
+            UPDATING.with(|u| u.borrow_mut().retain(|id| *id != source));
+            ui.library.version.update(|v| *v += 1);
+            done(accepted);
+        });
     });
     true
 }
@@ -693,17 +838,16 @@ pub fn clear(ui: Ui, done: impl FnOnce(bool) + 'static) -> bool {
         super::library::revoke_import_handoff(*source);
     }
     let generation = GENERATION.with(Cell::get);
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
+    let saved = crate::store_service::call(move |store| {
         let mut deleted = true;
         let mut imports = Vec::new();
         for source in sources {
-            if let Err(e) = open_store().and_then(|mut s| s.delete_epg(source)) {
+            if let Err(e) = store.delete_epg(source) {
                 log::warn!("iptv data: could not delete stored guide: {e}");
                 deleted = false;
                 continue;
             }
-            if let Ok((groups, channels)) = catalog(source) {
+            if let Ok((groups, channels)) = catalog_in(store, source) {
                 imports.push(Box::new(Imported {
                     groups,
                     channels,
@@ -715,18 +859,14 @@ pub fn clear(ui: Ui, done: impl FnOnce(bool) + 'static) -> bool {
                 }));
             }
         }
-        let _ = tx.send((deleted, imports));
+        Ok((deleted, imports))
     });
     super::spawn_in_app(async move {
-        let (deleted, imports) = loop {
-            match rx.try_recv() {
-                Ok(result) => break result,
-                Err(TryRecvError::Empty) => timer(POLL).await,
-                Err(TryRecvError::Disconnected) => return done(false),
-            }
+        let Ok((deleted, imports)) = saved.await else {
+            return done(false);
         };
         for imported in imports {
-            super::show(ui, imported, generation, false);
+            super::show(ui, imported, generation, false).await;
         }
         done(deleted);
     });
