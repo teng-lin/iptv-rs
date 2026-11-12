@@ -219,6 +219,7 @@ impl ImportError {
         matches!(
             self,
             Self::Cancelled
+                | Self::InvalidConfig(_)
                 | Self::Limit { .. }
                 | Self::Network {
                     error: FetchError {

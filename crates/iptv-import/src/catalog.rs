@@ -17,6 +17,8 @@ use crate::error::Step;
 /// What to import and the caller's clock.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImportOptions {
+    #[cfg(debug_assertions)]
+    pub allow_private_fixture: bool,
     pub limits: iptv_core::import_limits::ImportLimits,
     /// Unix seconds; used for Xtream expiry checks.
     pub now: i64,
@@ -37,6 +39,8 @@ impl ImportOptions {
     pub fn new(now: i64) -> Self {
         Self {
             limits: Default::default(),
+            #[cfg(debug_assertions)]
+            allow_private_fixture: false,
             now,
             include_vod: false,
             include_series: false,

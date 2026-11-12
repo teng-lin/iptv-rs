@@ -78,9 +78,14 @@ fn m3u(url: String) -> SourceConfig {
 #[tokio::test(flavor = "multi_thread")]
 async fn m3u_playlist_then_its_url_tvg_guide() {
     let server = server().await;
-    let net = NetClient::with_defaults().unwrap();
+    let net = NetClient::new(iptv_net::NetConfig {
+        allow_private_fixture: true,
+        ..Default::default()
+    })
+    .unwrap();
     let cancel = CancelToken::new();
-    let opts = ImportOptions::new(NOW);
+    let mut opts = ImportOptions::new(NOW);
+    opts.allow_private_fixture = true;
     let catalog = import_source(
         &net,
         &m3u(server.url("/moved.m3u")),
@@ -140,7 +145,11 @@ async fn m3u_playlist_then_its_url_tvg_guide() {
 #[tokio::test(flavor = "multi_thread")]
 async fn xtream_with_vod_and_its_xmltv_export() {
     let server = server().await;
-    let net = NetClient::with_defaults().unwrap();
+    let net = NetClient::new(iptv_net::NetConfig {
+        allow_private_fixture: true,
+        ..Default::default()
+    })
+    .unwrap();
     let config = SourceConfig::Xtream(XtreamCredentials {
         server_url: format!("{}/player_api.php", server.url("")),
         username: Secret::new(synth::XT_USER),
@@ -197,7 +206,11 @@ async fn xtream_with_vod_and_its_xmltv_export() {
 #[tokio::test(flavor = "multi_thread")]
 async fn stalker_full_portal_with_token_expiry() {
     let server = server().await;
-    let net = NetClient::with_defaults().unwrap();
+    let net = NetClient::new(iptv_net::NetConfig {
+        allow_private_fixture: true,
+        ..Default::default()
+    })
+    .unwrap();
     let config = SourceConfig::Stalker(StalkerCredentials {
         portal_url: server.url("/stalker_portal/c/"),
         mac: MacAddress::parse("00:1A:79:00:00:99").unwrap(),
@@ -237,7 +250,11 @@ async fn stalker_full_portal_with_token_expiry() {
 #[tokio::test(flavor = "multi_thread")]
 async fn failures_over_the_network_are_typed() {
     let server = server().await;
-    let net = NetClient::with_defaults().unwrap();
+    let net = NetClient::new(iptv_net::NetConfig {
+        allow_private_fixture: true,
+        ..Default::default()
+    })
+    .unwrap();
     let run = |cfg: SourceConfig| {
         let net = net.clone();
         async move {
@@ -277,7 +294,11 @@ async fn spawned_import_is_send_and_cancels_mid_download() {
     let server =
         TestServer::http(move |_| Resp::ok("").chunked(pieces.clone(), Duration::from_millis(200)))
             .await;
-    let net = NetClient::with_defaults().unwrap();
+    let net = NetClient::new(iptv_net::NetConfig {
+        allow_private_fixture: true,
+        ..Default::default()
+    })
+    .unwrap();
     let cancel = CancelToken::new();
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let task = {
@@ -306,28 +327,21 @@ async fn spawned_import_is_send_and_cancels_mid_download() {
 
 #[tokio::test]
 async fn malformed_non_ascii_guide_metadata_returns_an_error_without_losing_the_worker() {
-    let net = NetClient::with_defaults().unwrap();
-    let worker = tokio::spawn(async move {
-        let catalog = iptv_import::import_m3u_text(
+    let worker = tokio::spawn(async {
+        let result = iptv_import::import_m3u_text(
             "#EXTM3U url-tvg=\"aaaaaaé\"\n#EXTINF:-1,Synthetic\nhttps://media.example.test/live.ts\n".as_bytes(),
-            &mut NoProgress,
-            &CancelToken::new(),
-        ).unwrap();
-        import_epg(
-            &net,
-            &catalog.epg_sources(1),
-            &catalog.channels,
-            &Overrides::new(),
-            NOW,
-            &mut MemoryGuide::new(),
-            &mut NoProgress,
-            &CancelToken::new(),
-        )
-        .await
+            &mut NoProgress, &CancelToken::new(),
+        );
+        assert!(matches!(result, Err(ImportError::InvalidConfig(_))));
+        // The adapter independently remains safe even if a caller bypasses parsing.
+        NetClient::with_defaults()
+            .unwrap()
+            .fetch(iptv_providers::HttpRequest::get("aaaaaaé"))
+            .await
     });
-    let result = worker
+    let error = worker
         .await
-        .expect("malformed metadata must not panic in a worker");
-    assert!(matches!(result, Err(ImportError::Network { error, .. })
-        if error.kind == iptv_import::FetchErrorKind::InvalidRequest));
+        .expect("malformed metadata must not panic in a worker")
+        .unwrap_err();
+    assert_eq!(error.kind, iptv_import::FetchErrorKind::InvalidRequest);
 }

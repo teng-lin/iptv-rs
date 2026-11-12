@@ -17,6 +17,9 @@ const CROSS_ORIGIN_STRIP: &[&str] = &["authorization", "cookie", "proxy-authoriz
 
 /// A request that can be re-sent to a redirect target.
 pub(crate) struct Prepared {
+    pub public_only: bool,
+    #[cfg(debug_assertions)]
+    pub allow_private_fixture: bool,
     pub method: Method,
     pub url: Url,
     pub headers: HeaderMap,
@@ -43,14 +46,28 @@ fn origin(url: &Url) -> String {
 /// original URL for logs.
 pub(crate) async fn execute(
     client: &reqwest::Client,
+    public_client: &reqwest::Client,
     mut p: Prepared,
     max: usize,
     shown: &str,
 ) -> Result<reqwest::Response, FetchError> {
     let redirect = |what: String| FetchError::new(FetchErrorKind::Redirect, what);
     let mut hops = 0;
+    let initial_origin = p.url.origin();
     loop {
-        let resp = client.execute(p.request()).await.map_err(from_reqwest)?;
+        let restricted = p.public_only || p.url.origin() != initial_origin;
+        #[cfg(debug_assertions)]
+        let restricted = restricted && !p.allow_private_fixture;
+        if restricted {
+            iptv_providers::content_url::validate(p.url.as_str()).map_err(|_| {
+                FetchError::new(
+                    FetchErrorKind::InvalidRequest,
+                    "content destination must be public HTTP(S)",
+                )
+            })?;
+        }
+        let transport = if restricted { public_client } else { client };
+        let resp = transport.execute(p.request()).await.map_err(from_reqwest)?;
         let status = resp.status().as_u16();
         let location = match status {
             301 | 302 | 303 | 307 | 308 => resp
@@ -74,6 +91,9 @@ pub(crate) async fn execute(
             .map_err(|_| redirect("invalid redirect location".into()))?;
         if !matches!(next.scheme(), "http" | "https") {
             return Err(redirect("redirect to an unsupported scheme".into()));
+        }
+        if next.origin() != initial_origin {
+            p.public_only = true;
         }
         if next.origin() != p.url.origin() {
             for h in CROSS_ORIGIN_STRIP {

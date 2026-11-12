@@ -183,3 +183,93 @@ fn validation_accepts_historical_schema_without_migrating_it() {
         SCHEMA_VERSION
     );
 }
+
+#[test]
+fn restore_confines_file_urls_and_validates_guide_locations() {
+    use iptv_store_sqlite::GuideSource;
+    let mut store = Store::open_in_memory().unwrap();
+    let mut source = m3u_source("Synthetic local");
+    if let SourceConfig::M3u(config) = &mut source.config {
+        config.location = SecretUrl::new("file:///old/playlists/list.m3u");
+    }
+    let id = store.add_source(&source).unwrap();
+    let guide = |url: &str| GuideSource {
+        feed: iptv_epg::SourceId(1),
+        provider_index: Some(0),
+        url: SecretUrl::new(url),
+        name: None,
+        enabled: true,
+        shift_minutes: 0,
+    };
+    for url in [
+        "file:///etc/hosts",
+        "/etc/hosts",
+        "http://127.0.0.1/private",
+        "http://10.0.0.1/private",
+    ] {
+        store.set_guide_sources(id, &[guide(url)]).unwrap();
+        assert!(
+            store
+                .rebase_local_playlists("/old".as_ref(), "/new".as_ref())
+                .is_err()
+        );
+        assert_eq!(
+            store.source(id).unwrap().unwrap().source,
+            source,
+            "failed rebase is atomic"
+        );
+    }
+    store
+        .set_guide_sources(id, &[guide("file:///old/playlists/guide.xml")])
+        .unwrap();
+    store
+        .rebase_local_playlists("/old".as_ref(), "/new".as_ref())
+        .unwrap();
+    assert_eq!(
+        store.guide_sources(id).unwrap()[0].url.expose(),
+        "/new/playlists/guide.xml"
+    );
+    let SourceConfig::M3u(config) = store.source(id).unwrap().unwrap().source.config else {
+        panic!()
+    };
+    assert_eq!(config.location.expose(), "/new/playlists/list.m3u");
+}
+
+#[test]
+fn restore_keeps_explicit_lan_guides_and_derived_xtream_guides() {
+    use iptv_store_sqlite::GuideSource;
+    for xtream in [false, true] {
+        let mut store = Store::open_in_memory().unwrap();
+        let mut source = if xtream {
+            xtream_source("Synthetic LAN")
+        } else {
+            m3u_source("Synthetic LAN")
+        };
+        let url = if let SourceConfig::Xtream(c) = &mut source.config {
+            c.server_url = "http://10.0.0.1".into();
+            iptv_providers::xtream::XtreamClient::from_credentials(c)
+                .unwrap()
+                .xmltv_url()
+        } else {
+            "http://192.168.1.2/guide.xml".into()
+        };
+        let id = store.add_source(&source).unwrap();
+        store
+            .set_guide_sources(
+                id,
+                &[GuideSource {
+                    feed: iptv_epg::SourceId(1),
+                    provider_index: xtream.then_some(0),
+                    url: SecretUrl::new(&url),
+                    name: None,
+                    enabled: true,
+                    shift_minutes: 0,
+                }],
+            )
+            .unwrap();
+        store
+            .rebase_local_playlists("/old".as_ref(), "/new".as_ref())
+            .unwrap();
+        assert_eq!(store.guide_sources(id).unwrap()[0].url.expose(), url);
+    }
+}

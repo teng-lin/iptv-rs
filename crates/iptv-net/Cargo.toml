@@ -18,7 +18,7 @@ url.workspace = true
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "gzip", "deflate", "charset"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 webpki-roots = "1"
-tokio = { version = "1", default-features = false, features = ["fs", "io-util", "time"] }
+tokio = { version = "1", default-features = false, features = ["fs", "io-util", "time", "net"] }
 
 [dev-dependencies]
 tokio = { version = "1", default-features = false, features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }

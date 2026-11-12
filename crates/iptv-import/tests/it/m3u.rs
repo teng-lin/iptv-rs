@@ -9,7 +9,7 @@ use iptv_import::{
 use iptv_providers::SecretUrl;
 use iptv_providers::model::{CatchUpKind, M3uSourceConfig, SourceConfig};
 
-const URL: &str = "http://127.0.0.1:8089/iptv/playlist.m3u";
+const URL: &str = "http://fixture.example.test:8089/iptv/playlist.m3u";
 
 fn config(url: &str) -> SourceConfig {
     SourceConfig::M3u(M3uSourceConfig {
@@ -33,8 +33,8 @@ fn playlist(n: usize) -> String {
     synth::m3u(
         n,
         24,
-        Some("http://127.0.0.1:8089/iptv/guide.xml.gz"),
-        "http://127.0.0.1:8089",
+        Some("http://fixture.example.test:8089/iptv/guide.xml.gz"),
+        "http://fixture.example.test:8089",
     )
 }
 
@@ -60,12 +60,15 @@ fn imports_a_streamed_playlist_with_headers_and_progress() {
     let SourceMeta::M3u { header } = &catalog.source else {
         panic!("not m3u")
     };
-    assert_eq!(header.epg_urls, ["http://127.0.0.1:8089/iptv/guide.xml.gz"]);
+    assert_eq!(
+        header.epg_urls,
+        ["http://fixture.example.test:8089/iptv/guide.xml.gz"]
+    );
     let epg = catalog.epg_sources(1);
     assert_eq!(epg.len(), 1);
     assert_eq!(
         epg[0].url.expose(),
-        "http://127.0.0.1:8089/iptv/guide.xml.gz"
+        "http://fixture.example.test:8089/iptv/guide.xml.gz"
     );
     assert_eq!(catalog.guide_urls(), [epg[0].url.clone()]);
 
@@ -213,7 +216,7 @@ fn http_and_network_failures_are_typed() {
 
 #[test]
 fn plain_url_lists_without_header_import() {
-    let body = "http://127.0.0.1:8089/ch0/index.m3u8\nhttp://127.0.0.1:8089/ch1/index.m3u8\n";
+    let body = "http://fixture.example.test:8089/ch0/index.m3u8\nhttp://fixture.example.test:8089/ch1/index.m3u8\n";
     let catalog = run(&FakeFetch::body(body)).unwrap();
     assert_eq!(catalog.channels.len(), 2);
     assert_eq!(catalog.channels[1].name, "index");
@@ -325,4 +328,27 @@ fn warnings_from_skipped_lines_are_kept() {
     assert_eq!(catalog.stats.skipped, 1);
     assert_eq!(catalog.warnings.len(), 1);
     assert_eq!(catalog.warnings[0].step, Step::Playlist);
+}
+
+#[test]
+fn embedded_local_and_private_destinations_fail_without_a_partial_catalog() {
+    for url in [
+        "file:///etc/hosts",
+        "/etc/hosts",
+        "http://127.0.0.1/private",
+        "http://10.0.0.1/private",
+        "http://[::1]/private",
+    ] {
+        for text in [
+            format!(
+                "#EXTM3U url-tvg=\"{url}\"\n#EXTINF:-1,Synthetic\nhttps://media.example.test/live\n"
+            ),
+            format!("#EXTM3U\n#EXTINF:-1,Synthetic\n{url}\n"),
+        ] {
+            assert!(matches!(
+                import_m3u_text(text.as_bytes(), &mut NoProgress, &CancelToken::new()),
+                Err(ImportError::InvalidConfig(_))
+            ));
+        }
+    }
 }

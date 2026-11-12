@@ -14,7 +14,7 @@ for c in iptv-core iptv-nav iptv-settings iptv-epg iptv-providers iptv-guide ipt
 done
 cargo build --locked -p iptv-app --quiet
 # The app's own tests, among them headless runs of the whole app (tests/).
-cargo test --locked -p iptv-app --quiet
+cargo test --locked -p iptv-app --features test-support --quiet
 IPTV_REAL_CARGO="$(command -v cargo)" python3 tools/ci/test-locked-cargo.py
 python3 tools/ci/test-mpvkit-notices.py
 python3 tools/ci/test-macos-source-notices.py

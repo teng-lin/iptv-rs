@@ -31,6 +31,10 @@ pub struct HttpRequest {
     pub body: Option<Vec<u8>>,
     /// Remaining end-to-end import time. Adapters enforce it across response reads.
     pub timeout: Option<std::time::Duration>,
+    /// Content-supplied destinations require public hosts and DNS answers.
+    pub public_only: bool,
+    /// A source/guide path the user explicitly selected.
+    pub picked_file: bool,
     /// Substrings of `url` that are secrets, replaced in `Debug` output.
     redact: Vec<String>,
 }
@@ -61,6 +65,8 @@ impl HttpRequest {
             headers: Vec::new(),
             body: None,
             timeout: None,
+            public_only: false,
+            picked_file: false,
             redact: Vec::new(),
         }
     }

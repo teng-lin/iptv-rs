@@ -110,7 +110,7 @@ pub(super) fn cell(
                 .items_center()
                 .justify_center()
                 .child(
-                    image(logo)
+                    image(crate::content_image::source(logo))
                         .w(move || px(size.whole(LOGO_W) - 2.0 * size.of(LOGO_PAD)))
                         .h(move || px(size.whole(CELL_H) - 2.0 * size.of(LOGO_PAD)))
                         .object_fit(ResizeMode::Contain)

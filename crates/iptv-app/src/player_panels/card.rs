@@ -182,10 +182,12 @@ pub(super) fn info_card(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> im
                 .rounded(px(RADIUS))
                 .bg(tint(WHITE, RESTING_ALPHA))
                 .child(
-                    image(move || logo(channel()).unwrap_or_else(crate::grid::no_logo))
-                        .w_full()
-                        .h_full()
-                        .object_fit(ResizeMode::Contain),
+                    image(crate::content_image::source(move || {
+                        logo(channel()).unwrap_or_else(crate::grid::no_logo)
+                    }))
+                    .w_full()
+                    .h_full()
+                    .object_fit(ResizeMode::Contain),
                 ),
         )
         .child(

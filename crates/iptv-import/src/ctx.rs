@@ -15,6 +15,8 @@ pub(crate) struct Ctx<'a, F, P> {
     pub progress: &'a mut P,
     pub stats: ImportStats,
     pub limits: ImportLimits,
+    #[cfg(debug_assertions)]
+    pub allow_private_fixture: bool,
     started: std::time::Duration,
 }
 
@@ -26,6 +28,8 @@ impl<'a, F: Fetch, P: ProgressSink> Ctx<'a, F, P> {
             progress,
             stats: ImportStats::default(),
             limits: ImportLimits::default(),
+            #[cfg(debug_assertions)]
+            allow_private_fixture: false,
             started: fetch.elapsed(),
         }
     }

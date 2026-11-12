@@ -153,6 +153,26 @@ pub fn configs(sources: &[GuideSource]) -> Vec<EpgSourceConfig> {
     guides::configs_of(sources, &template)
 }
 
+/// An Xtream XMLTV endpoint is derived from the user-entered account, rather
+/// than read from response content. Its explicit origin remains trusted.
+pub fn configs_for(
+    sources: &[GuideSource],
+    source: &iptv_providers::model::SourceConfig,
+) -> Vec<EpgSourceConfig> {
+    let mut configs = configs(sources);
+    if let iptv_providers::model::SourceConfig::Xtream(credentials) = source
+        && let Ok(client) = iptv_providers::xtream::XtreamClient::from_credentials(credentials)
+    {
+        let explicit = client.xmltv_url();
+        for cfg in &mut configs {
+            if cfg.url.expose() == explicit {
+                cfg.content_supplied = false;
+            }
+        }
+    }
+    configs
+}
+
 /// A stored source's guides without its playlist: its guide sources; for a
 /// source whose guides were never arranged, the feeds stored with its
 /// guide.
@@ -162,7 +182,10 @@ pub fn current_configs(source: SourceId, state: Option<&StoredGuide>) -> Vec<Epg
         let stored = state.map(StoredGuide::configs).unwrap_or_default();
         return with_storage(stored, &crate::settings::get());
     }
-    configs(&sources)
+    match open_store().and_then(|s| s.source(source)) {
+        Ok(Some(stored)) => configs_for(&sources, &stored.source.config),
+        _ => configs(&sources),
+    }
 }
 
 /// The channels of `source` whose guide the user chose by hand.

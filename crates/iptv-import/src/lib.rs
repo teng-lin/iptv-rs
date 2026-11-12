@@ -73,10 +73,48 @@ pub async fn import_source<F: Fetch, P: ProgressSink>(
 ) -> Result<Catalog, ImportError> {
     let mut ctx = ctx::Ctx::new(fetch, progress, cancel);
     ctx.limits = options.limits;
+    #[cfg(debug_assertions)]
+    {
+        ctx.allow_private_fixture = options.allow_private_fixture;
+    }
     ctx.check()?;
-    match config {
+    let catalog = match config {
         SourceConfig::M3u(c) => m3u::import_m3u(&mut ctx, c).await,
         SourceConfig::Xtream(c) => xtream::import_xtream(&mut ctx, c, options).await,
         SourceConfig::Stalker(c) => stalker::import_stalker(&mut ctx, c, options).await,
+    }?;
+    #[cfg(not(debug_assertions))]
+    let allow_private_fixture = false;
+    #[cfg(debug_assertions)]
+    let allow_private_fixture = options.allow_private_fixture;
+    if !allow_private_fixture {
+        for stream in catalog
+            .channels
+            .iter()
+            .map(|c| &c.stream)
+            .chain(catalog.vod.iter().map(|v| &v.stream))
+        {
+            validate_stream(stream)?;
+        }
     }
+    Ok(catalog)
+}
+
+pub(crate) fn validate_stream(
+    stream: &iptv_providers::model::StreamLocator,
+) -> Result<(), ImportError> {
+    use iptv_providers::model::StreamLocator;
+    let url = match stream {
+        StreamLocator::Url { url, .. } => Some(url.clone()),
+        StreamLocator::Stalker { cmd, link } => {
+            iptv_providers::stalker::static_playback_url(cmd, *link)
+        }
+        StreamLocator::Xtream { .. } => None,
+    };
+    if let Some(url) = url {
+        iptv_providers::content_url::validate(&url).map_err(|_| {
+            ImportError::InvalidConfig("content stream URL must name a public HTTP(S) host".into())
+        })?;
+    }
+    Ok(())
 }

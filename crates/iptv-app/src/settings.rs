@@ -288,6 +288,11 @@ pub fn user_agent() -> Option<String> {
 /// requests that do not name their own.
 pub fn net_config() -> NetConfig {
     let mut config = NetConfig::default();
+    #[cfg(debug_assertions)]
+    {
+        config.allow_private_fixture =
+            cfg!(feature = "test-support") || crate::data::DEV_PLAYLIST.is_some();
+    }
     if let Some(ua) = user_agent() {
         config.user_agent = ua;
     }

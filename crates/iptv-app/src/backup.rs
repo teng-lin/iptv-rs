@@ -214,8 +214,10 @@ fn export(root: &Path, destination: &Path, settings: &str) -> Result<()> {
             .ok_or("Backup source is missing")?;
         if let iptv_providers::model::SourceConfig::M3u(config) = source.source.config {
             let location = config.location.expose();
-            if !location.contains("://") {
-                let relative = Path::new(location).strip_prefix(root).map_err(|_| "A local playlist is outside application storage; add it with the file picker before backing up")?;
+            if let Some(local) = iptv_providers::content_url::local_path(location)
+                .map_err(|_| "Backup contains an invalid local playlist URL")?
+            {
+                let relative = local.strip_prefix(root).map_err(|_| "A local playlist is outside application storage; add it with the file picker before backing up")?;
                 if !relative
                     .to_str()
                     .is_some_and(|name| names.iter().any(|entry| entry == name))
@@ -462,14 +464,31 @@ fn stage(root: &Path, input: &mut impl Read) -> Result<()> {
         .sources()
         .map_err(|_| "Could not check backup sources")?
     {
+        for guide in store
+            .guide_sources(source.id)
+            .map_err(|_| "Could not check backup guide sources")?
+        {
+            if let Some(local) = iptv_providers::content_url::local_path(guide.url.expose())
+                .map_err(|_| "Backup contains an invalid guide URL")?
+            {
+                let relative = local
+                    .strip_prefix(root)
+                    .map_err(|_| "Backup guide is outside application storage")?;
+                if !work.0.join(relative).is_file() {
+                    return Err("Backup is missing a local guide file");
+                }
+            }
+        }
         let source = store
             .source(source.id)
             .map_err(|_| "Could not check backup source")?
             .ok_or("Backup source is missing")?;
         if let iptv_providers::model::SourceConfig::M3u(config) = source.source.config {
             let location = config.location.expose();
-            if !location.contains("://") {
-                let relative = Path::new(location).strip_prefix(root).map_err(
+            if let Some(local) = iptv_providers::content_url::local_path(location)
+                .map_err(|_| "Backup contains an invalid local playlist URL")?
+            {
+                let relative = local.strip_prefix(root).map_err(
                     |_| "Backup references a local playlist outside application storage",
                 )?;
                 if !work.0.join(relative).is_file() {

@@ -20,8 +20,8 @@
 //! - **Headers:** sent exactly as the request carries them (User-Agent,
 //!   Cookie, Referer…). [`NetConfig::user_agent`] applies only when the
 //!   request has none. No cookie store: `Set-Cookie` is ignored.
-//! - **Timeouts:** connect and per-read (idle) timeouts; no total timeout,
-//!   so large playlists and guides can take as long as they keep flowing.
+//! - **Timeouts:** connect, idle, and total import/response deadlines; streamed
+//!   and buffered bodies both enforce byte budgets.
 //! - **Local files:** `file://` URLs and absolute paths are read with tokio
 //!   (picked playlists), unless [`NetConfig::allow_files`] is off.
 //! - **Redaction:** logs use `HttpRequest::redacted_url`; errors never carry
@@ -40,3 +40,6 @@ mod tls;
 pub use body::NetBody;
 pub use client::{NetClient, NetConfig};
 pub use iptv_import::{FetchError, FetchErrorKind, StreamingResponse};
+
+mod public_resolver;
+pub use public_resolver::PublicResolver;

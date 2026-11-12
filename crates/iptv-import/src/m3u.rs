@@ -151,6 +151,7 @@ fn into_catalog(
     playlist: M3uPlaylist,
     sniff: &[u8],
     stats: crate::catalog::ImportStats,
+    allow_private_fixture: bool,
 ) -> Result<Catalog, ImportError> {
     let fail = |p| Err(ImportError::parse(Step::Playlist, p));
     let head = String::from_utf8_lossy(sniff);
@@ -187,6 +188,24 @@ fn into_catalog(
             })
         };
     }
+    if !allow_private_fixture {
+        for url in &playlist.header.epg_urls {
+            iptv_providers::content_url::validate(url).map_err(|_| {
+                ImportError::InvalidConfig(
+                    "playlist guide URL must name a public HTTP(S) host".into(),
+                )
+            })?;
+        }
+        for channel in &playlist.channels.items {
+            if let StreamLocator::Url { url, .. } = &channel.stream {
+                iptv_providers::content_url::validate(url).map_err(|_| {
+                    ImportError::InvalidConfig(
+                        "playlist stream URL must name a public HTTP(S) host".into(),
+                    )
+                })?;
+            }
+        }
+    }
     let mut catalog = Catalog::new(SourceMeta::M3u {
         header: playlist.header,
     });
@@ -209,6 +228,7 @@ pub(crate) async fn import_m3u<F: Fetch, P: ProgressSink>(
         ));
     }
     let mut req = HttpRequest::get(location);
+    req.picked_file = true;
     if let Some(ua) = config
         .user_agent
         .as_deref()
@@ -232,7 +252,11 @@ pub(crate) async fn import_m3u<F: Fetch, P: ProgressSink>(
     })
     .await?;
     let (playlist, sniff) = feeder.finish()?;
-    let catalog = into_catalog(playlist, &sniff, ctx.stats.clone())?;
+    #[cfg(not(debug_assertions))]
+    let allow_private_fixture = false;
+    #[cfg(debug_assertions)]
+    let allow_private_fixture = ctx.allow_private_fixture;
+    let catalog = into_catalog(playlist, &sniff, ctx.stats.clone(), allow_private_fixture)?;
     report_done(ctx.progress, catalog.channels.len());
     Ok(catalog)
 }
@@ -265,7 +289,7 @@ pub fn import_m3u_text(
         bytes: bytes.len() as u64,
         ..Default::default()
     };
-    let catalog = into_catalog(playlist, &sniff, stats)?;
+    let catalog = into_catalog(playlist, &sniff, stats, false)?;
     report_done(progress, catalog.channels.len());
     Ok(catalog)
 }

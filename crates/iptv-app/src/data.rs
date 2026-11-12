@@ -842,7 +842,11 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
         return fail(ImportFailure::new(FailureKind::Network));
     };
     let mut progress = Forward(tx);
-    let options = ImportOptions::new(now);
+    let mut options = ImportOptions::new(now);
+    #[cfg(debug_assertions)]
+    {
+        options.allow_private_fixture = cfg!(feature = "test-support") || DEV_PLAYLIST.is_some();
+    }
     let catalog =
         match import_source(&net, &job.source.config, &options, &mut progress, cancel).await {
             Ok(catalog) => catalog,
@@ -887,7 +891,7 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
         Some(_) => {
             match download_guide(
                 &net,
-                &stored::configs(&planned),
+                &stored::configs_for(&planned, &job.source.config),
                 matching,
                 now,
                 &mut progress,
@@ -947,7 +951,7 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
     let report = |guide| {
         let _ = tx.send(Msg::Playlist(Ok((counts, imported(guide)))));
     };
-    let guides = stored::configs(&sources);
+    let guides = stored::configs_for(&sources, &job.source.config);
     if let Some(import) = typed_guide {
         report(keep_guide(id, import, &guides, matching, now));
         return send_next_check(tx, id, &guides, matching);

@@ -38,6 +38,9 @@ pub struct NetConfig {
     /// `http://host:port` proxy for every request. Environment proxies are
     /// ignored.
     pub proxy: Option<String>,
+    /// Explicit synthetic fixture escape hatch; absent from release builds.
+    #[cfg(debug_assertions)]
+    pub allow_private_fixture: bool,
 }
 
 impl Default for NetConfig {
@@ -53,6 +56,8 @@ impl Default for NetConfig {
             extra_roots_der: Vec::new(),
             allow_files: true,
             proxy: None,
+            #[cfg(debug_assertions)]
+            allow_private_fixture: false,
         }
     }
 }
@@ -77,6 +82,7 @@ impl std::fmt::Debug for NetConfig {
 #[derive(Clone)]
 pub struct NetClient {
     client: reqwest::Client,
+    public_client: reqwest::Client,
     config: Arc<NetConfig>,
     started: std::time::Instant,
 }
@@ -91,6 +97,17 @@ impl std::fmt::Debug for NetClient {
 
 impl NetClient {
     pub fn new(config: NetConfig) -> Result<Self, FetchError> {
+        let client = Self::http_client(&config, false)?;
+        let public_client = Self::http_client(&config, true)?;
+        Ok(Self {
+            client,
+            public_client,
+            config: Arc::new(config),
+            started: std::time::Instant::now(),
+        })
+    }
+
+    fn http_client(config: &NetConfig, public_only: bool) -> Result<reqwest::Client, FetchError> {
         let tls = crate::tls::client_config(&config.extra_roots_der)?;
         let mut builder = reqwest::Client::builder()
             .tls_backend_preconfigured(tls)
@@ -102,18 +119,16 @@ impl NetClient {
             .gzip(true)
             .deflate(true)
             .no_proxy();
-        if let Some(proxy) = &config.proxy {
+        if public_only {
+            builder = builder.dns_resolver(Arc::new(crate::PublicResolver));
+        }
+        if !public_only && let Some(proxy) = &config.proxy {
             let proxy = reqwest::Proxy::all(proxy).map_err(|_| {
                 FetchError::new(FetchErrorKind::InvalidRequest, "invalid proxy address")
             })?;
             builder = builder.proxy(proxy);
         }
-        let client = builder.build().map_err(from_reqwest)?;
-        Ok(Self {
-            client,
-            config: Arc::new(config),
-            started: std::time::Instant::now(),
-        })
+        builder.build().map_err(from_reqwest)
     }
 
     /// With [`NetConfig::default`].
@@ -168,7 +183,13 @@ impl NetClient {
         deadline: tokio::time::Instant,
     ) -> Result<StreamingResponse<NetBody>, FetchError> {
         if let Some(path) = file::local_path(&request.url) {
-            if !self.config.allow_files {
+            #[cfg(debug_assertions)]
+            let fixture = self.config.allow_private_fixture;
+            #[cfg(not(debug_assertions))]
+            let fixture = false;
+            if !self.config.allow_files
+                || (!fixture && (!request.picked_file || request.public_only))
+            {
                 return Err(FetchError::new(
                     FetchErrorKind::Unsupported,
                     "local files are disabled",
@@ -189,9 +210,15 @@ impl NetClient {
         let shown = request.redacted_url();
         let req = self.build(request)?;
         log::debug!("{} {shown}", req.method);
-        let resp = redirect::execute(&self.client, req, self.config.max_redirects, &shown)
-            .await
-            .inspect_err(|e| log::debug!("{shown}: {e}"))?;
+        let resp = redirect::execute(
+            &self.client,
+            &self.public_client,
+            req,
+            self.config.max_redirects,
+            &shown,
+        )
+        .await
+        .inspect_err(|e| log::debug!("{shown}: {e}"))?;
         let status = resp.status().as_u16();
         log::debug!("{shown}: HTTP {status}");
         Ok(StreamingResponse {
@@ -233,6 +260,9 @@ impl NetClient {
             Method::Post => reqwest::Method::POST,
         };
         Ok(Prepared {
+            public_only: request.public_only,
+            #[cfg(debug_assertions)]
+            allow_private_fixture: self.config.allow_private_fixture,
             method,
             url,
             headers,

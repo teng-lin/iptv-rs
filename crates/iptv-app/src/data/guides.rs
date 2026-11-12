@@ -106,6 +106,7 @@ pub fn configs_of(sources: &[GuideSource], template: &EpgSourceConfig) -> Vec<Ep
     on.iter()
         .zip(priorities)
         .map(|(s, priority)| EpgSourceConfig {
+            content_supplied: s.is_provider(),
             id: s.feed,
             url: s.url.clone(),
             priority,
