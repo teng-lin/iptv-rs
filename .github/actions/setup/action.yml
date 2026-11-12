@@ -1,0 +1,31 @@
+name: Build prerequisites
+description: Check out the pinned NSH fork alongside this repository
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v4
+      with:
+        repository: teng-lin/nsh
+        ref: 297e718f48c3e85a640dba2abbb1d06daee8c5c6
+        path: nsh-source
+        persist-credentials: false
+    - shell: bash
+      run: mv nsh-source ../nsh
+    - shell: bash
+      run: |
+        if [ "${RUNNER_OS}" = Linux ]; then
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libmpv-dev libssl-dev \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            pkg-config clang cmake ninja-build
+        else
+          brew install mpv pkg-config
+        fi
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: wasm32-unknown-unknown
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: |
+          .
+          ../nsh

@@ -147,7 +147,7 @@ fn the_wizard_and_the_choosers() {
     settings
         .set("guide.switch_delay", iptv_settings::Value::ms(0))
         .unwrap();
-    let data = home.path().join(".local/share/iptv-rs");
+    let data = home.data_dir();
     std::fs::create_dir_all(&data).unwrap();
     std::fs::write(data.join("settings.json"), settings.to_json_string()).unwrap();
     let port = serve();

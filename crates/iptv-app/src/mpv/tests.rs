@@ -373,6 +373,10 @@ impl Player {
         let inner = Inner::new(events.clone(), move |_| view);
         // No sound in tests: mpv opens its audio output with each file.
         inner.mpv.as_ref().expect("libmpv").set("ao", "null");
+        // Exercise playback and frame retention with the basic renderer.
+        // Ubuntu's older mpv renders black through its optional scaling
+        // shaders on software Mesa; this tiny framebuffer needs none of them.
+        inner.mpv.as_ref().unwrap().set("gpu-dumb-mode", "yes");
         Player {
             inner,
             events,

@@ -362,3 +362,10 @@ keeps the app's test binary at ~175 MB instead of ~1 GB (workspace
   Play. The name (Patina), icon and TV banner are in place (`art/icon`,
   `tools/make-icons.py`).
 - See Phase 9 of the plan.
+
+## CI and release automation
+
+Pull requests run the host test suite on Linux and macOS. Version tags build
+Android tablet/TV APK and AAB, iPad IPA, macOS DMG, and Linux DEB, RPM,
+pkg.tar.zst and AppImage, then publish to GitHub Releases.
+See [setup, signing secrets and release limitations](docs/ci-release.md).

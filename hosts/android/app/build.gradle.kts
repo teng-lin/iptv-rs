@@ -16,9 +16,20 @@ android {
         applicationId = "com.hantekllc.iptvrs"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toInt() ?: 1
+        versionName = System.getenv("VERSION") ?: "0.1.0"
         ndk { abiFilters += listOf("x86_64", "arm64-v8a", "armeabi-v7a") }
+    }
+
+    signingConfigs {
+        if (System.getenv("KEYSTORE_PATH") != null) {
+            create("distribution") {
+                storeFile = file(System.getenv("KEYSTORE_PATH"))
+                storePassword = System.getenv("STORE_PASSWORD")
+                keyAlias = System.getenv("KEY_ALIAS")
+                keyPassword = System.getenv("KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
@@ -30,7 +41,7 @@ android {
         // keeps simpleperf working on it.
         getByName("release") {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("distribution") ?: signingConfigs.getByName("debug")
         }
     }
 
