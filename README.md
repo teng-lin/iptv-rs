@@ -29,7 +29,7 @@ Whole-app backups: [Export, restore and platform support](docs/whole-app-backup.
 | `crates/iptv-net` | Native HTTP adapter (reqwest + rustls) implementing `Fetch`; strips identity headers on cross-host redirects |
 | `crates/iptv-store-sqlite` | SQLite store: provider catalog and guide data replaced per refresh (the guide from a download staged in its own file; with each feed's result and channel list), guide sources per playlist, user overlays (favourites, order, hidden, history, a channel's guide choice) kept by stable id, FTS5 search, tested migrations |
 | `crates/iptv-search` | Channel and programme search (folded, ranked, favourites first), history, search-screen state. Wasm-safe |
-| `crates/iptv-app` | NSH shell: screens, placeholder theme, bundled Roboto and Roboto Condensed (`fonts/`, SIL OFL 1.1; `tools/fetch-fonts.sh` rebuilds them), video layer; on Linux and macOS the `tv.player` component on libmpv (`src/mpv/`: the player, with `gtk.rs` and `mac.rs` for each desktop's view) |
+| `crates/iptv-app` | NSH shell: screens, original Patina theme, bundled Roboto and Roboto Condensed (`fonts/`, SIL OFL 1.1; `tools/fetch-fonts.sh` rebuilds them), video layer; on Linux and macOS the `tv.player` component on libmpv (`src/mpv/`: the player, with `gtk.rs` and `mac.rs` for each desktop's view) |
 | `hosts/android` | Kotlin host: `NshView`, Media3 `tv.player` component, TV launcher manifest |
 | `tools/` | `sync-host.sh`, `make-hls-fixtures.sh`, `make-track-fixtures.sh`, `make-iptv-fixtures.py`, `mock-server.py`, `mock-xtream.py`, `mock-live-cuts.py`, `burst.sh`, `package-macos.sh` and `bundle-macos.py` (the self-contained macOS app), `fetch-fonts.sh` (the bundled fonts from Google's release, pinned by SHA-256) |
 
@@ -359,7 +359,7 @@ keeps the app's test binary at ~175 MB instead of ~1 GB (workspace
 
 ## Before any public release
 
-- Replace `crates/iptv-app/src/theme.rs` (placeholder palette) with our own design.
+- [x] Replace the placeholder palette with the original Patina ink/mineral theme (`crates/iptv-app/src/theme.rs`).
 - The application id `com.hantekllc.iptvrs` is final once uploaded to
   Play. The name (Patina), icon and TV banner are in place (`art/icon`,
   `tools/make-icons.py`).

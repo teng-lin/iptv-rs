@@ -137,12 +137,14 @@ pub fn status(ui: Ui) -> impl IntoElement {
                         }
                     })
                     .mt(px(6.0))
-                    .px(px(22.0))
-                    .py(px(10.0))
+                    .px(px(20.0))
+                    .py(px(8.0))
                     .rounded(px(RADIUS))
                     .text_size(px(OSD_TEXT))
                     .text_color(rgb(WHITE))
                     .bg(move || tint(ui.theme.with(|t| t.accent.main), FOCUS_ALPHA))
+                    .border(px(2.0))
+                    .border_color(move || rgb(ui.theme.with(|t| t.accent.light)))
                     .on_press(move || {
                         ui.touched();
                         crate::player::retry(ui);

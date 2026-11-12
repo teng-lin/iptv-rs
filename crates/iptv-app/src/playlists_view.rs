@@ -385,7 +385,13 @@ fn row(ui: Ui, size: Scale, index: usize, focused_index: Memo<Option<usize>>) ->
                 .rounded(px(4.0))
                 .bg(move || {
                     if shown() {
-                        rgb(ui.theme.with(|t| t.accent.main))
+                        rgb(ui.theme.with(|t| {
+                            if mark() == Mark::Focused {
+                                t.accent.main
+                            } else {
+                                t.accent.light
+                            }
+                        }))
                     } else {
                         tint(WHITE, 0)
                     }
@@ -400,6 +406,7 @@ fn row(ui: Ui, size: Scale, index: usize, focused_index: Memo<Option<usize>>) ->
                     ui_kit::caption(size, move || status().0)
                         .number_of_lines(1)
                         .text_color(move || match (status().1, mark()) {
+                            (true, Mark::Focused) => rgb(ui_kit::ERROR_FOCUSED),
                             (true, _) => rgb(ERROR),
                             (false, m) => m.secondary(),
                         }),

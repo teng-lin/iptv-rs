@@ -496,7 +496,7 @@ fn processing(ui: Ui) -> impl IntoElement {
                         .h_full()
                         .rounded(px(2.0))
                         .w(move || percentage(f32::from(percent().unwrap_or(0)) / 100.0))
-                        .bg(move || rgb(ui.theme.with(|t| t.accent.main))),
+                        .bg(move || rgb(ui.theme.with(|t| t.accent.light))),
                 ),
         )
         // OK does nothing here (no accidental cancel); Back or a tap cancels.

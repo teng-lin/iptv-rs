@@ -211,10 +211,16 @@ fn top_bar(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> View {
             .rounded(px(4.0))
             .text_size(px(OSD_BADGE))
             .font_weight(FontWeight::BOLD)
-            .text_color(rgb(WHITE))
+            .text_color(move || {
+                if live() {
+                    rgb(crate::theme::FOCUSED_TEXT)
+                } else {
+                    rgb(WHITE)
+                }
+            })
             .bg(move || {
                 if live() {
-                    rgb(ui.theme.with(|t| t.accent.main))
+                    rgb(ui.theme.with(|t| t.accent.light))
                 } else {
                     tint(WHITE, RESTING_ALPHA * 3)
                 }
@@ -246,16 +252,23 @@ fn top_bar(ui: Ui, panel: impl Fn() -> Rgba + Copy + 'static) -> View {
 fn pill(
     ui: Ui,
     label: impl Fn() -> String + 'static,
-    focused: impl Fn() -> bool + 'static,
+    focused: impl Fn() -> bool + Copy + 'static,
     dim: impl Fn() -> bool + 'static,
     press: impl Fn() + 'static,
 ) -> Text {
     text(label)
-        .px(px(16.0))
-        .py(px(10.0))
+        .px(px(14.0))
+        .py(px(8.0))
         .rounded(px(RADIUS))
         .text_size(px(OSD_DETAIL))
         .text_color(move || tint(WHITE, if dim() { 0x60 } else { 0xFF }))
+        .border(px(2.0))
+        .border_color(move || {
+            tint(
+                ui.theme.with(|t| t.accent.light),
+                if focused() { 255 } else { 0 },
+            )
+        })
         .bg(move || {
             if focused() {
                 tint(ui.theme.with(|t| t.accent.main), FOCUS_ALPHA)
@@ -326,6 +339,8 @@ fn hint_line(ui: Ui, shown: Memo<Shown>) -> impl IntoElement {
     };
     text(words)
         .px(px(8.0))
+        .rounded(px(RADIUS))
+        .bg(move || tint(ui.theme.with(|t| t.background.panel), PANEL_ALPHA))
         .text_size(px(OSD_DETAIL))
         .text_color(tint(WHITE, TEXT_SECONDARY_ALPHA))
         .opacity(move || if words().is_empty() { 0.0_f32 } else { 1.0 })

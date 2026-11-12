@@ -146,12 +146,22 @@ pub fn guide(ui: Ui, rows: ElementRef) -> impl IntoElement {
                                     .top(px(0.0))
                                     .h_full()
                                     .w(px(NOW_W))
+                                    .test_id("guide-now-line")
                                     .opacity(
                                         move || if now_x.get().is_some() { 1.0_f32 } else { 0.0 },
                                     )
                                     .left(move || px(now_x.get().unwrap_or(0.0) - NOW_W / 2.0))
                                     .bind_translate_x(&pan.offset())
-                                    .bg(move || fill(ui, ui.theme.with(|t| t.guide().now_line))),
+                                    .bg(move || rgb(ui.theme.with(|t| t.guide().now_line)))
+                                    .child(
+                                        view()
+                                            .absolute()
+                                            .left(px(0.0))
+                                            .top(px(0.0))
+                                            .w(px(NOW_W / 2.0))
+                                            .h_full()
+                                            .bg(rgb(crate::theme::FOCUSED_TEXT)),
+                                    ),
                             ),
                     )
                     .child(empty_state(ui))

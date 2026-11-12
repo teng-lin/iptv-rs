@@ -55,7 +55,7 @@ pub(super) fn line(ui: Ui) -> impl IntoElement {
         }
         super::used(ui);
     };
-    let accent = move || rgb(ui.theme.with(|t| t.accent.main));
+    let accent = move || rgb(ui.theme.with(|t| t.accent.light));
     let time = move |s: Box<dyn Fn() -> String>| {
         text(s)
             .w(px(64.0))

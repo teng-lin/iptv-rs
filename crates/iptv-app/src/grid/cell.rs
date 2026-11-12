@@ -60,6 +60,13 @@ pub(super) fn colours(
         Look::Lit => (g.row_cell, with_alpha(BRIGHT_TEXT, 0xFF)),
         Look::Rest => (g.cell, with_alpha(WHITE, TEXT_SECONDARY_ALPHA)),
     };
+    if overlay.is_some() && matches!(look, Look::Focused) {
+        return (
+            with_alpha(FOCUSED_CELL, 255),
+            with_alpha(FOCUSED_TEXT, 255),
+            1.0,
+        );
+    }
     match overlay {
         Some(alpha) => (
             with_alpha(cell, alpha),
@@ -175,6 +182,21 @@ mod tests {
     /// `over` (`0xRRGGBBAA`) drawn on opaque `under` (`0xRRGGBB`).
     fn over(under: u32, over: u32) -> u32 {
         blend(under, over >> 8, over as u8)
+    }
+
+    #[test]
+    fn focused_cell_stays_opaque_over_video() {
+        let g = Theme::default().guide();
+        for alpha in [51, 128, 204, 255] {
+            assert_eq!(
+                colours(Look::Focused, false, &g, g.window, Some(alpha)),
+                (
+                    with_alpha(FOCUSED_CELL, 255),
+                    with_alpha(FOCUSED_TEXT, 255),
+                    1.0
+                )
+            );
+        }
     }
 
     #[test]

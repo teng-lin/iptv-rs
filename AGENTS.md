@@ -7,8 +7,8 @@
   logs, screenshots or files.
 - **Behaviour, not artwork.** The UX reference is `~/src/tivimate/docs`. Never
   copy files, code, artwork, icons, fonts, layouts or wording from the
-  reference APK. `crates/iptv-app/src/theme.rs` is a placeholder palette that
-  is replaced before release.
+  reference APK. `crates/iptv-app/src/theme.rs` holds the original Patina palette;
+  preserve its independent design.
 - **Core stays portable.** `crates/iptv-core` (and future core crates) must not
   depend on NSH or platform APIs, must not block, and must build for
   `wasm32-unknown-unknown`.

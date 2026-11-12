@@ -124,6 +124,10 @@ fn header(ui: Ui, size: Scale) -> impl IntoElement {
                 .return_key_type(ReturnKeyType::Search)
                 .test_id("search-field")
                 .bg(move || ui_kit::field_fill(ui, field_focused()))
+                .border(move || size.px(2.0))
+                .px(move || size.px(12.0))
+                .py(move || size.px(ui_kit::FIELD_PAD_Y - 2.0))
+                .border_color(move || ui_kit::field_border(ui, field_focused()))
                 .on_change(move |text: &str| {
                     let same = state(ui, |s| s.state.query() == text).unwrap_or(true);
                     if !same {

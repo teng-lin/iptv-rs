@@ -236,7 +236,7 @@ fn details(ui: Ui, program: Memo<Focused>, size: Scale) -> impl IntoElement {
                                         0.0
                                     })
                                 })
-                                .bg(move || rgb(ui.theme.with(|t| t.accent.main))),
+                                .bg(move || rgb(ui.theme.with(|t| t.accent.light))),
                         ),
                 )
                 .child(
