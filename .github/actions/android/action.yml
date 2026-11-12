@@ -1,0 +1,30 @@
+name: Android prerequisites
+description: Install the Android toolchain and build the pinned NSH CLI
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: '21'
+        cache: gradle
+        cache-dependency-path: |
+          hosts/android/**/*.gradle.kts
+          hosts/android/gradle.properties
+          hosts/android/gradle/wrapper/gradle-wrapper.properties
+    - uses: android-actions/setup-android@v3
+    - name: Install Android build tools
+      shell: bash
+      run: |
+        sdkmanager "platforms;android-35" "build-tools;35.0.1" "ndk;30.0.16248370"
+        rustup target add aarch64-linux-android
+        echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
+        echo "NSH=$(cd ../nsh && pwd)/target/release/nsh" >> "$GITHUB_ENV"
+        echo "NSH_RUNTIME=$(cd ../nsh && pwd)/target" >> "$GITHUB_ENV"
+    - name: Build NSH CLI
+      shell: bash
+      run: cargo build --release --locked --manifest-path ../nsh/Cargo.toml -p nsh-cli
+    - name: Build pinned Android runtime
+      shell: bash
+      working-directory: ../nsh
+      run: cargo xtask android --release --abi arm64-v8a
