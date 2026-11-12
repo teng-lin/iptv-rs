@@ -3,6 +3,7 @@ name = "iptv-epg"
 description = "EPG layer of iptv-rs: sans-IO streaming XMLTV parser (plain or gzip), channel matching and a compact guide store. No NSH, no platform APIs; must build for wasm32."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
 

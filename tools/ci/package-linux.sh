@@ -2,6 +2,7 @@
 set -euo pipefail
 : "${VERSION:?}"
 root=$(cd "$(dirname "$0")/../.." && pwd)
+source "$root/tools/ci/locked-build-env.sh"
 cd "$root"
 out="$root/dist"
 stage="$root/target/linux-root"

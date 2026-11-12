@@ -3,6 +3,7 @@ name = "iptv-nav"
 description = "Remote/keyboard input for iptv-rs: platform-independent keys, short/long press detection, and the layered key -> action map. No NSH; wasm-safe."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
 
