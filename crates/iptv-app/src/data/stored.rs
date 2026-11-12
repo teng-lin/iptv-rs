@@ -26,6 +26,7 @@
 //! how the last update went and [`source_lines`] how each source did.
 
 use std::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
 use std::sync::mpsc::{self, Sender, TryRecvError};
 
 use iptv_epg::{ChannelKey, DAY, GuideStore, Overrides, UnixTime};
@@ -54,7 +55,7 @@ thread_local! {
     static UPDATING: RefCell<Vec<SourceId>> = const { RefCell::new(Vec::new()) };
     /// Edits of guide sources since the app started: a check waits for
     /// the last one.
-    static EDITS: Cell<u64> = const { Cell::new(0) };
+    static EDITS: RefCell<BTreeMap<SourceId, u64>> = const { RefCell::new(BTreeMap::new()) };
 }
 
 /// How long a guide check waits after the guide sources changed (more
@@ -619,19 +620,30 @@ pub fn guides_changed(ui: Ui, source: SourceId) {
     if SHOWN.with(Cell::get) != Some(source) && !super::combined::includes(ui, source) {
         return;
     }
-    let edit = EDITS.with(|e| {
-        e.set(e.get() + 1);
-        e.get()
-    });
+    let edit = next_guide_edit(source);
     let generation = GENERATION.with(Cell::get);
     super::spawn_in_app(async move {
         timer(SETTLE).await;
-        let current = GENERATION.with(Cell::get) == generation && EDITS.with(Cell::get) == edit;
+        let current =
+            GENERATION.with(Cell::get) == generation && guide_edit_is_current(source, edit);
         if current && !updating(source) {
             log::info!("iptv data: guide sources changed; checking the guide");
             super::check_guide(ui, source, generation);
         }
     });
+}
+
+fn next_guide_edit(source: SourceId) -> u64 {
+    EDITS.with(|edits| {
+        let mut edits = edits.borrow_mut();
+        let generation = edits.entry(source).or_default();
+        *generation += 1;
+        *generation
+    })
+}
+
+fn guide_edit_is_current(source: SourceId, generation: u64) -> bool {
+    EDITS.with(|edits| edits.borrow().get(&source) == Some(&generation))
 }
 
 /// "Delete stored guide data": the source on screen keeps its channels
@@ -710,6 +722,20 @@ mod tests {
     use super::*;
 
     const NOW: UnixTime = 1_800_000_000;
+
+    #[test]
+    fn guide_edits_debounce_within_a_source_without_cancelling_other_sources() {
+        let a = SourceId(9001);
+        let b = SourceId(9002);
+        let first_a = next_guide_edit(a);
+        let first_b = next_guide_edit(b);
+        assert!(guide_edit_is_current(a, first_a));
+        assert!(guide_edit_is_current(b, first_b));
+        let second_a = next_guide_edit(a);
+        assert!(!guide_edit_is_current(a, first_a));
+        assert!(guide_edit_is_current(a, second_a));
+        assert!(guide_edit_is_current(b, first_b));
+    }
 
     /// A playlist's guide sources: the provider's own `xmltv.php`, after a
     /// guide the user typed when there is one.

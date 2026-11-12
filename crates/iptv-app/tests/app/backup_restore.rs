@@ -125,6 +125,7 @@ fn backup_export_cancel_restore_and_restart_preserve_personalized_library() {
     step(app.on_pick_paths(vec![archive.clone()]));
     app.on_dialog(|_| DialogAnswer::Press("Schedule restore".into()));
     schedule(&mut app);
+    step(app.wait_for("text:Scheduled for next launch"));
     let pending = root.with_file_name("iptv-rs.restore-pending");
     assert!(pending.exists());
     // The running library remains editable until restart.
@@ -137,6 +138,7 @@ fn backup_export_cancel_restore_and_restart_preserve_personalized_library() {
     step(app.press_key("down"));
     step(app.press_key("enter"));
     step(app.wait_for("text:Scheduled restore cancelled"));
+    step(app.wait_for_gone("text:Scheduled for next launch", Duration::from_secs(3)));
     assert!(!pending.exists());
     app.on_dialog(|_| DialogAnswer::Press("Schedule restore".into()));
     schedule(&mut app);

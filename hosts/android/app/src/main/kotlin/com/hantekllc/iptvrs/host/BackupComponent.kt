@@ -2,7 +2,6 @@ package com.hantekllc.iptvrs.host
 
 import android.app.Activity
 import android.content.Intent
-import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.system.Os
@@ -210,7 +209,8 @@ class BackupHost(private val activity: Activity) {
             } finally {
                 // An imported provider document is read-only to this bridge;
                 // never delete it, even when its private copy cannot be made.
-                if (!success && !request.importing) deletePartialDocument(uri)
+                // A provider may return an existing document for CREATE_DOCUMENT.
+                // Ownership is unknown, so never delete its URI on a failed copy.
                 if (!success || !request.importing) removePrivateArchive(request)
                 handler.post { finish(request, success, request.cancelled.get()) }
             }
@@ -234,11 +234,6 @@ class BackupHost(private val activity: Activity) {
 
     private fun removePrivateArchive(request: Request) {
         if (request.ownsArchive.get()) request.archive.delete()
-    }
-
-    private fun deletePartialDocument(uri: Uri) {
-        try { activity.applicationContext.contentResolver.delete(uri, null, null) }
-        catch (_: Exception) { /* Some document providers do not allow deletion. */ }
     }
 
     private fun finish(request: Request, success: Boolean, cancelled: Boolean) {

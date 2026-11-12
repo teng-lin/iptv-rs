@@ -185,13 +185,17 @@ pub fn want(schedule: &dyn Schedule, minute: i32) {
 /// Whether the programmes around `t` are in memory on `schedule`, so a
 /// catch-up there resolves with its programme's real times; when not, its
 /// day is pinned and asked for, and `retry` runs once a page arrived.
-pub fn ready(schedule: &Rc<dyn Schedule>, t: UnixTime, retry: impl FnOnce() + 'static) -> bool {
-    let mut ready = true;
-    each(&**schedule, |epg| {
-        epg.pin_page(Some(t));
-        ready &= epg.ensure_loaded(t);
-    });
-    if ready {
+pub fn ready(
+    schedule: &Rc<dyn Schedule>,
+    channel: usize,
+    t: UnixTime,
+    retry: impl FnOnce() + 'static,
+) -> bool {
+    let Some((epg, _)) = iptv_guide::combined::epg_channel(&**schedule, channel) else {
+        return true;
+    };
+    epg.pin_page(Some(t));
+    if epg.ensure_loaded(t) {
         return true;
     }
     log::info!("iptv data: catch-up waits for its guide day");
@@ -205,13 +209,17 @@ pub fn bind(ui: Ui) {
     effect(move || {
         ui.data_version.get();
         let archive = match (ui.playing.get(), ui.playback.get()) {
-            (Some(_), Playback::CatchUp { start, .. }) => Some(start),
+            (Some(channel), Playback::CatchUp { start, .. }) => Some((channel, start)),
             _ => None,
         };
         untracked(|| {
             let schedule = crate::schedule();
-            let unix = archive.map(|m| iptv_core::guide::unix_of(&*schedule, m));
-            each(&*schedule, |s| s.pin_page(unix));
+            each(&*schedule, |s| s.pin_page(None));
+            if let Some((channel, minute)) = archive
+                && let Some((epg, _)) = iptv_guide::combined::epg_channel(&*schedule, channel)
+            {
+                epg.pin_page(Some(iptv_core::guide::unix_of(&*schedule, minute)));
+            }
         });
     });
     let away = Cell::new(false);
@@ -238,6 +246,57 @@ mod tests {
     use super::*;
 
     const NOW: UnixTime = 1_800_000_000 + 1234;
+
+    #[test]
+    fn catchup_waits_only_for_its_own_source_page() {
+        use iptv_guide::combined::{CombinedSchedule, SourceSchedule};
+        let parsed = iptv_providers::m3u::parse_m3u(
+            "#EXTM3U\n#EXTINF:-1,Generated\nhttp://stream.example.test/generated\n",
+        );
+        let requests_a = Rc::new(RefCell::new(Vec::new()));
+        let requests_b = Rc::new(RefCell::new(Vec::new()));
+        let make = |requests: Rc<RefCell<Vec<PageRequest>>>| {
+            Rc::new(
+                EpgSchedule::from_catalog(
+                    &parsed.groups,
+                    &parsed.channels.items,
+                    GuideStore::default(),
+                    NOW,
+                )
+                .with_pages(window(NOW, 7), move |request| {
+                    requests.borrow_mut().push(request)
+                }),
+            )
+        };
+        let a = make(requests_a.clone());
+        let b = make(requests_b.clone());
+        let schedule: Rc<dyn Schedule> = Rc::new(CombinedSchedule::new(
+            vec![
+                SourceSchedule {
+                    id: 1,
+                    name: "Generated A".into(),
+                    schedule: a.clone(),
+                },
+                SourceSchedule {
+                    id: 2,
+                    name: "Generated B".into(),
+                    schedule: b.clone(),
+                },
+            ],
+            NOW,
+        ));
+        let time = NOW - 2 * DAY;
+        assert!(!ready(&schedule, 0, time, || {}));
+        assert_eq!(requests_a.borrow().len(), 1);
+        assert!(requests_b.borrow().is_empty());
+        // B remains pending indefinitely. Completing A must still unblock A.
+        assert!(!b.ensure_loaded(time));
+        let request = requests_a.borrow()[0];
+        assert!(a.insert_page(request, GuideStore::default()));
+        assert!(ready(&schedule, 0, time, || panic!("A is already loaded")));
+        assert!(!b.ensure_loaded(time));
+        WAITERS.with(|waiters| waiters.borrow_mut().clear());
+    }
 
     #[test]
     fn the_window_holds_a_day_before_the_hour() {

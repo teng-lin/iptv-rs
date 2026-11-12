@@ -77,6 +77,7 @@ fn switch_all_ready(ui: Ui) {
     }
 }
 pub fn leave(ui: Ui) {
+    RESUME.with(|r| r.set(false));
     ui.library.all.set(false);
     PARTS.with(|p| p.borrow_mut().clear());
     LIMITS.with(|p| p.borrow_mut().clear());

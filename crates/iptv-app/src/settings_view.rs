@@ -205,7 +205,7 @@ fn update(ui: Ui, f: impl FnOnce(&mut Screen, &Ctx) -> Effect) {
 }
 
 /// Tells the rows to read their status again.
-fn refresh(ui: Ui) {
+pub(crate) fn refresh(ui: Ui) {
     ui.settings.update(|v| *v += 1);
 }
 
@@ -213,7 +213,7 @@ fn refresh(ui: Ui) {
 fn run(ui: Ui, key: &'static str) {
     match key {
         "general.backup" => crate::backup::export_ui(),
-        "general.restore" => crate::backup::restore_ui(),
+        "general.restore" => crate::backup::restore_ui(ui),
         "epg.update_now" => {
             if stored::update_now(ui, move || refresh(ui)) {
                 refresh(ui);

@@ -293,3 +293,66 @@ fn persisted_combined_mode_recovers_disabled_and_failed_sources_and_deletion() {
     playlists(&mut app);
     step(app.wait_for("text:+ Add playlist"));
 }
+
+#[test]
+fn leaving_combined_mode_cancels_a_missing_startup_channel_before_manual_return() {
+    let Some(home) = isolated!() else { return };
+    let dir = home.path().join(if cfg!(target_os = "macos") {
+        "Library/Application Support/iptv-rs"
+    } else {
+        ".local/share/iptv-rs"
+    });
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("iptv.sqlite");
+    let mut store = Store::open(&path).unwrap();
+    let alpha = seed(&mut store, home.path(), "Alpha");
+    let beta = seed(&mut store, home.path(), "Beta");
+    store.set_all_playlists(true).unwrap();
+    store
+        .set_combined_last_channel("source:99999:missing-generated-channel")
+        .unwrap();
+    drop(store);
+    let mut app = Headless::start(EngineConfig {
+        viewport: Size::new(px(1920.0), px(1080.0)),
+        ..EngineConfig::new(Root::of::<iptv_app::App>())
+    })
+    .unwrap();
+    step(app.wait_for_within("text:/^Only Beta · Beta/", Duration::from_secs(20)));
+    playlists(&mut app);
+    step(app.press("text:Alpha"));
+    step(app.press("text:Show this playlist"));
+    step(app.wait_for_within("text:Only Alpha", Duration::from_secs(20)));
+    let mut store = Store::open(&path).unwrap();
+    assert_eq!(store.active_source().unwrap(), Some(alpha));
+    let channel = store.load_channels(beta, &ChannelQuery::default()).unwrap()[0]
+        .channel
+        .id
+        .clone();
+    store
+        .set_combined_last_channel(&format!("source:{}:{}", beta.0, channel.as_str()))
+        .unwrap();
+    drop(store);
+    let opened: Arc<Mutex<Vec<String>>> = Arc::default();
+    let observed = opened.clone();
+    app.observe(move |_, batch| {
+        for item in &batch.items {
+            if let MountItem::ComponentProps { props, .. } = item {
+                for (key, value) in props {
+                    if key.as_ref() == "source"
+                        && let Some(url) = value.as_ref().and_then(|v| v["url"].as_str())
+                    {
+                        observed.lock().unwrap().push(url.into());
+                    }
+                }
+            }
+        }
+    });
+    playlists(&mut app);
+    step(app.press("id:playlists-all"));
+    step(app.wait_for_within("text:/^Only Beta · Beta/", Duration::from_secs(20)));
+    step(app.wait_for_within("text:Beta bulletin", Duration::from_secs(20)));
+    assert!(
+        opened.lock().unwrap().is_empty(),
+        "manual All playlists entry must not resume the old startup request"
+    );
+}

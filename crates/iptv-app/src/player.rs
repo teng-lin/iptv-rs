@@ -297,19 +297,24 @@ fn open(ui: Ui, surface: usize, session: u64) {
     let schedule = crate::schedule();
     // An older day's programme: its real times once its day is paged in.
     if let Playback::CatchUp { start, .. } = playback
-        && !crate::data::pages::ready(&schedule, crate::guide::unix_of(&*schedule, start), {
-            move || {
-                if ui
-                    .player
-                    .stream(surface)
-                    .health
-                    .with_untracked(|h| h.session())
-                    == session
-                {
-                    open(ui, surface, session);
+        && !crate::data::pages::ready(
+            &schedule,
+            channel,
+            crate::guide::unix_of(&*schedule, start),
+            {
+                move || {
+                    if ui
+                        .player
+                        .stream(surface)
+                        .health
+                        .with_untracked(|h| h.session())
+                        == session
+                    {
+                        open(ui, surface, session);
+                    }
                 }
-            }
-        })
+            },
+        )
     {
         return;
     }
@@ -401,6 +406,9 @@ fn resolve_link(
     link: Box<StalkerLink>,
     schedule: Rc<dyn Schedule>,
 ) {
+    let context = target(ui, surface)
+        .and_then(|(channel, _)| iptv_guide::combined::epg_channel(&*schedule, channel))
+        .and_then(|(epg, _)| epg.shared_playback());
     let StalkerLink {
         session: mut portal,
         cmd,
@@ -428,11 +436,18 @@ fn resolve_link(
             let Ok((result, portal)) = rx.await else {
                 return;
             };
+            if ui
+                .player
+                .stream(surface)
+                .health
+                .with_untracked(|h| h.session())
+                != session
+            {
+                return;
+            }
             // Keep a refreshed token for the next link, if the data is the same.
             if Rc::ptr_eq(&schedule, &crate::schedule())
-                && let Some(ctx) = target(ui, surface)
-                    .and_then(|(c, _)| iptv_guide::combined::epg_channel(&*schedule, c))
-                    .and_then(|(s, _)| s.playback())
+                && let Some(ctx) = context
             {
                 ctx.update_stalker_session(portal.clone());
             }

@@ -587,7 +587,7 @@ pub(crate) fn export_ui() {
     });
 }
 
-pub(crate) fn restore_ui() {
+pub(crate) fn restore_ui(ui: crate::Ui) {
     crate::data::spawn_in_app(async move {
         let Some(_busy) = Busy::begin() else {
             return;
@@ -599,7 +599,9 @@ pub(crate) fn restore_ui() {
                 .cancel("keep", "Keep scheduled").action("cancel", "Cancel restore").action("replace", "Choose another backup…").show().await;
             match answer.ok().and_then(|a| a.action) {
                 Some(action) if action.as_str() == "cancel" => {
-                    crate::settings_view::notify(match worker(move || cancel(&root)).await {
+                    let result = worker(move || cancel(&root)).await;
+                    crate::settings_view::refresh(ui);
+                    crate::settings_view::notify(match result {
                         Ok(()) => "Scheduled restore cancelled",
                         Err(message) => message,
                     });
@@ -633,6 +635,7 @@ pub(crate) fn restore_ui() {
             stage(&root, &mut input)
         })
         .await;
+        crate::settings_view::refresh(ui);
         crate::settings_view::notify(match result {
             Ok(()) => "Restore scheduled. Close and reopen Patina to apply it",
             Err(message) => message,
