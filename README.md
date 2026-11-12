@@ -367,9 +367,11 @@ keeps the app's test binary at ~175 MB instead of ~1 GB (workspace
 
 ## CI and release automation
 
-Pull requests run the host test suite on Linux and macOS. Version tags build
-Android tablet/TV APK and AAB, iPad IPA, macOS DMG, and Linux DEB, RPM,
-pkg.tar.zst and AppImage, then publish to GitHub Releases.
+Pull requests run the host test suite on Linux and macOS and build Android.
+Version tags build Android tablet/TV APK and AAB, Apple silicon macOS DMG,
+and Linux x86_64 DEB, RPM, pkg.tar.zst and AppImage, then publish to GitHub
+Releases. Manual builds can select Android, desktop, both, or all platforms
+(adding iPad IPA when Apple signing is configured).
 See [setup, signing secrets and release limitations](docs/ci-release.md).
 
 ## License

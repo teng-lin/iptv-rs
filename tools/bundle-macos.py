@@ -176,8 +176,10 @@ def main():
     # Nothing outside the system and the bundle is left.
     for f in [exe, *copies.values()]:
         for ref in refs(f):
-            if external(ref) and not ref.startswith("@rpath/"):
-                sys.exit(f"{f} still links {ref}")
+            if external(ref):
+                real = resolve(ref, f, exe_dir)
+                if not ref.startswith("@rpath/") or real is None or not real.startswith(bundled):
+                    sys.exit(f"{f} has an unbundled dependency: {ref}")
         for rp in rpaths(f):
             if not rp.startswith(("@executable_path", "@loader_path")):
                 sys.exit(f"{f} still has rpath {rp}")
