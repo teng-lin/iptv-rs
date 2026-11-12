@@ -9,7 +9,10 @@ NSH is checked
 out beside the repository at a pinned commit from tv-keys; update the SHA
 in .github/actions/setup/action.yml when adopting fork changes.
 
-Release runs repeat those checks. Tags and manual runs default to Android
+Release runs repeat the host checks while packaging runs in parallel; the
+signed Android build takes the place of the PR's debug build. Publication
+waits for both the checks and packaging to pass.
+Tags and manual runs default to Android
 arm64: one distribution-signed APK and AAB for tablets and TVs. Both signing
 certificates are checked against the configured keystore before upload.
 The manual workflow's platforms=all option additionally builds Linux x86_64,

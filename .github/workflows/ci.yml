@@ -4,6 +4,11 @@ on:
   push:
     branches: [master]
   workflow_call:
+    inputs:
+      skip_android:
+        description: Release packaging builds and signs Android itself
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -21,6 +26,7 @@ jobs:
       - uses: ./.github/actions/setup
       - run: bash tools/check.sh
   android:
+    if: ${{ !inputs.skip_android }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
