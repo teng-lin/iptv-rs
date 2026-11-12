@@ -188,6 +188,8 @@ fn choice(ui: Ui) -> impl IntoElement {
                     .w(move || size.px(18.0))
                     .h(move || size.px(18.0))
                     .rounded(px(4.0))
+                    .border(px(1.0))
+                    .border_color(move || mark().text())
                     .bg(move || swatch().map_or(tint(WHITE, 0), rgb))
                     .opacity(move || if swatch().is_some() { 1.0_f32 } else { 0.0 }),
             )

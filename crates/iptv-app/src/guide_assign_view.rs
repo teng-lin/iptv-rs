@@ -330,6 +330,10 @@ fn search_field(ui: Ui, size: Scale, focused: Memo<Option<usize>>) -> impl IntoE
             .auto_correct(false)
             .return_key_type(ReturnKeyType::Search)
             .bg(move || ui_kit::field_fill(ui, focused.get() == Some(0)))
+            .border(move || size.px(2.0))
+            .px(move || size.px(12.0))
+            .py(move || size.px(ui_kit::FIELD_PAD_Y - 2.0))
+            .border_color(move || ui_kit::field_border(ui, focused.get() == Some(0)))
             .on_change(move |text: &str| {
                 if state(ui, |p| p.query() != text).unwrap_or(false) {
                     update(ui, |p| {

@@ -1,15 +1,10 @@
-//! PLACEHOLDER THEME: colour values and state rules taken from the TiviMate
-//! 5.3.3 visual-system reference (`~/src/tivimate/docs/04-visual-system.md`).
-//! The accents are the public Material Design 500/200 swatches. Replace this
-//! module with the app's own design before any public release (tracked in
-//! README "Before release").
-//!
-//! Only colour values and state rules live here: no artwork, icons or font
-//! files are copied from the APK. The fonts are Google's own Roboto release
-//! (`fonts.rs`, `fonts/README.md`).
+//! Patina: ink surfaces, mineral accents and a pale blue focus marker.
+//! Designed for this app. Opaque programme focus isolates its text from video;
+//! dark accent fills keep white control labels readable. Saved colour names
+//! remain stable so existing preferences select the corresponding new tones.
 
 /// An accent bundle: lighter tone and main accent (`0xRRGGBB`). The focus
-/// fill is the main accent at alpha `0x60`.
+/// fill is an opaque dark main accent.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Accent {
     pub name: &'static str,
@@ -39,51 +34,51 @@ const fn b(name: &'static str, panel: u32, window: u32, alt: u32) -> Background 
 }
 
 pub const ACCENTS: [Accent; 16] = [
-    a("Amber", 0xFFE082, 0xFFC107),
-    a("Black", 0x000000, 0x000000),
-    a("Blue", 0x90CAF9, 0x2196F3),
-    a("Blue grey", 0xB0BEC5, 0x607D8B),
-    a("Brown", 0xBCAAA4, 0x795548),
-    a("Cyan", 0x80DEEA, 0x00BCD4),
-    a("Green", 0xA5D6A7, 0x4CAF50),
-    a("Grey", 0xEEEEEE, 0x9E9E9E),
-    a("Indigo", 0x9FA8DA, 0x3F51B5),
-    a("Lime", 0xE6EE9C, 0xCDDC39),
-    a("Orange", 0xFFCC80, 0xFF9800),
-    a("Pink", 0xF48FB1, 0xE91E63),
-    a("Purple", 0xCE93D8, 0x9C27B0),
-    a("Red", 0xEF9A9A, 0xF44336),
-    a("Teal", 0x80CBC4, 0x009688),
-    a("Yellow", 0xFFF59D, 0xFFEB3B),
+    a("Amber", 0xF2CE8C, 0x72521F),
+    a("Black", 0xCED8DE, 0x394650),
+    a("Blue", 0x9CCBEB, 0x285575),
+    a("Blue grey", 0xB6CBD7, 0x405564),
+    a("Brown", 0xDEC1A7, 0x614C3C),
+    a("Cyan", 0x99DEDF, 0x265E62),
+    a("Green", 0xACD7AE, 0x3B593F),
+    a("Grey", 0xCDD2D8, 0x4D545C),
+    a("Indigo", 0xBCC1EE, 0x4A4F75),
+    a("Lime", 0xD0DB9B, 0x535E32),
+    a("Orange", 0xEFBE97, 0x704C30),
+    a("Pink", 0xE8B8CF, 0x684354),
+    a("Purple", 0xD2BBE9, 0x5D4872),
+    a("Red", 0xEDB3AB, 0x70463F),
+    a("Teal", 0xA2DACC, 0x315E53),
+    a("Yellow", 0xE5D494, 0x635827),
 ];
 
 pub const BACKGROUNDS: [Background; 18] = [
-    b("Amber", 0x58491D, 0x3A3113, 0x756226),
-    b("Black", 0x131313, 0x060606, 0x202020),
-    b("Blue", 0x1F415C, 0x142B3D, 0x29577B),
-    b("Blue grey", 0x2C333C, 0x1C232C, 0x3C434C),
-    b("Brown", 0x362923, 0x201913, 0x4C3933),
-    b("Cyan", 0x174247, 0x0F2C2F, 0x1F585F),
-    b("Dark", 0x232629, 0x131619, 0x333639),
-    b("Dark grey", 0x262626, 0x161616, 0x363636),
-    b("Green", 0x194C1B, 0x103312, 0x216624),
-    b("Grey", 0x363636, 0x262626, 0x464646),
-    b("Indigo", 0x1F295F, 0x151B3F, 0x2A377F),
-    b("Lime", 0x575C1F, 0x3A3D14, 0x747B29),
-    b("Orange", 0x553E1C, 0x392912, 0x725325),
-    b("Pink", 0x642138, 0x431625, 0x862D4A),
-    b("Purple", 0x4E1D57, 0x34133A, 0x692674),
-    b("Red", 0x6B2523, 0x471817, 0x8F312F),
-    b("Teal", 0x164440, 0x0E2D2A, 0x1D5B55),
-    b("Yellow", 0x696223, 0x464117, 0x8D822F),
+    b("Amber", 0x24211B, 0x1C1913, 0x2E2B25),
+    b("Black", 0x171C20, 0x0F1418, 0x21262A),
+    b("Blue", 0x19232C, 0x111B24, 0x232D36),
+    b("Blue grey", 0x20262D, 0x181E25, 0x2A3037),
+    b("Brown", 0x25211E, 0x1D1916, 0x2F2B28),
+    b("Cyan", 0x192728, 0x111F20, 0x233132),
+    b("Dark", 0x1C2429, 0x141C21, 0x262E33),
+    b("Dark grey", 0x222529, 0x1A1D21, 0x2C2F33),
+    b("Green", 0x1D271F, 0x151F17, 0x273129),
+    b("Grey", 0x282B2F, 0x202327, 0x323539),
+    b("Indigo", 0x212330, 0x191B28, 0x2B2D3A),
+    b("Lime", 0x25281C, 0x1D2014, 0x2F3226),
+    b("Orange", 0x29221C, 0x211A14, 0x332C26),
+    b("Pink", 0x2B2026, 0x23181E, 0x352A30),
+    b("Purple", 0x27212D, 0x1F1925, 0x312B37),
+    b("Red", 0x2D211F, 0x251917, 0x372B29),
+    b("Teal", 0x1C2825, 0x14201D, 0x26322F),
+    b("Yellow", 0x29271D, 0x211F15, 0x333127),
 ];
 
-/// Alpha of the focus/selection fill over the accent (~37.6%).
-pub const FOCUS_ALPHA: u8 = 0x60;
+/// Opaque focus fills keep control contrast independent of the video.
+pub const FOCUS_ALPHA: u8 = 0xFF;
 /// Alpha of a subtle resting button (`#16FFFFFF`, ~8.6%).
 pub const RESTING_ALPHA: u8 = 0x16;
 /// Text: primary white; secondary and disabled are white at these alphas.
-pub const TEXT_SECONDARY_ALPHA: u8 = 0xA0;
+pub const TEXT_SECONDARY_ALPHA: u8 = 0xC4;
 pub const TEXT_DISABLED_ALPHA: u8 = 0x60;
 /// Corner radii: focus shape and larger rounded surfaces, in dp.
 pub const RADIUS: f32 = 6.0;
@@ -129,19 +124,18 @@ pub const fn blend(under: u32, over: u32, a: u8) -> u32 {
 const WHITE: u32 = 0xFFFFFF;
 /// The focused programme: a light pill whatever the background, with
 /// near-black text.
-pub const FOCUSED_CELL: u32 = 0xD0D2D4;
-pub const FOCUSED_TEXT: u32 = 0x060606;
+pub const FOCUSED_CELL: u32 = 0xC8DDEB;
+pub const FOCUSED_TEXT: u32 = 0x171C20;
 /// Titles of the focused row and channel names: white, a touch dimmer.
-pub const BRIGHT_TEXT: u32 = 0xFBFBFB;
+pub const BRIGHT_TEXT: u32 = 0xF5F3EE;
 /// Names in the lists (groups, channels, results, menu items) on the
 /// window and panel colours.
-pub const LIST_TEXT: u32 = 0xECECED;
-/// White over a programme for the other programmes of the focused row
-/// (`#424547` on Dark).
-pub const ROW_ALPHA: u8 = 0x24;
-/// The accent's light tone over a programme for the now line (`#445868`
-/// on Dark + Blue; measured `#435868`).
-pub const NOW_ALPHA: u8 = 0x4D;
+pub const LIST_TEXT: u32 = 0xE8EDF0;
+/// Error text on dark surfaces and its ink counterpart on pale blue focus.
+pub const ERROR: u32 = 0xF0B5AC;
+pub const ERROR_FOCUSED: u32 = 0x753A32;
+/// Lift the focused row slightly above the resting ink surface.
+pub const ROW_ALPHA: u8 = 0x18;
 
 /// The guide's colours for a theme (`0xRRGGBB`; titles of rows without the
 /// focus and the ruler's times are white at [`TEXT_SECONDARY_ALPHA`]).
@@ -170,9 +164,9 @@ impl Theme {
             window: bg.window,
             cell: bg.panel,
             row_cell: blend(bg.panel, WHITE, ROW_ALPHA),
-            playing: accent.main,
+            playing: accent.light,
             ruler_date: accent.light,
-            now_line: blend(bg.panel, accent.light, NOW_ALPHA),
+            now_line: accent.light,
             separator: bg.alt,
         }
     }
@@ -184,7 +178,7 @@ mod tests {
 
     #[test]
     fn alpha_packs_after_rgb() {
-        assert_eq!(with_alpha(0x2196F3, FOCUS_ALPHA), 0x2196F360);
+        assert_eq!(with_alpha(0x123456, FOCUS_ALPHA), 0x123456FF);
     }
 
     #[test]
@@ -194,36 +188,67 @@ mod tests {
         assert_eq!(blend(0x000000, 0xFF8000, 0x80), 0x804000);
     }
 
+    fn luminance(rgb: u32) -> f64 {
+        let channel = |shift| {
+            let c = ((rgb >> shift) & 255_u32) as f64 / 255.0;
+            if c <= 0.04045 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0)
+    }
+
+    fn contrast(a: u32, b: u32) -> f64 {
+        let (a, b) = (luminance(a), luminance(b));
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
     #[test]
-    fn dark_blue_guide_colours_match_the_reference() {
-        let g = Theme::default().guide();
-        assert_eq!(g.window, 0x131619);
-        assert_eq!(g.cell, 0x232629);
-        assert_eq!(g.row_cell, 0x424547);
-        assert_eq!(g.playing, 0x2196F3);
-        assert_eq!(g.ruler_date, 0x90CAF9);
-        assert_eq!(g.separator, 0x333639);
-        // Within one step per channel of the measured #435868.
-        let measured = 0x435868_u32;
-        for shift in [0, 8, 16] {
-            let (a, b) = ((g.now_line >> shift) & 0xFF, (measured >> shift) & 0xFF);
-            assert!(a.abs_diff(b) <= 1, "now line {:06X}", g.now_line);
+    fn text_and_focus_contrast_for_every_saved_palette() {
+        assert!(contrast(FOCUSED_TEXT, FOCUSED_CELL) >= 7.0);
+        assert!(contrast(ERROR_FOCUSED, FOCUSED_CELL) >= 4.5);
+        for accent in ACCENTS {
+            assert!(
+                contrast(LIST_TEXT, accent.main) >= 4.5,
+                "{} control",
+                accent.name
+            );
+            for background in BACKGROUNDS {
+                let g = Theme { accent, background }.guide();
+                for surface in [g.window, g.cell, g.row_cell, background.alt] {
+                    assert!(contrast(LIST_TEXT, surface) >= 4.5);
+                    assert!(contrast(ERROR, surface) >= 4.5);
+                    assert!(contrast(blend(surface, WHITE, TEXT_SECONDARY_ALPHA), surface) >= 4.5);
+                    assert!(contrast(FOCUSED_CELL, surface) >= 3.0);
+                }
+                // The playback panels use E0 opacity. Black/white video
+                // bound every channel of their composited surfaces.
+                for video in [0x000000, 0xFFFFFF] {
+                    let panel = blend(video, background.panel, 0xE0);
+                    let track = blend(panel, WHITE, RESTING_ALPHA * 2);
+                    assert!(contrast(accent.light, track) >= 3.0);
+                    assert!(contrast(blend(panel, WHITE, TEXT_SECONDARY_ALPHA), panel) >= 4.5);
+                }
+                assert!(contrast(g.playing, g.window) >= 4.5);
+                for surface in [g.cell, g.row_cell, FOCUSED_CELL] {
+                    assert!(
+                        contrast(g.now_line, surface).max(contrast(FOCUSED_TEXT, surface)) >= 3.0
+                    );
+                }
+                assert!(contrast(accent.main, FOCUSED_CELL) >= 3.0);
+                assert!(
+                    contrast(accent.light, blend(background.panel, WHITE, RESTING_ALPHA)) >= 3.0
+                );
+                assert!(
+                    contrast(
+                        accent.light,
+                        blend(background.panel, WHITE, RESTING_ALPHA * 2)
+                    ) >= 3.0
+                );
+            }
         }
-        assert_eq!(
-            (FOCUSED_CELL, FOCUSED_TEXT, BRIGHT_TEXT),
-            (0xD0D2D4, 0x060606, 0xFBFBFB)
-        );
-        // Secondary and disabled text: white at A0 and 60.
-        assert_eq!(
-            with_alpha(WHITE, TEXT_SECONDARY_ALPHA),
-            0xFFFFFFA0,
-            "text secondary"
-        );
-        assert_eq!(with_alpha(WHITE, TEXT_DISABLED_ALPHA), 0xFFFFFF60);
-        assert_eq!(
-            with_alpha(Theme::default().accent.main, FOCUS_ALPHA),
-            0x2196F360
-        );
     }
 
     #[test]
@@ -232,7 +257,7 @@ mod tests {
             for background in BACKGROUNDS {
                 let g = Theme { accent, background }.guide();
                 assert_eq!((g.window, g.cell), (background.window, background.panel));
-                assert_eq!((g.playing, g.ruler_date), (accent.main, accent.light));
+                assert_eq!((g.playing, g.ruler_date), (accent.light, accent.light));
             }
         }
         let black = Theme {
@@ -240,7 +265,7 @@ mod tests {
             background: BACKGROUNDS[1],
         };
         assert_eq!(black.background.name, "Black");
-        assert_eq!(black.guide().window, 0x060606);
+        assert_eq!(black.guide().window, 0x0F1418);
     }
 
     #[test]

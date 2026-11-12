@@ -53,6 +53,16 @@ fn secondary_screens_use_the_shared_type() {
     step(app.press("text:Watch"));
     step(app.wait_for_within("text:Test Channel Two", IMPORT));
 
+    // The two-tone marker retains the original total width; borders must
+    // not silently grow its outer box.
+    let marker = app
+        .screen()
+        .layout_nodes()
+        .into_iter()
+        .find(|n| n.test_id.as_deref() == Some("guide-now-line"))
+        .expect("the guide now line");
+    assert!((marker.bounds.size.width.0 - 2.0).abs() < 0.01);
+
     // Search, from the rail: the field at the item size, the heading.
     open_rail(&mut app);
     step(app.press("text:Search >> nth=0"));

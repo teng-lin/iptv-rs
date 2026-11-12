@@ -305,7 +305,7 @@ fn input_and_appearance_defaults_match_the_other_crates() {
     assert_eq!(st.get("general.user_agent"), Ok(Value::text("")));
 }
 
-/// The palette keys mirror the bundle names in iptv-app's placeholder
+/// The palette keys mirror the bundle names in iptv-app's Patina
 /// theme (read at compile time; no dependency on the NSH crate).
 #[test]
 fn palettes_mirror_the_theme_names() {

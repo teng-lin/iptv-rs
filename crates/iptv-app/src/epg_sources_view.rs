@@ -362,6 +362,7 @@ fn row(ui: Ui, size: Scale, index: usize, focused_index: Memo<Option<usize>>) ->
                     ui_kit::caption(size, move || status().0)
                         .number_of_lines(1)
                         .text_color(move || match (status().1, mark()) {
+                            (true, Mark::Focused) => rgb(ui_kit::ERROR_FOCUSED),
                             (true, _) => rgb(ERROR),
                             (false, m) => m.secondary(),
                         }),

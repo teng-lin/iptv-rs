@@ -6,8 +6,7 @@
 use crate::schema::Choices;
 
 /// Accent bundles by stable name. The values mirror the names of
-/// `ACCENTS` in `crates/iptv-app/src/theme.rs` (placeholder palette,
-/// replaced before release; keep the two lists in step).
+/// `ACCENTS` in `crates/iptv-app/src/theme.rs` (keep the two lists in step).
 pub static ACCENT: Choices = Choices {
     family: "accent",
     variants: &[

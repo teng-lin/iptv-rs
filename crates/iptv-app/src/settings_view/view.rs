@@ -215,7 +215,7 @@ pub(super) fn swatch_colour(ty: &ValueType, variant: &str) -> Option<u32> {
         "accent" => crate::theme::ACCENTS
             .iter()
             .find(|a| key(a.name) == variant)
-            .map(|a| a.main),
+            .map(|a| a.light),
         _ => crate::theme::BACKGROUNDS
             .iter()
             .find(|b| key(b.name) == variant)
@@ -313,6 +313,8 @@ fn row_view(
                 .w(move || size.px(16.0))
                 .h(move || size.px(16.0))
                 .rounded(px(3.0))
+                .border(px(1.0))
+                .border_color(move || mark().text())
                 .bg(move || current().1.map_or(tint(WHITE, 0), rgb))
                 .opacity(move || if current().1.is_some() { 1.0_f32 } else { 0.0 }),
         )

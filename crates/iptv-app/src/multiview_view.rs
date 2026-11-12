@@ -174,12 +174,14 @@ fn tile(ui: Ui, index: usize) -> impl IntoElement {
                     )
                     .child(
                         text("Try again")
-                            .px(px(18.0))
-                            .py(px(8.0))
+                            .px(px(16.0))
+                            .py(px(6.0))
                             .rounded(px(RADIUS))
                             .text_size(px(OSD_DETAIL))
                             .text_color(rgb(WHITE))
                             .bg(move || tint(accent(), FOCUS_ALPHA))
+                            .border(px(2.0))
+                            .border_color(move || rgb(ui.theme.with(|t| t.accent.light)))
                             .on_press(move || {
                                 ui.touched();
                                 if let Some(s) = surface() {
@@ -249,8 +251,15 @@ fn warning(ui: Ui) -> impl IntoElement {
     let choice = move |i: usize| {
         let focused = move || ui.keys_shown() && content.with(|c| c.2 == i);
         text(warning_label(WARNING_CHOICES[i]))
-            .px(px(20.0))
-            .py(px(10.0))
+            .border(px(2.0))
+            .border_color(move || {
+                tint(
+                    ui.theme.with(|t| t.accent.light),
+                    if focused() { 255 } else { 0 },
+                )
+            })
+            .px(px(18.0))
+            .py(px(8.0))
             .rounded(px(RADIUS))
             .text_size(px(OSD_TEXT))
             .text_color(rgb(WHITE))
