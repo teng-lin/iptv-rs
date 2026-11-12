@@ -14,3 +14,5 @@ mod stalker;
 mod xtream;
 
 mod limits;
+
+mod parser_properties;

@@ -27,6 +27,7 @@
 //! (callers pass `now`); builds for `wasm32-unknown-unknown`. The native
 //! adapter is `iptv-net`.
 
+pub mod backup_manifest;
 mod cancel;
 mod catalog;
 mod catalog_sink;

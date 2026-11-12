@@ -2,23 +2,24 @@
 //! settings, SQLite connection, import job or player is started. Directory
 //! renames keep the previous state recoverable across an interrupted swap.
 use std::cell::Cell;
-use std::collections::BTreeSet;
 
 mod instance;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use iptv_settings::Settings;
 use iptv_store_sqlite::Store;
-use serde_json::{Value, json};
+#[cfg(target_os = "android")]
+use serde_json::Value;
+use serde_json::json;
 
 const MAGIC: &[u8; 9] = b"PATINABK\x01";
-const MAX_MANIFEST: u64 = 4 * 1024 * 1024;
-const MAX_BYTES: u64 = 8 * 1024 * 1024 * 1024;
-const MAX_FILES: usize = 20_000;
+use iptv_import::backup_manifest::{
+    self, MAX_BYTES, MAX_FILES, MAX_MANIFEST, allowed, entry_limit,
+};
 static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static STARTED: OnceLock<std::result::Result<(), StartupError>> = OnceLock::new();
 
@@ -102,20 +103,6 @@ fn sync_dir(path: &Path) -> Result<()> {
         .map_err(|_| "Could not finish writing backup storage")
 }
 
-fn allowed(name: &str) -> bool {
-    let path = Path::new(name);
-    !name.contains('\\')
-        && !name.contains(':')
-        && path.components().all(|c| matches!(c, Component::Normal(_)))
-        && (matches!(
-            name,
-            "iptv.sqlite" | "settings.json" | "search-history.json" | "last_channel"
-        ) || (!name.contains('/')
-            && name.starts_with("last_channel-")
-            && name.len() > 13
-            && name[13..].chars().all(|c| c.is_ascii_digit()))
-            || (name.starts_with("playlists/") && path.components().count() > 1))
-}
 fn collect(root: &Path, directory: &Path, names: &mut Vec<String>) -> Result<()> {
     if !directory.exists() {
         return Ok(());
@@ -305,24 +292,6 @@ fn export(root: &Path, destination: &Path, settings: &str) -> Result<()> {
     result
 }
 
-/// Structured files are read as a whole. Enforce their individual budget both
-/// while staging archive entries and before startup revalidation allocates.
-#[derive(Debug, PartialEq, Eq)]
-struct BackupEntryLimit;
-
-fn entry_limit(name: &str, bytes: u64) -> std::result::Result<(), BackupEntryLimit> {
-    let maximum = match name {
-        "settings.json" | "search-history.json" => 1 << 20,
-        name if name == "last_channel" || name.starts_with("last_channel-") => 64 << 10,
-        _ => MAX_BYTES,
-    };
-    if bytes > maximum {
-        Err(BackupEntryLimit)
-    } else {
-        Ok(())
-    }
-}
-
 fn read_small_file(path: &Path, name: &str) -> Result<String> {
     let maximum = if name == "last_channel" {
         64 << 10
@@ -386,41 +355,11 @@ fn stage(root: &Path, input: &mut impl Read) -> Result<()> {
     input
         .read_exact(&mut bytes)
         .map_err(|_| "Backup header is incomplete")?;
-    let manifest: Value = serde_json::from_slice(&bytes).map_err(|_| "Backup header is invalid")?;
-    if manifest["format"] != "patina-whole-app" || manifest["version"] != 1 {
-        return Err("Backup format is not supported by this version");
-    }
-    let old_root = Path::new(
-        manifest["root"]
-            .as_str()
-            .ok_or("Backup storage path is missing")?,
-    );
-    if !old_root.is_absolute() {
-        return Err("Backup storage path is invalid");
-    }
-    let files = manifest["files"]
-        .as_array()
-        .ok_or("Backup file list is missing")?;
-    if files.len() > MAX_FILES {
-        return Err("Backup has too many files");
-    }
-    let mut seen = BTreeSet::new();
-    let mut total = 0u64;
-    for entry in files {
-        let name = entry["name"]
-            .as_str()
-            .ok_or("Backup file name is invalid")?;
-        if !allowed(name) || !seen.insert(name) {
-            return Err("Backup contains an unsafe or duplicate file path");
-        }
-        let len = entry["length"]
-            .as_u64()
-            .ok_or("Backup file size is invalid")?;
-        entry_limit(name, len).map_err(|_| "Backup structured entry is too large")?;
-        total = total.checked_add(len).ok_or("Backup is too large")?;
-        if total > MAX_BYTES {
-            return Err("Backup is too large");
-        }
+    let manifest = backup_manifest::parse(&bytes)?;
+    let old_root = Path::new(&manifest.root);
+    for entry in &manifest.files {
+        let name = &entry.name;
+        let len = entry.length;
         let path = work.0.join(name);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|_| "Could not stage backup files")?;
@@ -434,9 +373,6 @@ fn stage(root: &Path, input: &mut impl Read) -> Result<()> {
         output
             .sync_all()
             .map_err(|_| "Could not finish staging backup files")?;
-    }
-    if !seen.contains("iptv.sqlite") || !seen.contains("settings.json") {
-        return Err("Backup is missing the library or settings");
     }
     let mut extra = [0];
     if input

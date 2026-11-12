@@ -309,7 +309,10 @@ fn structured_entry_budgets_preserve_current_and_pending_data() {
     let pending = sibling(&root, "restore-pending");
     let before = fs::read(pending.join("iptv.sqlite")).unwrap();
     for name in ["settings.json", "search-history.json", "last_channel-1"] {
-        assert_eq!(entry_limit(name, 2 << 20), Err(BackupEntryLimit));
+        assert_eq!(
+            entry_limit(name, 2 << 20),
+            Err(iptv_import::backup_manifest::EntryLimit)
+        );
         let manifest = serde_json::to_vec(&json!({"format":"patina-whole-app", "version":1, "root":"/synthetic", "files":[{"name":name,"length":2 << 20}]})).unwrap();
         let mut bytes = MAGIC.to_vec();
         bytes.extend((manifest.len() as u64).to_le_bytes());
