@@ -30,6 +30,8 @@ jobs:
       - uses: ./.github/actions/setup
       - uses: ./.github/actions/android
       - name: Build Android native library
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
         run: ABIS=arm64-v8a bash tools/sync-host.sh
       - name: Build Android APK and bundle
         working-directory: hosts/android

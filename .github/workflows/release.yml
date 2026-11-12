@@ -63,6 +63,8 @@ jobs:
         if: matrix.platform == 'android'
       - name: Build Android native library
         if: matrix.platform == 'android'
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
         run: bash tools/sync-host.sh --release
       - name: Linux packages
         if: matrix.platform == 'linux'

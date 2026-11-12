@@ -23,8 +23,15 @@ runs:
         echo "NSH_RUNTIME=$(cd ../nsh && pwd)/target" >> "$GITHUB_ENV"
     - name: Build NSH CLI
       shell: bash
+      # Bootstrap tools are not shipped; reserve full LTO for the app itself.
+      env:
+        CARGO_PROFILE_RELEASE_LTO: thin
+        CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
       run: cargo build --release --locked --manifest-path ../nsh/Cargo.toml -p nsh-cli
     - name: Build pinned Android runtime
       shell: bash
       working-directory: ../nsh
+      env:
+        CARGO_PROFILE_RELEASE_LTO: thin
+        CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
       run: cargo xtask android --release --abi arm64-v8a
