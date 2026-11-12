@@ -10,6 +10,8 @@ rm -rf "$stage" "$appdir" target/linux
 mkdir -p "$out" target/linux
 (cd crates/iptv-app && "$NSH" package --target linux -o "$root/target/linux" .)
 native="$root/target/linux/Patina"
+cp LICENSE "$native/LICENSE"
+license=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["license"])')
 mapfile -t executables < <(find "$native" -maxdepth 1 -type f -executable -printf '%f\n')
 test "${#executables[@]}" -eq 1
 exe=${executables[0]}
@@ -27,7 +29,8 @@ for format in deb rpm pacman; do
     rpm) deps=(--depends 'glibc >= 2.39' --depends 'gtk4 >= 4.14' --depends mpv-libs --depends gstreamer1 --depends gstreamer1-plugins-base); extension=rpm;;
     pacman) deps=(--depends 'glibc>=2.39' --depends 'gtk4>=4.14' --depends mpv --depends gstreamer --depends gst-plugins-base-libs --pacman-compression zstd); extension=pkg.tar.zst;;
   esac
-  fpm --force -s dir -t "$format" -n patina -v "$VERSION" \
+  fpm --force -s dir -t "$format" -n patina -v "$VERSION" --license "$license" \
+    --url https://github.com/teng-lin/iptv-rs \
     --description 'Patina IPTV player' --maintainer 'Patina maintainers' \
     "${deps[@]}" -C "$stage" -p "$out/Patina-$VERSION-linux-x86_64.$extension" .
 done
