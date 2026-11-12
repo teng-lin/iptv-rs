@@ -93,7 +93,8 @@ fn protect_directory(path: &Path) -> io::Result<()> {
         builder.mode(0o700);
     }
     builder.create(path)?;
-    protect_tree(path)
+    protect_tree(path)?;
+    exclude_from_backup(path)
 }
 
 fn protect_tree(path: &Path) -> io::Result<()> {
@@ -117,6 +118,26 @@ fn protect_tree(path: &Path) -> io::Result<()> {
             protect_tree(&entry?.path())?;
         }
     }
+    Ok(())
+}
+
+/// User-initiated exports are separate; OS backups must not copy credentials.
+pub(crate) fn exclude_from_backup(path: &Path) -> io::Result<()> {
+    #[cfg(target_os = "ios")]
+    {
+        use objc2_foundation::{NSNumber, NSString, NSURL, NSURLIsExcludedFromBackupKey};
+        let name = path.to_str().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "Storage path is not UTF-8")
+        })?;
+        let url = NSURL::fileURLWithPath_isDirectory(&NSString::from_str(name), true);
+        let value = NSNumber::numberWithBool(true);
+        // SAFETY: Apple's excluded-from-backup resource key expects an NSNumber
+        // boolean; both Objective-C values live through this synchronous call.
+        unsafe { url.setResourceValue_forKey_error(Some(&value), NSURLIsExcludedFromBackupKey) }
+            .map_err(|_| io::Error::other("Could not exclude private storage from OS backup"))?;
+    }
+    #[cfg(not(target_os = "ios"))]
+    let _ = path;
     Ok(())
 }
 

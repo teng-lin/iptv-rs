@@ -10,6 +10,9 @@
 
     <!-- usesCleartextTraffic: the spike plays synthetic HLS from a local server (10.0.2.2). -->
     <application
+        android:allowBackup="false"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:label="Patina"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"

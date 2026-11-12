@@ -85,7 +85,8 @@ fn private_dir(path: &Path) -> io::Result<()> {
         use std::os::unix::fs::DirBuilderExt;
         builder.mode(0o700);
     }
-    builder.create(path)
+    builder.create(path)?;
+    crate::platform_data::exclude_from_backup(path)
 }
 fn private_file(path: &Path) -> io::Result<File> {
     let mut options = OpenOptions::new();

@@ -81,6 +81,9 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
   "NSGeometry",
   "NSObject",
   "NSString",
+  "NSURL",
+  "NSValue",
+  "NSError",
   "objc2-core-foundation",
 ] }
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFCGTypes"] }
