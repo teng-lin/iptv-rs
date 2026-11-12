@@ -147,9 +147,10 @@ class TvActivity : Activity() {
      * remote sends; the app binds F12 to its search on Android (`input.rs`).
      */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (event.keyCode != KeyEvent.KEYCODE_SEARCH) return super.dispatchKeyEvent(event)
+        val mapped = RemoteKeys.translate(event.keyCode)
+        if (mapped == event.keyCode) return super.dispatchKeyEvent(event)
         val search = KeyEvent(
-            event.downTime, event.eventTime, event.action, SEARCH_AS, event.repeatCount,
+            event.downTime, event.eventTime, event.action, mapped, event.repeatCount,
             event.metaState, event.deviceId, event.scanCode, event.flags, event.source,
         )
         return super.dispatchKeyEvent(search)
@@ -167,8 +168,4 @@ class TvActivity : Activity() {
         super.onDestroy()
     }
 
-    private companion object {
-        /** What the remote's Search key is handed on as. */
-        const val SEARCH_AS = KeyEvent.KEYCODE_F12
-    }
 }

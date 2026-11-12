@@ -189,9 +189,9 @@ On Android nothing plays in the background: when the activity stops
 connections, and when it starts again each one reopens its stream (live at
 the live edge, catch-up where it was). A minimised desktop window plays on.
 
-Known limit: mpv sends a stream's headers (Cookie, Authorization, ...) with
-every request of that stream, including redirects and HLS segments on other
-hosts; the Android player keeps identity headers to the stream's own host.
+Android and mpv use a bounded playback transport that keeps identity headers
+(Cookie, Authorization, SN and X-User-Agent) on the stream's exact origin
+(scheme, host and port), including redirects and HLS/DASH subresources.
 
 Package (release runner, `.desktop` entry and a `.tar.gz`; libmpv stays a
 system dependency):
