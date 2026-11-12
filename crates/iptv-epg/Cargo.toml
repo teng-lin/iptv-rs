@@ -4,6 +4,7 @@ description = "EPG layer of iptv-rs: sans-IO streaming XMLTV parser (plain or gz
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]
 # Pure-Rust gzip (miniz_oxide); no C zlib, builds for wasm32.

@@ -4,5 +4,6 @@ description = "Remote/keyboard input for iptv-rs: platform-independent keys, sho
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]

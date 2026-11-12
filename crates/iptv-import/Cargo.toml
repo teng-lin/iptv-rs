@@ -4,6 +4,7 @@ description = "Import pipeline of iptv-rs: drives the sans-IO provider clients a
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]
 iptv-providers.workspace = true

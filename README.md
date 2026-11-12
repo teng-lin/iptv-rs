@@ -371,3 +371,11 @@ Pull requests run the host test suite on Linux and macOS. Version tags build
 Android tablet/TV APK and AAB, iPad IPA, macOS DMG, and Linux DEB, RPM,
 pkg.tar.zst and AppImage, then publish to GitHub Releases.
 See [setup, signing secrets and release limitations](docs/ci-release.md).
+
+## License
+
+This project is licensed under the GNU Affero General Public License version 3
+(`AGPL-3.0-only`). See [LICENSE](LICENSE) for the full text.
+
+Third-party components retain their own licenses, including the bundled fonts
+under the [SIL Open Font License](crates/iptv-app/fonts/OFL.txt).

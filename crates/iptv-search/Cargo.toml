@@ -4,6 +4,7 @@ description = "Search layer of iptv-rs: text folding shared with EPG matching, c
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]
 iptv-core.workspace = true
