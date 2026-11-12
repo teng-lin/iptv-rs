@@ -43,7 +43,10 @@ fn wal_snapshot_preserves_credentials_organization_history_and_cached_catalog() 
     assert_eq!(restored.source(id).unwrap().unwrap().source, source);
     assert_eq!(restored.active_source().unwrap(), Some(id));
     assert!(restored.all_playlists().unwrap());
-    assert_eq!(restored.combined_last_channel().unwrap(), Some(combined_key));
+    assert_eq!(
+        restored.combined_last_channel().unwrap(),
+        Some(combined_key)
+    );
     assert!(restored.is_favourite(id, &last).unwrap());
     let channels = restored
         .load_channels(id, &ChannelQuery::default())
