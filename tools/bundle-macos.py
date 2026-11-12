@@ -19,6 +19,13 @@ older deployment target instead).
 """
 
 import os
+import json
+import hashlib
+import re
+import tarfile
+import tempfile
+import urllib.request
+from pathlib import Path
 import plistlib
 import shutil
 import subprocess
@@ -90,6 +97,55 @@ def external(ref):
     return not ref.startswith(SYSTEM)
 
 
+def glib_source_notices(prefix, destination):
+    """Use the installed formula's exact source checksum when its bottle omits texts."""
+    formula = prefix / ".brew/glib.rb"
+    content = formula.read_text()
+    url_match = re.search(r'^\s*url "([^"\n]+)"\s*$', content, re.M)
+    sha_match = re.search(r'^\s*sha256 "([0-9a-f]{64})"\s*$', content, re.M)
+    version = prefix.name.split("_", 1)[0]
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+        raise ValueError("Unsupported installed GLib version")
+    expected = f"https://download.gnome.org/sources/glib/{'.'.join(version.split('.')[:2])}/glib-{version}.tar.xz"
+    if not url_match or url_match[1] != expected or not sha_match:
+        raise ValueError("Installed GLib formula lacks matching source URL and checksum")
+    with tempfile.TemporaryFile() as archive:
+        digest = hashlib.sha256()
+        total = 0
+        with urllib.request.urlopen(expected, timeout=60) as response:
+            while chunk := response.read(1024 * 1024):
+                total += len(chunk)
+                if total > 64 * 1024 * 1024:
+                    raise ValueError("GLib source archive exceeds limit")
+                digest.update(chunk)
+                archive.write(chunk)
+        if digest.hexdigest() != sha_match[1]:
+            raise ValueError("GLib source checksum mismatch")
+        archive.seek(0)
+        copied = 0
+        with tarfile.open(fileobj=archive, mode="r:xz") as source:
+            for member in source:
+                path = Path(member.name)
+                if not member.isfile() or path.is_absolute() or ".." in path.parts:
+                    continue
+                if not path.parts or path.parts[0] != f"glib-{version}":
+                    continue
+                if not (path.name.upper().startswith(("COPYING", "LICENSE", "LICENCE", "NOTICE", "COPYRIGHT"))
+                        or "LICENSES" in path.parts):
+                    continue
+                if member.size > 1024 * 1024 or copied >= 200:
+                    raise ValueError("GLib source notices exceed limit")
+                target = destination / "source" / Path(*path.parts[1:])
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with source.extractfile(member) as stream:
+                    target.write_bytes(stream.read())
+                copied += 1
+        if not copied:
+            raise ValueError("GLib source has no licence notices")
+    shutil.copyfile(formula, destination / "source-formula.rb")
+    (destination / "source.json").write_text(json.dumps({"url": expected, "sha256": sha_match[1]}, indent=2) + "\n")
+
+
 def main():
     if len(sys.argv) != 2 or not sys.argv[1].rstrip("/").endswith(".app"):
         sys.exit(__doc__)
@@ -125,6 +181,37 @@ def main():
     for real, name in names.items():
         if taken.setdefault(name, real) != real:
             sys.exit(f"two dylibs named {name}: {taken[name]} and {real}")
+
+    # Homebrew installs upstream notices in each versioned formula prefix.
+    # Keep those texts and the bottle receipt alongside the bundled libraries.
+    notices = Path(app) / "Contents/Resources/notices/native"
+    notices.mkdir(parents=True, exist_ok=True)
+    inventory = []
+    prefixes = set()
+    for real in names:
+        library = Path(real)
+        prefix = next((p for p in library.parents if (p / "INSTALL_RECEIPT.json").exists()), None)
+        if prefix is None:
+            sys.exit(f"no component receipt for bundled library {library.name}")
+        inventory.append({"library": names[real], "component": prefix.parent.name, "version": prefix.name})
+        if prefix in prefixes:
+            continue
+        prefixes.add(prefix)
+        destination = notices / (prefix.parent.name + "-" + prefix.name)
+        destination.mkdir(exist_ok=True)
+        shutil.copyfile(prefix / "INSTALL_RECEIPT.json", destination / "receipt.json")
+        texts = [p for p in prefix.rglob("*") if p.is_file() and
+                 p.name.upper().startswith(("LICENSE", "LICENCE", "COPYING", "NOTICE", "COPYRIGHT"))]
+        if not texts:
+            if prefix.parent.name == "glib":
+                glib_source_notices(prefix, destination)
+            else:
+                sys.exit(f"no upstream licence text installed for {prefix.parent.name} {prefix.name}")
+        for text in texts:
+            target = destination / text.relative_to(prefix)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(text, target)
+    (notices / "components.json").write_text(json.dumps(inventory, indent=2) + "\n")
 
     os.makedirs(frameworks, exist_ok=True)
     copies = {}
