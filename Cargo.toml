@@ -55,3 +55,20 @@ iptv-net = { path = "crates/iptv-net" }
 iptv-store-sqlite = { path = "crates/iptv-store-sqlite" }
 rusqlite = { version = "0.41", default-features = false, features = ["bundled", "cache"] }
 tempfile = "3"
+
+# Debug info is most of what a test binary links: with full debug info an
+# app test binary is ~1 GB, 94 % of it DWARF, mostly the dependencies'
+# (GTK, NSH, ...), and the linker holds it all in memory. Other packages
+# (crates.io and the NSH checkout) keep line tables only: backtraces
+# through them still show file:line, a debugger shows no variables or
+# types there. Our own crates keep full debug info.
+[profile.dev.package."*"]
+debug = "line-tables-only"
+
+# Debug info stays in the object files under target/ (split DWARF, the
+# default on macOS) instead of being copied into every binary: the app's
+# test binary goes from ~530 to ~175 MB and its link from ~2 to ~1.2 GB.
+# Backtraces and gdb/lldb read it from there, so a binary copied off this
+# machine (without target/) has symbols but no debug info.
+[profile.dev]
+split-debuginfo = "unpacked"

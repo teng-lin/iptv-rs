@@ -344,6 +344,13 @@ the scenario runs directly. To add a scenario, write
 `tests/app/main.rs`. `cargo test -p iptv-app guide_look` runs one
 scenario (`-- --nocapture` shows its log).
 
+Debug builds keep full debug info for our crates only; other packages
+(crates.io and the NSH checkout) keep line tables (backtraces show
+file:line, a debugger no variables there), and debug info stays in the
+object files under `target/` (`split-debuginfo = "unpacked"`), which
+keeps the app's test binary at ~175 MB instead of ~1 GB (workspace
+`Cargo.toml`).
+
 ## Before any public release
 
 - Replace `crates/iptv-app/src/theme.rs` (placeholder palette) with our own design.
