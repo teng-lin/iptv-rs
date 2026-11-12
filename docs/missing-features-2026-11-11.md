@@ -2,7 +2,7 @@
 
 This backlog follows the [functionality audit](parity-audit-2026-11-11.md).
 The current implementation work covers the four priorities below. Further
-multiview enhancements, backup/restore, and parental controls are deferred;
+multiview enhancements and parental controls are deferred;
 channel/group blocking and PIN enforcement remain outside this work.
 
 ## 1. Hide/show channels and groups
@@ -128,6 +128,6 @@ as a usable feature. See the audit for evidence and reference uncertainty.
 | Recording/reminders | Scheduling, storage and conflict journeys | End-to-end scheduler and persistence, permission/storage UI, recording state, failure/retry/cancellation; enums alone are insufficient | Later product scope |
 | VOD | Movies/series, watched state, resume/next episode | Usable catalogue/detail/season/episode screens, player integration, persisted progress and navigation/focus restoration | Later product scope |
 
-Multiview enhancements, backup/restore, parental controls and blocking/PIN
-work remain explicitly deferred. This backlog does not require them to
+Whole-app backup/restore is implemented; see [coverage and platform support](whole-app-backup.md).
+Multiview enhancements, parental controls and blocking/PIN work remain explicitly deferred. This backlog does not require them to
 ship the four library/input priorities.

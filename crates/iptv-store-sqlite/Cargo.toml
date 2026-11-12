@@ -9,7 +9,7 @@ publish.workspace = true
 iptv-providers.workspace = true
 iptv-epg.workspace = true
 iptv-import.workspace = true
-rusqlite.workspace = true
+rusqlite = { workspace = true, features = ["backup"] }
 serde_json.workspace = true
 
 [dev-dependencies]

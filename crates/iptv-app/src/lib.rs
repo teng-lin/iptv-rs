@@ -7,6 +7,7 @@
 pub use iptv_core::guide;
 pub mod theme;
 
+mod backup;
 mod browse_playback;
 mod channels_view;
 mod chooser;
@@ -425,6 +426,28 @@ pub fn App() -> impl IntoElement {
     startup::mark("rust root");
     startup::log_library_base();
     fonts::register();
+    if let Err(message) = backup::lock() {
+        return view()
+            .flex_1()
+            .items_center()
+            .justify_center()
+            .child(text(message));
+    }
+    if let Err(error) = backup::startup() {
+        let message = error.message;
+        log::warn!("iptv backup: {message}");
+        if error.fatal {
+            // Never create a replacement empty database over an unrecovered
+            // directory after a filesystem failure during restore recovery.
+            return view()
+                .flex_1()
+                .items_center()
+                .justify_center()
+                .child(text("Saved data could not be recovered"))
+                .child(text(message))
+                .child(text("Close Patina and try opening it again."));
+        }
+    }
     settings::load();
     startup::mark("settings loaded");
     let ui = Ui {
@@ -550,6 +573,7 @@ pub fn App() -> impl IntoElement {
         // Layers, bottom to top: opaque backdrop, video (multiview's other
         // surfaces while their tiles play), UI, full-screen tap catcher.
         // The picture-in-picture window shows only the video (`pip.rs`).
+        .child(backup::service_layer())
         .child(panels::backdrop(ui))
         .child(video::layer(ui, 0))
         .children((1..player::SURFACES).map(move |s| {

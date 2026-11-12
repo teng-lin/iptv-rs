@@ -34,6 +34,7 @@ class TvActivity : Activity() {
     /** Between onStart and onStop. */
     private var started = false
     private lateinit var pip: PipHost
+    private lateinit var backups: BackupHost
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
@@ -43,6 +44,10 @@ class TvActivity : Activity() {
         mark("library loaded")
         nsh.useStandaloneLimits()
         pip = PipHost(this)
+        backups = BackupHost(this)
+        nsh.registerComponent(BackupComponent.NAME) { context ->
+            BackupComponent(this, context, backups)
+        }
         val gone = { p: PlayerComponent ->
             players.remove(p)
             pip.destroyed(p)
@@ -125,6 +130,13 @@ class TvActivity : Activity() {
         nsh.handleUrlSchemeIntent(intent)
     }
 
+    @Deprecated("App-owned Storage Access Framework bridge")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (!backups.activityResult(requestCode, resultCode, data)) {
+            super.onActivityResult(requestCode, resultCode, data)
+        }
+    }
+
     /**
      * A remote's Search key: NSH has no key for `KEYCODE_SEARCH` (and the
      * system would start its own search), so it goes on as F12, which no
@@ -145,6 +157,7 @@ class TvActivity : Activity() {
     }
 
     override fun onDestroy() {
+        backups.destroy()
         pip.destroy()
         nsh.destroy()
         super.onDestroy()

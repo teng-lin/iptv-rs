@@ -340,6 +340,9 @@ fn text_sheet(ui: Ui) -> View {
 /// The question before a command that cannot be undone.
 fn question(key: &str) -> &'static str {
     match key {
+        "general.restore" => {
+            "Choose a backup to apply when you next open Patina. You can cancel the scheduled restore before closing the app."
+        }
         "epg.clear" => {
             "The stored programmes are deleted. The guide stays empty until it is downloaded again."
         }

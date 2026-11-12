@@ -212,6 +212,8 @@ fn refresh(ui: Ui) {
 /// Runs a command (`settings::COMMANDS`).
 fn run(ui: Ui, key: &'static str) {
     match key {
+        "general.backup" => crate::backup::export_ui(),
+        "general.restore" => crate::backup::restore_ui(),
         "epg.update_now" => {
             if stored::update_now(ui, move || refresh(ui)) {
                 refresh(ui);
@@ -303,6 +305,7 @@ fn lit_page(page: &Page) -> bool {
 /// What a command row shows on its right.
 fn command_value(key: &str) -> String {
     match key {
+        "general.restore" if crate::backup::is_pending() => "Scheduled for next launch".to_owned(),
         "epg.update_now" => match stored::guide_status() {
             GuideStatus::NoSource => "No playlist".to_owned(),
             GuideStatus::Updating => "Updating…".to_owned(),
