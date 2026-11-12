@@ -92,7 +92,7 @@ fn the_last_channel_opens_once_before_the_guide() {
     drop(first);
 
     // Channel two played last.
-    let data = home.path().join(".local/share/iptv-rs");
+    let data = home.data_dir();
     let store = Store::open(data.join("iptv.sqlite")).unwrap();
     let source = store.sources().unwrap()[0].id;
     let two = store

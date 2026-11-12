@@ -62,6 +62,15 @@ impl Home {
             Home::Owned(dir) => dir.path(),
         }
     }
+
+    /// The app's native data directory inside this scenario's home.
+    pub fn data_dir(&self) -> PathBuf {
+        if cfg!(target_os = "macos") {
+            self.path().join("Library/Application Support/iptv-rs")
+        } else {
+            self.path().join(".local/share/iptv-rs")
+        }
+    }
 }
 
 /// `here` is the type name of a function nested in the test:

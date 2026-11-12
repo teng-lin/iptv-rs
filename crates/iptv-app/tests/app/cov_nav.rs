@@ -161,7 +161,7 @@ fn keys_drive_the_guide_search_the_channel_list_and_multiview() {
     settings
         .set("search.stay_on_search", Value::Bool(true))
         .unwrap();
-    let data = home.path().join(".local/share/iptv-rs");
+    let data = home.data_dir();
     std::fs::create_dir_all(&data).unwrap();
     std::fs::write(data.join("settings.json"), settings.to_json_string()).unwrap();
 
