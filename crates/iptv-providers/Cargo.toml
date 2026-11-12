@@ -13,3 +13,6 @@ url.workspace = true
 percent-encoding.workspace = true
 xxhash-rust.workspace = true
 sha1_smol.workspace = true
+
+[lints]
+workspace = true

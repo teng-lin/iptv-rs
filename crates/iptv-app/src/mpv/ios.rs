@@ -302,6 +302,7 @@ define_class!(
     #[ivars = ViewIvars]
     struct VideoView;
 
+    // SAFETY: this NSObject subclass inherits the NSObject protocol implementation.
     unsafe impl NSObjectProtocol for VideoView {}
 
     impl VideoView {
@@ -453,6 +454,7 @@ define_class!(
     #[ivars = u64]
     struct Lifecycle;
 
+    // SAFETY: this NSObject subclass inherits the NSObject protocol implementation.
     unsafe impl NSObjectProtocol for Lifecycle {}
 
     impl Lifecycle {

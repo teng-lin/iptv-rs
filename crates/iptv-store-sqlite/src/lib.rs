@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Native SQLite store of iptv-rs.
 //!
 //! - **Provider data** (groups, channels, VOD, series) is replaced wholesale

@@ -374,9 +374,11 @@ mod editor_tests {
     use super::*;
     #[test]
     fn draft_and_escape_are_safe_and_search_is_isolated() {
-        let mut e = Editor::default();
-        e.context = Context::Search;
-        e.action = Action::Select;
+        let mut e = Editor {
+            context: Context::Search,
+            action: Action::Select,
+            ..Editor::default()
+        };
         let b = e.binding().unwrap();
         let mut map = crate::Keymap::defaults();
         map.set_override(b);

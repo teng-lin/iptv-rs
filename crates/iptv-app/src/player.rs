@@ -182,7 +182,7 @@ pub fn stored_context(config: &SourceConfig) -> Option<PlaybackContext> {
 /// `f` after `delay`, under the app's owner.
 fn later(ui: Ui, delay: Duration, f: impl FnOnce() + 'static) {
     ui.player.owner.run(|| {
-        let _ = set_timeout(delay, f);
+        let _task = set_timeout(delay, f);
     });
 }
 
@@ -431,7 +431,7 @@ fn resolve_link(
         })();
         let _ = tx.send((result, portal));
     });
-    let _ = ui.player.owner.run(|| {
+    let _task = ui.player.owner.run(|| {
         spawn(async move {
             let Ok((result, portal)) = rx.await else {
                 return;

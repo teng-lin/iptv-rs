@@ -46,7 +46,7 @@ fn arm_back_guard(ui: Ui) {
     let now = ui.now_ms();
     ui.back_guard.update(|g| g.long_back(now));
     let wait = Duration::from_millis(BackGuard::TIMEOUT_MS);
-    let _ = set_timeout(wait, move || {
+    let _task = set_timeout(wait, move || {
         if ui.back_guard.with_untracked(BackGuard::armed) {
             let now = ui.now_ms();
             let mut expired = false;

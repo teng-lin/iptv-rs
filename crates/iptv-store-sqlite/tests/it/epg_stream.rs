@@ -414,6 +414,8 @@ fn streaming_import_without_descriptions_or_retention() {
 }
 
 /// Imports `feeds` (served as given) into `source`'s stored guide.
+// Mirrors the import boundary so each failure fixture can supply its own sinks.
+#[allow(clippy::too_many_arguments)]
 fn import_into(
     store: &mut Store,
     source: iptv_store_sqlite::SourceId,

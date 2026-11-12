@@ -11,3 +11,6 @@ license.workspace = true
 iptv-core.workspace = true
 iptv-epg.workspace = true
 iptv-providers.workspace = true
+
+[lints]
+workspace = true

@@ -296,7 +296,12 @@ fn organization_playlist_policies_and_remote_bindings_are_editable_and_persisted
     step(app.press("id:remote-Capture"));
     step(app.press_key("green"));
     step(app.wait_for("text:Key: Green"));
+    // A quiet headless batch does not acknowledge a queued settings action.
+    // Observe the captured key's unsaved state, then its saved state before
+    // reading the durable file (a busy engine can otherwise still show one).
+    step(app.wait_for("text:/^Currently: .* · default binding$/"));
     step(app.press("id:remote-Save"));
+    step(app.wait_for("text:/^Currently: .* · custom binding$/"));
     let saved = read_bindings(&dir);
     assert_eq!(saved.len(), 2);
     assert!(saved.iter().any(|b| b.context.as_deref() == Some("groups")

@@ -143,7 +143,9 @@ mod tests {
         assert_eq!(LIST_SECONDARY, HEADER_BODY);
         assert_eq!(ROW, crate::grid::ROW_H);
         // Touch targets: at least 48 dp (Android keeps the full sizes).
-        assert!(ROW - 2.0 * GAP >= 48.0 && ROW_TWO - 2.0 * GAP >= 48.0);
+        const {
+            assert!(ROW - 2.0 * GAP >= 48.0 && ROW_TWO - 2.0 * GAP >= 48.0);
+        };
     }
 
     #[test]

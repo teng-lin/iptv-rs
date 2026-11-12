@@ -165,14 +165,14 @@ pub fn set_combined() {
         state.source = None;
         state.combined_sources = ids.clone();
         state.favorites = Favorites::from_keys(keys);
-        if previous != ids {
-            if let Ok(rows) = store.recent(None, Some(ContentKind::Live), RECENT_LIMIT as u32) {
-                state.recent = Recent::from_keys(
-                    rows.into_iter()
-                        .filter(|r| ids.contains(&r.source_id))
-                        .map(|r| qualified_key(r.source_id.0, r.item_id.as_str())),
-                );
-            }
+        if previous != ids
+            && let Ok(rows) = store.recent(None, Some(ContentKind::Live), RECENT_LIMIT as u32)
+        {
+            state.recent = Recent::from_keys(
+                rows.into_iter()
+                    .filter(|r| ids.contains(&r.source_id))
+                    .map(|r| qualified_key(r.source_id.0, r.item_id.as_str())),
+            );
         }
         state.has_vod = false;
     });
@@ -389,6 +389,30 @@ fn write_all_with(rx: Receiver<Write>, mut persist: impl FnMut(&Write) -> bool) 
     }
 }
 
+/// Ordered keys of the displayed source. Reorders use the same writer queue
+/// as membership changes, so rapid add/move/remove cannot race persistence.
+pub fn ordered_keys() -> Vec<String> {
+    STATE.with(|s| s.borrow().favorites.keys().to_vec())
+}
+pub fn reorder(ui: Ui, key: &str, index: usize) {
+    let source = STATE.with(|s| {
+        let mut s = s.borrow_mut();
+        s.favorites
+            .move_key(key, index)
+            .then_some(s.source)
+            .flatten()
+    });
+    if let Some(source) = source {
+        send(Write::MoveFavourite {
+            source,
+            key: key.into(),
+            index,
+        });
+    }
+    publish(ui);
+    crate::lists::favorites_changed(ui);
+}
+
 #[cfg(test)]
 mod writer_tests {
     use super::*;
@@ -477,28 +501,4 @@ mod writer_tests {
             assert_eq!(result.try_recv().unwrap(), Some(false));
         }
     }
-}
-
-/// Ordered keys of the displayed source. Reorders use the same writer queue
-/// as membership changes, so rapid add/move/remove cannot race persistence.
-pub fn ordered_keys() -> Vec<String> {
-    STATE.with(|s| s.borrow().favorites.keys().to_vec())
-}
-pub fn reorder(ui: Ui, key: &str, index: usize) {
-    let source = STATE.with(|s| {
-        let mut s = s.borrow_mut();
-        s.favorites
-            .move_key(key, index)
-            .then_some(s.source)
-            .flatten()
-    });
-    if let Some(source) = source {
-        send(Write::MoveFavourite {
-            source,
-            key: key.into(),
-            index,
-        });
-    }
-    publish(ui);
-    crate::lists::favorites_changed(ui);
 }

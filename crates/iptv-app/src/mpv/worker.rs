@@ -39,7 +39,7 @@ const SPARE_OPTIONS: &str = "live_start_index=-2";
 pub enum Cmd {
     /// Disable automatic handoff for a test of the app's own retry path.
     /// Queue before the first load; other players retain their usual bridge.
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "linux"))]
     DisableBridge,
     /// `loadfile <url> replace`, from the default tracks (video and audio
     /// automatic, no subtitles) with `options` set first
@@ -197,7 +197,7 @@ fn run(
 /// Runs `cmd`; what it answers.
 fn execute(mpv: &Mpv, cmd: Cmd, bridge: &mut Bridge) -> Vec<Note> {
     match cmd {
-        #[cfg(test)]
+        #[cfg(all(test, target_os = "linux"))]
         Cmd::DisableBridge => {
             bridge.enabled = false;
             Vec::new()
@@ -316,6 +316,7 @@ impl Bridge {
         match ev.event_id {
             ffi::MPV_EVENT_START_FILE => {
                 // SAFETY: the data type mpv documents for the event.
+                // SAFETY: mpv supplies the documented event payload until the next wait_event call.
                 let s = unsafe { &*(ev.data as *const ffi::mpv_event_start_file) };
                 self.started = Some(s.playlist_entry_id);
                 None
@@ -326,6 +327,7 @@ impl Bridge {
             }
             ffi::MPV_EVENT_END_FILE => {
                 // SAFETY: as above.
+                // SAFETY: mpv supplies the documented event payload until the next wait_event call.
                 let e = unsafe { &*(ev.data as *const ffi::mpv_event_end_file) };
                 self.ended(mpv, e.playlist_entry_id, e.reason)
             }
@@ -376,10 +378,12 @@ fn convert(mpv: &Mpv, ev: &ffi::mpv_event) -> Option<Note> {
     // SAFETY (each cast): the data type mpv documents for the event id.
     match ev.event_id {
         ffi::MPV_EVENT_LOG_MESSAGE => {
+            // SAFETY: mpv supplies the documented event payload until the next wait_event call.
             let m = unsafe { &*(ev.data as *const ffi::mpv_event_log_message) };
             if m.text.is_null() {
                 return None;
             }
+            // SAFETY: mpv supplies a nul-terminated string; null was rejected above.
             let text = unsafe { CStr::from_ptr(m.text) }.to_string_lossy();
             let warn = m.log_level <= LOG_WARN;
             let format = text.starts_with("AO:") || text.starts_with("VO:");
@@ -389,10 +393,12 @@ fn convert(mpv: &Mpv, ev: &ffi::mpv_event) -> Option<Note> {
             })
         }
         ffi::MPV_EVENT_START_FILE => {
+            // SAFETY: mpv supplies the documented event payload until the next wait_event call.
             let s = unsafe { &*(ev.data as *const ffi::mpv_event_start_file) };
             Some(Note::Started(s.playlist_entry_id))
         }
         ffi::MPV_EVENT_END_FILE => {
+            // SAFETY: mpv supplies the documented event payload until the next wait_event call.
             let e = unsafe { &*(ev.data as *const ffi::mpv_event_end_file) };
             Some(Note::Ended {
                 entry: e.playlist_entry_id,
@@ -407,23 +413,30 @@ fn convert(mpv: &Mpv, ev: &ffi::mpv_event) -> Option<Note> {
             mpv.get(c"track-list").map(Note::Tracks)
         }
         ffi::MPV_EVENT_PROPERTY_CHANGE => {
+            // SAFETY: mpv supplies the documented event payload until the next wait_event call.
             let p = unsafe { &*(ev.data as *const ffi::mpv_event_property) };
             if p.data.is_null() {
                 return None; // unavailable (no file, no video)
             }
             match (ev.reply_userdata, p.format) {
                 (1, ffi::MPV_FORMAT_FLAG) => {
+                    // SAFETY: the matched mpv format identifies this value type; null was rejected above.
                     Some(Note::Buffering(unsafe { *(p.data as *const c_int) } != 0))
                 }
+                // SAFETY: the matched mpv format identifies this value type; null was rejected above.
                 (2, ffi::MPV_FORMAT_INT64) => Some(Note::Width(unsafe { *(p.data as *const i64) })),
                 (3, ffi::MPV_FORMAT_INT64) => {
+                    // SAFETY: the matched mpv format identifies this value type; null was rejected above.
                     Some(Note::Height(unsafe { *(p.data as *const i64) }))
                 }
                 (4, ffi::MPV_FORMAT_DOUBLE) => {
+                    // SAFETY: the matched mpv format identifies this value type; null was rejected above.
                     Some(Note::Aspect(unsafe { *(p.data as *const f64) }))
                 }
+                // SAFETY: the matched mpv format identifies this value type; null was rejected above.
                 (6, ffi::MPV_FORMAT_DOUBLE) => Some(Note::Fps(unsafe { *(p.data as *const f64) })),
                 (7, ffi::MPV_FORMAT_INT64) => {
+                    // SAFETY: the matched mpv format identifies this value type; null was rejected above.
                     Some(Note::Channels(unsafe { *(p.data as *const i64) }))
                 }
                 _ => None,

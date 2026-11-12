@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Native network adapter of iptv-rs.
 //!
 //! [`NetClient`] performs `iptv_providers::HttpRequest`s with reqwest and

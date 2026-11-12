@@ -91,3 +91,6 @@ objc2-ui-kit = { version = "0.3.2", default-features = false, features = [
 nsh-engine.workspace = true
 nsh-testing.workspace = true
 tempfile.workspace = true
+
+[lints]
+workspace = true

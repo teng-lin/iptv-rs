@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Remote and keyboard input for iptv-rs, independent of any UI toolkit.
 //!
 //! Pipeline: platform key events → [`RemoteKey`] + [`Phase`] →

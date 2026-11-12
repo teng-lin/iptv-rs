@@ -201,10 +201,11 @@ class PipHost(private val activity: Activity) {
         listening = on
         if (!on) {
             activity.unregisterReceiver(receiver)
-        } else if (Build.VERSION.SDK_INT >= 33) {
-            activity.registerReceiver(receiver, IntentFilter(ACTION), Context.RECEIVER_NOT_EXPORTED)
         } else {
-            activity.registerReceiver(receiver, IntentFilter(ACTION))
+            androidx.core.content.ContextCompat.registerReceiver(
+                activity, receiver, IntentFilter(ACTION),
+                androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED,
+            )
         }
     }
 

@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! EPG layer of iptv-rs.
 //!
 //! - [`XmltvParser`]: sans-IO, incremental XMLTV parser. Feed it bytes in

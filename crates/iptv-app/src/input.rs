@@ -192,7 +192,7 @@ fn key_event(ui: Ui, nav: &Rc<RefCell<Nav>>, key: RemoteKey, phase: Phase) {
     // key was released (or a repeat already fired it), the poll finds nothing.
     if let Some(wait_ms) = deadline {
         let nav = nav.clone();
-        let _ = set_timeout(Duration::from_millis(wait_ms), move || {
+        let _task = set_timeout(Duration::from_millis(wait_ms), move || {
             let action = {
                 let mut nav = nav.borrow_mut();
                 let now = nav.start.elapsed().as_millis() as u64;

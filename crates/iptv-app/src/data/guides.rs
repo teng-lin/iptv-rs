@@ -201,7 +201,7 @@ mod tests {
     #[test]
     fn the_providers_guides_follow_each_import() {
         let typed = user_source(FIRST_USER_FEED, url("typed"), None);
-        let first = sync_provider(&[typed.clone()], &[url("a"), url("b")]);
+        let first = sync_provider(std::slice::from_ref(&typed), &[url("a"), url("b")]);
         assert_eq!(feeds(&first), [1, 2, 3]);
         assert_eq!(first[1].provider_index, Some(0));
         // The user's arrangement stays; a changed address is taken over.

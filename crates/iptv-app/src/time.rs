@@ -104,7 +104,7 @@ pub fn tick(ui: Ui) {
 /// Ticks at every minute boundary of the current schedule's clock.
 pub fn start(ui: Ui) {
     let secs = guide::secs_to_next_minute(&*schedule(), wall_unix(), shown_secs());
-    let _ = set_timeout(Duration::from_millis(secs * 1000 + 20), move || {
+    let _task = set_timeout(Duration::from_millis(secs * 1000 + 20), move || {
         tick(ui);
         start(ui);
     });

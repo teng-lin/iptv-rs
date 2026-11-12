@@ -252,7 +252,7 @@ impl Pan {
 
     /// Straight to now's window (the Now button): the focused channel's
     /// live programme, as Home.
-    pub(crate) fn to_now(&self) {
+    pub(crate) fn to_now(self) {
         self.ui.touched();
         self.ui.guide_panning.set(false);
         self.fling.with(|g| *g += 1);

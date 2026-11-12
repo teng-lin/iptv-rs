@@ -158,7 +158,7 @@ fn commit_later(ui: Ui, wait: Duration) {
         p.set(p.get() + 1);
         p.get()
     });
-    let _ = set_timeout(wait, move || {
+    let _task = set_timeout(wait, move || {
         if PRESSES.with(Cell::get) == press {
             commit(ui);
         }

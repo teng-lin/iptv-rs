@@ -54,6 +54,7 @@ impl Gpu {
     /// `None` (the caller skips) where EGL or its surfaceless platform is
     /// missing.
     fn new() -> Option<Gpu> {
+        // SAFETY: create checks dynamically loaded EGL entry points and context creation.
         let gpu = unsafe { Gpu::create() };
         if gpu.is_none() {
             eprintln!("skipped: no surfaceless EGL context on this machine");
@@ -62,7 +63,7 @@ impl Gpu {
     }
 
     unsafe fn create() -> Option<Gpu> {
-        // SAFETY (all): EGL's and GL's documented C signatures, called in
+        // SAFETY: EGL's and GL's documented C signatures, called in
         // the order the specifications ask for.
         unsafe {
             let lib = libc::dlopen(c"libEGL.so.1".as_ptr(), libc::RTLD_LAZY | libc::RTLD_LOCAL);

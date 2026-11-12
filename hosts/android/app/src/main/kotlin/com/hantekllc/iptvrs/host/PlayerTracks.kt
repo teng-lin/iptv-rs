@@ -29,6 +29,7 @@ internal object PlayerTracks {
     private fun positive(v: Float): Float? = v.takeIf { it > 0f && it.isFinite() }
 
     /** The `tracks` event: supported tracks of each kind and what plays. */
+    @OptIn(UnstableApi::class)
     fun event(tracks: Tracks, choice: Choice): Map<String, Any?> {
         val video = mutableListOf<Map<String, Any?>>()
         val audio = mutableListOf<Map<String, Any?>>()
