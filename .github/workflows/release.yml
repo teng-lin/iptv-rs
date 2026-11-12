@@ -78,7 +78,7 @@ jobs:
       - name: Linux packages
         if: matrix.platform == 'linux'
         run: |
-          sudo apt-get install -y ruby-dev rpm zstd patchelf file desktop-file-utils \
+          sudo apt-get install -y ruby-dev rpm zstd libarchive-tools patchelf file desktop-file-utils \
             libgirepository1.0-dev librsvg2-dev xvfb x11-utils xauth dbus-x11
           sudo gem install fpm -v 1.16.0 --no-document
           bash tools/ci/setup-linux-packaging.sh
