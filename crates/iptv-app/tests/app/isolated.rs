@@ -16,7 +16,7 @@
 //! no scenario's guide (a few hours either side of now) crosses midnight
 //! and no time shows a weekday prefix by chance of the hour it runs.
 //!
-//! At most [`JOBS`] scenario processes run at once (default 4: each is a
+//! At most [`JOBS`] scenario processes run at once (default 6: each is a
 //! headless app with threads of its own); other tests stay as parallel as
 //! the harness makes them.
 
@@ -30,7 +30,7 @@ use tempfile::TempDir;
 pub const CHILD: &str = "IPTV_RS_TEST_CHILD";
 /// How many scenario processes may run at once.
 pub const JOBS: &str = "IPTV_RS_TEST_JOBS";
-const DEFAULT_JOBS: usize = 4;
+const DEFAULT_JOBS: usize = 6;
 /// A file the child writes when it reaches the scenario: a name that
 /// selects no test exits successfully too.
 const RAN: &str = "IPTV_RS_TEST_RAN";

@@ -337,7 +337,7 @@ let Some(home) = isolated!() else { return };
 which, under `cargo test`, runs the test binary again for just that test
 with a fresh, empty `$HOME`, forwards its output (shown when it fails, or
 with `--nocapture`) and fails if it fails (`tests/app/isolated.rs`). At
-most four scenario processes run at once; `IPTV_RS_TEST_JOBS=N` changes
+most six scenario processes run at once; `IPTV_RS_TEST_JOBS=N` changes
 that. Under cargo-nextest, which runs every test in a process of its own,
 the scenario runs directly. Every scenario's local time is noon (a
 fixed-offset `TZ` for its process; timestamps stay real), so no guide it
