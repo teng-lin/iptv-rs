@@ -84,3 +84,10 @@ invalid/truncated/path-traversal archives, interrupted directory swaps, and
 a headless settings export → schedule → cancel → schedule → restart journey.
 Android Kotlin compilation and an owned `tab36` emulator smoke run supplement
 the portable/native Rust checks; no real provider data is used.
+
+Integrated `tab36` validation exported two generated playlists in All playlists
+mode, checked the archive's stored mode and six-channel catalogue, then imported
+it and used Close Patina. Fresh process startup restored the combined guide
+and consumed the staged restore. The integrated storage snapshot regression
+also verifies combined browsing mode and its last-channel identity survive
+backup independently of later changes to the live database.

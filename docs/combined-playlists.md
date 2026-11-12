@@ -63,3 +63,8 @@ The required core tests, core WebAssembly build and native app build are run
 alongside guide/store tests and the full app suite. These validate Linux and
 portable behavior; native Android/iOS decoder and lifecycle behavior need
 platform smoke testing. No Android or iOS host code changes are required.
+
+Integrated Android validation on an owned `tab36` emulator showed six channels
+from two generated playlists, retained All playlists after process restart,
+and restored the same combined view through a whole-app backup round trip.
+The integrated Linux app suite passed 173 unit tests and 38 UI scenarios.
