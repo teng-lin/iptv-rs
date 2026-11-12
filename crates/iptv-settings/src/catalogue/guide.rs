@@ -173,6 +173,18 @@ const IF_OVERLAY: &[Dependency] = &[visible_if(&[when(
 )])];
 
 pub static GUIDE: &[Setting] = &[
+    guide(
+        "content",
+        "guide.visible_minutes",
+        int(60, 360, 30, IntUnit::None, 150),
+        "Minutes visible across the programme grid; navigation retains its focused programme.",
+    ),
+    guide(
+        "content",
+        "guide.show_logos",
+        boolean(true),
+        "Show channel logos in the guide column.",
+    ),
     // default: observed (07) — the guide opened in preview mode
     guide(
         "browsing",

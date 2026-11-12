@@ -167,6 +167,7 @@ pub fn act(act: Act, kind: Option<SourceKind>, shown: bool, running: bool) -> &'
         Act::RefreshInterval => "Automatic refresh",
         Act::RefreshOnStart => "Refresh on startup",
         Act::Channels => "Organize channels",
+        Act::CustomGroups => "Custom groups",
         Act::Groups => "Organize groups",
         Act::Show if shown => "On screen now: back to the guide",
         Act::Show => "Show this playlist",

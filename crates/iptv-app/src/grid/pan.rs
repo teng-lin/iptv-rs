@@ -18,7 +18,7 @@
 
 use std::time::Instant;
 
-use iptv_core::guide::{VISIBLE, view_range};
+use iptv_core::guide::view_range;
 use iptv_core::timeline::{Band, MARGIN, SLOP, Timeline};
 use nsh_core::prelude::*;
 
@@ -34,6 +34,7 @@ pub(crate) struct Pan {
     model: Stored<Timeline>,
     /// The programme area's width (dp): [`VISIBLE`] minutes span it.
     width: Signal<f32>,
+    span: Memo<i32>,
     /// The minutes the rows hold cells for, and the minute a cell's start
     /// is clamped to (the window at rest, so its title shows; the band's
     /// start while panning).
@@ -61,6 +62,7 @@ impl Pan {
             ui,
             model: stored(model),
             width,
+            span: computed(move || ui.focus.with(|f| f.visible)),
             band: signal(band),
             clip: signal(window),
             offset: animated_value(0.0),
@@ -79,12 +81,16 @@ impl Pan {
 
     /// Dp per minute now.
     pub(crate) fn ppm(&self) -> f32 {
-        self.width.get_untracked() / VISIBLE as f32
+        self.width.get_untracked() / self.span.get_untracked() as f32
     }
 
     /// Dp per minute (reactive: the cells' geometry).
     pub(crate) fn scale(&self) -> f32 {
-        self.width.get() / VISIBLE as f32
+        self.width.get() / self.span.get() as f32
+    }
+
+    pub(crate) fn minutes(&self) -> i32 {
+        self.span.get() + 2 * MARGIN
     }
 
     pub(crate) fn band(&self) -> Band {
@@ -109,9 +115,10 @@ impl Pan {
         let ui = self.ui;
         effect(move || {
             ui.guide_data();
-            let (window, now) = ui.focus.with(|f| (f.window, f.now));
+            let (window, now, span) = ui.focus.with(|f| (f.window, f.now, f.visible));
             let bounds = untracked(|| view_range(&crate::lists::view(ui), now));
             self.model.with(|m| {
+                m.set_span(span);
                 m.set_bounds(bounds);
                 m.follow(window);
             });
@@ -152,6 +159,7 @@ impl Pan {
         if self.model.with(|m| m.moving()) {
             return;
         }
+        self.ui.guide_panning.set(false);
         let window = self.model.with(|m| m.window());
         let view = crate::lists::view(self.ui);
         self.ui.focus.update(|f| f.pan_to(window, &view));
@@ -161,12 +169,14 @@ impl Pan {
     /// The platform found a horizontal drag: it pans from here.
     fn grabbed(&self) {
         self.ui.touched();
+        self.ui.guide_panning.set(true);
         self.fling.with(|g| *g += 1);
         self.model.with(Timeline::grab);
         self.show();
     }
 
     fn dragged(&self, gesture: &PanGesture) {
+        crate::browse_playback::activity(self.ui);
         let (dx, dy, ppm) = (gesture.delta.x.0, gesture.delta.y.0, self.ppm());
         if self.model.with(|m| m.drag(dx, dy, ppm)) {
             self.show();
@@ -174,6 +184,7 @@ impl Pan {
     }
 
     fn released(&self, gesture: &PanGesture) {
+        crate::browse_playback::activity(self.ui);
         let ppm = self.ppm();
         if !self.model.with(|m| m.release(gesture.vx, ppm)) {
             self.settle();
@@ -185,7 +196,10 @@ impl Pan {
         // rows show them.
         let rest = self.model.with(|m| m.rest()).round() as i32;
         let schedule = crate::schedule();
-        for minute in [rest - MARGIN, rest + VISIBLE + MARGIN] {
+        for minute in [
+            rest - MARGIN,
+            rest + self.ui.focus.with_untracked(|f| f.visible) + MARGIN,
+        ] {
             crate::data::pages::want(&*schedule, minute);
         }
         let pan = *self;
@@ -215,6 +229,8 @@ impl Pan {
         if self.model.with(|m| m.dragging()) {
             return;
         }
+        self.ui.guide_panning.set(true);
+        crate::browse_playback::activity(self.ui);
         self.wheeling.with(|w| *w = true);
         self.fling.with(|g| *g += 1);
         if self.model.with(|m| m.wheel(dx, ppm)) {
@@ -238,6 +254,7 @@ impl Pan {
     /// live programme, as Home.
     pub(crate) fn to_now(&self) {
         self.ui.touched();
+        self.ui.guide_panning.set(false);
         self.fling.with(|g| *g += 1);
         self.model.with(Timeline::cancel);
         self.ui.focus.update(|f| f.jump_to_now());

@@ -77,7 +77,7 @@ pub fn secondary() -> Rgba {
 fn styled(size: Scale, content: impl IntoReactive<SharedString>, sp: f32) -> Text {
     text(content)
         .font_family(SANS)
-        .text_size(move || size.px(sp))
+        .text_size(move || size.text_px(sp))
 }
 
 /// A screen's, sheet's or dialog's title: the header's title size.
@@ -267,7 +267,7 @@ pub const FIELD_PAD_Y: f32 = 13.0;
 pub fn field(size: Scale, input: Input) -> Input {
     input
         .font_family(SANS)
-        .text_size(move || size.px(LIST_ITEM))
+        .text_size(move || size.text_px(LIST_ITEM))
         .text_color(rgb(LIST_TEXT))
         .placeholder_color(secondary())
         .px(move || size.px(14.0))

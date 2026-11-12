@@ -65,6 +65,7 @@ fn screen(ui: Ui, size: Scale) -> impl IntoElement {
     });
     let editing = computed(move || state(ui, |s| s.editor().is_some()).unwrap_or(false));
     view()
+        .test_id("settings-screen")
         .absolute()
         .inset_0()
         .flex_row()
@@ -291,7 +292,9 @@ fn row_view(
                 .child(
                     list_rows::name(size, title)
                         .pt(move || size.px(if heading() { 8.0 } else { 0.0 }))
-                        .text_size(move || size.px(if heading() { SECTION } else { LIST_ITEM }))
+                        .text_size(move || {
+                            size.text_px(if heading() { SECTION } else { LIST_ITEM })
+                        })
                         .text_color(move || match (heading(), mark(), lit()) {
                             (true, _, _) => secondary(),
                             (false, Mark::Focused, true) => Mark::Focused.text(),

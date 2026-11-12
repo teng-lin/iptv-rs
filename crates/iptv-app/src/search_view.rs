@@ -428,7 +428,7 @@ pub fn open(ui: Ui) {
         }
     }
     if ui.mode.get_untracked() == ViewMode::Fullscreen {
-        ui.mode.set(ViewMode::Guide);
+        ui.mode.set(crate::settings::browse_mode());
     }
 }
 

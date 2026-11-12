@@ -72,13 +72,19 @@ failure retention, and cancellation/deletion.
 Acceptance: assignment, replacement, removal/default reset, per-context
 isolation, restart persistence, invalid data, repeats and long-release.
 
+## Follow-up: guide and list personalization
+
+Implemented on `feat/guide-personalization`: cancelable guide playback policy,
+independent favorites/group ordering, custom groups with filtered atomic
+bulk membership operations, and guide text/logo/number/time-span controls.
+See [behavior, UI entry points and validation](guide-personalization.md).
+
 ## Remaining backlog, outside this implementation
 
 - Playlist manual ordering, combined All playlists view, source-specific
   logo/catch-up overrides, advanced Stalker identity/login fields.
-- Custom groups and bulk copy/move membership; Favorites reorder.
-- Guide mode/visibility/stay/autoplay/delay preferences, history limits,
-  font/animation/logo preferences and additional playback settings.
+- Remaining guide visibility/emphasis controls, history limits, animations,
+  advanced logo-source preferences and additional playback settings.
 - Global/shared EPG source workflow and interface localization.
 - Recording, reminders, watchlist and VOD end-to-end journeys remain future
   product scope. TV hardware/boot capabilities require separate decisions.
@@ -106,16 +112,16 @@ as a usable feature. See the audit for evidence and reference uncertainty.
 | Source overrides | Per-playlist logo and catch-up policy | Distinguish provider defaults from overrides; validate URL templates without showing secrets; refresh/reset behavior | Later |
 | Stalker setup | Advanced device/login identity fields | Optional serial/device identity/login UI, validation, retained credentials and tested session renewal; supported fields must be confirmed against provider behavior | Later |
 | Shared EPG | Reuse one feed across multiple playlists | Shared-source identity/lifecycle, per-playlist matching/shift, default feed selection, refresh ownership and deletion consequences | Next |
-| Custom groups | Create/rename/delete a personal group | Expose existing storage support, choose source scope, manage empty groups and duplicate names, restore focus on deletion | Next |
-| Channel membership | Bulk copy/move between personal groups | Multi-select, source/destination chooser, explain copy versus membership removal, transactional writes and reset/recovery | Later |
-| Favorite order | Rearrange favorites through UI | Expose stored favorites ordering, identity-based movement, consistent guide/player/chooser order | Next |
-| Bulk editing | Apply edits to a filtered subset of channels | Group/search filter, selected-count feedback, select/clear all, atomic application and recovery | Next |
-| Guide mode | User-selectable guide presentation | Wire catalogue choices into actual layout, persist selection, define preview/overlay/fullscreen transitions and focus return | Next |
-| Guide visibility | Channel numbers, logos and programme metadata choices | Implement each visibility toggle, reclaim layout space, keep programmatic labels and remote focus readable | Next |
-| Guide navigation | Stay-on-guide/list, autoplay and channel-switch delay choices | Separate focus, preview and committed playback; cancellable timers; no stale channel changes after leaving the screen | Next |
-| Guide timing | Visible time span and grid time scale choices | Responsive ruler/cell geometry, horizontal movement/page steps, past floor and now positioning, independent of archive permission | Next |
+| Custom groups | Create/rename/delete a personal group | Expose existing storage support, choose source scope, manage empty groups and duplicate names, restore focus on deletion | Implemented on guide-personalization |
+| Channel membership | Bulk copy/move between personal groups | Multi-select, source/destination chooser, explain copy versus membership removal, transactional writes and reset/recovery | Implemented on guide-personalization |
+| Favorite order | Rearrange favorites through UI | Expose stored favorites ordering, identity-based movement, consistent guide/player/chooser order | Implemented on guide-personalization |
+| Bulk editing | Filtered edits beyond custom membership | Custom copy/move/remove now has search and selection counts; filtered visibility/renumbering remain | Partial |
+| Guide mode | User-selectable guide presentation | Wire catalogue choices into actual layout, persist selection, define preview/overlay/fullscreen transitions and focus return | Implemented on guide-personalization |
+| Guide visibility | Remaining programme metadata/emphasis choices | Logos and channel numbers are implemented with reclaimed layout space; other visibility controls remain | Partial |
+| Guide navigation | Stay-on-guide/list, autoplay and channel-switch delay choices | Separate focus, preview and committed playback; cancellable timers; no stale channel changes after leaving the screen | Implemented on guide-personalization |
+| Guide timing | Visible time span and grid time scale choices | Responsive ruler/cell geometry, horizontal movement/page steps, past floor and now positioning, independent of archive permission | Implemented on guide-personalization |
 | History | Configurable recent/history limits | Trim persisted history predictably; guide and player lists use the same limit; clear confirmation and empty state | Next |
-| Appearance | Font size, animations, detailed logo behavior | Apply measured settings to layout and text; avoid truncation/overlap; cache/fallback logo behavior; do not copy reference assets | Later |
+| Appearance | Animations, advanced logo-source behavior and remaining guide emphasis controls | Text size, guide logos/numbers and visible span are implemented; animation/source policies remain | Partial |
 | Playback options | Additional unwired rows in settings catalogue | Implement the behavior behind each row before enabling it; define portable versus Android-only capabilities and persistence scope | Later |
 | Localization | Interface language workflow | Translatable strings, language selection/system fallback, date/time formats, text expansion and bidirectional layout checks | Later |
 | Hardware/boot | Device wake/start, frame rate, passthrough and decoder controls | Platform capability detection and native validation; retain unavailable status on unsupported hosts | Separate platform work |

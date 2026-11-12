@@ -51,6 +51,10 @@ pub(super) fn cell(
             rgb(BRIGHT_TEXT)
         }
     };
+    let show_logo = move || {
+        crate::settings::read(ui);
+        crate::settings::flag(iptv_settings::keys::BoolKey("guide.show_logos"))
+    };
     let logo = move || {
         ui.guide_data();
         channel
@@ -78,19 +82,29 @@ pub(super) fn cell(
         })
         .child(
             // The place in the list on screen.
-            text(move || (at.index() + 1).to_string())
-                .w(move || px(number_w.get()))
-                .number_of_lines(1)
-                .text_right()
-                .font_family(SANS)
-                .text_size(move || size.px(CHANNEL))
-                .text_color(colour),
+            text(move || {
+                crate::settings::read(ui);
+                if crate::settings::flag(iptv_settings::keys::BoolKey("guide.show_channel_numbers"))
+                {
+                    (at.index() + 1).to_string()
+                } else {
+                    String::new()
+                }
+            })
+            .test_id("guide-channel-number")
+            .w(move || px(number_w.get()))
+            .number_of_lines(1)
+            .text_right()
+            .font_family(SANS)
+            .text_size(move || size.text_px(CHANNEL))
+            .text_color(colour),
         )
         .child(
             view()
-                .w(move || px(size.whole(LOGO_W)))
+                .test_id("guide-channel-logo")
+                .w(move || px(if show_logo() { size.whole(LOGO_W) } else { 0.0 }))
                 .h(move || px(size.whole(CELL_H)))
-                .p(move || size.px(LOGO_PAD))
+                .p(move || size.px(if show_logo() { LOGO_PAD } else { 0.0 }))
                 .rounded(move || size.px(CELL_RADIUS))
                 .bg(move || fill(ui, ui.theme.with(|t| t.guide().cell)))
                 .items_center()
@@ -99,7 +113,8 @@ pub(super) fn cell(
                     image(logo)
                         .w(move || px(size.whole(LOGO_W) - 2.0 * size.of(LOGO_PAD)))
                         .h(move || px(size.whole(CELL_H) - 2.0 * size.of(LOGO_PAD)))
-                        .object_fit(ResizeMode::Contain),
+                        .object_fit(ResizeMode::Contain)
+                        .opacity(move || if show_logo() { 1.0_f32 } else { 0.0_f32 }),
                 ),
         )
         .child(
@@ -115,20 +130,22 @@ pub(super) fn cell(
                 let scale = size.get();
                 crate::fonts::fit(
                     &name,
-                    name_width(column(), number_w.get(), playing(), scale),
-                    CHANNEL * scale,
+                    name_width(column(), number_w.get(), playing(), scale)
+                        + if show_logo() { 0.0 } else { size.whole(LOGO_W) },
+                    CHANNEL * scale * crate::settings::font_factor(),
                 )
             })
+            .test_id("guide-channel-name")
             .flex_shrink(1.0)
             .number_of_lines(1)
             .font_family(SANS)
-            .text_size(move || size.px(CHANNEL))
+            .text_size(move || size.text_px(CHANNEL))
             .text_color(colour),
         )
         .child(
             // The playing marker, after the name.
             text(move || if playing() { "▶" } else { "" })
-                .text_size(move || size.px(CHANNEL * 0.6))
+                .text_size(move || size.text_px(CHANNEL * 0.6))
                 .text_color(move || rgb(ui.theme.with(|t| t.guide().playing))),
         )
 }

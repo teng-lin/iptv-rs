@@ -146,6 +146,10 @@ fn perform(ui: Ui, effect: Effect) {
             Ok(())
         }
         Effect::Policy(id, policy) => data::set_policy(ui, id, policy),
+        Effect::CustomGroups(id) => {
+            crate::custom_groups::open(ui, id, false);
+            Ok(())
+        }
         Effect::Organize(id, groups) => {
             crate::organization_view::open(
                 ui,
@@ -203,6 +207,7 @@ fn effect_name(effect: &Effect) -> String {
         Effect::Show(id) => format!("show {}", id.0),
         Effect::Refresh(id) => format!("refresh {}", id.0),
         Effect::Policy(id, _) => format!("playlist policy {}", id.0),
+        Effect::CustomGroups(id) => format!("custom groups {}", id.0),
         Effect::Organize(id, _) => format!("organize {}", id.0),
         Effect::Rename(id, _) => format!("rename {}", id.0),
         Effect::Guides(id) => format!("guide sources of {}", id.0),

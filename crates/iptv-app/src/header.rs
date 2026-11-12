@@ -77,7 +77,7 @@ fn preview(ui: Ui, size: Scale) -> impl IntoElement {
         .child(
             text(move || if idle() { "Nothing playing" } else { "" })
                 .font_family(SANS)
-                .text_size(move || size.px(HEADER_TIMES))
+                .text_size(move || size.text_px(HEADER_TIMES))
                 .text_color(secondary()),
         )
 }
@@ -186,12 +186,12 @@ fn details(ui: Ui, program: Memo<Focused>, size: Scale) -> impl IntoElement {
                     .number_of_lines(1)
                     .font_family(SANS)
                     .font_weight(MEDIUM)
-                    .text_size(move || size.px(HEADER_TITLE))
+                    .text_size(move || size.text_px(HEADER_TITLE))
                     .text_color(rgb(WHITE)),
                 )
                 .child(
                     text(move || if favourite() { "★" } else { "" })
-                        .text_size(move || size.px(HEADER_TITLE * 0.8))
+                        .text_size(move || size.text_px(HEADER_TITLE * 0.8))
                         .text_color(move || rgb(ui.theme.with(|t| t.accent.light))),
                 ),
         )
@@ -205,7 +205,7 @@ fn details(ui: Ui, program: Memo<Focused>, size: Scale) -> impl IntoElement {
                     text(move || program.with(|p| p.map(|p| span(p.4)).unwrap_or_default()))
                         .number_of_lines(1)
                         .font_family(SANS)
-                        .text_size(move || size.px(HEADER_TIMES))
+                        .text_size(move || size.text_px(HEADER_TIMES))
                         .text_color(rgb(BRIGHT_TEXT)),
                 )
                 .child(
@@ -238,7 +238,7 @@ fn details(ui: Ui, program: Memo<Focused>, size: Scale) -> impl IntoElement {
                     })
                     .number_of_lines(1)
                     .font_family(SANS)
-                    .text_size(move || size.px(HEADER_TIMES))
+                    .text_size(move || size.text_px(HEADER_TIMES))
                     .text_color(secondary()),
                 )
                 .child(
@@ -247,7 +247,7 @@ fn details(ui: Ui, program: Memo<Focused>, size: Scale) -> impl IntoElement {
                         .number_of_lines(1)
                         .text_right()
                         .font_family(SANS)
-                        .text_size(move || size.px(HEADER_TIMES))
+                        .text_size(move || size.text_px(HEADER_TIMES))
                         .text_color(secondary()),
                 ),
         )
@@ -255,7 +255,7 @@ fn details(ui: Ui, program: Memo<Focused>, size: Scale) -> impl IntoElement {
             text(move || description.get().unwrap_or_default())
                 .number_of_lines(BODY_LINES)
                 .font_family(SANS)
-                .text_size(move || size.px(HEADER_BODY))
+                .text_size(move || size.text_px(HEADER_BODY))
                 .text_color(secondary()),
         )
 }

@@ -75,6 +75,16 @@ impl Favorites {
         }
     }
 
+    /// Move an existing key without changing membership.
+    pub fn move_key(&mut self, key: &str, index: usize) -> bool {
+        let Some(at) = self.keys.iter().position(|k| k == key) else {
+            return false;
+        };
+        let key = self.keys.remove(at);
+        self.keys.insert(index.min(self.keys.len()), key);
+        true
+    }
+
     /// The favourites as catalog channels: the Favourites list, in order.
     pub fn channels(&self, index: &KeyIndex) -> Vec<usize> {
         index.channels(&self.keys)

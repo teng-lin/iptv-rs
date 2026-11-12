@@ -112,7 +112,7 @@ pub fn name(size: Scale, content: impl IntoReactive<SharedString>) -> Text {
     text(content)
         .number_of_lines(1)
         .font_family(SANS)
-        .text_size(move || size.px(LIST_ITEM))
+        .text_size(move || size.text_px(LIST_ITEM))
 }
 
 /// A second line in `family` (Roboto Condensed for programme titles).
@@ -120,7 +120,7 @@ pub fn second(size: Scale, content: impl IntoReactive<SharedString>, family: &'s
     text(content)
         .number_of_lines(1)
         .font_family(family)
-        .text_size(move || size.px(LIST_SECONDARY))
+        .text_size(move || size.text_px(LIST_SECONDARY))
 }
 
 /// Text at `sp` (scaled) in Roboto, in the secondary colour: headings,
@@ -128,7 +128,7 @@ pub fn second(size: Scale, content: impl IntoReactive<SharedString>, family: &'s
 pub fn small(size: Scale, content: impl IntoReactive<SharedString>, sp: f32) -> Text {
     text(content)
         .font_family(SANS)
-        .text_size(move || size.px(sp))
+        .text_size(move || size.text_px(sp))
         .text_color(Mark::Plain.secondary())
 }
 

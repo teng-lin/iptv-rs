@@ -38,6 +38,18 @@ const UNREADABLE: &str = "settings.unreadable.json";
 
 /// The settings the app acts on.
 pub const WIRED: &[&str] = &[
+    "guide.autoplay",
+    "guide.switch_delay",
+    "guide.fullscreen_timeout",
+    "guide.stay_on_guide",
+    "guide.stay_on_guide_overlay",
+    "guide.stay_on_list",
+    "guide.browse_mode",
+    "guide.list_browse_mode",
+    "appearance.font_size",
+    "guide.show_channel_numbers",
+    "guide.show_logos",
+    "guide.visible_minutes",
     "general.resume_last_channel",
     "general.confirm_exit",
     "general.user_agent",
@@ -104,6 +116,26 @@ const NOT_OFFERED: &[&str] = &[
 
 /// Sections planned for later versions.
 const LATER: &[&str] = &["recordings.", "vod.", "parental."];
+
+thread_local! { static REVISION: std::cell::Cell<Option<Signal<u64>>> = const { std::cell::Cell::new(None) }; }
+
+pub fn observe() {
+    REVISION.with(|v| {
+        if let Some(s) = v.get() {
+            s.get();
+        }
+    });
+}
+
+pub fn font_factor() -> f32 {
+    observe();
+    match choice(keys::FONT_SIZE) {
+        "small" => 0.9,
+        "large" => 1.15,
+        "extra_large" => 1.3,
+        _ => 1.0,
+    }
+}
 
 static CURRENT: RwLock<Option<Arc<Settings>>> = RwLock::new(None);
 
@@ -229,6 +261,14 @@ pub fn duration_ms(key: DurationKey) -> i64 {
     get().duration_ms(key, &Target::Global)
 }
 
+pub fn browse_mode() -> crate::ViewMode {
+    if choice(keys::BROWSE_MODE) == "overlay" {
+        crate::ViewMode::Overlay
+    } else {
+        crate::ViewMode::Guide
+    }
+}
+
 pub fn choice(key: EnumKey) -> &'static str {
     get().choice(key, &Target::Global)
 }
@@ -310,11 +350,27 @@ pub fn overlay_alpha(s: &Settings) -> u8 {
 /// Applies the settings that live in `Ui` state: colours and panel
 /// timeouts, now and after every change.
 pub fn bind(ui: Ui) {
+    REVISION.with(|r| r.set(Some(ui.settings)));
+    let last_mode = std::cell::Cell::new(None);
     effect(move || {
         let s = read(ui);
         let (theme, timeouts) = (theme_of(&s), timeouts_of(&s));
+        let mode = s.choice(keys::BROWSE_MODE, &Target::Global);
+        let changed = last_mode.replace(Some(mode)) != Some(mode);
+        let span = s.int(keys::IntKey("guide.visible_minutes"), &Target::Global) as i32;
         untracked(|| {
             ui.theme.set(theme);
+            if ui.focus.with_untracked(|f| f.visible) != span {
+                let view = crate::lists::view(ui);
+                ui.focus.update(|f| f.set_visible(span, &view));
+            }
+            if changed && ui.mode.get_untracked() != crate::ViewMode::Fullscreen {
+                ui.mode.set(if mode == "overlay" {
+                    crate::ViewMode::Overlay
+                } else {
+                    crate::ViewMode::Guide
+                });
+            }
             if ui.panels.with(|p| p.timeouts) != timeouts {
                 ui.panels.update(|p| p.timeouts = timeouts);
             }

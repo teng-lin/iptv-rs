@@ -8,12 +8,14 @@
 //! settings and view models as separate crates.
 
 pub mod browse;
+pub mod browse_playback;
 pub mod channel_list;
 pub mod clock;
 pub mod editor;
 pub mod favorites;
 pub mod guide;
 pub mod lists;
+pub mod membership;
 pub mod menu;
 pub mod multiview;
 pub mod panels;

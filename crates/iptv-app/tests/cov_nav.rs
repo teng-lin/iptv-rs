@@ -150,6 +150,15 @@ fn keys_drive_the_guide_search_the_channel_list_and_multiview() {
     let playlist = playlist(&guide_path.display().to_string());
     // Search comes back after watching a result.
     let mut settings = Settings::new();
+    // These journeys exercise the two-step preview and list interaction;
+    // dedicated personalization tests cover the default close/delay policy.
+    settings
+        .set("guide.stay_on_guide", Value::Bool(true))
+        .unwrap();
+    settings
+        .set("guide.stay_on_list", Value::Bool(true))
+        .unwrap();
+    settings.set("guide.switch_delay", Value::ms(0)).unwrap();
     settings
         .set("search.stay_on_search", Value::Bool(true))
         .unwrap();

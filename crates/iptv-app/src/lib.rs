@@ -7,8 +7,10 @@
 pub use iptv_core::guide;
 pub mod theme;
 
+mod browse_playback;
 mod channels_view;
 mod chooser;
+mod custom_groups;
 mod data;
 mod desktop;
 mod epg_sources_view;
@@ -148,6 +150,9 @@ pub struct Stats {
 pub struct Ui {
     /// The remote's focus; its `channel` is a row of `list`.
     pub focus: Signal<Focus>,
+    pub browse_playback: Signal<iptv_core::browse_playback::BrowsePlayback>,
+    pub pending_zap: Signal<Option<iptv_core::browse_playback::Target>>,
+    pub guide_panning: Signal<bool>,
     /// The list the guide shows: catalog channels (`lists.rs`).
     pub list: Signal<Rc<ChannelList>>,
     /// The playing channel (catalog).
@@ -193,6 +198,7 @@ pub struct Ui {
     /// The favourites editor, when open.
     pub editor: Signal<Option<FavoritesEditor>>,
     pub organization: Signal<Option<organization_view::Open>>,
+    pub custom_groups: Signal<Option<custom_groups::Open>>,
     pub remote_editor: Signal<Option<iptv_nav::remap::Editor>>,
     /// The search screen, while open (also while a result it chose plays).
     pub search: Signal<Option<search_view::Screen>>,
@@ -250,7 +256,7 @@ impl Ui {
                     self.mode.set(ViewMode::Fullscreen);
                     self.show_playing();
                 } else {
-                    self.play(channel, Playback::Live);
+                    browse_playback::select(*self);
                 }
             }
             // A past programme plays from the archive when the channel has
@@ -272,6 +278,8 @@ impl Ui {
 
     /// Starts `channel` live or from the archive.
     pub fn play(&self, channel: usize, playback: Playback) {
+        self.pending_zap.set(None);
+        self.browse_playback.set(Default::default());
         self.playback.set(playback);
         self.playing.set(Some(channel));
         self.paused.set(false);
@@ -280,6 +288,8 @@ impl Ui {
 
     /// A touch on any control.
     pub fn touched(&self) {
+        self.pending_zap.set(None);
+        browse_playback::activity(*self);
         self.input.set(Input::Touch);
     }
 
@@ -419,6 +429,9 @@ pub fn App() -> impl IntoElement {
     startup::mark("settings loaded");
     let ui = Ui {
         focus: signal(Focus::default()),
+        browse_playback: signal(Default::default()),
+        pending_zap: signal(None),
+        guide_panning: signal(false),
         list: signal(Rc::new(ChannelList::build(
             iptv_core::lists::ALL,
             &*schedule(),
@@ -454,6 +467,7 @@ pub fn App() -> impl IntoElement {
         chooser: signal(None),
         editor: signal(None),
         organization: signal(None),
+        custom_groups: signal(None),
         remote_editor: signal(None),
         search: signal(None),
         wizard: signal(None),
@@ -471,6 +485,7 @@ pub fn App() -> impl IntoElement {
         back_guard: signal(iptv_nav::BackGuard::default()),
     };
     settings::bind(ui);
+    browse_playback::bind(ui);
     desktop::bind();
     desktop::menus(ui);
     // Leaving full screen closes the panels.
@@ -631,6 +646,7 @@ fn ui_layers(ui: Ui, groups: ElementRef, rows: ElementRef) -> View {
         // over both.
         .child(playlists_view::layer(ui))
         .child(remote_editor::layer(ui))
+        .child(custom_groups::layer(ui))
         .child(organization_view::layer(ui))
         .child(epg_sources_view::layer(ui))
         .child(wizard_view::layer(ui))
@@ -730,6 +746,7 @@ fn bind_back(ui: Ui) {
             && !epg_sources_view::is_open(ui)
             && !guide_assign_view::is_open(ui)
             && !playlists_view::is_open(ui)
+            && !custom_groups::is_open(ui)
             && !organization_view::is_open(ui)
             && !remote_editor::is_open(ui)
             && !settings_view::is_open(ui)
@@ -748,6 +765,8 @@ fn bind_back(ui: Ui) {
 /// One step back (the platform's Back, or a key standing in for it);
 /// `false` where Back leaves the app.
 pub(crate) fn go_back(ui: Ui) -> bool {
+    ui.pending_zap.set(None);
+    browse_playback::activity(ui);
     untracked(|| {
         let panels =
             ui.panels.with(|p| p.shown) != iptv_core::panels::Shown::Hidden || play_bar::shows(ui);
@@ -760,6 +779,7 @@ pub(crate) fn go_back(ui: Ui) -> bool {
             _ if epg_sources_view::is_open(ui) => epg_sources_view::back(ui),
             _ if remote_editor::is_open(ui) => remote_editor::back(ui),
             _ if organization_view::is_open(ui) => organization_view::back(ui),
+            _ if custom_groups::is_open(ui) => custom_groups::back(ui),
             _ if playlists_view::is_open(ui) => playlists_view::back(ui),
             _ if settings_view::is_open(ui) => settings_view::back(ui),
             _ if guide_assign_view::is_open(ui) => guide_assign_view::back(ui),
@@ -798,9 +818,15 @@ pub(crate) fn go_back(ui: Ui) -> bool {
             }
             // Hint, past programme → now, guide → groups → rail → leave
             // (`general.confirm_exit`: only after a second press).
-            (ViewMode::Guide, _, _) => lists::back(ui) || !settings_view::may_leave(),
+            (ViewMode::Overlay, _, _) if ui.playing.get_untracked().is_some() => {
+                ui.mode.set(ViewMode::Fullscreen);
+                true
+            }
+            (ViewMode::Guide | ViewMode::Overlay, _, _) => {
+                lists::back(ui) || !settings_view::may_leave()
+            }
             _ => {
-                ui.mode.set(ViewMode::Guide);
+                ui.mode.set(crate::settings::browse_mode());
                 true
             }
         }

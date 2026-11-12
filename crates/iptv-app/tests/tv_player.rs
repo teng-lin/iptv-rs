@@ -9,6 +9,8 @@
 //!
 //! Synthetic data only: a three-channel playlist "picked" from a file.
 
+mod browse_fixture;
+
 use std::time::Duration;
 
 use nsh_core::picker::PickedFile;
@@ -42,6 +44,7 @@ fn the_remote_shows_one_time_line_a_banner_on_zap_the_card_on_ok_and_the_strip_o
     // SAFETY: the only test of this binary, before anything reads the
     // environment.
     unsafe { std::env::set_var("HOME", home.path()) };
+    browse_fixture::two_step_preview(home.path());
     let config = EngineConfig {
         viewport: Size::new(px(960.0), px(540.0)),
         ..EngineConfig::new(Root::of::<iptv_app::App>())

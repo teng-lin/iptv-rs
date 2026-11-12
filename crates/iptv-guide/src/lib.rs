@@ -62,6 +62,7 @@ struct OrganizationState {
     hidden: Vec<bool>,
     order: Vec<usize>,
     groups: Vec<(usize, String)>,
+    lists: Option<Vec<(String, String, Vec<usize>)>>,
 }
 pub struct EpgSchedule {
     organization: std::cell::RefCell<Option<OrganizationState>>,
@@ -118,6 +119,33 @@ fn group_slots<'a>(
 pub type DescriptionLookup = Box<dyn Fn(&ChannelKey, UnixTime) -> Option<String>>;
 
 impl EpgSchedule {
+    /// Display lists refer to the existing catalog by stable channel key.
+    /// Provider groups can have independent order; custom groups share the
+    /// same channels, guide data and player streams without duplication.
+    pub fn set_group_lists(&self, lists: Vec<(String, String, Vec<String>)>) {
+        let index: std::collections::HashMap<_, _> = self
+            .channels
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (c.key.as_str(), i))
+            .collect();
+        if let Some(s) = self.organization.borrow_mut().as_mut() {
+            s.lists = Some(
+                lists
+                    .into_iter()
+                    .map(|(key, name, members)| {
+                        let mut seen = std::collections::HashSet::new();
+                        let members = members
+                            .iter()
+                            .filter_map(|id| index.get(id.as_str()).copied())
+                            .filter(|c| seen.insert(*c))
+                            .collect();
+                        (key, name, members)
+                    })
+                    .collect(),
+            );
+        }
+    }
     /// `groups`: names with their channels, in display order. The epoch is
     /// `now` rounded down to the hour.
     pub fn new(groups: Vec<(String, Vec<GuideChannel>)>, store: GuideStore, now: UnixTime) -> Self {
@@ -542,10 +570,30 @@ impl Schedule for EpgSchedule {
     }
 
     fn group_count(&self) -> usize {
+        if let Some(lists) = self
+            .organization
+            .borrow()
+            .as_ref()
+            .and_then(|s| s.lists.as_ref())
+        {
+            return lists.len();
+        }
         self.visible_groups().len()
     }
 
     fn group_start(&self, group: usize) -> usize {
+        if let Some(lists) = self
+            .organization
+            .borrow()
+            .as_ref()
+            .and_then(|s| s.lists.as_ref())
+        {
+            return lists
+                .get(group)
+                .and_then(|l| l.2.first())
+                .copied()
+                .unwrap_or(0);
+        }
         self.visible_groups()
             .get(group)
             .and_then(|&g| self.group_starts.get(g))
@@ -620,6 +668,14 @@ impl Schedule for EpgSchedule {
     }
 
     fn group_key(&self, group: usize) -> String {
+        if let Some(lists) = self
+            .organization
+            .borrow()
+            .as_ref()
+            .and_then(|s| s.lists.as_ref())
+        {
+            return lists.get(group).map_or_else(String::new, |l| l.0.clone());
+        }
         self.visible_groups()
             .get(group)
             .and_then(|&g| self.group_keys.get(g))
@@ -627,6 +683,14 @@ impl Schedule for EpgSchedule {
             .unwrap_or_default()
     }
     fn group_name(&self, group: usize) -> String {
+        if let Some(lists) = self
+            .organization
+            .borrow()
+            .as_ref()
+            .and_then(|s| s.lists.as_ref())
+        {
+            return lists.get(group).map_or_else(String::new, |l| l.1.clone());
+        }
         if let Some(state) = self.organization.borrow().as_ref() {
             return state
                 .groups
@@ -636,6 +700,14 @@ impl Schedule for EpgSchedule {
         self.group_names.get(group).cloned().unwrap_or_default()
     }
     fn group_channels(&self, group: usize) -> Vec<usize> {
+        if let Some(lists) = self
+            .organization
+            .borrow()
+            .as_ref()
+            .and_then(|s| s.lists.as_ref())
+        {
+            return lists.get(group).map_or_else(Vec::new, |l| l.2.clone());
+        }
         let Some(g) = self.visible_groups().get(group).copied() else {
             return Vec::new();
         };

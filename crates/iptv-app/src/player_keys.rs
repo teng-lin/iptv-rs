@@ -163,7 +163,7 @@ pub(crate) fn stop_playback(ui: Ui) {
     log::info!("iptv player: stopped by the viewer");
     ui.playing.set(None);
     crate::player::stop(ui);
-    ui.mode.set(ViewMode::Guide);
+    ui.mode.set(crate::settings::browse_mode());
 }
 
 /// Channel up/down: switches playback and keeps the focus on it. Wraps
@@ -171,7 +171,14 @@ pub(crate) fn stop_playback(ui: Ui) {
 /// focused one); a channel the list does not have zaps within its group.
 pub(crate) fn zap(ui: Ui, step: isize) {
     let list = ui.list.get();
-    let playing = ui.playing.get();
+    let playing = if ui.mode.get_untracked() != ViewMode::Fullscreen {
+        crate::lists::focused_channel(ui)
+    } else {
+        ui.pending_zap
+            .get_untracked()
+            .and_then(|t| crate::favorites::channel_of(&t.key))
+            .or(ui.playing.get())
+    };
     let from_row = playing
         .and_then(|ch| list.row_of(ch))
         .or_else(|| playing.is_none().then(|| ui.focus.with(|f| f.channel)));
@@ -182,15 +189,7 @@ pub(crate) fn zap(ui: Ui, step: isize) {
     let Some(to) = to else {
         return;
     };
-    crate::lists::show_channel(ui, to);
-    ui.play(to, Playback::Live);
-    // Channel-change feedback over full-screen video (`player.info_on_switch`):
-    // the banner, or the open card or strip showing the new channel.
-    if ui.mode.get() == ViewMode::Fullscreen
-        && crate::settings::flag(iptv_settings::keys::INFO_ON_SWITCH)
-    {
-        ui.update_panels(|p, now| p.show_banner(now));
-    }
+    crate::browse_playback::zap(ui, to);
 }
 
 /// OK (or a tap) on an action card under the info card.
@@ -201,7 +200,7 @@ pub fn press_quick(ui: Ui, action: QuickAction) {
             if let Some(ch) = ui.playing.get() {
                 crate::lists::show_channel(ui, ch);
             }
-            ui.mode.set(ViewMode::Guide);
+            ui.mode.set(crate::settings::browse_mode());
         }
         QuickAction::History => crate::chooser::open(ui, crate::chooser::Kind::History),
         QuickAction::Channels => crate::channels_view::open(ui, ListMode::Overlay),

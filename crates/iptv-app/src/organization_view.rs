@@ -6,13 +6,18 @@ use crate::{Ui, data, ui_kit};
 use iptv_core::organization::{ACTIONS, Action as Edit, Editor, Item};
 use iptv_nav::Action;
 use iptv_providers::{ContentId, GroupId};
-use iptv_store_sqlite::{OrderScope, SourceId, StoreError};
+use iptv_store_sqlite::{
+    ChannelQuery, ChannelScope, CustomGroupId, OrderScope, SourceId, StoreError,
+};
 use nsh_core::prelude::*;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Kind {
     Channels,
     Groups,
+    Favorites,
+    GroupChannels(GroupId),
+    CustomChannels(CustomGroupId),
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Open {
@@ -20,18 +25,53 @@ pub struct Open {
     kind: Kind,
     editor: Editor,
 }
-fn items(source: SourceId, kind: Kind) -> Result<Vec<Item>, StoreError> {
+fn items(source: SourceId, kind: &Kind) -> Result<Vec<Item>, StoreError> {
     let org = data::organization::read(source)?;
     Ok(match kind {
         Kind::Channels => org.channels,
         Kind::Groups => org.groups,
+        Kind::Favorites => {
+            let names: std::collections::HashMap<_, _> = org
+                .channels
+                .into_iter()
+                .map(|(id, n, h)| (id, (n, h)))
+                .collect();
+            crate::favorites::ordered_keys()
+                .into_iter()
+                .filter_map(|id| names.get(&id).map(|(n, h)| (id.clone(), n.clone(), *h)))
+                .collect()
+        }
+        Kind::GroupChannels(g) => data::open_store()?
+            .load_channels(
+                source,
+                &ChannelQuery {
+                    scope: ChannelScope::Group(g.clone()),
+                    include_hidden: true,
+                    ..Default::default()
+                },
+            )?
+            .into_iter()
+            .map(|r| (r.channel.id.as_str().to_owned(), r.name, r.hidden))
+            .collect(),
+        Kind::CustomChannels(g) => data::open_store()?
+            .load_channels(
+                source,
+                &ChannelQuery {
+                    scope: ChannelScope::Custom(*g),
+                    include_hidden: true,
+                    ..Default::default()
+                },
+            )?
+            .into_iter()
+            .map(|r| (r.channel.id.as_str().to_owned(), r.name, r.hidden))
+            .collect(),
     }
     .into_iter()
     .map(|(id, name, hidden)| Item { id, name, hidden })
     .collect())
 }
 pub fn open(ui: Ui, source: SourceId, kind: Kind, focus: Option<String>) {
-    match items(source, kind) {
+    match items(source, &kind) {
         Ok(items) => ui.organization.set(Some(Open {
             source,
             kind,
@@ -124,22 +164,64 @@ fn perform(ui: Ui, edit: Edit) {
             _ => at,
         };
         match edit {
-            Edit::Visibility => match s.kind {
-                Kind::Channels => store.set_hidden(s.source, &id, !item.hidden)?,
+            Edit::Visibility => match &s.kind {
                 Kind::Groups => store.hide_group(s.source, &group, !item.hidden)?,
+                _ => store.set_hidden(s.source, &id, !item.hidden)?,
             },
-            Edit::ResetName => match s.kind {
-                Kind::Channels => store.rename_channel(s.source, &id, None)?,
+            Edit::ResetName => match &s.kind {
                 Kind::Groups => store.rename_group(s.source, &group, None)?,
+                _ => store.rename_channel(s.source, &id, None)?,
             },
-            Edit::Earlier | Edit::Later | Edit::First | Edit::Last => match s.kind {
+            Edit::Earlier | Edit::Later | Edit::First | Edit::Last => match &s.kind {
                 Kind::Channels => {
                     store.move_channel(s.source, &OrderScope::All, &id, to)?;
                 }
+                Kind::GroupChannels(g) => {
+                    store.move_channel(s.source, &OrderScope::Group(g.clone()), &id, to)?;
+                }
+                Kind::CustomChannels(g) => {
+                    store.move_in_custom_group(*g, &id, to)?;
+                }
+                Kind::Favorites => crate::favorites::reorder(ui, &item.id, to),
                 Kind::Groups => store.move_group(s.source, &group, to)?,
             },
-            Edit::ResetOrder => match s.kind {
+            Edit::ResetOrder => match &s.kind {
                 Kind::Channels => store.reset_manual_order(s.source, &OrderScope::All)?,
+                Kind::GroupChannels(g) => {
+                    store.reset_manual_order(s.source, &OrderScope::Group(g.clone()))?
+                }
+                Kind::CustomChannels(g) => {
+                    let rows = store.load_channels(
+                        s.source,
+                        &ChannelQuery {
+                            scope: ChannelScope::Custom(*g),
+                            include_hidden: true,
+                            order: iptv_store_sqlite::ChannelOrder::Provider,
+                            ..Default::default()
+                        },
+                    )?;
+                    for (at, r) in rows.iter().enumerate() {
+                        store.move_in_custom_group(*g, &r.channel.id, at)?;
+                    }
+                }
+                Kind::Favorites => {
+                    let keys = crate::favorites::ordered_keys();
+                    let rows = store.load_channels(
+                        s.source,
+                        &ChannelQuery {
+                            include_hidden: true,
+                            order: iptv_store_sqlite::ChannelOrder::Provider,
+                            ..Default::default()
+                        },
+                    )?;
+                    for (at, r) in rows
+                        .iter()
+                        .filter(|r| keys.iter().any(|k| k == r.channel.id.as_str()))
+                        .enumerate()
+                    {
+                        crate::favorites::reorder(ui, r.channel.id.as_str(), at);
+                    }
+                }
                 Kind::Groups => store.reset_group_order(s.source)?,
             },
             Edit::HideSelected | Edit::ShowSelected | Edit::HideAll | Edit::ShowAll => {
@@ -165,7 +247,7 @@ fn finish(ui: Ui, s: &Open, result: Result<(), StoreError>) {
         log::warn!("iptv organization: change refused: {e}");
         return;
     }
-    if let Ok(items) = items(s.source, s.kind) {
+    if let Ok(items) = items(s.source, &s.kind) {
         update(ui, |s| {
             s.editor.reload(items);
             s.editor.action = None;
@@ -182,9 +264,9 @@ fn commit(ui: Ui) {
         return;
     };
     let text = (!text.trim().is_empty()).then_some(text.trim());
-    let result = data::open_store().and_then(|mut store| match s.kind {
-        Kind::Channels => store.rename_channel(s.source, &ContentId::from_stored(&item.id), text),
+    let result = data::open_store().and_then(|mut store| match &s.kind {
         Kind::Groups => store.rename_group(s.source, &GroupId::from_stored(&item.id), text),
+        _ => store.rename_channel(s.source, &ContentId::from_stored(&item.id), text),
     });
     dismiss_keyboard();
     finish(ui, &s, result);
@@ -230,7 +312,7 @@ pub fn layer(ui: Ui) -> impl IntoElement {
         ui.library.version.get();
         if let Some(s) = untracked(|| state(ui, Clone::clone)) {
             untracked(|| {
-                if let Ok(items) = items(s.source, s.kind) {
+                if let Ok(items) = items(s.source, &s.kind) {
                     update(ui, |s| s.editor.reload(items));
                 }
             })
@@ -253,8 +335,13 @@ pub fn layer(ui: Ui) -> impl IntoElement {
                 }
             });
             ui_kit::screen(ui,size).test_id("organization-screen")
-            .child(ui_kit::header(ui,size,move||if state(ui,|s|s.kind)==Some(Kind::Groups){"Organize groups"}else{"Organize channels"},close))
-            .child(ui_kit::caption(size,"Includes hidden items. OK opens actions; select items for bulk hide/show. Back returns."))
+            .child(ui_kit::header(ui,size,move||state(ui,|s|match &s.kind{Kind::Groups=>"Organize groups",Kind::Favorites=>"Order favourites",Kind::GroupChannels(_)=>"Organize group channels",Kind::CustomChannels(_)=>"Order custom-group members",Kind::Channels=>"Organize channels"}).unwrap_or("Organize channels"),close))
+            .child(ui_kit::caption(size,move||state(ui,|s|match &s.kind {
+                Kind::Favorites=>"Order applies to favourites. Names and visibility apply across this playlist.",
+                Kind::GroupChannels(_)=>"Order applies only to this group. Names and visibility apply across this playlist.",
+                Kind::CustomChannels(_)=>"Order applies only to these members. Edit membership in Custom groups.",
+                _=>"Includes hidden items. OK opens actions; select items for bulk hide/show. Back returns.",
+            }).unwrap_or("")))
             .child(when(move||state(ui,|s|s.editor.items.is_empty()).unwrap_or(true),move||ui_kit::body(size,"This playlist has no items to organize.")))
             .child(virtual_list(move||state(ui,|s|s.editor.items.len()).unwrap_or(0),move|at|{
                 let item=move||state(ui,|s|s.editor.items.get(at.index()).cloned()).flatten();

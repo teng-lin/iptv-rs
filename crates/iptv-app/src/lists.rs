@@ -117,6 +117,7 @@ pub fn keep(ui: Ui) -> Kept {
 pub fn restore(ui: Ui, kept: Kept) {
     let catalog = crate::schedule();
     let mut focus = Focus::at(crate::time::now_minute());
+    focus.visible = kept.focus.visible;
     focus.pane = kept.focus.pane;
     focus.rail = kept.focus.rail;
     focus.group = kept.list.find(&*catalog);

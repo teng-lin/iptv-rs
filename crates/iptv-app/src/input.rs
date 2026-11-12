@@ -46,6 +46,9 @@ pub fn context(ui: &Ui) -> Context {
     if crate::organization_view::is_open(*ui) {
         return Context::Editor;
     }
+    if crate::custom_groups::is_open(*ui) {
+        return Context::Editor;
+    }
     if crate::epg_sources_view::is_open(*ui) {
         return Context::Editor; // Up/Down/Left/Right, OK, Back
     }
@@ -133,6 +136,9 @@ pub fn bind(ui: Ui) {
 }
 
 fn key_event(ui: Ui, nav: &Rc<RefCell<Nav>>, key: RemoteKey, phase: Phase) {
+    if phase != Phase::Up {
+        crate::browse_playback::activity(ui);
+    }
     if crate::remote_editor::captures(ui) {
         if phase == Phase::Down {
             crate::remote_editor::capture(ui, key);
@@ -220,6 +226,10 @@ fn key_event(ui: Ui, nav: &Rc<RefCell<Nav>>, key: RemoteKey, phase: Phase) {
 }
 
 fn apply(ui: Ui, key: RemoteKey, action: Action, repeat: bool) {
+    if !matches!(action, Action::ChannelUp | Action::ChannelDown) {
+        ui.pending_zap.set(None);
+    }
+    crate::browse_playback::activity(ui);
     // The first key after touch starts from a row on screen.
     if ui.input.get() == Input::Touch {
         if let Some((first, last)) = ui.visible_rows.get() {
@@ -246,6 +256,10 @@ fn apply(ui: Ui, key: RemoteKey, action: Action, repeat: bool) {
     }
     if crate::organization_view::is_open(ui) {
         crate::organization_view::key(ui, action);
+        return;
+    }
+    if crate::custom_groups::is_open(ui) {
+        crate::custom_groups::key(ui, action);
         return;
     }
     if crate::playlists_view::is_open(ui) {
@@ -345,7 +359,7 @@ fn apply(ui: Ui, key: RemoteKey, action: Action, repeat: bool) {
         Action::Select => crate::lists::ok(ui),
         Action::ShowGuide => ui.mode.set(match ui.mode.get() {
             ViewMode::Fullscreen => ViewMode::Overlay,
-            _ => ViewMode::Guide,
+            _ => crate::settings::browse_mode(),
         }),
         Action::ShowGroups => crate::lists::open_groups(ui),
         Action::OpenSearch => crate::search_view::open(ui),

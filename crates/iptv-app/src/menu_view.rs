@@ -30,6 +30,8 @@ fn implemented(item: MenuItem) -> bool {
             | MenuItem::ReorderChannels
             | MenuItem::ChannelOptions
             | MenuItem::GroupOptions
+            | MenuItem::CopyChannels
+            | MenuItem::CreateGroup
     )
 }
 
@@ -158,6 +160,12 @@ pub fn perform(ui: Ui, item: MenuItem) {
                 }
             }
         }
+        MenuItem::CreateGroup | MenuItem::CopyChannels => {
+            close(ui);
+            if let Some(source) = ui.library.shown.get_untracked() {
+                crate::custom_groups::open(ui, source, item == MenuItem::CopyChannels);
+            }
+        }
         MenuItem::ChannelOptions
         | MenuItem::ManageHidden
         | MenuItem::ReorderChannels
@@ -180,6 +188,24 @@ pub fn perform(ui: Ui, item: MenuItem) {
                     source,
                     if groups {
                         crate::organization_view::Kind::Groups
+                    } else if item == MenuItem::ReorderChannels {
+                        use crate::organization_view::Kind;
+                        use iptv_core::lists::Entry;
+                        match Entry::at(ui.list.with_untracked(|l| l.entry())) {
+                            Entry::Favorites => Kind::Favorites,
+                            Entry::Group(g) => {
+                                let key = crate::schedule().group_key(g);
+                                if let Some(id) = key
+                                    .strip_prefix("custom:")
+                                    .and_then(|s| s.parse::<i64>().ok())
+                                {
+                                    Kind::CustomChannels(iptv_store_sqlite::CustomGroupId(id))
+                                } else {
+                                    Kind::GroupChannels(iptv_providers::GroupId::from_stored(key))
+                                }
+                            }
+                            _ => Kind::Channels,
+                        }
                     } else {
                         crate::organization_view::Kind::Channels
                     },
@@ -247,7 +273,7 @@ pub fn layer(ui: Ui) -> impl IntoElement {
             None => String::new(),
         })
         // Headings in the lists' heading size.
-        .text_size(move || size.px(if heading() { SECTION } else { LIST_ITEM }))
+        .text_size(move || size.text_px(if heading() { SECTION } else { LIST_ITEM }))
         .text_color(move || match row() {
             Some(Row::Action { enabled: true, .. }) => mark().text(),
             Some(Row::Heading(_)) => mark().secondary(),
@@ -352,7 +378,7 @@ fn description(ui: Ui) -> impl IntoElement {
                     text(move || program().map_or(String::new(), |(ch, p)| title(ch, p)))
                         .font_family(SANS)
                         .font_weight(MEDIUM)
-                        .text_size(move || size.px(TITLE))
+                        .text_size(move || size.text_px(TITLE))
                         .text_color(rgb(LIST_TEXT)),
                 )
                 .child(
@@ -362,13 +388,13 @@ fn description(ui: Ui) -> impl IntoElement {
                         })
                     })
                     .font_family(SANS)
-                    .text_size(move || size.px(HEADER_TIMES))
+                    .text_size(move || size.text_px(HEADER_TIMES))
                     .text_color(Mark::Plain.secondary()),
                 )
                 .child(
                     text("A synthetic programme description for testing the guide. Real descriptions come from the EPG.")
                         .font_family(SANS)
-                        .text_size(move || size.px(HEADER_BODY))
+                        .text_size(move || size.text_px(HEADER_BODY))
                         .text_color(rgb(LIST_TEXT)),
                 ),
         )

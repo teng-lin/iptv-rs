@@ -96,7 +96,7 @@ pub(super) fn cell(
             // At rest a cell starts at the window's edge, so its title
             // shows; its place is in the band, which slides.
             let base = pan.band().base;
-            let (start, end) = (p.start.max(pan.clip()), p.end.min(base + super::BAND));
+            let (start, end) = (p.start.max(pan.clip()), p.end.min(base + pan.minutes()));
             let scale = pan.scale();
             (
                 (start - base) as f32 * scale,
@@ -127,6 +127,7 @@ pub(super) fn cell(
         colours(look.get(), dim.get(), &g, window, overlay)
     });
     view()
+        .test_id("guide-programme")
         .absolute()
         .top(move || px(((size.whole(ROW_H) - size.whole(CELL_H)) / 2.0).floor()))
         .h(move || px(size.whole(CELL_H)))
@@ -161,7 +162,7 @@ pub(super) fn cell(
             .number_of_lines(1)
             .text_overflow(nsh_core::EllipsizeMode::Clip)
             .font_family(CONDENSED)
-            .text_size(move || size.px(CELL_TITLE))
+            .text_size(move || size.text_px(CELL_TITLE))
             .text_color(move || rgba(colours.get().1)),
         )
 }

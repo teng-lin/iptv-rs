@@ -72,6 +72,11 @@ impl Scale {
         size * self.get()
     }
 
+    /// Text size, independent of geometry and responsive window scaling.
+    pub fn text_px(self, size: f32) -> Points {
+        px(self.of(size) * crate::settings::font_factor())
+    }
+
     /// [`Self::of`] in whole px, for row pitches and boxes (rows the same
     /// height each, not alternating around a fraction).
     pub fn whole(self, size: f32) -> f32 {

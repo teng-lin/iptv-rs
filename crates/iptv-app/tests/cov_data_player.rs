@@ -24,6 +24,8 @@
 //! Synthetic data only: a three-channel playlist "picked" from a file,
 //! channel one with three days of catch-up, its guide a local XMLTV file.
 
+mod browse_fixture;
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -165,6 +167,7 @@ fn the_player_follows_its_host_through_waits_failures_and_replays() {
     // SAFETY: the only test of this binary, before anything reads the
     // environment.
     unsafe { std::env::set_var("HOME", home.path()) };
+    browse_fixture::two_step_preview(home.path());
     // Log lines run as in the app (into the test's captured output).
     let _ = env_logger::builder()
         .is_test(true)

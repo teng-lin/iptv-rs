@@ -248,7 +248,7 @@ fn step_button(ui: Ui, size: Scale, label: &'static str, act: impl Fn(Ui) + 'sta
         })
         .child(
             text(label)
-                .text_size(move || size.px(TITLE))
+                .text_size(move || size.text_px(TITLE))
                 .text_color(rgb(LIST_TEXT)),
         )
 }
