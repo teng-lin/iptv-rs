@@ -1,0 +1,22 @@
+name: Tests
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - run: bash tools/check.sh
