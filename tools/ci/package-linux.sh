@@ -10,9 +10,12 @@ appdir="$root/target/Patina.AppDir"
 rm -rf "$stage" "$appdir" target/linux
 mkdir -p "$out" target/linux
 (cd crates/iptv-app && "$NSH" package --target linux -o "$root/target/linux" .)
+bash "$root/tools/ci/notices.sh"
 native="$root/target/linux/Patina"
+cp -R target/notices "$native/notices"
 cp LICENSE "$native/LICENSE"
 cp crates/iptv-app/fonts/OFL.txt "$native/OFL.txt"
+python3 tools/ci/check-notices.py "$native"
 license=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["license"])')
 mapfile -t executables < <(find "$native" -maxdepth 1 -type f -executable -printf '%f\n')
 test "${#executables[@]}" -eq 1
@@ -56,11 +59,22 @@ chmod +x "$appdir/AppRun"
 export DEPLOY_GTK_VERSION=4 OUTPUT="$out/Patina-$VERSION-linux-x86_64.AppImage"
 # linuxdeploy excludes these common desktop libraries by default. They are
 # direct/transitive dependencies here and may be absent on a minimal desktop.
+# Native notice attribution assumes distro system-library provenance. Browser
+# private libraries must not enter the deployment through caller environment.
+unset LD_LIBRARY_PATH LD_PRELOAD
 libraries=()
 for library in libharfbuzz.so.0 libfribidi.so.0 libfontconfig.so.1 libfreetype.so.6 \
   libasound.so.2 libjack.so.0 libpipewire-0.3.so.0 libusb-1.0.so.0; do
   path=$(ldconfig -p | awk -v name="$library" '$1 == name { print $NF }' | head -n 1)
   test -n "$path"
+  path=$(readlink -f "$path")
+  case "$path" in
+    /usr/lib/*|/lib/*) ;;
+    *) echo "refusing non-system deployment library: $library" >&2; exit 1 ;;
+  esac
   libraries+=(--library "$path")
 done
-linuxdeploy --appdir "$appdir" --executable "$appdir/usr/bin/$exe" "${libraries[@]}" --plugin gtk --output appimage
+linuxdeploy --appdir "$appdir" --executable "$appdir/usr/bin/$exe" "${libraries[@]}" --plugin gtk
+python3 tools/ci/linux-native-notices.py "$appdir"
+python3 tools/ci/check-notices.py "$appdir" native/components.json
+linuxdeploy --appdir "$appdir" --output appimage

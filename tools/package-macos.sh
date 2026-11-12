@@ -12,8 +12,11 @@ nsh=${NSH:-$root/../nsh/target/release/nsh}
 out=$(mkdir -p "${1:-$root/target/package}" && cd "${1:-$root/target/package}" && pwd)
 rm -rf "$out/Patina.app"
 (cd "$root/crates/iptv-app" && "$nsh" package --target macos -o "$out" .)
+bash "$root/tools/ci/notices.sh"
 cp "$root/LICENSE" "$out/Patina.app/Contents/Resources/LICENSE"
 cp "$root/crates/iptv-app/fonts/OFL.txt" "$out/Patina.app/Contents/Resources/OFL.txt"
+cp -R "$root/target/notices" "$out/Patina.app/Contents/Resources/notices"
 python3 -I "$root/tools/bundle-macos.py" "$out/Patina.app"
+python3 "$root/tools/ci/check-notices.py" "$out/Patina.app" native/components.json
 codesign --verify --deep --strict "$out/Patina.app"
 echo "$out/Patina.app"
