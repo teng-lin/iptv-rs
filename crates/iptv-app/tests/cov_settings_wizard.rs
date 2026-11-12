@@ -144,6 +144,15 @@ fn the_wizard_and_the_choosers() {
     // SAFETY: the only test of this binary, before anything reads the
     // environment.
     unsafe { std::env::set_var("HOME", home.path()) };
+    // The history chooser below follows a zap at once; the default switch
+    // delay (and its cancellation by opening a chooser) has its own tests.
+    let mut settings = iptv_settings::Settings::new();
+    settings
+        .set("guide.switch_delay", iptv_settings::Value::ms(0))
+        .unwrap();
+    let data = home.path().join(".local/share/iptv-rs");
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(data.join("settings.json"), settings.to_json_string()).unwrap();
     let port = serve();
     let local = format!("http://127.0.0.1:{port}");
     let config = EngineConfig {

@@ -237,7 +237,19 @@ fn stored_playlists_switch_refresh_and_go() {
         .is_test(true)
         .filter_level(log::LevelFilter::Info)
         .try_init();
+    // These journeys exercise the two-step preview (OK tunes, OK again goes
+    // full screen) and immediate zaps; dedicated personalization tests
+    // cover the default close/delay policy.
+    let mut settings = iptv_settings::Settings::new();
+    for key in ["guide.stay_on_guide", "guide.stay_on_list"] {
+        settings.set(key, iptv_settings::Value::Bool(true)).unwrap();
+    }
+    settings
+        .set("guide.switch_delay", iptv_settings::Value::ms(0))
+        .unwrap();
     let data = home.path().join(".local/share/iptv-rs");
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(data.join("settings.json"), settings.to_json_string()).unwrap();
     let guide_a = home.path().join("guide-a.xml");
     std::fs::write(&guide_a, guide("Alpha", &["a1", "a2"])).unwrap();
     let guide_b = home.path().join("guide-b.xml");

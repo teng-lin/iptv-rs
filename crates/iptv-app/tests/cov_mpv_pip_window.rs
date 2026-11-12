@@ -66,8 +66,8 @@ fn the_pip_windows_controls_follow_the_pointer() {
     step(app.set_environment("a TV", |e| e.idiom = Idiom::Tv));
 
     // Full screen, then the control strip's Picture in picture.
-    step(app.press_key("enter"));
-    step(app.wait_for("text:▶"));
+    // OK on a channel tunes it after the switch delay and goes full
+    // screen (`guide.stay_on_guide` off by default).
     step(app.press_key("enter"));
     step(app.wait_for("id:player-banner"));
     step(app.press_key("m"));

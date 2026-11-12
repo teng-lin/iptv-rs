@@ -118,8 +118,8 @@ fn picture_in_picture_opens_a_window_of_its_own_on_the_same_player() {
     step(app.set_environment("a TV", |e| e.idiom = Idiom::Tv));
 
     // Full screen.
-    step(app.press_key("enter"));
-    step(app.wait_for("text:▶"));
+    // OK on a channel tunes it after the switch delay and goes full
+    // screen (`guide.stay_on_guide` off by default).
     step(app.press_key("enter"));
     step(app.wait_for("id:player-banner"));
     let before = main_size(&mut app);
@@ -152,7 +152,11 @@ fn picture_in_picture_opens_a_window_of_its_own_on_the_same_player() {
     assert!(app.screen().shows("Playing in picture-in-picture"));
     step(app.press_key("down"));
     step(app.press_key("enter"));
-    app.idle(Duration::from_millis(300)).unwrap();
+    // It tunes after the switch delay.
+    let tuned = std::time::Instant::now();
+    while iptv_app::player_opens(0) == opens && tuned.elapsed() < Duration::from_secs(5) {
+        app.idle(Duration::from_millis(100)).unwrap();
+    }
     assert!(pip_open(&mut app), "the window shows the new channel");
     assert_eq!(iptv_app::player_opens(0), opens + 1, "the new channel only");
     let opens = opens + 1;
@@ -200,8 +204,8 @@ fn picture_in_picture_opens_a_window_of_its_own_on_the_same_player() {
     assert!(!iptv_app::player_has_source(0), "playback stopped");
 
     // The system closing it (Super+W) does the same.
-    step(app.press_key("enter"));
-    step(app.wait_for("text:▶"));
+    // OK on a channel tunes it after the switch delay and goes full
+    // screen (`guide.stay_on_guide` off by default).
     step(app.press_key("enter"));
     step(app.wait_for("id:player-banner"));
     enter(&mut app);
