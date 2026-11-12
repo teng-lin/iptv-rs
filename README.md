@@ -373,3 +373,11 @@ and Linux x86_64 DEB, RPM, pkg.tar.zst and AppImage, then publish to GitHub
 Releases. Manual builds can select Android, desktop, both, or all platforms
 (adding iPad IPA when Apple signing is configured).
 See [setup, signing secrets and release limitations](docs/ci-release.md).
+
+## License
+
+This project is licensed under the GNU Affero General Public License version 3
+(`AGPL-3.0-only`). See [LICENSE](LICENSE) for the full text.
+
+Third-party components retain their own licenses, including the bundled fonts
+under the [SIL Open Font License](crates/iptv-app/fonts/OFL.txt).

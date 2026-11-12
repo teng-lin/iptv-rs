@@ -4,6 +4,7 @@ description = "The settings layer of iptv-rs: one declarative schema (keys, type
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]
 serde_json.workspace = true

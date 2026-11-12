@@ -4,6 +4,7 @@ description = "Native SQLite store of iptv-rs: sources, provider catalog replace
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]
 iptv-providers.workspace = true

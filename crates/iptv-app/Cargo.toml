@@ -4,6 +4,7 @@ description = "The NSH shell of iptv-rs: TV + tablet screens rendering iptv-core
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]
 iptv-core.workspace = true

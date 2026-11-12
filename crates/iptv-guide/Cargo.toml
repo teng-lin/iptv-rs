@@ -4,6 +4,7 @@ description = "The real guide schedule for iptv-rs: imported channels and groups
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]
 iptv-core.workspace = true

@@ -4,6 +4,7 @@ description = "Provider layer of iptv-rs: M3U/M3U8 parser, Xtream Codes and Stal
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]
 serde_json.workspace = true
