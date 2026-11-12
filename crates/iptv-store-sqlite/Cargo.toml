@@ -20,3 +20,6 @@ iptv-guide.workspace = true
 # examples/epg_import_bench.rs: the app's guide import over HTTP.
 iptv-net.workspace = true
 tokio = { version = "1", default-features = false, features = ["macros", "rt"] }
+
+[lints]
+workspace = true

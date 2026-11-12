@@ -82,6 +82,7 @@ fn playlists(app: &mut Headless) {
     step(app.press_key("left"));
     step(app.press_key("left"));
     step(app.press("text:Playlists >> nth=0"));
+    step(app.wait_for("text:Tap a playlist for what you can do with it"));
 }
 
 fn favorite_names(path: &Path, source: SourceId) -> Vec<String> {
@@ -252,11 +253,12 @@ fn persisted_combined_mode_recovers_disabled_and_failed_sources_and_deletion() {
         ..EngineConfig::new(Root::of::<iptv_app::App>())
     })
     .unwrap();
-    step(
-        app.wait_until("empty aggregate startup", Duration::from_secs(15), |app| {
-            app.count("id:guide-channel-name").unwrap() == 0
-        }),
-    );
+    // Zero rows also holds before the initial mount. Wait for the persisted
+    // combined mode and its real empty state before sending navigation input;
+    // startup can otherwise replace the placeholder underneath those clicks.
+    step(app.wait_for_within("text:☰  All playlists", Duration::from_secs(15)));
+    step(app.wait_for("text:This group has no channels."));
+    assert_eq!(app.screen().count("id:guide-channel-name").unwrap(), 0);
     playlists(&mut app);
     step(app.press("text:Alpha"));
     step(app.press("text:Playlist enabled: No"));
@@ -484,14 +486,14 @@ fn adding_second_playlist_opens_combined_browser_without_management_switch() {
 /// A generated account permits only TS and one connection. Its first guide is
 /// held until the Add result has joined the browser; another account import is
 /// rejected so retaining the successful result cannot depend on a second fetch.
-fn delayed_account(
-    hold_first_account: bool,
-) -> (
+type DelayedAccount = (
     String,
     Arc<std::sync::atomic::AtomicUsize>,
     Arc<std::sync::atomic::AtomicUsize>,
     Arc<(Mutex<bool>, std::sync::Condvar)>,
-) {
+);
+
+fn delayed_account(hold_first_account: bool) -> DelayedAccount {
     use std::io::{BufRead, BufReader, Write};
     use std::sync::atomic::{AtomicUsize, Ordering};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

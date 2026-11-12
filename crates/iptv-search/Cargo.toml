@@ -12,3 +12,6 @@ iptv-core.workspace = true
 iptv-epg.workspace = true
 # Same crate and features as iptv-epg (only `is_combining_mark` is used here).
 unicode-normalization = { version = "0.1.24", default-features = false }
+
+[lints]
+workspace = true

@@ -113,7 +113,7 @@ pub enum Effect {
     /// Load the stored details of `id` for [`Screen::open_details`].
     OpenDetails(SourceId),
     /// Import these new details; they replace the stored ones if they work.
-    TryDetails(SourceId, Source),
+    TryDetails(SourceId, Box<Source>),
     SetUserAgent(SourceId, Option<String>),
     Close,
 }
@@ -447,7 +447,7 @@ impl Screen {
             return None;
         }
         form.checking = true;
-        Some(Effect::TryDetails(form.id, form.edited().clone()))
+        Some(Effect::TryDetails(form.id, Box::new(form.edited().clone())))
     }
 
     /// The check of `id`'s new details ended: saved, the form closes;
@@ -799,7 +799,7 @@ mod tests {
             panic!("no check");
         };
         assert_eq!(id, B);
-        assert_ne!(tried, xtream_source());
+        assert_ne!(*tried, xtream_source());
         // While it is checked, a second check does nothing.
         assert_eq!(s.check(), None);
         // Refused: the form stays with the edits; saved: it closes.

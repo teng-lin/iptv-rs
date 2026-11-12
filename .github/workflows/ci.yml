@@ -41,7 +41,7 @@ jobs:
         run: ABIS=arm64-v8a bash tools/sync-host.sh
       - name: Build Android APK and bundle
         working-directory: hosts/android
-        run: ./gradlew --no-daemon assembleDebug bundleDebug
+        run: ./gradlew --no-daemon lintDebug assembleDebug bundleDebug
       - name: Verify APK signature
         run: |
           "$ANDROID_HOME/build-tools/35.0.1/apksigner" verify hosts/android/app/build/outputs/apk/debug/app-debug.apk

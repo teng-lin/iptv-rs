@@ -109,10 +109,10 @@ pub(super) fn added(ui: Ui, source: SourceId, generation: u64, previous: Option<
             reattach_guide(ui, previous, generation, pending);
         }
         for playlist in playlists.into_iter().filter(|p| p.policy.enabled) {
-            if !PARTS.with(|p| p.borrow().contains_key(&playlist.id)) {
-                if let Ok(Some(stored)) = super::open_store().and_then(|s| s.source(playlist.id)) {
-                    library::run(ui, stored, Purpose::Combined, false);
-                }
+            if !PARTS.with(|p| p.borrow().contains_key(&playlist.id))
+                && let Ok(Some(stored)) = super::open_store().and_then(|s| s.source(playlist.id))
+            {
+                library::run(ui, stored, Purpose::Combined, false);
             }
         }
     });
@@ -218,14 +218,14 @@ fn switch_all_ready(ui: Ui) {
     let now = super::now_unix();
     EPOCH.with(|e| e.set(now - now.rem_euclid(3600)));
     rebuild(ui);
-    if let Ok(store) = super::open_store() {
-        if let Ok(sources) = store.sources() {
-            for source in sources {
-                if store.source_policy(source.id).is_ok_and(|p| p.enabled) {
-                    if let Ok(Some(source)) = store.source(source.id) {
-                        library::run(ui, source, Purpose::Combined, false);
-                    }
-                }
+    if let Ok(store) = super::open_store()
+        && let Ok(sources) = store.sources()
+    {
+        for source in sources {
+            if store.source_policy(source.id).is_ok_and(|p| p.enabled)
+                && let Ok(Some(source)) = store.source(source.id)
+            {
+                library::run(ui, source, Purpose::Combined, false);
             }
         }
     }

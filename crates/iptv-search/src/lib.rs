@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Search layer of iptv-rs.
 //!
 //! - [`tokens`] / [`Query`]: text folding shared with EPG matching (iptv-epg's

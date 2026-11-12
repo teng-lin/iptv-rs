@@ -346,7 +346,7 @@ impl Ui {
         self.panels.update(|p| f(p, now));
         if let Some(at) = self.panels.with(|p| p.hide_at_ms()) {
             let ui = *self;
-            let _ = set_timeout(Duration::from_millis(at.saturating_sub(now)), move || {
+            let _task = set_timeout(Duration::from_millis(at.saturating_sub(now)), move || {
                 let now = ui.now_ms();
                 // Later input moved the deadline: this tick is a no-op then.
                 if ui

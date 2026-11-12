@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! The guide schedule built from real data: imported channels and groups
 //! (`iptv-providers`) plus the EPG store (`iptv-epg`), behind
 //! `iptv_core::guide::Schedule` so the focus model and the UI work on it
@@ -529,10 +530,10 @@ impl EpgSchedule {
             {
                 start = start.max(prev_end);
             }
-            if let Some(next) = store.next_after(key, t) {
-                if next.start() > t {
-                    end = end.min(next.start());
-                }
+            if let Some(next) = store.next_after(key, t)
+                && next.start() > t
+            {
+                end = end.min(next.start());
             }
         }
         (start, end)

@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! The settings layer of iptv-rs: one declarative schema that drives
 //! storage, backup/restore, the settings UI and validation.
 //!

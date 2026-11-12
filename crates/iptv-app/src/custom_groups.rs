@@ -508,59 +508,6 @@ fn entry_sheet(ui: Ui) -> impl IntoElement {
         },
     )
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    fn group(id: i64) -> CustomGroup {
-        CustomGroup {
-            id: CustomGroupId(id),
-            source_id: SourceId(1),
-            name: "Same name".into(),
-            channel_count: 0,
-        }
-    }
-    fn screen() -> Open {
-        Open {
-            source: SourceId(1),
-            groups: vec![group(1), group(2), group(3)],
-            page: Page::Groups,
-            scope: ChannelScope::All,
-            members: Membership::default(),
-            control: Some(3),
-            editing: None,
-            status: String::new(),
-        }
-    }
-    #[test]
-    fn duplicate_named_group_focus_tracks_identity_through_refresh() {
-        let mut s = screen();
-        s.reload_groups(vec![group(2), group(3), group(1)]);
-        assert_eq!(s.control, Some(2));
-        s.reload_groups(vec![group(3)]);
-        assert_eq!(s.control, Some(0));
-        s.page = Page::Detail(CustomGroupId(3));
-        s.reload_groups(vec![]);
-        assert_eq!(s.page, Page::Groups);
-        assert_eq!(s.control, Some(0));
-    }
-    #[test]
-    fn destination_excludes_source_and_retains_focused_target_identity() {
-        let mut s = screen();
-        s.scope = ChannelScope::Custom(CustomGroupId(1));
-        s.page = Page::Destination(true);
-        s.control = Some(2);
-        s.reload_groups(vec![group(3), group(1), group(2)]);
-        assert_eq!(s.control, Some(1));
-        assert_eq!(labels(&s).len(), 3);
-        s.page = Page::Members;
-        assert!(labels(&s).iter().any(|l| l == "Move selected"));
-        s.scope = ChannelScope::All;
-        assert!(!labels(&s).iter().any(|l| l == "Move selected"));
-        s.page = Page::Delete(CustomGroupId(1));
-        assert_eq!(labels(&s)[0], "Cancel");
-    }
-}
 pub fn layer(ui: Ui) -> impl IntoElement {
     effect(move || {
         ui.library.version.get();
@@ -616,4 +563,57 @@ pub fn layer(ui: Ui) -> impl IntoElement {
         .child(when(move||read(ui,|s|s.editing.is_some()).unwrap_or(false),move||entry_sheet(ui)))
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn group(id: i64) -> CustomGroup {
+        CustomGroup {
+            id: CustomGroupId(id),
+            source_id: SourceId(1),
+            name: "Same name".into(),
+            channel_count: 0,
+        }
+    }
+    fn screen() -> Open {
+        Open {
+            source: SourceId(1),
+            groups: vec![group(1), group(2), group(3)],
+            page: Page::Groups,
+            scope: ChannelScope::All,
+            members: Membership::default(),
+            control: Some(3),
+            editing: None,
+            status: String::new(),
+        }
+    }
+    #[test]
+    fn duplicate_named_group_focus_tracks_identity_through_refresh() {
+        let mut s = screen();
+        s.reload_groups(vec![group(2), group(3), group(1)]);
+        assert_eq!(s.control, Some(2));
+        s.reload_groups(vec![group(3)]);
+        assert_eq!(s.control, Some(0));
+        s.page = Page::Detail(CustomGroupId(3));
+        s.reload_groups(vec![]);
+        assert_eq!(s.page, Page::Groups);
+        assert_eq!(s.control, Some(0));
+    }
+    #[test]
+    fn destination_excludes_source_and_retains_focused_target_identity() {
+        let mut s = screen();
+        s.scope = ChannelScope::Custom(CustomGroupId(1));
+        s.page = Page::Destination(true);
+        s.control = Some(2);
+        s.reload_groups(vec![group(3), group(1), group(2)]);
+        assert_eq!(s.control, Some(1));
+        assert_eq!(labels(&s).len(), 3);
+        s.page = Page::Members;
+        assert!(labels(&s).iter().any(|l| l == "Move selected"));
+        s.scope = ChannelScope::All;
+        assert!(!labels(&s).iter().any(|l| l == "Move selected"));
+        s.page = Page::Delete(CustomGroupId(1));
+        assert_eq!(labels(&s)[0], "Cancel");
+    }
 }

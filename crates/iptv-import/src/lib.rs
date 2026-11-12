@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Import pipeline of iptv-rs.
 //!
 //! Drives the sans-IO provider clients (`iptv-providers`) and the XMLTV

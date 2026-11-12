@@ -145,7 +145,7 @@ fn pointer_moved(ui: Ui, hover: Signal<Hover>, shown: Signal<bool>) {
     hover.update(|h| h.moved(now));
     shown.set(true);
     // When they hide unless it moves again (`Hover::hide_at_ms`).
-    let _ = set_timeout(Duration::from_millis(pw::HIDE_AFTER_MS), move || {
+    let _task = set_timeout(Duration::from_millis(pw::HIDE_AFTER_MS), move || {
         let now = ui.now_ms();
         if untracked(|| hover.try_get()).is_some_and(|h| !h.shows(now)) {
             shown.try_set(false);
@@ -166,7 +166,7 @@ fn clicked(ui: Ui, hover: Signal<Hover>, drags: Signal<bool>, clicks: u32) {
     drags.set(false);
     // Once it can no longer become a double click
     // (`Hover::drags_again_at_ms`).
-    let _ = set_timeout(Duration::from_millis(pw::DOUBLE_CLICK_MS + 1), move || {
+    let _task = set_timeout(Duration::from_millis(pw::DOUBLE_CLICK_MS + 1), move || {
         let now = ui.now_ms();
         if untracked(|| hover.try_get()).is_some_and(|h| h.drags(now)) {
             drags.try_set(true);

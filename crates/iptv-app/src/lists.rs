@@ -263,7 +263,7 @@ fn arm_hint(ui: Ui) {
         h.set(h.get() + 1);
         h.get()
     });
-    let _ = set_timeout(HINT, move || {
+    let _task = set_timeout(HINT, move || {
         if HINT_SHOWN.with(Cell::get) == shown && ui.focus.with_untracked(|f| f.hint) {
             ui.focus.update(|f| f.hint = false);
         }

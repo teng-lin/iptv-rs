@@ -19,7 +19,7 @@ exclude = ["crates/iptv-app/.nsh"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 license = "AGPL-3.0-only"
 publish = false
 
@@ -74,3 +74,9 @@ debug = "line-tables-only"
 # machine (without target/) has symbols but no debug info.
 [profile.dev]
 split-debuginfo = "unpacked"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "deny"

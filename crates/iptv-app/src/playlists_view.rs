@@ -191,7 +191,7 @@ fn perform(ui: Ui, effect: Effect) {
             Ok(())
         }
         Effect::TryDetails(id, source) => {
-            data::try_details(ui, id, source);
+            data::try_details(ui, id, *source);
             Ok(())
         }
         Effect::SetUserAgent(id, agent) => {
@@ -551,10 +551,10 @@ fn actions_card(ui: Ui, size: Scale, id: SourceId) -> impl IntoElement {
             let rows = element_ref();
             let focused_acts = acts.clone();
             effect(move || {
-                if let Some(Layer::Actions { focus, .. }) = state(ui, Screen::layer) {
-                    if let Some(at) = focused_acts.iter().position(|a| *a == focus) {
-                        rows.scroll_to_index(at as u32, percentage(0.5), px(0.0), false);
-                    }
+                if let Some(Layer::Actions { focus, .. }) = state(ui, Screen::layer)
+                    && let Some(at) = focused_acts.iter().position(|a| *a == focus)
+                {
+                    rows.scroll_to_index(at as u32, percentage(0.5), px(0.0), false);
                 }
             });
             virtual_list(move || count, move |at| act_row(acts[at.index()]))
@@ -692,7 +692,7 @@ mod tests {
             (Effect::RefreshAll, "refresh all"),
             (Effect::OpenDetails(SourceId(1)), "details of 1"),
             (
-                Effect::TryDetails(SourceId(1), source),
+                Effect::TryDetails(SourceId(1), Box::new(source)),
                 "try new details of 1",
             ),
             (Effect::Close, "close"),

@@ -11,6 +11,7 @@ pub struct Mpv(pub *mut ffi::mpv_handle);
 // SAFETY: libmpv's client API may be used from any thread; the handle is
 // destroyed once, when the last owner drops it.
 unsafe impl Send for Mpv {}
+// SAFETY: libmpv serializes concurrent client API access to a live handle.
 unsafe impl Sync for Mpv {}
 
 impl Mpv {
