@@ -17,6 +17,93 @@ thread_local! {
     static LIMITS: RefCell<BTreeMap<SourceId,Option<u32>>> = RefCell::default();
     static RESUME: Cell<bool> = const { Cell::new(false) };
     static EPOCH: Cell<i64> = const { Cell::new(0) };
+    static SINGLE: RefCell<Option<SingleSchedule>> = const { RefCell::new(None) };
+}
+
+/// The current single-source schedule can enter the combined catalogue without
+/// dropping a portal session, account format, connection limit or loaded guide.
+#[derive(Clone)]
+pub(super) struct SingleSchedule {
+    source: SourceId,
+    schedule: Rc<EpgSchedule>,
+    limit: Option<u32>,
+}
+pub(super) fn reset_single() {
+    SINGLE.with(|s| s.borrow_mut().take());
+}
+pub(super) fn single() -> Option<SingleSchedule> {
+    SINGLE.with(|s| s.borrow().clone())
+}
+/// Snapshot before Add advances the generation. An unfinished account refresh
+/// can still replace a cached source's provisional playback metadata, so that
+/// source must go through the normal combined loader instead of being retained.
+pub(super) fn ready_single() -> Option<SingleSchedule> {
+    single().filter(|s| !library::running(s.source))
+}
+pub(super) fn remember_single(source: SourceId, schedule: Rc<EpgSchedule>) {
+    SINGLE.with(|s| {
+        *s.borrow_mut() = Some(SingleSchedule {
+            source,
+            schedule,
+            limit: crate::multiview::account_limit(),
+        })
+    });
+}
+
+/// Add already owns the current generation. Keep that generation so its guide
+/// download and future guide checks continue after the browser joins sources.
+pub(super) fn added(ui: Ui, source: SourceId, generation: u64, previous: Option<SingleSchedule>) {
+    super::spawn_in_app(async move {
+        if !crate::favorites::flush().await {
+            crate::settings_view::notify("Recent changes could not be saved; try again");
+            return;
+        }
+        if active(ui) || super::GENERATION.with(Cell::get) != generation || !has_multiple_enabled()
+        {
+            return;
+        }
+        // Guide messages may have arrived while writes flushed: take the latest
+        // schedule, rather than the first channel-only Add result.
+        let Some(added) = single().filter(|s| s.source == source) else {
+            return;
+        };
+        if let Err(e) = super::open_store().and_then(|mut s| s.set_all_playlists(true)) {
+            log::warn!("iptv combined: cannot save browsing mode: {e}");
+            return;
+        }
+        let Ok(playlists) = library::playlists() else {
+            return;
+        };
+        let enabled = |id| playlists.iter().any(|p| p.id == id && p.policy.enabled);
+        super::source_changed(ui, None);
+        stored::note_shown(None);
+        ui.library.all.set(true);
+        PARTS.with(|p| p.borrow_mut().clear());
+        LIMITS.with(|p| p.borrow_mut().clear());
+        let previous = previous.filter(|s| enabled(s.source));
+        let previous_source = previous.as_ref().map(|s| s.source);
+        for kept in previous.into_iter().chain(std::iter::once(added)) {
+            PARTS.with(|p| p.borrow_mut().insert(kept.source, kept.schedule));
+            LIMITS.with(|p| p.borrow_mut().insert(kept.source, kept.limit));
+        }
+        reset_single();
+        crate::multiview::set_account_streams(None);
+        let now = super::now_unix();
+        EPOCH.with(|e| e.set(now - now.rem_euclid(3600)));
+        rebuild(ui);
+        // The previous single source's timer belonged to its older generation.
+        // Reattach guide work without fetching its playlist/account again.
+        if let Some(previous) = previous_source.filter(|id| *id != source) {
+            super::restore_guide(ui, previous, generation);
+        }
+        for playlist in playlists.into_iter().filter(|p| p.policy.enabled) {
+            if !PARTS.with(|p| p.borrow().contains_key(&playlist.id)) {
+                if let Ok(Some(stored)) = super::open_store().and_then(|s| s.source(playlist.id)) {
+                    library::run(ui, stored, Purpose::Combined, false);
+                }
+            }
+        }
+    });
 }
 pub fn active(ui: Ui) -> bool {
     ui.library.all.get_untracked()
@@ -61,6 +148,7 @@ fn switch_all_ready(ui: Ui) {
         return;
     }
     super::next_generation();
+    reset_single();
     super::source_changed(ui, None);
     stored::note_shown(None);
     ui.library.all.set(true);
@@ -83,6 +171,7 @@ fn switch_all_ready(ui: Ui) {
     }
 }
 pub fn leave(ui: Ui) {
+    reset_single();
     RESUME.with(|r| r.set(false));
     ui.library.all.set(false);
     PARTS.with(|p| p.borrow_mut().clear());

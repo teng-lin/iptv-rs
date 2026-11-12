@@ -480,3 +480,286 @@ fn adding_second_playlist_opens_combined_browser_without_management_switch() {
             .unwrap()
     );
 }
+
+/// A generated account permits only TS and one connection. Its first guide is
+/// held until the Add result has joined the browser; another account import is
+/// rejected so retaining the successful result cannot depend on a second fetch.
+fn delayed_account(
+    hold_first_account: bool,
+) -> (
+    String,
+    Arc<std::sync::atomic::AtomicUsize>,
+    Arc<std::sync::atomic::AtomicUsize>,
+    Arc<(Mutex<bool>, std::sync::Condvar)>,
+) {
+    use std::io::{BufRead, BufReader, Write};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let accounts = Arc::new(AtomicUsize::new(0));
+    let guides = Arc::new(AtomicUsize::new(0));
+    let release = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+    let observed_accounts = accounts.clone();
+    let observed_guides = guides.clone();
+    let release_guide = release.clone();
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            let accounts = observed_accounts.clone();
+            let guides = observed_guides.clone();
+            let release = release_guide.clone();
+            std::thread::spawn(move || {
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut request = String::new();
+                let _ = reader.read_line(&mut request);
+                let mut header = String::new();
+                while reader.read_line(&mut header).unwrap_or(0) > 2 {
+                    header.clear();
+                }
+                let target = request.split_whitespace().nth(1).unwrap_or("/");
+                let action = target
+                    .split(['?', '&'])
+                    .find_map(|p| p.strip_prefix("action="))
+                    .unwrap_or("");
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as i64;
+                let (status, body) = if target.starts_with("/xmltv.php") {
+                    let count = guides.fetch_add(1, Ordering::SeqCst) + 1;
+                    let (ready, signal) = &*release;
+                    let _ready = signal
+                        .wait_while(ready.lock().unwrap(), |ready| !*ready)
+                        .unwrap();
+                    (
+                        "200 OK",
+                        format!(
+                            "<tv><channel id=\"beta1\"><display-name>Imported Beta One</display-name></channel><programme channel=\"beta1\" start=\"{}\" stop=\"{}\"><title>Delayed Beta guide {count}</title></programme></tv>",
+                            iptv_epg::format_xmltv_time(now - 3600),
+                            iptv_epg::format_xmltv_time(now + 24 * 3600),
+                        ),
+                    )
+                } else if action.is_empty() || action == "get_account_info" {
+                    let attempt = accounts.fetch_add(1, Ordering::SeqCst);
+                    if hold_first_account && attempt == 0 {
+                        let (ready, signal) = &*release;
+                        drop(
+                            signal
+                                .wait_while(ready.lock().unwrap(), |ready| !*ready)
+                                .unwrap(),
+                        );
+                    }
+                    if attempt > 0 && !hold_first_account {
+                        (
+                            "503 Service Unavailable",
+                            "Generated account retry rejected".into(),
+                        )
+                    } else {
+                        (
+                            "200 OK",
+                            serde_json::json!({
+                                "user_info": {"username":"viewer", "password":"secret", "auth":1,
+                                    "status":"Active", "exp_date":(now+30*86400).to_string(),
+                                    "max_connections":"1", "allowed_output_formats":["ts"]},
+                                "server_info": {"url":"127.0.0.1", "port":port.to_string(),
+                                    "server_protocol":"http", "timezone":"UTC", "timestamp_now":now}
+                            })
+                            .to_string(),
+                        )
+                    }
+                } else {
+                    let body = match action {
+                        "get_live_categories" => serde_json::json!([
+                            {"category_id":"1", "category_name":"News", "parent_id":0}]),
+                        "get_live_streams" => serde_json::json!([
+                            {"name":"Imported Beta One", "stream_id":1, "stream_type":"live", "category_id":"1", "epg_channel_id":"beta1", "tv_archive":0},
+                            {"name":"Imported Beta Two", "stream_id":2, "stream_type":"live", "category_id":"1", "epg_channel_id":"beta2", "tv_archive":0}]),
+                        _ => serde_json::json!([]),
+                    };
+                    ("200 OK", body.to_string())
+                };
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            });
+        }
+    });
+    (
+        format!("http://127.0.0.1:{port}"),
+        accounts,
+        guides,
+        release,
+    )
+}
+
+#[test]
+fn automatic_join_keeps_account_format_limit_and_the_original_guide_job_and_timer() {
+    use std::sync::atomic::Ordering;
+    let Some(home) = isolated!() else { return };
+    let dir = home.data_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("iptv.sqlite");
+    let mut store = Store::open(&path).unwrap();
+    seed(&mut store, home.path(), "Alpha");
+    drop(store);
+    let mut settings = Settings::new();
+    settings
+        .set("general.resume_last_channel", Value::Bool(false))
+        .unwrap();
+    settings
+        .set("guide.stay_on_guide", Value::Bool(true))
+        .unwrap();
+    settings.set("guide.switch_delay", Value::secs(0)).unwrap();
+    std::fs::write(dir.join("settings.json"), settings.to_json_string()).unwrap();
+    let (server, accounts, guides, release) = delayed_account(false);
+    let mut app = Headless::start(EngineConfig {
+        viewport: Size::new(px(1920.0), px(1080.0)),
+        clock: nsh_core::time::Clock::manual(SystemTime::now()),
+        ..EngineConfig::new(Root::of::<iptv_app::App>())
+    })
+    .unwrap();
+    step(app.wait_for_within("text:Alpha bulletin", Duration::from_secs(20)));
+    step(app.press("text:+ Add playlist"));
+    step(app.press("text:Xtream Codes login"));
+    for (field, empty, value) in [
+        ("Server", "http://server:port", server.as_str()),
+        ("Username", "Required", "viewer"),
+        ("Password", "Required", "secret"),
+    ] {
+        step(app.press(&format!("text:{field}")));
+        step(app.type_text(&format!("text:{empty}"), value));
+        step(app.submit(&format!("text:{value}")));
+    }
+    step(app.press("text:Add playlist"));
+    step(app.wait_for_within("text:Playlist added", Duration::from_secs(20)));
+    step(app.press("text:Watch"));
+    step(app.wait_for_within("text:☰  All playlists", Duration::from_secs(20)));
+    step(app.wait_for("text:/^Imported Beta Two · /"));
+    step(app.wait_until(
+        "original guide download waiting",
+        Duration::from_secs(10),
+        |_| guides.load(Ordering::SeqCst) == 1,
+    ));
+    assert_eq!(
+        accounts.load(Ordering::SeqCst),
+        1,
+        "joining must reuse the completed account import"
+    );
+    *release.0.lock().unwrap() = true;
+    release.1.notify_all();
+    step(app.wait_for_within("text:Delayed Beta guide 1", Duration::from_secs(20)));
+    // This is the original Add's post-playlist Guide message, not a reimport.
+    let opened: Arc<Mutex<Vec<String>>> = Arc::default();
+    let observed = opened.clone();
+    app.observe(move |_, batch| {
+        for item in &batch.items {
+            if let MountItem::ComponentProps { props, .. } = item {
+                for (key, value) in props {
+                    if key.as_ref() == "source"
+                        && let Some(url) = value.as_ref().and_then(|v| v["url"].as_str())
+                    {
+                        observed.lock().unwrap().push(url.into());
+                    }
+                }
+            }
+        }
+    });
+    let beta = Store::open(&path)
+        .unwrap()
+        .sources()
+        .unwrap()
+        .into_iter()
+        .find(|s| s.name != "Alpha")
+        .unwrap()
+        .id;
+    // Let NextCheck arrive, remove the stored guide, then run the original
+    // Add's scheduled check. It must still be eligible in the combined mode.
+    step(app.run_for(Duration::from_secs(1)));
+    Store::open(&path).unwrap().delete_epg(beta).unwrap();
+    step(app.fast_forward(Duration::from_secs(7 * 3600)));
+    step(app.wait_for_within("text:Delayed Beta guide 2", Duration::from_secs(20)));
+    assert_eq!(accounts.load(Ordering::SeqCst), 1);
+    step(app.press("text:/^Imported Beta One · /"));
+    step(app.wait_until(
+        "TS-only account stream opened",
+        Duration::from_secs(5),
+        |_| {
+            opened
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|url| url.ends_with("/1.ts"))
+        },
+    ));
+    step(app.press("text:/^Imported Beta One · /"));
+    step(app.press("label:Video"));
+    step(app.press("label:Multiview"));
+    step(app.wait_for("text:/^4  Imported Beta Two · /"));
+    step(app.press("text:/^4  Imported Beta Two · /"));
+    step(app.wait_for("text:Your account allows 1 stream at once"));
+}
+
+#[test]
+fn automatic_join_reloads_previous_source_whose_account_refresh_is_still_pending() {
+    use iptv_providers::{Secret, model::XtreamCredentials};
+    use nsh_core::{ImageData, picker::PickedFile};
+    use std::sync::atomic::Ordering;
+    let Some(home) = isolated!() else { return };
+    let dir = home.data_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    let (server, accounts, _, release) = delayed_account(true);
+    let mut store = Store::open(dir.join("iptv.sqlite")).unwrap();
+    let source = store
+        .add_source(&Source {
+            name: "Pending account".into(),
+            config: SourceConfig::Xtream(XtreamCredentials {
+                server_url: server,
+                username: Secret::new("viewer"),
+                password: Secret::new("secret"),
+                user_agent: None,
+            }),
+        })
+        .unwrap();
+    let cached = iptv_providers::m3u::parse_m3u(
+        "#EXTM3U\n#EXTINF:-1 group-title=\"News\",Cached Beta\nhttp://stream.example.test/cached-beta\n",
+    );
+    store
+        .replace_catalog(source, &cached.groups, &cached.channels.items, &[], &[])
+        .unwrap();
+    store.set_active_source(source).unwrap();
+    drop(store);
+    let mut app = Headless::start(EngineConfig {
+        viewport: Size::new(px(1920.0), px(1080.0)),
+        ..EngineConfig::new(Root::of::<iptv_app::App>())
+    })
+    .unwrap();
+    app.on_pick(|_| vec![PickedFile::new("Alpha.m3u", "audio/x-mpegurl", ImageData::new(
+        b"#EXTM3U\n#EXTINF:-1 group-title=\"News\",Added Alpha\nhttp://stream.example.test/added-alpha\n".to_vec()
+    ))]);
+    step(app.wait_for_within("text:Cached Beta", Duration::from_secs(20)));
+    step(app.wait_until(
+        "previous startup account request held",
+        Duration::from_secs(10),
+        |_| accounts.load(Ordering::SeqCst) == 1,
+    ));
+    step(app.press("text:+ Add playlist"));
+    step(app.press("text:Playlist file"));
+    step(app.press("text:Choose a file…"));
+    step(app.wait_for("text:Alpha.m3u"));
+    step(app.press("text:Add playlist"));
+    step(app.wait_for_within("text:Playlist added", Duration::from_secs(20)));
+    step(app.press("text:Watch"));
+    step(app.wait_for_within("text:☰  All playlists", Duration::from_secs(20)));
+    step(app.wait_for_within("text:/^Imported Beta Two · /", Duration::from_secs(20)));
+    assert_eq!(
+        accounts.load(Ordering::SeqCst),
+        2,
+        "an unfinished previous import must be replaced, not retained as provisional cached rows"
+    );
+    *release.0.lock().unwrap() = true;
+    release.1.notify_all();
+    step(app.wait_for_within("text:Delayed Beta guide 1", Duration::from_secs(20)));
+    step(app.wait_for("text:/^Added Alpha · /"));
+    assert!(!app.screen().matches("text:/^Cached Beta · /").unwrap());
+}

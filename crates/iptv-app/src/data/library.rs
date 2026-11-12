@@ -243,7 +243,7 @@ fn changed(ui: Ui) {
     ui.library.version.update(|v| *v += 1);
 }
 
-fn running(id: SourceId) -> bool {
+pub(super) fn running(id: SourceId) -> bool {
     RUNNING.with(|r| r.borrow().contains_key(&id))
 }
 

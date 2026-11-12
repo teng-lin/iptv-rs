@@ -241,6 +241,7 @@ pub fn spawn_in_app(future: impl Future<Output = ()> + 'static) {
 /// otherwise refresh the active source or open the wizard.
 pub fn start(ui: Ui) {
     APP_OWNER.with(|o| o.set(Some(Owner::current())));
+    combined::reset_single();
     // Guide downloads a crash interrupted (none runs yet).
     EpgStage::remove_stale(data_dir());
     let started = std::time::Instant::now();
@@ -310,6 +311,9 @@ pub fn start_import(ui: Ui, job: Job, on_update: impl Fn(Update) + 'static) -> C
 /// [`start_import`] with the caller's cancel token.
 fn start_import_with(ui: Ui, job: Job, cancel: CancelToken, on_update: impl Fn(Update) + 'static) {
     let purpose = job.purpose;
+    let previous = (purpose == Purpose::Add)
+        .then(combined::ready_single)
+        .flatten();
     let shows = purpose.shows() && !combined::active(ui);
     let generation = if shows {
         next_generation()
@@ -323,12 +327,21 @@ fn start_import_with(ui: Ui, job: Job, cancel: CancelToken, on_update: impl Fn(U
         let cancel = cancel.clone();
         std::thread::spawn(move || run(job, &tx, &cancel));
     }
+    let merge_requested = Cell::new(false);
     let show = move |imported: Box<Imported>, held: Option<opening::Held>| {
+        if GENERATION.with(Cell::get) != generation {
+            return;
+        }
         if shows || combined::active(ui) {
+            let merge = purpose == Purpose::Add
+                && !combined::active(ui)
+                && !merge_requested.get()
+                && combined::has_multiple_enabled();
+            let source = imported.source;
             show_part(ui, imported, generation, resume, held);
-            if purpose == Purpose::Add && !combined::active(ui) && combined::has_multiple_enabled()
-            {
-                combined::switch_all(ui);
+            if merge {
+                merge_requested.set(true);
+                combined::added(ui, source, generation, previous.clone());
             }
         }
     };
@@ -447,7 +460,9 @@ fn show_part(
     log::info!("iptv data: guide switched to {channels} imported channels");
     crate::favorites::set_source(Some(imported.source));
     let favorites = started.elapsed();
-    crate::set_schedule(&ui, Rc::new(schedule));
+    let schedule = Rc::new(schedule);
+    combined::remember_single(imported.source, schedule.clone());
+    crate::set_schedule(&ui, schedule);
     pages::replaced();
     crate::startup::shown(&[
         ("schedule", built),
@@ -475,6 +490,7 @@ fn source_changed(ui: Ui, source: Option<SourceId>) {
 /// No stored source is left: the guide shows nothing real and no timers
 /// run (the wizard's first-run state goes over it).
 fn show_nothing(ui: Ui) {
+    combined::reset_single();
     next_generation();
     source_changed(ui, None);
     crate::set_schedule(
@@ -506,9 +522,20 @@ fn schedule_check(ui: Ui, source: SourceId, at: i64, generation: u64) {
 /// A guide check on its own thread: downloads the guide again when the
 /// refresh policy says so, then schedules the next check.
 fn check_guide(ui: Ui, source: SourceId, generation: u64) {
+    read_guide(ui, source, generation, false);
+}
+
+/// Reattach a retained source after changing generations. A first-screen
+/// snapshot may still hold only a few channels/hours, so install the full
+/// cached window even when the refresh policy does not request a download.
+fn restore_guide(ui: Ui, source: SourceId, generation: u64) {
+    read_guide(ui, source, generation, true);
+}
+
+fn read_guide(ui: Ui, source: SourceId, generation: u64, restore_cached: bool) {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        with_runtime(|| guide_pipeline(source, &tx));
+        with_runtime(|| guide_pipeline(source, &tx, restore_cached));
     });
     spawn_in_app(async move {
         loop {
@@ -549,7 +576,7 @@ fn run(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
 }
 
 /// The timer's guide check: the stored feeds for the stored channels.
-async fn guide_pipeline(source: SourceId, tx: &Sender<Msg>) {
+async fn guide_pipeline(source: SourceId, tx: &Sender<Msg>, restore_cached: bool) {
     let now = now_unix();
     let state = stored::guide_state(source);
     let guides = stored::current_configs(source, state.as_ref());
@@ -565,6 +592,17 @@ async fn guide_pipeline(source: SourceId, tx: &Sender<Msg>) {
         channels: &channels,
         overrides: &overrides,
     };
+    if restore_cached {
+        let _ = tx.send(Msg::Guide(Box::new(Imported {
+            groups: groups.clone(),
+            channels: channels.clone(),
+            playback: Streams::Current,
+            guide: stored::load_guide(source, now).unwrap_or_default(),
+            now,
+            source,
+            resume: false,
+        })));
+    }
     match stored::plan(Trigger::Timer, &guides, matching, state.as_ref(), now) {
         Decision::Refresh(reason) => {
             log::info!("iptv data: downloading the guide ({reason:?})");
