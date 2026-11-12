@@ -1844,6 +1844,7 @@ version = "0.1.0"
 dependencies = [
  "iptv-core",
  "percent-encoding",
+ "serde",
  "serde_json",
  "sha1_smol",
  "url",

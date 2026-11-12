@@ -14,6 +14,7 @@ pub(crate) struct Ctx<'a, F, P> {
     pub cancel: &'a CancelToken,
     pub progress: &'a mut P,
     pub stats: ImportStats,
+    pub catalog_sink: Option<&'a mut dyn crate::CatalogSink>,
     pub limits: ImportLimits,
     #[cfg(debug_assertions)]
     pub allow_private_fixture: bool,
@@ -27,6 +28,7 @@ impl<'a, F: Fetch, P: ProgressSink> Ctx<'a, F, P> {
             cancel,
             progress,
             stats: ImportStats::default(),
+            catalog_sink: None,
             limits: ImportLimits::default(),
             #[cfg(debug_assertions)]
             allow_private_fixture: false,

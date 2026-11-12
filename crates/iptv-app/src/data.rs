@@ -43,13 +43,14 @@ use iptv_guide::EpgSchedule;
 use iptv_guide::playback::PlaybackContext;
 use iptv_import::{
     CancelToken, Catalog, Decision, EpgImport, EpgSourceConfig, ImportError, ImportOptions,
-    NoProgress, Progress, ProgressSink, Trigger, import_epg, import_source,
+    NoProgress, Progress, ProgressSink, Trigger, import_epg, import_source_into,
 };
 use iptv_net::NetClient;
 use iptv_providers::SecretUrl;
 use iptv_providers::model::{Channel, Group, Source};
 use iptv_store_sqlite::{
-    CatalogCounts, EpgStage, GuideSource, ImportErrorKind, SourceId, Store, StoreError,
+    CatalogCounts, CatalogStage, EpgStage, GuideSource, ImportErrorKind, SourceId, Store,
+    StoreError,
 };
 use nsh_core::prelude::*;
 
@@ -245,6 +246,7 @@ pub fn start(ui: Ui) {
     library::reset_imports();
     // Guide downloads a crash interrupted (none runs yet).
     EpgStage::remove_stale(data_dir());
+    CatalogStage::remove_stale(data_dir());
     let started = std::time::Instant::now();
     let (store, source) = match open_store() {
         Ok(store) => {
@@ -847,35 +849,65 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
     {
         options.allow_private_fixture = cfg!(feature = "test-support") || DEV_PLAYLIST.is_some();
     }
-    let catalog =
-        match import_source(&net, &job.source.config, &options, &mut progress, cancel).await {
-            Ok(catalog) => catalog,
-            Err(e) => {
-                log::warn!("iptv data: {:?} import failed: {e}", job.source.kind());
-                // New details that failed say nothing about the stored ones.
-                if !matches!(e, ImportError::Cancelled) && !job.edit {
-                    record_failure(job.stored, stored::error_kind(&e));
-                }
-                // The stored guide stays on screen: keep it current.
-                if let (Some(id), Some(state)) = (job.stored, stored_guide.as_ref())
-                    && let Ok((_, channels)) = stored::catalog(id)
-                {
-                    let overrides = stored::overrides(id);
-                    let matching = stored::Matching {
-                        channels: &channels,
-                        overrides: &overrides,
-                    };
-                    let guides = stored::current_configs(id, Some(state));
-                    send_next_check(tx, id, &guides, matching);
-                }
-                return fail(wizard_map::failure_of(&e));
+    let _ = std::fs::create_dir_all(data_dir());
+    let mut stage = match CatalogStage::create_in(data_dir()) {
+        Ok(stage) => stage,
+        Err(error) => {
+            log::warn!("iptv data: catalog staging failed: {error}");
+            return fail(ImportFailure::new(FailureKind::Network));
+        }
+    };
+    let mut catalog = match import_source_into(
+        &net,
+        &job.source.config,
+        &options,
+        &mut progress,
+        cancel,
+        &mut stage,
+    )
+    .await
+    {
+        Ok(catalog) => catalog,
+        Err(e) => {
+            log::warn!("iptv data: {:?} import failed: {e}", job.source.kind());
+            // New details that failed say nothing about the stored ones.
+            if !matches!(e, ImportError::Cancelled) && !job.edit {
+                record_failure(job.stored, stored::error_kind(&e));
             }
-        };
+            // The stored guide stays on screen: keep it current.
+            if let (Some(id), Some(state)) = (job.stored, stored_guide.as_ref())
+                && let Ok((_, channels)) = stored::catalog(id)
+            {
+                let overrides = stored::overrides(id);
+                let matching = stored::Matching {
+                    channels: &channels,
+                    overrides: &overrides,
+                };
+                let guides = stored::current_configs(id, Some(state));
+                send_next_check(tx, id, &guides, matching);
+            }
+            return fail(wizard_map::failure_of(&e));
+        }
+    };
     if catalog.is_empty() {
         if !job.edit {
             record_failure(job.stored, ImportErrorKind::Other);
         }
         return fail(ImportFailure::new(FailureKind::EmptyPlaylist));
+    }
+    // Materialize only the live guide's model; movies and series stay in SQLite.
+    match stage
+        .load_channels()
+        .and_then(|channels| stage.load_groups().map(|groups| (channels, groups)))
+    {
+        Ok((channels, groups)) => {
+            catalog.channels = channels;
+            catalog.groups = groups;
+        }
+        Err(error) => {
+            log::warn!("iptv data: staged catalog read failed: {error}");
+            return fail(ImportFailure::new(FailureKind::Network));
+        }
     }
     // The guide sources: the stored source's as the user arranged them (a
     // new source: the guide just typed), with the provider's guides of now.
@@ -921,7 +953,7 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
         done: 0,
         total: None,
     }));
-    let (id, counts, sources) = match save(&job, &catalog, &planned) {
+    let (id, counts, sources) = match save(&job, &catalog, &planned, stage) {
         Ok(saved) => saved,
         Err(e) => {
             log::warn!("iptv data: store: {e}");
@@ -1074,8 +1106,25 @@ fn save(
     job: &Job,
     catalog: &Catalog,
     planned: &[GuideSource],
+    stage: CatalogStage,
 ) -> Result<(SourceId, CatalogCounts, Vec<GuideSource>), StoreError> {
     let mut store = open_store()?;
+    save_in(
+        &mut store,
+        job,
+        catalog.guide_urls(),
+        planned.to_vec(),
+        stage,
+    )
+}
+
+fn save_in(
+    store: &mut Store,
+    job: &Job,
+    guide_urls: Vec<SecretUrl>,
+    planned: Vec<GuideSource>,
+    stage: CatalogStage,
+) -> Result<(SourceId, CatalogCounts, Vec<GuideSource>), StoreError> {
     let (id, added) = match job.stored {
         Some(id) => (id, false),
         None => (store.add_source(&job.source)?, true),
@@ -1085,19 +1134,13 @@ fn save(
         log::info!("iptv data: saved the new details of source {}", id.0);
     }
     let sources = if added {
-        planned.to_vec()
+        planned
     } else {
-        guides::sync_provider(&store.guide_sources(id)?, &catalog.guide_urls())
+        guides::sync_provider(&store.guide_sources(id)?, &guide_urls)
     };
-    let written = store.set_guide_sources(id, &sources).and_then(|()| {
-        store.replace_catalog(
-            id,
-            &catalog.groups,
-            &catalog.channels,
-            &catalog.vod,
-            &catalog.series,
-        )
-    });
+    let written = store
+        .set_guide_sources(id, &sources)
+        .and_then(|()| store.replace_catalog_stage(id, stage));
     if written.is_err() && added {
         let _ = store.delete_source(id);
     }

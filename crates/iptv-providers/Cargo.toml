@@ -10,6 +10,7 @@ license.workspace = true
 [dependencies]
 iptv-core.workspace = true
 serde_json.workspace = true
+serde = { version = "1", features = ["derive"] }
 url.workspace = true
 percent-encoding.workspace = true
 xxhash-rust.workspace = true

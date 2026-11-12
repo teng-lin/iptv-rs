@@ -29,6 +29,7 @@
 
 mod cancel;
 mod catalog;
+mod catalog_sink;
 mod ctx;
 mod epg;
 mod error;
@@ -43,6 +44,7 @@ mod xtream;
 
 pub use cancel::{CancelToken, Cancelled};
 pub use catalog::{Catalog, CatalogWarning, ImportOptions, ImportStats, SourceMeta};
+pub use catalog_sink::{CatalogRow, CatalogSink};
 pub use epg::{
     EpgImport, EpgSourceConfig, EpgSourceOutcome, EpgSourceStats, ListedChannel, import_epg,
 };
@@ -71,8 +73,36 @@ pub async fn import_source<F: Fetch, P: ProgressSink>(
     progress: &mut P,
     cancel: &CancelToken,
 ) -> Result<Catalog, ImportError> {
+    import_source_impl(fetch, config, options, progress, cancel, None).await
+}
+
+/// Streams typed catalog rows into a private destination. Only metadata and
+/// bounded diagnostics remain in the returned Catalog; publish after success.
+pub async fn import_source_into<F: Fetch, P: ProgressSink>(
+    fetch: &F,
+    config: &SourceConfig,
+    options: &ImportOptions,
+    progress: &mut P,
+    cancel: &CancelToken,
+    sink: &mut dyn CatalogSink,
+) -> Result<Catalog, ImportError> {
+    let result = import_source_impl(fetch, config, options, progress, cancel, Some(sink)).await?;
+    sink.finish()
+        .map_err(|e| ImportError::Storage(e.to_string()))?;
+    Ok(result)
+}
+
+async fn import_source_impl<'a, F: Fetch, P: ProgressSink>(
+    fetch: &'a F,
+    config: &SourceConfig,
+    options: &ImportOptions,
+    progress: &'a mut P,
+    cancel: &'a CancelToken,
+    sink: Option<&'a mut dyn CatalogSink>,
+) -> Result<Catalog, ImportError> {
     let mut ctx = ctx::Ctx::new(fetch, progress, cancel);
     ctx.limits = options.limits;
+    ctx.catalog_sink = sink;
     #[cfg(debug_assertions)]
     {
         ctx.allow_private_fixture = options.allow_private_fixture;

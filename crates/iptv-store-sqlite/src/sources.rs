@@ -120,7 +120,7 @@ impl From<&ProviderError> for ImportErrorKind {
         match err {
             ProviderError::InvalidConfig(_) => Self::InvalidConfig,
             ProviderError::HttpStatus(_) => Self::HttpStatus,
-            ProviderError::InvalidBody(_) => Self::InvalidBody,
+            ProviderError::InvalidBody(_) | ProviderError::Limit(_) => Self::InvalidBody,
             ProviderError::AccountRejected => Self::AccountRejected,
             ProviderError::Stalker(e) => match e.kind {
                 StalkerErrorKind::Blocked | StalkerErrorKind::DeviceConflict => Self::Blocked,

@@ -35,6 +35,7 @@ pub(crate) struct M3uFeeder {
     taken: Vec<Channel>,
     limits: ImportLimits,
     bytes: u64,
+    parsed: u64,
 }
 
 impl M3uFeeder {
@@ -43,6 +44,7 @@ impl M3uFeeder {
             parser: M3uParser::with_limits(limits),
             limits,
             bytes: 0,
+            parsed: 0,
             head: Vec::new(),
             gzip: None,
             decided: false,
@@ -66,8 +68,10 @@ impl M3uFeeder {
                 self.decoded(&head)?;
             }
         }
-        self.taken.append(&mut self.parser.take_channels());
-        Ok(self.taken.len() as u64)
+        let mut completed = self.parser.take_channels();
+        self.parsed += completed.len() as u64;
+        self.taken.append(&mut completed);
+        Ok(self.parsed)
     }
 
     fn decide(&mut self) {
@@ -152,6 +156,7 @@ fn into_catalog(
     sniff: &[u8],
     stats: crate::catalog::ImportStats,
     allow_private_fixture: bool,
+    emitted: u64,
 ) -> Result<Catalog, ImportError> {
     let fail = |p| Err(ImportError::parse(Step::Playlist, p));
     let head = String::from_utf8_lossy(sniff);
@@ -172,12 +177,12 @@ fn into_catalog(
             StreamLocator::Url { url, .. } => url.contains("://"),
             _ => false,
         });
-        if head.starts_with(['<', '{', '[']) || !any_url {
+        if head.starts_with(['<', '{', '[']) || (!any_url && emitted == 0) {
             return fail(ParseProblem::NotAPlaylist);
         }
     }
     let channels = &playlist.channels;
-    if channels.items.is_empty() {
+    if channels.items.is_empty() && emitted == 0 {
         return if channels.skipped > 0 {
             fail(ParseProblem::NoUsableEntries {
                 skipped: channels.skipped,
@@ -210,6 +215,7 @@ fn into_catalog(
         header: playlist.header,
     });
     catalog.stats = stats;
+    catalog.stats.content_items = emitted + playlist.channels.items.len() as u64;
     catalog.groups = playlist.groups;
     catalog.channels = catalog.absorb(Step::Playlist, None, playlist.channels);
     Ok(catalog)
@@ -247,17 +253,53 @@ pub(crate) async fn import_m3u<F: Fetch, P: ProgressSink>(
     }
     ctx.phase(Phase::Playlist);
     let mut feeder = M3uFeeder::new(ctx.limits);
-    ctx.stream(Step::Playlist, Phase::Playlist, req, |chunk| {
-        feeder.push(chunk)
-    })
-    .await?;
-    let (playlist, sniff) = feeder.finish()?;
+    let mut sink = ctx.catalog_sink.take();
+    if let Some(s) = &mut sink {
+        s.begin_step()
+            .map_err(|e| ImportError::Storage(e.to_string()))?;
+    }
     #[cfg(not(debug_assertions))]
     let allow_private_fixture = false;
     #[cfg(debug_assertions)]
     let allow_private_fixture = ctx.allow_private_fixture;
-    let catalog = into_catalog(playlist, &sniff, ctx.stats.clone(), allow_private_fixture)?;
-    report_done(ctx.progress, catalog.channels.len());
+    let mut emitted = 0;
+    ctx.stream(Step::Playlist, Phase::Playlist, req, |chunk| {
+        let count = feeder.push(chunk)?;
+        if let Some(s) = &mut sink {
+            for channel in std::mem::take(&mut feeder.taken) {
+                if !allow_private_fixture {
+                    crate::validate_stream(&channel.stream)?;
+                }
+                s.push(crate::CatalogRow::Channel(channel))
+                    .map_err(|e| ImportError::Storage(e.to_string()))?;
+                emitted += 1;
+            }
+        }
+        Ok(count)
+    })
+    .await?;
+    let (playlist, sniff) = feeder.finish()?;
+    let mut catalog = into_catalog(
+        playlist,
+        &sniff,
+        ctx.stats.clone(),
+        allow_private_fixture,
+        emitted,
+    )?;
+    if let Some(s) = &mut sink {
+        for group in std::mem::take(&mut catalog.groups) {
+            s.push(crate::CatalogRow::Group(group))
+                .map_err(|e| ImportError::Storage(e.to_string()))?;
+        }
+        for channel in std::mem::take(&mut catalog.channels) {
+            s.push(crate::CatalogRow::Channel(channel))
+                .map_err(|e| ImportError::Storage(e.to_string()))?;
+        }
+        s.end_step(true)
+            .map_err(|e| ImportError::Storage(e.to_string()))?;
+    }
+    ctx.catalog_sink = sink;
+    report_done(ctx.progress, catalog.stats.content_items as usize);
     Ok(catalog)
 }
 
@@ -289,7 +331,7 @@ pub fn import_m3u_text(
         bytes: bytes.len() as u64,
         ..Default::default()
     };
-    let catalog = into_catalog(playlist, &sniff, stats, false)?;
+    let catalog = into_catalog(playlist, &sniff, stats, false, 0)?;
     report_done(progress, catalog.channels.len());
     Ok(catalog)
 }

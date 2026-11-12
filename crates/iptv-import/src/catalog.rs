@@ -91,6 +91,8 @@ pub struct CatalogWarning {
 /// Counters for logs and the import summary.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ImportStats {
+    /// Content records emitted, including those held only by a private sink.
+    pub content_items: u64,
     pub requests: u32,
     /// Body bytes received (after transport decompression).
     pub bytes: u64,
@@ -134,7 +136,10 @@ impl Catalog {
 
     /// No channels, movies or series.
     pub fn is_empty(&self) -> bool {
-        self.channels.is_empty() && self.vod.is_empty() && self.series.is_empty()
+        self.stats.content_items == 0
+            && self.channels.is_empty()
+            && self.vod.is_empty()
+            && self.series.is_empty()
     }
 
     /// Total warnings including the ones not stored.

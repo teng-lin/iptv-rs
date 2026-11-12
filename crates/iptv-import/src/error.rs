@@ -203,6 +203,7 @@ impl ImportError {
 
     pub(crate) fn provider(step: Step, error: ProviderError) -> Self {
         match error {
+            ProviderError::Limit(error) => Self::Limit { step, error },
             ProviderError::InvalidConfig(why) => Self::InvalidConfig(why),
             ProviderError::HttpStatus(status) => Self::http(step, status),
             ProviderError::InvalidBody(why) => Self::parse(step, ParseProblem::InvalidBody(why)),

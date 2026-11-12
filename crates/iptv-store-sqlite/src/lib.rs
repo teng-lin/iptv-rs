@@ -30,6 +30,8 @@
 
 mod backup;
 mod catalog;
+mod catalog_stage;
+pub use catalog_stage::CatalogStage;
 mod channels;
 mod codec;
 mod epg;

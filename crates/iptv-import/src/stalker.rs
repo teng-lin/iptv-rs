@@ -107,6 +107,16 @@ pub(crate) async fn import_stalker<F: Fetch, P: ProgressSink>(
         }
     }
 
+    if let Some(sink) = &mut ctx.catalog_sink {
+        sink.begin_step()
+            .map_err(|e| ImportError::Storage(e.to_string()))?;
+        for group in std::mem::take(&mut catalog.groups) {
+            sink.push(crate::CatalogRow::Group(group))
+                .map_err(|e| ImportError::Storage(e.to_string()))?;
+        }
+        sink.end_step(true)
+            .map_err(|e| ImportError::Storage(e.to_string()))?;
+    }
     if catalog.is_empty() {
         return Err(ImportError::Empty {
             step: Step::Items(live),
@@ -251,10 +261,12 @@ trait Crawl: Sized {
     fn push(c: &mut PagedCrawl<Self>, page: Page<Self>);
     fn abort(c: &mut PagedCrawl<Self>);
     fn into_items(c: PagedCrawl<Self>) -> Vec<Self>;
+    fn take_items(c: &mut PagedCrawl<Self>) -> Vec<Self>;
+    fn row(self) -> crate::CatalogRow;
 }
 
 macro_rules! crawlable {
-    ($t:ty) => {
+    ($t:ty, $variant:ident) => {
         impl Crawl for $t {
             fn crawl(cap: usize) -> PagedCrawl<Self> {
                 PagedCrawl::new(cap)
@@ -268,14 +280,20 @@ macro_rules! crawlable {
             fn abort(c: &mut PagedCrawl<Self>) {
                 c.abort()
             }
+            fn take_items(c: &mut PagedCrawl<Self>) -> Vec<Self> {
+                c.take_items()
+            }
+            fn row(self) -> crate::CatalogRow {
+                crate::CatalogRow::$variant(self)
+            }
             fn into_items(c: PagedCrawl<Self>) -> Vec<Self> {
                 c.into_items()
             }
         }
     };
 }
-crawlable!(Channel);
-crawlable!(VodItem);
+crawlable!(Channel, Channel);
+crawlable!(VodItem, Vod);
 
 /// Items from a crawl plus what to report about them.
 struct Crawled<T> {
@@ -283,10 +301,12 @@ struct Crawled<T> {
     skipped: usize,
     warnings: Vec<CatalogWarning>,
     dropped: usize,
+    emitted: u64,
 }
 
 impl<T> Crawled<T> {
     fn into_catalog(self, catalog: &mut Catalog) -> Vec<T> {
+        catalog.stats.content_items += self.emitted;
         catalog.stats.skipped += self.skipped;
         catalog.warnings_dropped += self.dropped;
         for w in self.warnings {
@@ -315,6 +335,7 @@ async fn crawl<F: Fetch, P: ProgressSink, T: Crawl>(
         skipped: 0,
         warnings: Vec::new(),
         dropped: 0,
+        emitted: 0,
     };
     let mut rows = 0u64;
     let mut failures = 0u8;
@@ -338,7 +359,47 @@ async fn crawl<F: Fetch, P: ProgressSink, T: Crawl>(
                         message: w.message,
                     });
                 }
+                let total = got.total_items;
                 T::push(&mut crawl, got);
+                if rows > opts.limits.items
+                    || (rows >= cap as u64 && total.is_some_and(|t| t as usize > cap))
+                {
+                    return Err(ImportError::Limit {
+                        step,
+                        error: crate::LimitExceeded {
+                            kind: crate::LimitKind::Items,
+                            maximum: opts.limits.items.min(cap as u64),
+                        },
+                    });
+                }
+                if let Some(sink) = &mut ctx.catalog_sink {
+                    sink.begin_step()
+                        .map_err(|e| ImportError::Storage(e.to_string()))?;
+                    let result: Result<(), ImportError> = (|| {
+                        for item in T::take_items(&mut crawl) {
+                            let row = item.row();
+                            let stream = match &row {
+                                crate::CatalogRow::Channel(v) => Some(&v.stream),
+                                crate::CatalogRow::Vod(v) => Some(&v.stream),
+                                _ => None,
+                            };
+                            #[cfg(not(debug_assertions))]
+                            let allow_private = false;
+                            #[cfg(debug_assertions)]
+                            let allow_private = opts.allow_private_fixture;
+                            if !allow_private && let Some(stream) = stream {
+                                crate::validate_stream(stream)?;
+                            }
+                            sink.push(row)
+                                .map_err(|e| ImportError::Storage(e.to_string()))?;
+                            out.emitted += 1;
+                        }
+                        Ok(())
+                    })();
+                    sink.end_step(result.is_ok())
+                        .map_err(|e| ImportError::Storage(e.to_string()))?;
+                    result?;
+                }
             }
             Err(e) if e.is_fatal() => return Err(e),
             Err(_) if failures < opts.page_retries => failures += 1,
@@ -355,6 +416,7 @@ async fn crawl<F: Fetch, P: ProgressSink, T: Crawl>(
         }
     }
     out.items = T::into_items(crawl);
+    out.emitted += out.items.len() as u64;
     let mut p = Progress::phase(Phase::Items(kind));
     p.items = out.items.len() as u64;
     ctx.report(p);
