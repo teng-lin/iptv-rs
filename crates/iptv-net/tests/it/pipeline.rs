@@ -303,3 +303,31 @@ async fn spawned_import_is_send_and_cancels_mid_download() {
         "cancel does not wait for the body"
     );
 }
+
+#[tokio::test]
+async fn malformed_non_ascii_guide_metadata_returns_an_error_without_losing_the_worker() {
+    let net = NetClient::with_defaults().unwrap();
+    let worker = tokio::spawn(async move {
+        let catalog = iptv_import::import_m3u_text(
+            "#EXTM3U url-tvg=\"aaaaaaé\"\n#EXTINF:-1,Synthetic\nhttps://media.example.test/live.ts\n".as_bytes(),
+            &mut NoProgress,
+            &CancelToken::new(),
+        ).unwrap();
+        import_epg(
+            &net,
+            &catalog.epg_sources(1),
+            &catalog.channels,
+            &Overrides::new(),
+            NOW,
+            &mut MemoryGuide::new(),
+            &mut NoProgress,
+            &CancelToken::new(),
+        )
+        .await
+    });
+    let result = worker
+        .await
+        .expect("malformed metadata must not panic in a worker");
+    assert!(matches!(result, Err(ImportError::Network { error, .. })
+        if error.kind == iptv_import::FetchErrorKind::InvalidRequest));
+}

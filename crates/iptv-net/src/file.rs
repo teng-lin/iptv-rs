@@ -7,7 +7,10 @@ use iptv_import::{FetchError, FetchErrorKind};
 /// The local path a request URL names, if it names one.
 pub(crate) fn local_path(url: &str) -> Option<Result<PathBuf, FetchError>> {
     let url = url.trim();
-    if url.len() > 7 && url[..7].eq_ignore_ascii_case("file://") {
+    if url
+        .get(..7)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("file://"))
+    {
         return Some(
             url::Url::parse(url)
                 .ok()
