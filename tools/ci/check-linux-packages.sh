@@ -13,9 +13,14 @@ if [ "$(id -u)" -eq 0 ]; then
 else
   sudo apt-get install -y "$prefix.deb"
 fi
+python3 tools/ci/check-notices.py /opt/patina
 xvfb-run -a dbus-run-session -- python3 tools/ci/smoke-desktop.py /usr/bin/patina
 chmod +x "$prefix.AppImage"
 APPIMAGE_EXTRACT_AND_RUN=1 xvfb-run -a dbus-run-session -- python3 tools/ci/smoke-desktop.py "$prefix.AppImage"
 docker build -t patina-appimage-smoke -f tools/ci/Dockerfile.appimage-smoke tools/ci
 docker run --rm --init -v "$PWD/dist:/packages:ro" patina-appimage-smoke \
   "/packages/Patina-$VERSION-linux-x86_64.AppImage"
+for format in rpm pacman; do
+  docker build -t "patina-$format-smoke" -f "tools/ci/Dockerfile.$format-smoke" tools/ci
+  docker run --rm --init -v "$PWD/dist:/packages:ro" "patina-$format-smoke"
+done
