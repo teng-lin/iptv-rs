@@ -759,6 +759,13 @@ fn a_dropped_live_stream_keeps_its_picture_until_the_retry_plays() {
     assert!(p.inner.create_render());
     let source =
         |token: i64| json!({ "url": server.url("/live.ts"), "live": true, "token": token });
+    // Establish a rendered picture before this short clip can reach EOF:
+    // software renderer startup can take longer than the clip on CI. This
+    // test needs a real end for the app to retry, regardless of paused wall
+    // time (which would otherwise count toward automatic live bridging).
+    p.inner.send(Cmd::DisableBridge);
+    p.set("paused", json!(true));
+    p.wait_prop(c"pause", "yes");
     p.set("source", source(0));
     p.wait_state(Some(&gpu), "ready");
     p.wait_picture(&gpu, "red", red);
@@ -767,6 +774,8 @@ fn a_dropped_live_stream_keeps_its_picture_until_the_retry_plays() {
     assert!(red(p.draw(&gpu)));
 
     // The server drops it (a live end the app retries).
+    p.set("paused", json!(false));
+    p.wait_prop(c"pause", "no");
     p.wait_state(Some(&gpu), "ended");
     p.idle(Some(&gpu), 300);
     assert!(red(p.draw(&gpu)), "the picture stays after the drop");
@@ -774,6 +783,9 @@ fn a_dropped_live_stream_keeps_its_picture_until_the_retry_plays() {
     assert!(red(p.draw(&gpu)), "at either size");
 
     // The retry: the same stream, now blue; red until its first frame.
+    // Keep that first frame available until the test thread has sampled it.
+    p.set("paused", json!(true));
+    p.wait_prop(c"pause", "yes");
     switched.store(true, Ordering::Release);
     p.set("source", source(1));
     let start = Instant::now();
@@ -791,6 +803,8 @@ fn a_dropped_live_stream_keeps_its_picture_until_the_retry_plays() {
         std::thread::sleep(Duration::from_millis(5));
     }
     p.wait_state(Some(&gpu), "ready");
+    p.set("paused", json!(false));
+    p.wait_prop(c"pause", "no");
 
     // Another channel still starts black.
     p.set(
