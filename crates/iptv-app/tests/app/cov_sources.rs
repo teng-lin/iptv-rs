@@ -84,7 +84,7 @@ fn playlists_and_their_guide_sources() {
 
 /// The rail's Playlists.
 fn open_playlists(t: &mut T) {
-    t.press("text:☰  All channels");
+    t.press("text:/^☰  /");
     t.key("left");
     t.key("left");
     t.press("text:Playlists >> nth=0");
@@ -116,12 +116,17 @@ fn add_by_link(t: &mut T, srv: &Server) {
     t.press("text:Add playlist");
     t.wait("text:Playlist added", 30);
     t.press("text:Watch");
-    t.wait("text:Test Link Channel 1", 10);
+    t.wait("text:Test Link Channel 1 · Linked", 10);
     open_playlists(t);
     t.wait("text:Linked", 5);
     assert!(t.shows("text:Refresh all playlists"));
     assert!(t.shows("text:Each one downloads again; the one on screen updates in place"));
     t.count(&format!("text:/^Updated {TIME}$/"), 2, 5);
+    // These management journeys explicitly inspect an individual source.
+    t.press("text:Linked");
+    t.press("text:Show this playlist");
+    t.wait("text:Test Link Channel 1", 10);
+    open_playlists(t);
 }
 
 /// A file's actions (no provider details), a tap beside them, renaming.

@@ -10,7 +10,7 @@
 //! ([`preview_rect`]).
 
 use iptv_core::channel_list::{ChannelList, ListMode, ListPane, Outcome};
-use iptv_core::lists::{ChannelList as Rows, FAVORITES, entry_count, entry_name};
+use iptv_core::lists::{ChannelList as Rows, Entry, FAVORITES, entry_count, entry_name};
 use iptv_nav::Action;
 use nsh_core::prelude::*;
 
@@ -326,7 +326,15 @@ fn entry_row(
         .child(
             list_rows::name(size, move || {
                 ui.data_version.get();
-                entry_name(at.index(), &*crate::schedule())
+                let schedule = crate::schedule();
+                let name = entry_name(at.index(), &*schedule);
+                if let Entry::Group(g) = Entry::at(at.index())
+                    && schedule.group_depth(g) > 0
+                {
+                    format!("    {name}")
+                } else {
+                    name
+                }
             })
             .text_color(move || mark().text()),
         )

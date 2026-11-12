@@ -37,6 +37,10 @@ const SPARE_OPTIONS: &str = "live_start_index=-2";
 
 /// What the main thread asks of mpv.
 pub enum Cmd {
+    /// Disable automatic handoff for a test of the app's own retry path.
+    /// Queue before the first load; other players retain their usual bridge.
+    #[cfg(test)]
+    DisableBridge,
     /// `loadfile <url> replace`, from the default tracks (video and audio
     /// automatic, no subtitles) with `options` set first
     /// ([`super::map::load_options`]); answered by [`Note::Loading`]. A
@@ -193,6 +197,11 @@ fn run(
 /// Runs `cmd`; what it answers.
 fn execute(mpv: &Mpv, cmd: Cmd, bridge: &mut Bridge) -> Vec<Note> {
     match cmd {
+        #[cfg(test)]
+        Cmd::DisableBridge => {
+            bridge.enabled = false;
+            Vec::new()
+        }
         Cmd::Load { url, live, options } => {
             // Track choices are options: they would carry over to this file.
             mpv.set("vid", "auto");

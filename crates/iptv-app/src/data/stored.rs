@@ -525,26 +525,33 @@ pub fn update_source(ui: Ui, source: SourceId, done: impl FnOnce() + 'static) ->
     if guides.is_empty() {
         return false;
     }
+    super::library::revoke_import_handoff(source);
+    let cancel = CancelToken::new();
+    let completion = super::library::import_completion(cancel.clone());
+    completion.playlist_done(); // This worker owns guide work only.
+    super::library::track_import(source, &completion);
     // Without a stored guide the periodic checks stopped: start them again.
     let restart_checks = stored.is_none();
     UPDATING.with(|u| u.borrow_mut().push(source));
     let generation = GENERATION.with(Cell::get);
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        super::with_runtime(|| download_now(source, guides, restart_checks, &tx));
+        super::with_runtime(|| download_now(source, guides, restart_checks, &tx, &cancel));
     });
     super::spawn_in_app(async move {
         loop {
             match rx.try_recv() {
                 Ok(Msg::Guide(imported))
-                    if SHOWN.with(Cell::get) == Some(source)
-                        || super::combined::includes(ui, source) =>
+                    if (SHOWN.with(Cell::get) == Some(source)
+                        || super::combined::includes(ui, source))
+                        && super::library::import_is_current(source, &completion) =>
                 {
                     super::show(ui, imported, generation, false)
                 }
                 Ok(Msg::NextCheck { source, at })
-                    if SHOWN.with(Cell::get) == Some(source)
-                        || super::combined::includes(ui, source) =>
+                    if (SHOWN.with(Cell::get) == Some(source)
+                        || super::combined::includes(ui, source))
+                        && super::library::import_is_current(source, &completion) =>
                 {
                     super::schedule_check(ui, source, at, generation);
                 }
@@ -553,6 +560,7 @@ pub fn update_source(ui: Ui, source: SourceId, done: impl FnOnce() + 'static) ->
                 Err(TryRecvError::Disconnected) => break,
             }
         }
+        completion.finish();
         UPDATING.with(|u| u.borrow_mut().retain(|id| *id != source));
         ui.library.version.update(|v| *v += 1);
         done();
@@ -566,6 +574,7 @@ async fn download_now(
     guides: Vec<EpgSourceConfig>,
     restart_checks: bool,
     tx: &Sender<Msg>,
+    cancel: &CancelToken,
 ) {
     let now = super::now_unix();
     let (groups, channels) = match catalog(source) {
@@ -583,9 +592,8 @@ async fn download_now(
     log::info!("iptv data: downloading the guide (asked for)");
     match NetClient::new(crate::settings::net_config()) {
         Ok(net) => {
-            let cancel = CancelToken::new();
             let result =
-                super::download_guide(&net, &guides, matching, now, &mut NoProgress, &cancel, None)
+                super::download_guide(&net, &guides, matching, now, &mut NoProgress, cancel, None)
                     .await;
             match result {
                 Ok(import) => {
@@ -600,6 +608,7 @@ async fn download_now(
                         resume: false,
                     })));
                 }
+                Err(ImportError::Cancelled) => {}
                 Err(e) => {
                     log::warn!("iptv data: guide: {e}");
                     record_failure(source, &e, &guides);
@@ -655,6 +664,9 @@ pub fn clear(ui: Ui, done: impl FnOnce(bool) + 'static) -> bool {
     let sources = shown_sources();
     if sources.is_empty() {
         return false;
+    }
+    for source in &sources {
+        super::library::revoke_import_handoff(*source);
     }
     let generation = GENERATION.with(Cell::get);
     let (tx, rx) = mpsc::channel();

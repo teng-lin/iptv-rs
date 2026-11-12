@@ -64,7 +64,7 @@ pub fn entry_name(entry: usize, catalog: &dyn Schedule) -> String {
     match Entry::at(entry) {
         Entry::Favorites => "Favourites".to_owned(),
         Entry::Recent => "Recently watched".to_owned(),
-        Entry::All => "All channels".to_owned(),
+        Entry::All => catalog.all_channels_name(),
         Entry::Group(g) => catalog.group_name(g),
     }
 }
@@ -104,11 +104,19 @@ impl ListId {
 }
 
 /// The catalog group holding `channel` (channels are stored grouped).
-pub fn group_of(catalog: &dyn Schedule, channel: usize) -> Option<usize> {
+pub fn group_of(catalog: &(impl Schedule + ?Sized), channel: usize) -> Option<usize> {
     if channel >= catalog.channel_count() || catalog.group_count() == 0 {
         return None;
     }
-    (0..catalog.group_count()).find(|&g| catalog.group_channels(g).contains(&channel))
+    // Prefer a category over its playlist parent, which contains the same
+    // channel. A collapsed source still has its parent as a useful fallback.
+    (0..catalog.group_count())
+        .find(|&g| !catalog.group_is_playlist(g) && catalog.group_channels(g).contains(&channel))
+        .or_else(|| {
+            (0..catalog.group_count()).find(|&g| {
+                catalog.group_is_playlist(g) && catalog.group_channels(g).contains(&channel)
+            })
+        })
 }
 
 /// The channels a list shows: catalog indices in display order.

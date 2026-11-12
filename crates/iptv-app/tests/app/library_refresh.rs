@@ -95,6 +95,13 @@ fn startup_and_periodic_refresh_skip_disabled_sources_and_failures_keep_the_cach
         ..EngineConfig::new(Root::of::<iptv_app::App>())
     })
     .unwrap();
+    step(app.wait_for_within("text:A 0 · Synthetic A", Duration::from_secs(20)));
+    step(app.press("text:☰  All playlists"));
+    step(app.press_key("left"));
+    step(app.press_key("left"));
+    step(app.press("text:Playlists >> nth=0"));
+    step(app.press("text:Synthetic A"));
+    step(app.press("text:Show this playlist"));
     step(app.wait_for_within("text:A 0", Duration::from_secs(20)));
     until(
         &mut app,

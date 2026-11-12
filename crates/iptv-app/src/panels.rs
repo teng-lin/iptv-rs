@@ -2,7 +2,7 @@
 //! layer, the groups column (shown with the rail while either has the
 //! focus) and the geometry of the header (`header.rs`) and its preview.
 
-use iptv_core::lists::{entry_count, entry_name};
+use iptv_core::lists::entry_count;
 use nsh_core::prelude::*;
 
 use crate::Ui;
@@ -110,7 +110,7 @@ pub fn group_column(ui: Ui, groups: ElementRef) -> impl IntoElement {
                     // Re-read on new data: the recycled cell keeps its index.
                     list_rows::name(size, move || {
                         ui.guide_data();
-                        entry_name(at.index(), &*crate::schedule())
+                        crate::lists::browser_entry_name(at.index())
                     })
                     .text_color(move || match mark() {
                         Mark::Current => rgb(ui.theme.with(|t| t.accent.light)),

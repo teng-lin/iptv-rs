@@ -116,6 +116,7 @@ pub fn choose(
     choice: Choice,
     done: impl FnOnce(Applied) + 'static,
 ) {
+    super::library::revoke_import_handoff(source);
     let generation = GENERATION.with(std::cell::Cell::get);
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {

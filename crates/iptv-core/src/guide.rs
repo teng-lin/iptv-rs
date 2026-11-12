@@ -109,6 +109,13 @@ pub trait Schedule {
         };
         (start..end).collect()
     }
+    /// The owning category's channels in display order, independent of which
+    /// category rows the browser currently shows. Channels without a category
+    /// use the playlist's order.
+    fn channel_group_channels(&self, channel: usize) -> Vec<usize> {
+        crate::lists::group_of(self, channel)
+            .map_or_else(|| self.playlist_order(), |g| self.group_channels(g))
+    }
     /// Hidden channels remain addressable for an already playing stream.
     fn channel_hidden(&self, _channel: usize) -> bool {
         false
@@ -144,6 +151,21 @@ pub trait Schedule {
         (0..self.channel_count()).collect()
     }
     fn group_name(&self, group: usize) -> String;
+
+    /// A playlist parent in a multi-source group browser.
+    fn group_is_playlist(&self, _group: usize) -> bool {
+        false
+    }
+    fn group_is_collapsed(&self, _group: usize) -> bool {
+        false
+    }
+    fn group_depth(&self, _group: usize) -> usize {
+        0
+    }
+    fn all_channels_name(&self) -> String {
+        "All channels".into()
+    }
+
     fn title(&self, channel: usize, program: Program) -> String;
     /// The channel's live stream URL, when the schedule knows it.
     fn stream_url(&self, _channel: usize) -> Option<String> {

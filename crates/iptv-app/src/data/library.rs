@@ -7,6 +7,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap};
+use std::rc::{Rc, Weak};
 
 use iptv_core::wizard::{ImportCounts, ImportFailure, ImportProgress};
 use iptv_import::CancelToken;
@@ -81,6 +82,96 @@ thread_local! {
     static RUNNING: RefCell<HashMap<SourceId, (u64, CancelToken)>> = RefCell::default();
     static ATTEMPTS: RefCell<HashMap<SourceId,i64>> = RefCell::default();
     static TICKETS: Cell<u64> = const { Cell::new(0) };
+    // Unlike RUNNING, this lasts through post-playlist guide work. Weak entries
+    // identify the latest worker without retaining completed guides or tasks.
+    static COMPLETIONS: RefCell<HashMap<SourceId, Weak<ImportWork>>> = RefCell::default();
+}
+pub(super) type ImportCompletion = Rc<ImportWork>;
+pub(super) struct ImportWork {
+    finished: Cell<bool>,
+    catalog_done: Cell<bool>,
+    cancel: CancelToken,
+}
+impl ImportWork {
+    pub(super) fn finished(&self) -> bool {
+        self.finished.get()
+    }
+    pub(super) fn finish(&self) {
+        self.finished.set(true);
+    }
+    pub(super) fn playlist_done(&self) {
+        self.catalog_done.set(true);
+    }
+    pub(super) fn cancel_guide(&self) {
+        if self.catalog_done.get() {
+            self.cancel.cancel();
+        }
+    }
+}
+pub(super) fn import_completion(cancel: CancelToken) -> ImportCompletion {
+    Rc::new(ImportWork {
+        finished: Cell::new(false),
+        catalog_done: Cell::new(false),
+        cancel,
+    })
+}
+pub(super) fn track_import(source: SourceId, completion: &ImportCompletion) {
+    COMPLETIONS.with(|jobs| jobs.borrow_mut().insert(source, Rc::downgrade(completion)));
+}
+/// An Add learns its source ID only after saving. A newer known-source job may
+/// already own that ID by then, including a worker that has just completed.
+pub(super) fn track_added_import(source: SourceId, completion: &ImportCompletion) {
+    COMPLETIONS.with(|jobs| {
+        jobs.borrow_mut()
+            .entry(source)
+            .or_insert_with(|| Rc::downgrade(completion));
+    });
+}
+pub(super) type ImportRevision = Option<Weak<ImportWork>>;
+pub(super) fn import_revision(source: SourceId) -> ImportRevision {
+    COMPLETIONS.with(|jobs| jobs.borrow().get(&source).cloned())
+}
+pub(super) fn import_revision_is_current(source: SourceId, revision: &ImportRevision) -> bool {
+    match (import_revision(source), revision) {
+        (None, None) => true,
+        (Some(current), Some(previous)) => Weak::ptr_eq(&current, previous),
+        _ => false,
+    }
+}
+pub(super) fn pending_import(source: SourceId) -> Option<ImportCompletion> {
+    COMPLETIONS
+        .with(|jobs| jobs.borrow().get(&source).and_then(Weak::upgrade))
+        .filter(|job| !job.finished())
+}
+pub(super) fn import_is_current(source: SourceId, completion: &ImportCompletion) -> bool {
+    COMPLETIONS.with(|jobs| {
+        jobs.borrow()
+            .get(&source)
+            .and_then(Weak::upgrade)
+            .is_some_and(|current| Rc::ptr_eq(&current, completion))
+    })
+}
+pub(super) fn revoke_import_handoff(source: SourceId) {
+    if let Some(job) = COMPLETIONS.with(|jobs| {
+        jobs.borrow_mut()
+            .remove(&source)
+            .and_then(|job| job.upgrade())
+    }) {
+        // Guide edits may happen during a source's authentication/catalog
+        // phase. Revoke handoff then, but let that phase establish playback.
+        job.cancel_guide();
+    }
+}
+pub(super) fn reset_imports() {
+    COMPLETIONS.with(|jobs| {
+        for job in jobs
+            .borrow_mut()
+            .drain()
+            .filter_map(|(_, job)| job.upgrade())
+        {
+            job.cancel.cancel();
+        }
+    });
 }
 
 /// The stored playlists in list order.
@@ -243,11 +334,12 @@ fn changed(ui: Ui) {
     ui.library.version.update(|v| *v += 1);
 }
 
-fn running(id: SourceId) -> bool {
+pub(super) fn running(id: SourceId) -> bool {
     RUNNING.with(|r| r.borrow().contains_key(&id))
 }
 
 fn cancel_running(id: SourceId) {
+    revoke_import_handoff(id);
     if let Some((_, token)) = RUNNING.with(|r| r.borrow_mut().remove(&id)) {
         log::info!(
             "iptv data: cancelling the running import of source {}",
@@ -444,6 +536,7 @@ pub fn edit_guides(ui: Ui, id: SourceId, edit: &guides::Edit) -> Result<bool, St
     };
     store.set_guide_sources(id, &changed_sources)?;
     changed(ui);
+    revoke_import_handoff(id);
     stored::guides_changed(ui, id);
     Ok(true)
 }
