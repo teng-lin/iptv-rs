@@ -35,7 +35,7 @@
 //! player holds it itself until the new first frame ([`held`]), as mpv's
 //! render API draws black meanwhile. Each
 //! load sets its cache options first ([`map::load_options`]). mpv
-//! sends a stream's headers with all of its requests ([`map::http`]).
+//! loads through the origin-scoped playback transport ([`map::http`]).
 //! `IPTV_RS_AUDIO` names mpv's audio output (`null` mutes, for tests);
 //! `IPTV_RS_HWDEC` overrides `hwdec`; `IPTV_RS_LIVE_BRIDGE=0` turns
 //! bridging off.
@@ -143,6 +143,7 @@ struct State {
     /// The source is a live channel (bridged, see [`worker`]).
     live: bool,
     headers: Vec<(String, String)>,
+    public_only: bool,
     user_agent: String,
     picture: String,
     aspect: Option<f64>,
@@ -264,6 +265,7 @@ impl Inner {
                 token: 0,
                 live: false,
                 headers: Vec::new(),
+                public_only: true,
                 user_agent: DEFAULT_UA.to_owned(),
                 picture: "normal".to_owned(),
                 aspect: None,
@@ -397,6 +399,9 @@ impl Inner {
             .and_then(|s| s["url"].as_str())
             .map(str::to_owned)
             .filter(|u| !u.is_empty());
+        let public_only = source
+            .and_then(|s| s["publicOnly"].as_bool())
+            .unwrap_or(true);
         let token = source.and_then(|s| s["token"].as_i64()).unwrap_or(0);
         let live = source.and_then(|s| s["live"].as_bool()).unwrap_or(false);
         let reconnect = source
@@ -412,12 +417,13 @@ impl Inner {
             .unwrap_or_default();
         let (changed, keep) = {
             let mut st = self.state.borrow_mut();
-            let changed = url != st.url || token != st.token;
+            let changed = url != st.url || token != st.token || public_only != st.public_only;
             let keep = map::keeps_frame(st.url.as_deref(), url.as_deref(), reconnect);
             st.url = url;
             st.token = token;
             st.live = live;
             st.headers = headers;
+            st.public_only = public_only;
             (changed, keep)
         };
         self.apply_http();
@@ -470,20 +476,27 @@ impl Inner {
                 st.loads += 1;
                 st.state(&mut out, "buffering");
                 let live = st.live;
+                let public_only = st.public_only;
                 drop(st);
                 let options = map::load_options(live, keep_frame);
-                self.send(Cmd::Load { url, live, options });
+                self.send(Cmd::Load {
+                    url,
+                    live,
+                    options,
+                    public_only,
+                });
             }
         }
         self.emit(out);
     }
 
     fn apply_http(&self) {
-        let http = {
+        let (source, http) = {
             let st = self.state.borrow();
-            map::http(&st.headers, &st.user_agent)
+            (st.url.clone(), map::http(&st.headers, &st.user_agent))
         };
         self.send(Cmd::Http {
+            source,
             user_agent: http.user_agent,
             fields: http.fields,
         });
@@ -633,6 +646,7 @@ impl Inner {
 
     fn note(&self, note: Note, out: &mut Out) {
         match note {
+            Note::TransportError(code) => self.state.borrow_mut().clues.transport_error(code),
             Note::Loading(id) => {
                 let mut st = self.state.borrow_mut();
                 st.loads = st.loads.saturating_sub(1);

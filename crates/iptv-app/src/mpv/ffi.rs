@@ -27,6 +27,7 @@ pub const MPV_EVENT_START_FILE: c_int = 6;
 pub const MPV_EVENT_END_FILE: c_int = 7;
 pub const MPV_EVENT_PLAYBACK_RESTART: c_int = 21;
 pub const MPV_EVENT_PROPERTY_CHANGE: c_int = 22;
+pub const MPV_EVENT_HOOK: c_int = 25;
 
 pub const MPV_END_FILE_REASON_EOF: c_int = 0;
 pub const MPV_END_FILE_REASON_ERROR: c_int = 4;
@@ -48,6 +49,12 @@ pub struct mpv_event {
     pub error: c_int,
     pub reply_userdata: u64,
     pub data: *mut c_void,
+}
+
+#[repr(C)]
+pub struct mpv_event_hook {
+    pub name: *const c_char,
+    pub id: u64,
 }
 
 #[repr(C)]
@@ -107,6 +114,13 @@ pub type Callback = unsafe extern "C" fn(data: *mut c_void);
 // iOS links MPVKit's static `Libmpv.framework` (build.rs).
 #[cfg_attr(not(target_os = "ios"), link(name = "mpv"))]
 unsafe extern "C" {
+    pub fn mpv_hook_add(
+        ctx: *mut mpv_handle,
+        userdata: u64,
+        name: *const c_char,
+        priority: c_int,
+    ) -> c_int;
+    pub fn mpv_hook_continue(ctx: *mut mpv_handle, id: u64) -> c_int;
     pub fn mpv_create() -> *mut mpv_handle;
     pub fn mpv_initialize(ctx: *mut mpv_handle) -> c_int;
     pub fn mpv_terminate_destroy(ctx: *mut mpv_handle);

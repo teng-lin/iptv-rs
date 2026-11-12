@@ -13,7 +13,7 @@
 //! - **HTTP:** HTTP/1.1; `gzip`/`deflate` `Content-Encoding` decoded
 //!   transparently (a `.gz` *file* is passed through for the parsers to
 //!   detect); up to [`NetConfig::max_redirects`] redirects, including
-//!   http↔https. A redirect to another origin drops `Cookie`,
+//!   HTTP to HTTPS; HTTPS to HTTP is refused. A redirect to another origin drops `Cookie`,
 //!   `Authorization` and `SN`, and no `Referer` is ever added (it would
 //!   carry Xtream credentials from the query), so portal identity never
 //!   leaks to a CDN.
@@ -34,6 +34,7 @@ mod body;
 mod client;
 mod error;
 mod file;
+pub mod playback;
 mod redirect;
 mod tls;
 

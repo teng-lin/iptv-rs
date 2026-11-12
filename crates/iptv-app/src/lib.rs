@@ -7,6 +7,8 @@
 pub use iptv_core::guide;
 pub mod theme;
 
+#[cfg(target_os = "android")]
+mod android_transport;
 mod backup;
 mod browse_playback;
 mod channels_view;
@@ -50,6 +52,7 @@ mod settings;
 mod settings_view;
 pub mod startup;
 pub mod time;
+mod transport;
 mod ui_kit;
 mod video;
 mod wizard_view;

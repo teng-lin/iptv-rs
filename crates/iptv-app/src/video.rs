@@ -184,6 +184,7 @@ fn source_prop(ui: Ui, surface: usize) -> Value {
                 .collect();
             json!({
                 "url": s.url,
+                "publicOnly": s.public_only,
                 "headers": headers,
                 "token": token,
                 "live": live,

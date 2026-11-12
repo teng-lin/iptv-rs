@@ -31,6 +31,37 @@ pub(super) fn serial() -> MutexGuard<'static, ()> {
     SERIAL.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// CI opts into mandatory native coverage; missing prerequisites cannot pass.
+fn unavailable(reason: &str) {
+    assert!(
+        std::env::var("IPTV_REQUIRE_PLAYER_TESTS").as_deref() != Ok("1"),
+        "Required player test unavailable: {reason}"
+    );
+    eprintln!("skipped: {reason}");
+}
+
+#[test]
+fn required_player_tests_fail_without_their_prerequisites() {
+    const CHILD: &str = "IPTV_PLAYER_PREREQUISITE_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        let dir = tempfile::tempdir().unwrap();
+        clip(dir.path(), "black", 0.1);
+        return;
+    }
+    let result = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "mpv::tests::required_player_tests_fail_without_their_prerequisites",
+        ])
+        .env(CHILD, "1")
+        .env("IPTV_REQUIRE_PLAYER_TESTS", "1")
+        .env("PATH", "/synthetic/no-programs")
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stdout).contains("Required player test unavailable"));
+}
+
 // ---- A GL context without a display ----
 
 const W: i32 = 64;
@@ -57,7 +88,7 @@ impl Gpu {
         // SAFETY: create checks dynamically loaded EGL entry points and context creation.
         let gpu = unsafe { Gpu::create() };
         if gpu.is_none() {
-            eprintln!("skipped: no surfaceless EGL context on this machine");
+            unavailable("no surfaceless EGL context on this machine");
         }
         gpu
     }
@@ -256,9 +287,9 @@ fn clip(dir: &Path, color: &str, secs: f32) -> Option<Vec<u8>> {
         .arg(&out)
         .status();
     match status {
-        Ok(s) if s.success() => std::fs::read(&out).ok(),
+        Ok(s) if s.success() => Some(std::fs::read(&out).expect("ffmpeg produced its output")),
         _ => {
-            eprintln!("skipped: ffmpeg could not make a synthetic clip");
+            unavailable("ffmpeg could not make a synthetic clip");
             None
         }
     }
@@ -268,6 +299,7 @@ fn clip(dir: &Path, color: &str, secs: f32) -> Option<Vec<u8>> {
 enum Answer {
     Body(Vec<u8>),
     Status(u16),
+    Redirect(String),
     /// The first body until the flag is set, then the second.
     Switch(Arc<AtomicBool>, Vec<u8>, Vec<u8>),
 }
@@ -349,6 +381,7 @@ fn answer(mut conn: TcpStream, routes: &[(&'static str, Answer)], heads: &Mutex<
                 .as_bytes(),
             )
             .and_then(|()| conn.write_all(&body)),
+        Answer::Redirect(url) => conn.write_all(format!("HTTP/1.1 302 Found\r\nLocation: {url}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes()),
         Answer::Status(code) => conn.write_all(
             format!("HTTP/1.1 {code} Synthetic\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
                 .as_bytes(),
@@ -588,8 +621,15 @@ fn a_source_plays_through_the_render_api() {
     assert_eq!(tracks["selected"]["text"], "off");
     assert_eq!(p.inner.state.borrow().audio_out.as_deref(), Some("null"));
     let head = server.heads("/red.ts").remove(0);
-    assert!(head.contains("User-Agent: SyntheticAgent/1.0"), "{head}");
-    assert!(head.contains("X-Synthetic: one"), "{head}");
+    assert!(
+        head.to_ascii_lowercase()
+            .contains("user-agent: syntheticagent/1.0"),
+        "{head}"
+    );
+    assert!(
+        head.to_ascii_lowercase().contains("x-synthetic: one"),
+        "{head}"
+    );
 
     // Once a second while playing: where it is.
     host::tick(&p.inner);
@@ -614,9 +654,13 @@ fn a_source_plays_through_the_render_api() {
     assert!(red(p.draw(&gpu)), "the last frame stays");
     p.wait_state(Some(&gpu), "ready");
     let head = server.heads("/red.ts").pop().unwrap();
-    assert!(head.contains("User-Agent: SyntheticAgent/1.0"), "{head}");
     assert!(
-        !head.contains("X-Synthetic"),
+        head.to_ascii_lowercase()
+            .contains("user-agent: syntheticagent/1.0"),
+        "{head}"
+    );
+    assert!(
+        !head.to_ascii_lowercase().contains("x-synthetic"),
         "headers are the source's: {head}"
     );
 
@@ -925,7 +969,7 @@ fn props_set_mpvs_properties() {
         }),
     );
     p.wait_prop(c"user-agent", "SourceAgent/1.0");
-    p.wait_prop(c"http-header-fields", "X-Synthetic: two");
+    p.wait_prop(c"http-header-fields", "");
     // mpv may not open files: refused before it is asked.
     assert_eq!(
         p.events("error"),
@@ -1203,4 +1247,45 @@ fn suspend_stops_the_stream_until_resume() {
     p.inner.resume(); // not suspended: nothing
     p.idle(None, 50);
     assert!(p.states().is_empty());
+}
+
+/// Real libmpv follows a redirected HLS manifest and plays its remote-origin
+/// segment, while only the first origin sees generated identity headers.
+#[test]
+fn adaptive_playback_never_sends_identity_to_another_origin() {
+    let _serial = serial();
+    let Some((dir, gpu)) = rig() else { return };
+    let Some(red_ts) = clip(dir.path(), "red", 4.0) else {
+        return;
+    };
+    let remote = Server::start(vec![("/red.ts", Answer::Body(red_ts))]);
+    let manifest = format!(
+        "#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:4,\n{}\n#EXT-X-ENDLIST\n",
+        remote.url("/red.ts")
+    );
+    let origin = Server::start(vec![
+        ("/start.m3u8", Answer::Redirect("/main.m3u8".into())),
+        ("/main.m3u8", Answer::Body(manifest.into_bytes())),
+    ]);
+    let mut player = Player::new();
+    assert!(player.inner.create_render());
+    player.set("source", json!({"url": origin.url("/start.m3u8"), "headers": {
+        "Authorization": "synthetic-identity", "Cookie": "synthetic-identity", "SN": "synthetic-identity", "X-User-Agent": "synthetic-identity"
+    }}));
+    player.wait_state(Some(&gpu), "ready");
+    player.wait_picture(&gpu, "red", red);
+    assert!(!remote.heads("/red.ts").is_empty());
+    for path in ["/start.m3u8", "/main.m3u8"] {
+        let heads = origin.heads(path);
+        assert!(!heads.is_empty());
+        for head in heads {
+            let head = head.to_ascii_lowercase();
+            for name in ["authorization", "cookie", "sn", "x-user-agent"] {
+                assert!(head.contains(&format!("{name}: synthetic-identity")));
+            }
+        }
+    }
+    for head in remote.heads("/red.ts") {
+        assert!(!head.contains("synthetic-identity"));
+    }
 }

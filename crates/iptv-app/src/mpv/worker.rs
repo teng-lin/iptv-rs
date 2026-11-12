@@ -46,6 +46,7 @@ pub enum Cmd {
     /// ([`super::map::load_options`]); answered by [`Note::Loading`]. A
     /// `live` stream is bridged across connections the server closes.
     Load {
+        public_only: bool,
         url: String,
         live: bool,
         options: Vec<(&'static str, String)>,
@@ -54,6 +55,7 @@ pub enum Cmd {
     Set(&'static str, String),
     /// The HTTP options for the next load.
     Http {
+        source: Option<String>,
         user_agent: String,
         fields: Vec<String>,
     },
@@ -68,6 +70,7 @@ pub enum Cmd {
 pub enum Note {
     /// The playlist entry a [`Cmd::Load`] made (`None`: refused).
     Loading(Option<i64>),
+    TransportError(&'static str),
     Started(i64),
     Ended {
         entry: i64,
@@ -113,6 +116,8 @@ pub struct Worker {
 impl Worker {
     /// Starts the thread; `notify` runs (on it) after notes were sent.
     pub fn spawn(mpv: Arc<Mpv>, notify: impl Fn() + Send + 'static) -> Worker {
+        // SAFETY: a live initialized handle and static NUL-terminated hook name.
+        let guarded = unsafe { ffi::mpv_hook_add(mpv.0, 0, c"on_load".as_ptr(), 0) } >= 0;
         let (tx, notes) = channel();
         let queue = Arc::new(Mutex::new(Vec::new()));
         let quit = Arc::new(AtomicBool::new(false));
@@ -120,7 +125,11 @@ impl Worker {
             let (mpv, queue, quit) = (mpv.clone(), queue.clone(), quit.clone());
             std::thread::Builder::new()
                 .name("iptv-mpv".into())
-                .spawn(move || run(&mpv, &queue, &quit, &tx, notify, Bridge::new()))
+                .spawn(move || {
+                    let mut bridge = Bridge::new();
+                    bridge.guarded = guarded;
+                    run(&mpv, &queue, &quit, &tx, notify, bridge)
+                })
                 .map_err(|e| log::error!("iptv mpv: no control thread ({e})"))
                 .ok()
         };
@@ -181,7 +190,55 @@ fn run(
             match ev.event_id {
                 ffi::MPV_EVENT_NONE => break,
                 ffi::MPV_EVENT_SHUTDOWN => return,
+                ffi::MPV_EVENT_HOOK if !ev.data.is_null() => {
+                    let path = mpv.get(c"stream-open-filename").unwrap_or_default();
+                    let allowed = bridge
+                        .transport
+                        .as_ref()
+                        .is_some_and(|relay| relay.owns_url(&path));
+                    // Worker-only unit fixtures synthesize tones without IO.
+                    let allowed = allowed || (cfg!(test) && path.starts_with("av://lavfi:"));
+                    if !allowed {
+                        let denied = mpv.try_set(
+                            "stream-open-filename",
+                            "iptv-blocked://unsupported-reference",
+                        );
+                        if !denied {
+                            // Never continue an original path after failed
+                            // substitution. Keep the hook blocked until handle
+                            // teardown and refuse subsequent source loads.
+                            bridge.guarded = false;
+                            sent |= tx
+                                .send(Note::TransportError(
+                                    "ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED",
+                                ))
+                                .is_ok();
+                            continue;
+                        }
+                        if !bridge.retired(&path) {
+                            sent |= tx
+                                .send(Note::TransportError(
+                                    "ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED",
+                                ))
+                                .is_ok();
+                        }
+                    }
+                    // SAFETY: MPV_EVENT_HOOK carries this struct until next wait;
+                    // continuing it exactly once releases the blocked load.
+                    unsafe {
+                        let hook = &*(ev.data as *const ffi::mpv_event_hook);
+                        ffi::mpv_hook_continue(mpv.0, hook.id);
+                    }
+                }
                 _ => {
+                    if ev.event_id == ffi::MPV_EVENT_END_FILE
+                        && let Some(code) = bridge
+                            .transport
+                            .as_ref()
+                            .and_then(|transport| transport.take_error_code())
+                    {
+                        sent |= tx.send(Note::TransportError(code)).is_ok();
+                    }
                     if let Some(note) = bridge.event(mpv, ev).or_else(|| convert(mpv, ev)) {
                         sent |= tx.send(note).is_ok();
                     }
@@ -202,7 +259,17 @@ fn execute(mpv: &Mpv, cmd: Cmd, bridge: &mut Bridge) -> Vec<Note> {
             bridge.enabled = false;
             Vec::new()
         }
-        Cmd::Load { url, live, options } => {
+        Cmd::Load {
+            url,
+            live,
+            options,
+            public_only,
+        } => {
+            if !bridge.guarded {
+                return vec![Note::TransportError(
+                    "ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED",
+                )];
+            }
             // Track choices are options: they would carry over to this file.
             mpv.set("vid", "auto");
             mpv.set("aid", "auto");
@@ -211,6 +278,28 @@ fn execute(mpv: &Mpv, cmd: Cmd, bridge: &mut Bridge) -> Vec<Note> {
             for (name, value) in &options {
                 mpv.set(name, value);
             }
+            bridge.retire_transport();
+            let url = if url
+                .get(..7)
+                .is_some_and(|s| s.eq_ignore_ascii_case("http://"))
+                || url
+                    .get(..8)
+                    .is_some_and(|s| s.eq_ignore_ascii_case("https://"))
+            {
+                let Ok(transport) = iptv_net::playback::PlaybackRelay::start_with_policy(
+                    &url,
+                    &bridge.headers,
+                    crate::transport::policy(public_only),
+                ) else {
+                    mpv.command(&["stop"]);
+                    return vec![Note::Loading(None)];
+                };
+                let local = transport.url().to_owned();
+                bridge.transport = Some(transport);
+                local
+            } else {
+                url
+            };
             let ok = mpv.command(&["loadfile", &url, "replace"]);
             // The new entry is the playlist's last (`replace` may keep the
             // stopping one until it ends).
@@ -220,6 +309,7 @@ fn execute(mpv: &Mpv, cmd: Cmd, bridge: &mut Bridge) -> Vec<Note> {
         }
         Cmd::Stop => {
             mpv.command(&["stop"]);
+            bridge.retire_transport();
             bridge.load(String::new(), false, None);
             Vec::new()
         }
@@ -227,11 +317,31 @@ fn execute(mpv: &Mpv, cmd: Cmd, bridge: &mut Bridge) -> Vec<Note> {
             mpv.set(name, &value);
             Vec::new()
         }
-        Cmd::Http { user_agent, fields } => {
+        Cmd::Http {
+            source,
+            user_agent,
+            fields,
+        } => {
             mpv.set("user-agent", &user_agent);
             mpv.command(&["change-list", "http-header-fields", "clr", ""]);
-            for field in &fields {
-                mpv.command(&["change-list", "http-header-fields", "append", field]);
+            if bridge
+                .transport
+                .as_ref()
+                .is_some_and(|transport| Some(transport.source_url()) != source.as_deref())
+            {
+                bridge.retire_transport();
+            }
+            bridge.headers = fields
+                .iter()
+                .filter_map(|field| {
+                    field
+                        .split_once(':')
+                        .map(|(name, value)| (name.to_owned(), value.trim().to_owned()))
+                })
+                .collect();
+            bridge.headers.push(("User-Agent".into(), user_agent));
+            if let Some(transport) = &bridge.transport {
+                let _ = transport.update_headers(&bridge.headers);
             }
             Vec::new()
         }
@@ -275,7 +385,11 @@ fn remove_entry(mpv: &Mpv, id: i64) {
 /// `IPTV_RS_LIVE_BRIDGE=0`: every closed connection is then an end the app
 /// reconnects.
 struct Bridge {
+    guarded: bool,
     enabled: bool,
+    headers: Vec<(String, String)>,
+    transport: Option<iptv_net::playback::PlaybackRelay>,
+    retired_prefixes: std::collections::VecDeque<String>,
     /// The live stream's address (`None`: nothing live is loaded).
     url: Option<String>,
     /// The entry that plays it, and its spare.
@@ -288,13 +402,31 @@ struct Bridge {
 }
 
 impl Bridge {
+    fn retire_transport(&mut self) {
+        if let Some(relay) = self.transport.take() {
+            if self.retired_prefixes.len() == 8 {
+                self.retired_prefixes.pop_front();
+            }
+            self.retired_prefixes.push_back(relay.prefix().to_owned());
+        }
+    }
+    fn retired(&self, url: &str) -> bool {
+        self.retired_prefixes
+            .iter()
+            .any(|prefix| url.starts_with(prefix))
+    }
+
     fn new() -> Bridge {
         let off = std::env::var("IPTV_RS_LIVE_BRIDGE").is_ok_and(|v| v.trim() == "0");
         if off {
             log::info!("iptv mpv: live bridging off");
         }
         Bridge {
+            guarded: true,
             enabled: !off,
+            headers: Vec::new(),
+            transport: None,
+            retired_prefixes: std::collections::VecDeque::new(),
             url: None,
             current: None,
             spare: None,
@@ -481,6 +613,7 @@ mod tests {
 
     fn load(url: String, live: bool) -> Cmd {
         Cmd::Load {
+            public_only: true,
             url,
             live,
             options: super::super::map::load_options(live, false),
@@ -521,6 +654,65 @@ mod tests {
         matches!(n, Note::Ended { .. })
     }
 
+    #[test]
+    fn native_reference_load_is_blocked_before_network_io() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let mpv = mpv();
+        let worker = Worker::spawn(mpv.clone(), || {});
+        // A decoder-selected playlist entry bypasses Cmd::Load, just as this
+        // direct command does. The on_load hook must refuse it before open.
+        assert!(mpv.command(&[
+            "loadfile",
+            &format!("http://{}/private", listener.local_addr().unwrap()),
+            "replace"
+        ]));
+        let notes = notes_until(&worker, ended);
+        assert!(notes.iter().any(|note| matches!(
+            note,
+            Note::TransportError("ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED")
+        )));
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+
+    #[test]
+    fn changing_source_retires_transport_before_new_identity_is_applied() {
+        let mut bridge = Bridge::new();
+        bridge.transport = Some(
+            iptv_net::playback::PlaybackRelay::start_with_policy(
+                "http://localhost:1/old",
+                &[],
+                crate::transport::policy(false),
+            )
+            .unwrap(),
+        );
+        let retired = bridge.transport.as_ref().unwrap().url().to_owned();
+        let mpv = mpv();
+        execute(
+            &mpv,
+            Cmd::Http {
+                source: Some("http://localhost:2/new".into()),
+                user_agent: "SyntheticAgent".into(),
+                fields: vec!["Authorization: synthetic-new-identity".into()],
+            },
+            &mut bridge,
+        );
+        assert!(bridge.transport.is_none());
+        assert!(
+            bridge.retired(&retired),
+            "a pending hook from the retired source is denied silently"
+        );
+        assert!(
+            bridge
+                .headers
+                .iter()
+                .any(|(name, value)| name == "Authorization" && value == "synthetic-new-identity")
+        );
+    }
+
     /// A file's life as notes, in mpv's order: the entry the load made,
     /// its start, the playback start with the audio output, its end; the
     /// main loop is woken for them.
@@ -532,6 +724,7 @@ mod tests {
             let _ = woke_tx.send(());
         });
         worker.send(Cmd::Http {
+            source: None,
             user_agent: "SyntheticAgent/3.0".into(),
             fields: vec!["X-One: 1".into(), "X-Two: 2".into()],
         });
@@ -542,6 +735,7 @@ mod tests {
         let mut options = options;
         options.push(("pause", "yes".into()));
         worker.send(Cmd::Load {
+            public_only: true,
             url,
             live: false,
             options,
@@ -564,10 +758,7 @@ mod tests {
             mpv.get(c"user-agent").as_deref(),
             Some("SyntheticAgent/3.0")
         );
-        assert_eq!(
-            mpv.get(c"http-header-fields").as_deref(),
-            Some("X-One: 1,X-Two: 2")
-        );
+        assert_eq!(mpv.get(c"http-header-fields").as_deref(), Some(""));
 
         // What plays, while it plays.
         worker.send(Cmd::Position);
