@@ -342,9 +342,18 @@ fn settings(app: &mut Headless, home: &Path) {
     step(app.press_key("up"));
     step(app.wait_for(PAGES_HINT));
     step(app.wait_for("text:/^\\d+ of \\d+ settings here can be changed now$/"));
-    // Into the rows: the first row the app acts on, its description.
+    // Into the rows: backup is now the first available command. Its
+    // description and Restore's are reachable before the startup switches.
     step(app.press_key("right"));
     step(app.wait_for(ROWS_HINT));
+    step(app.wait_for("text:Write settings and customisations to a backup file."));
+    step(app.press_key("down"));
+    step(app.wait_for("text:Replace everything with a backup's contents."));
+    // Unavailable command rows still take remote focus; passing them does
+    // not invoke a command or open an editor.
+    step(app.press_key("down"));
+    step(app.press_key("down"));
+    step(app.press_key("down"));
     step(app.wait_for("text:Start playing the channel that was on when the app was last closed."));
     // OK flips a switch, saved at once.
     row_value(app, "Play the last channel on start", "On");
