@@ -1,0 +1,9 @@
+# This image deliberately has no system GTK, mpv or GStreamer installation.
+FROM ubuntu:24.04
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    python3 xvfb x11-utils xauth dbus-x11 fonts-dejavu-core \
+    libegl1 libgles2 libgl1 libgl1-mesa-dri libglx-mesa0 ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY smoke-desktop.py /smoke-desktop.py
+ENV APPIMAGE_EXTRACT_AND_RUN=1
+ENTRYPOINT ["timeout", "90", "xvfb-run", "-a", "dbus-run-session", "--", "python3", "/smoke-desktop.py"]

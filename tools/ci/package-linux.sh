@@ -49,4 +49,13 @@ printf 'exec "./%s" "$@"\n' "$exe" >> "$appdir/AppRun"
 chmod +x "$appdir/AppRun"
 # GTK needs schemas, loaders and other resources beyond its linked libraries.
 export DEPLOY_GTK_VERSION=4 OUTPUT="$out/Patina-$VERSION-linux-x86_64.AppImage"
-linuxdeploy --appdir "$appdir" --executable "$appdir/usr/bin/$exe" --plugin gtk --output appimage
+# linuxdeploy excludes these common desktop libraries by default. They are
+# direct/transitive dependencies here and may be absent on a minimal desktop.
+libraries=()
+for library in libharfbuzz.so.0 libfribidi.so.0 libfontconfig.so.1 libfreetype.so.6 \
+  libasound.so.2 libjack.so.0 libpipewire-0.3.so.0 libusb-1.0.so.0; do
+  path=$(ldconfig -p | awk -v name="$library" '$1 == name { print $NF }' | head -n 1)
+  test -n "$path"
+  libraries+=(--library "$path")
+done
+linuxdeploy --appdir "$appdir" --executable "$appdir/usr/bin/$exe" "${libraries[@]}" --plugin gtk --output appimage

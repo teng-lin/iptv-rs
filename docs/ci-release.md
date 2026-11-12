@@ -22,10 +22,12 @@ only that option requires Apple signing secrets and still needs iPad validation.
 Linux outputs are .deb, .rpm, .pkg.tar.zst (a pacman package), and .AppImage.
 Native packages depend on system GTK4, mpv and GStreamer. The AppImage bundles
 linked libraries and GTK resources, and uses X11 (XWayland on Wayland desktops).
+It uses the host's OpenGL/EGL/GLES drivers and audio servers.
 Linux compatibility starts at glibc 2.39 and GTK 4.14 from Ubuntu 24.04, not
 every older distribution. Packaging checks inspect all three native package
 formats, install and launch the DEB, and launch the AppImage under Xvfb with
-empty temporary app state. RPM and pacman metadata checks do not replace
+empty temporary app state. A second AppImage launch uses a minimal Ubuntu
+container without system GTK, mpv or GStreamer. RPM and pacman metadata checks do not replace
 installation tests on their respective distributions.
 
 macOS produces a self-contained .dmg with Patina.app and an Applications
