@@ -1,6 +1,6 @@
 use crate::personalization;
 use iptv_settings::Settings;
-use iptv_store_sqlite::{ChannelQuery, ChannelScope, Store};
+use iptv_store_sqlite::{ChannelQuery, ChannelScope};
 use personalization::*;
 use std::time::Duration;
 #[test]
@@ -14,7 +14,7 @@ fn custom_groups_filter_select_copy_move_rename_delete_and_restore_focus() {
     step(app.press("text:New group"));
     step(app.submit("text:Enter text"));
     assert!(
-        Store::open(&f.path)
+        crate::isolated::open_database(&f.path)
             .unwrap()
             .custom_groups(f.source)
             .unwrap()
@@ -64,7 +64,7 @@ fn custom_groups_filter_select_copy_move_rename_delete_and_restore_focus() {
     step(app.press("text:Second group · 0 channels"));
     step(app.wait_for("text:2 channels moved."));
     step(app.wait_for("text:0 selected · 0 matching · 0 total"));
-    let groups = Store::open(&f.path)
+    let groups = crate::isolated::open_database(&f.path)
         .unwrap()
         .custom_groups(f.source)
         .unwrap();
@@ -81,7 +81,7 @@ fn custom_groups_filter_select_copy_move_rename_delete_and_restore_focus() {
     step(app.press("id:organization-row-1"));
     step(app.press("text:Move to first"));
     step(app.back());
-    let s = Store::open(&f.path).unwrap();
+    let s = crate::isolated::open_database(&f.path).unwrap();
     let id = s.custom_groups(f.source).unwrap()[1].id;
     let members = s
         .load_channels(
@@ -101,7 +101,7 @@ fn custom_groups_filter_select_copy_move_rename_delete_and_restore_focus() {
     step(app.press("text:Select filtered"));
     step(app.press("text:Remove selected"));
     assert_eq!(
-        Store::open(&f.path)
+        crate::isolated::open_database(&f.path)
             .unwrap()
             .load_channels(
                 f.source,
@@ -119,7 +119,7 @@ fn custom_groups_filter_select_copy_move_rename_delete_and_restore_focus() {
     step(app.press("text:Delete group"));
     step(app.press_key("enter"));
     assert_eq!(
-        Store::open(&f.path)
+        crate::isolated::open_database(&f.path)
             .unwrap()
             .custom_groups(f.source)
             .unwrap()
@@ -131,7 +131,7 @@ fn custom_groups_filter_select_copy_move_rename_delete_and_restore_focus() {
     step(app.press_key("enter"));
     step(app.wait_for("text:1 custom groups"));
     assert_eq!(
-        Store::open(&f.path)
+        crate::isolated::open_database(&f.path)
             .unwrap()
             .load_channels(f.source, &ChannelQuery::default())
             .unwrap()

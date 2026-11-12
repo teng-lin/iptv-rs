@@ -120,10 +120,21 @@ impl EpgStage {
     /// A new stage in directory `dir` (next to the store), under a name no
     /// other stage of this process uses.
     pub fn create_in(dir: impl AsRef<Path>) -> Result<Self> {
+        Self::create(Self::next_path(dir.as_ref()))
+    }
+
+    /// Stages guide data using the live store's key, including icon/stream URLs.
+    pub fn create_in_store(store: &crate::Store, dir: impl AsRef<Path>) -> Result<Self> {
+        let path = Self::next_path(dir.as_ref());
+        let conn = store.open_staging_connection(&path)?;
+        Self::create_with_connection(path, conn)
+    }
+
+    fn next_path(dir: &Path) -> PathBuf {
         static NEXT: AtomicU32 = AtomicU32::new(0);
         let n = NEXT.fetch_add(1, Ordering::Relaxed);
         let name = format!("{PREFIX}{}-{n}.sqlite", std::process::id());
-        Self::create(dir.as_ref().join(name))
+        dir.join(name)
     }
 
     /// A new stage at `path` (an existing file there is replaced).
@@ -134,6 +145,10 @@ impl EpgStage {
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX;
         let conn = Connection::open_with_flags(&path, flags)?;
+        Self::create_with_connection(path, conn)
+    }
+
+    fn create_with_connection(path: PathBuf, conn: Connection) -> Result<Self> {
         let opened = (|| -> Result<()> {
             // Scratch data: a crash deletes the file anyway.
             let _mode: String =

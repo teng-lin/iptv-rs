@@ -210,7 +210,7 @@ fn exercise(data: &Path, combined_key: bool) {
         .unwrap();
     std::fs::write(data.join("settings.json"), settings.to_json_string()).unwrap();
     let portal = Portal::start();
-    let mut store = Store::open(data.join("iptv.sqlite")).unwrap();
+    let mut store = crate::isolated::open_database(data.join("iptv.sqlite")).unwrap();
     let (stalker, channel) = seed_portal(&mut store, &portal);
     if combined_key {
         store
@@ -329,7 +329,7 @@ fn adding_playlist_reauthenticates_a_cached_portal_after_startup_auth_failed() {
     let portal = Portal::start();
     portal.reject_auth();
     let path = data.join("iptv.sqlite");
-    let mut store = Store::open(&path).unwrap();
+    let mut store = crate::isolated::open_database(&path).unwrap();
     let (stalker, _) = seed_portal(&mut store, &portal);
     drop(store);
     let mut app = Headless::start(EngineConfig {
@@ -340,7 +340,7 @@ fn adding_playlist_reauthenticates_a_cached_portal_after_startup_auth_failed() {
     step(app.wait_for_within("text:Saved portal channel", IMPORT));
     step(
         app.wait_until("failed portal startup is recorded", IMPORT, |_| {
-            Store::open(&path)
+            crate::isolated::open_database(&path)
                 .unwrap()
                 .import_status(stalker)
                 .unwrap()
@@ -381,7 +381,7 @@ fn adding_playlist_reauthenticates_a_cached_portal_after_startup_auth_failed() {
         "the cached portal must authenticate again"
     );
     assert!(
-        Store::open(&path)
+        crate::isolated::open_database(&path)
             .unwrap()
             .import_status(stalker)
             .unwrap()

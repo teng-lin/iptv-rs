@@ -110,6 +110,9 @@ fn collect(root: &Path, directory: &Path, names: &mut Vec<String>) -> Result<()>
     }
     for entry in fs::read_dir(directory).map_err(|_| "Could not read local playlist files")? {
         let entry = entry.map_err(|_| "Could not read local playlist files")?;
+        if crate::private_files::temporary_name(&entry.file_name()) {
+            continue;
+        }
         let kind = entry
             .file_type()
             .map_err(|_| "Could not read local playlist files")?;
@@ -140,6 +143,102 @@ fn collect(root: &Path, directory: &Path, names: &mut Vec<String>) -> Result<()>
 
 /// An online SQLite snapshot includes committed WAL data. The caller first
 /// drains queued favorite/history writes and captures settings on the UI thread.
+/// Unit tests own independent synthetic roots; they must never reach the
+/// process-wide production service or the operating-system credential broker.
+#[cfg(test)]
+fn snapshot_library(root: &Path, snapshot: &Path) -> Result<()> {
+    Store::open(root.join("iptv.sqlite"))
+        .and_then(|store| store.snapshot_to(snapshot))
+        .map_err(|_| "Could not snapshot the library")
+}
+#[cfg(not(test))]
+fn snapshot_library(root: &Path, snapshot: &Path) -> Result<()> {
+    if root != crate::data::data_dir() {
+        return Err("Backup root does not match application storage");
+    }
+    crate::credential_key::open_database(&root.join("iptv.sqlite"))
+        .and_then(|store| store.snapshot_to(snapshot))
+        .map_err(|_| "Could not snapshot the library")
+}
+
+// Backup unit tests own independent plaintext roots. Production exports stream
+// decrypted private chunks directly into the explicitly requested v1 archive.
+#[cfg(test)]
+fn document_reader(_: &Path, path: &Path) -> Result<(u64, Box<dyn Read>)> {
+    let file = File::open(path).map_err(|_| "Could not read backup document")?;
+    let len = file
+        .metadata()
+        .map_err(|_| "Could not read backup document")?
+        .len();
+    Ok((len, Box::new(file)))
+}
+#[cfg(not(test))]
+fn document_reader(root: &Path, path: &Path) -> Result<(u64, Box<dyn Read>)> {
+    if root != crate::data::data_dir() {
+        return Err("Backup root does not match application storage");
+    }
+    let path = path.to_owned();
+    let reader = crate::credential_key::open_database(&root.join("iptv.sqlite"))
+        .and_then(|store| store.read_private_file(&path))
+        .map_err(|_| "Could not decrypt backup document")?;
+    Ok((reader.len(), Box::new(reader)))
+}
+
+fn seal_restore_with_store(
+    store: &Store,
+    directory: &Path,
+) -> std::result::Result<(), iptv_store_sqlite::StoreError> {
+    crate::private_files::seal_tree(store, &directory.join("playlists"))?;
+    store.seal_snapshot(&directory.join("iptv.sqlite"))
+}
+#[cfg(test)]
+fn seal_restore(_: &Path) -> Result<()> {
+    Ok(())
+}
+#[cfg(not(test))]
+fn seal_restore(directory: &Path) -> Result<()> {
+    let directory = directory.to_owned();
+    crate::credential_key::open_database(&crate::data::data_dir().join("iptv.sqlite"))
+        .and_then(|store| seal_restore_with_store(&store, &directory))
+        .map_err(|_| "Could not encrypt the pending restore")
+}
+#[cfg(test)]
+fn validate_pending(path: &Path) -> std::result::Result<(), iptv_store_sqlite::StoreError> {
+    Store::validate_snapshot(path)
+}
+#[cfg(not(test))]
+fn validate_pending(path: &Path) -> std::result::Result<(), iptv_store_sqlite::StoreError> {
+    crate::credential_key::validate_staged_database(path)
+}
+
+fn remove_stale_work(root: &Path) -> Result<()> {
+    let Some(parent) = root.parent() else {
+        return Ok(());
+    };
+    let Some(name) = root.file_name().and_then(|n| n.to_str()) else {
+        return Ok(());
+    };
+    let prefix = format!("{name}.backup-work-");
+    let Ok(entries) = fs::read_dir(parent) else {
+        return Ok(());
+    };
+    for entry in entries {
+        let entry = entry.map_err(|_| "Could not inspect abandoned backup storage")?;
+        if entry.file_name().to_string_lossy().starts_with(&prefix) {
+            let kind = entry
+                .file_type()
+                .map_err(|_| "Could not inspect abandoned backup storage")?;
+            let result = if kind.is_dir() {
+                fs::remove_dir_all(entry.path())
+            } else {
+                fs::remove_file(entry.path())
+            };
+            result.map_err(|_| "Could not remove abandoned backup storage")?;
+        }
+    }
+    Ok(())
+}
+
 fn export(root: &Path, destination: &Path, settings: &str) -> Result<()> {
     validate_settings(settings)?;
     let absolute_destination = if destination.is_absolute() {
@@ -172,9 +271,8 @@ fn export(root: &Path, destination: &Path, settings: &str) -> Result<()> {
     }
     let destination = absolute_destination.as_path();
     let work = scratch(root)?;
-    Store::open(root.join("iptv.sqlite"))
-        .and_then(|s| s.snapshot_to(&work.0.join("iptv.sqlite")))
-        .map_err(|_| "Could not snapshot the library")?;
+    let snapshot = work.0.join("iptv.sqlite");
+    snapshot_library(root, &snapshot)?;
     let mut names = vec!["iptv.sqlite".to_owned(), "settings.json".to_owned()];
     collect(root, &root.join("playlists"), &mut names)?;
     if let Ok(entries) = fs::read_dir(root) {
@@ -221,6 +319,8 @@ fn export(root: &Path, destination: &Path, settings: &str) -> Result<()> {
     for name in &names {
         let len = if name == "settings.json" {
             settings.len() as u64
+        } else if name.starts_with("playlists/") {
+            document_reader(root, &root.join(name))?.0
         } else {
             fs::metadata(if name == "iptv.sqlite" {
                 work.0.join(name)
@@ -273,8 +373,20 @@ fn export(root: &Path, destination: &Path, settings: &str) -> Result<()> {
                     root.join(name)
                 };
                 let expected = entry["length"].as_u64().unwrap();
-                let file = File::open(path).map_err(|_| "Could not read backup files")?;
-                let count = io::copy(&mut file.take(expected), &mut output)
+                let (length, reader): (u64, Box<dyn Read>) = if name.starts_with("playlists/") {
+                    document_reader(root, &path)?
+                } else {
+                    let file = File::open(path).map_err(|_| "Could not read backup files")?;
+                    let length = file
+                        .metadata()
+                        .map_err(|_| "Could not read backup files")?
+                        .len();
+                    (length, Box::new(file))
+                };
+                if length != expected {
+                    return Err("Application files changed; try the backup again");
+                }
+                let count = io::copy(&mut reader.take(expected), &mut output)
                     .map_err(|_| "Could not write backup files")?;
                 if count != expected {
                     return Err("Application files changed; try the backup again");
@@ -435,6 +547,9 @@ fn stage(root: &Path, input: &mut impl Read) -> Result<()> {
         }
     }
     drop(store);
+    // All archive validation and reference rewriting succeeded. Encrypt the
+    // persistent pending tree before its rename can make it survive restart.
+    seal_restore(&work.0)?;
     // Close/checkpoint WAL before directory swap; SQLite open on next launch
     // sees a complete database, and no staging handles remain.
     recover_replacement(root)?;
@@ -504,6 +619,7 @@ pub(crate) fn startup() -> std::result::Result<(), StartupError> {
 }
 
 fn activate(root: &Path) -> Result<()> {
+    remove_stale_work(root)?;
     recover_replacement(root)?;
     // No native export is active before App starts. A killed process can leave
     // a private prepared archive; never retain those credential-bearing copies.
@@ -547,7 +663,7 @@ fn activate(root: &Path) -> Result<()> {
             .map_err(|_| "Backup structured entry is too large")?;
         }
     }
-    Store::validate_snapshot(&pending.join("iptv.sqlite"))
+    validate_pending(&pending.join("iptv.sqlite"))
         .map_err(|_| "The pending backup library is invalid; current data was kept")?;
     validate_settings(&read_small_file(
         &pending.join("settings.json"),

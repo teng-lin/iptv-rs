@@ -29,12 +29,12 @@ use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::sync::mpsc::{self, Sender, TryRecvError};
 
+use crate::private_files::Client as NetClient;
 use iptv_epg::{ChannelKey, DAY, GuideStore, Overrides, UnixTime};
 use iptv_import::{
     CancelToken, Decision, EpgSourceConfig, ImportError, NoProgress, RefreshPolicy, Trigger,
     decide, matching_fingerprint, store_options,
 };
-use iptv_net::NetClient;
 use iptv_providers::SecretUrl;
 use iptv_providers::model::{Channel, ContentKind, Group};
 use iptv_settings::{Settings, Target};

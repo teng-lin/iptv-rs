@@ -32,9 +32,9 @@ desktop-file-validate "$stage/usr/share/applications/$id.desktop"
 # not add its dispatch library to native package requirements.
 for format in deb rpm pacman; do
   case "$format" in
-    deb) deps=(--depends 'libc6 (>= 2.39)' --depends 'libgtk-4-1 (>= 4.14)' --depends libmpv2 --depends libgles2 --depends libgstreamer1.0-0 --depends libgstreamer-plugins-base1.0-0); extension=deb;;
-    rpm) deps=(--depends 'glibc >= 2.39' --depends 'gtk4 >= 4.14' --depends mpv-libs --depends libglvnd-gles --depends gstreamer1 --depends gstreamer1-plugins-base); extension=rpm;;
-    pacman) deps=(--depends 'glibc>=2.39' --depends 'gtk4>=4.14' --depends mpv --depends libglvnd --depends gstreamer --depends gst-plugins-base-libs --pacman-compression zstd); extension=pkg.tar.zst;;
+    deb) deps=(--depends 'libc6 (>= 2.39)' --depends 'libgtk-4-1 (>= 4.14)' --depends libdbus-1-3 --depends libmpv2 --depends libgles2 --depends libgstreamer1.0-0 --depends libgstreamer-plugins-base1.0-0); extension=deb;;
+    rpm) deps=(--depends 'glibc >= 2.39' --depends 'gtk4 >= 4.14' --depends dbus-libs --depends mpv-libs --depends libglvnd-gles --depends gstreamer1 --depends gstreamer1-plugins-base); extension=rpm;;
+    pacman) deps=(--depends 'glibc>=2.39' --depends 'gtk4>=4.14' --depends dbus --depends mpv --depends libglvnd --depends gstreamer --depends gst-plugins-base-libs --pacman-compression zstd); extension=pkg.tar.zst;;
   esac
   fpm --force -s dir -t "$format" -n patina -v "$VERSION" --license "$license" \
     --url https://github.com/teng-lin/iptv-rs \

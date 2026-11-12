@@ -64,7 +64,7 @@ fn startup_and_periodic_refresh_skip_disabled_sources_and_failures_keep_the_cach
     };
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("iptv.sqlite");
-    let mut store = Store::open(&path).unwrap();
+    let mut store = crate::isolated::open_database(&path).unwrap();
     let (a, file_a) = add(
         &mut store,
         home.path(),
@@ -108,7 +108,7 @@ fn startup_and_periodic_refresh_skip_disabled_sources_and_failures_keep_the_cach
         "background startup refresh",
         Duration::from_secs(10),
         || {
-            Store::open(&path)
+            crate::isolated::open_database(&path)
                 .unwrap()
                 .import_status(b)
                 .unwrap()
@@ -117,7 +117,7 @@ fn startup_and_periodic_refresh_skip_disabled_sources_and_failures_keep_the_cach
                 == 2
         },
     );
-    let mut store = Store::open(&path).unwrap();
+    let mut store = crate::isolated::open_database(&path).unwrap();
     assert_eq!(
         store.import_status(a).unwrap().counts.channels,
         1,
@@ -146,7 +146,7 @@ fn startup_and_periodic_refresh_skip_disabled_sources_and_failures_keep_the_cach
         "periodic refresh",
         Duration::from_secs(75),
         || {
-            Store::open(&path)
+            crate::isolated::open_database(&path)
                 .unwrap()
                 .import_status(a)
                 .unwrap()
@@ -156,7 +156,7 @@ fn startup_and_periodic_refresh_skip_disabled_sources_and_failures_keep_the_cach
         },
     );
     step(app.wait_for("text:A 2")); // Store commit precedes application of the refreshed UI.
-    let mut store = Store::open(&path).unwrap();
+    let mut store = crate::isolated::open_database(&path).unwrap();
     assert_eq!(store.import_status(c).unwrap().counts.channels, 1);
     store
         .set_source_policy(
@@ -182,7 +182,7 @@ fn startup_and_periodic_refresh_skip_disabled_sources_and_failures_keep_the_cach
         "failed import status",
         Duration::from_secs(10),
         || {
-            Store::open(&path)
+            crate::isolated::open_database(&path)
                 .unwrap()
                 .import_status(a)
                 .unwrap()
@@ -191,7 +191,7 @@ fn startup_and_periodic_refresh_skip_disabled_sources_and_failures_keep_the_cach
         },
     );
     assert_eq!(
-        Store::open(&path)
+        crate::isolated::open_database(&path)
             .unwrap()
             .import_status(a)
             .unwrap()
@@ -207,7 +207,7 @@ fn startup_and_periodic_refresh_skip_disabled_sources_and_failures_keep_the_cach
         "explicit refresh of disabled source",
         Duration::from_secs(10),
         || {
-            Store::open(&path)
+            crate::isolated::open_database(&path)
                 .unwrap()
                 .import_status(c)
                 .unwrap()
@@ -217,14 +217,17 @@ fn startup_and_periodic_refresh_skip_disabled_sources_and_failures_keep_the_cach
         },
     );
     assert!(
-        !Store::open(&path)
+        !crate::isolated::open_database(&path)
             .unwrap()
             .source_policy(c)
             .unwrap()
             .enabled
     );
     assert_eq!(
-        Store::open(&path).unwrap().active_source().unwrap(),
+        crate::isolated::open_database(&path)
+            .unwrap()
+            .active_source()
+            .unwrap(),
         Some(a)
     );
     step(app.press("text:Synthetic A"));
@@ -233,7 +236,13 @@ fn startup_and_periodic_refresh_skip_disabled_sources_and_failures_keep_the_cach
         &mut app,
         "fallback to an enabled source",
         Duration::from_secs(10),
-        || Store::open(&path).unwrap().active_source().unwrap() == Some(b),
+        || {
+            crate::isolated::open_database(&path)
+                .unwrap()
+                .active_source()
+                .unwrap()
+                == Some(b)
+        },
     );
     step(app.press("text:Close"));
     step(app.wait_for("text:B 0"));

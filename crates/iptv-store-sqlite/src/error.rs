@@ -11,6 +11,8 @@ use crate::SourceId;
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum StoreError {
+    /// The service or platform key broker is unavailable; contains no secrets.
+    Unavailable(&'static str),
     /// SQLite failed (I/O, constraint, busy, corrupt file).
     Sqlite(rusqlite::Error),
     /// Applying a numbered migration failed; the database stays at the
@@ -35,9 +37,19 @@ pub enum StoreError {
 
 pub type Result<T, E = StoreError> = std::result::Result<T, E>;
 
+impl StoreError {
+    /// The bytes could not be interpreted as a database with the supplied key.
+    /// I/O, locking and schema errors deliberately do not match this class.
+    pub fn is_not_database(&self) -> bool {
+        matches!(self, Self::Sqlite(rusqlite::Error::SqliteFailure(error, _))
+            if error.code == rusqlite::ErrorCode::NotADatabase)
+    }
+}
+
 impl fmt::Display for StoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Unavailable(reason) => write!(f, "store unavailable: {reason}"),
             Self::Sqlite(err) => write!(f, "database error: {err}"),
             Self::Migration { version, source } => {
                 write!(f, "schema migration {version} failed: {source}")

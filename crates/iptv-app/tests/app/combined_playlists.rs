@@ -86,7 +86,7 @@ fn playlists(app: &mut Headless) {
 }
 
 fn favorite_names(path: &Path, source: SourceId) -> Vec<String> {
-    Store::open(path)
+    crate::isolated::open_database(path)
         .unwrap()
         .load_channels(
             source,
@@ -120,7 +120,7 @@ fn combined_browsing_routes_duplicate_keys_favorites_search_and_playback() {
         .unwrap();
     std::fs::write(dir.join("settings.json"), settings.to_json_string()).unwrap();
     let path = dir.join("iptv.sqlite");
-    let mut store = Store::open(&path).unwrap();
+    let mut store = crate::isolated::open_database(&path).unwrap();
     let alpha = seed(&mut store, home.path(), "Alpha");
     let beta = seed(&mut store, home.path(), "Beta");
     store.set_active_source(alpha).unwrap();
@@ -200,12 +200,17 @@ fn combined_browsing_routes_duplicate_keys_favorites_search_and_playback() {
     playlists(&mut app);
     step(app.press("id:playlists-all"));
     step(app.wait_for_within("text:/^Only Beta/", Duration::from_secs(20)));
-    assert!(Store::open(&path).unwrap().all_playlists().unwrap());
+    assert!(
+        crate::isolated::open_database(&path)
+            .unwrap()
+            .all_playlists()
+            .unwrap()
+    );
     playlists(&mut app);
     step(app.press("text:Beta"));
     step(app.press("text:Playlist enabled: Yes"));
     assert!(
-        !Store::open(&path)
+        !crate::isolated::open_database(&path)
             .unwrap()
             .source_policy(beta)
             .unwrap()
@@ -219,7 +224,12 @@ fn combined_browsing_routes_duplicate_keys_favorites_search_and_playback() {
     // Disabling keeps the underlying configuration and membership available
     // for re-enabling; the combined-mode choice stays persisted.
     assert_eq!(favorite_names(&path, beta), ["Shared"]);
-    assert!(Store::open(&path).unwrap().all_playlists().unwrap());
+    assert!(
+        crate::isolated::open_database(&path)
+            .unwrap()
+            .all_playlists()
+            .unwrap()
+    );
 }
 
 #[test]
@@ -232,7 +242,7 @@ fn persisted_combined_mode_recovers_disabled_and_failed_sources_and_deletion() {
     };
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("iptv.sqlite");
-    let mut store = Store::open(&path).unwrap();
+    let mut store = crate::isolated::open_database(&path).unwrap();
     let source = seed(&mut store, home.path(), "Alpha");
     store.set_all_playlists(true).unwrap();
     store
@@ -269,7 +279,7 @@ fn persisted_combined_mode_recovers_disabled_and_failed_sources_and_deletion() {
         "failed refresh recorded with cache retained",
         Duration::from_secs(15),
         |_| {
-            Store::open(&path)
+            crate::isolated::open_database(&path)
                 .unwrap()
                 .import_status(source)
                 .unwrap()
@@ -288,8 +298,19 @@ fn persisted_combined_mode_recovers_disabled_and_failed_sources_and_deletion() {
         Duration::from_secs(10),
         |app| app.count("id:guide-channel-name").unwrap() == 0,
     ));
-    assert!(Store::open(&path).unwrap().sources().unwrap().is_empty());
-    assert!(Store::open(&path).unwrap().all_playlists().unwrap());
+    assert!(
+        crate::isolated::open_database(&path)
+            .unwrap()
+            .sources()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        crate::isolated::open_database(&path)
+            .unwrap()
+            .all_playlists()
+            .unwrap()
+    );
     playlists(&mut app);
     step(app.wait_for("text:+ Add playlist"));
 }
@@ -304,7 +325,7 @@ fn leaving_combined_mode_cancels_a_missing_startup_channel_before_manual_return(
     });
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("iptv.sqlite");
-    let mut store = Store::open(&path).unwrap();
+    let mut store = crate::isolated::open_database(&path).unwrap();
     let alpha = seed(&mut store, home.path(), "Alpha");
     let beta = seed(&mut store, home.path(), "Beta");
     store.set_all_playlists(true).unwrap();
@@ -322,7 +343,7 @@ fn leaving_combined_mode_cancels_a_missing_startup_channel_before_manual_return(
     step(app.press("text:Alpha"));
     step(app.press("text:Show this playlist"));
     step(app.wait_for_within("text:Only Alpha", Duration::from_secs(20)));
-    let mut store = Store::open(&path).unwrap();
+    let mut store = crate::isolated::open_database(&path).unwrap();
     assert_eq!(store.active_source().unwrap(), Some(alpha));
     let channel = store.load_channels(beta, &ChannelQuery::default()).unwrap()[0]
         .channel
@@ -363,7 +384,7 @@ fn guide_browses_playlist_sections_by_touch_and_remote_and_remembers_expansion()
     let dir = home.data_dir();
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("iptv.sqlite");
-    let mut store = Store::open(&path).unwrap();
+    let mut store = crate::isolated::open_database(&path).unwrap();
     let alpha = seed(&mut store, home.path(), "Alpha");
     seed(&mut store, home.path(), "Beta");
     let disabled = seed(&mut store, home.path(), "Disabled");
@@ -410,7 +431,10 @@ fn guide_browses_playlist_sections_by_touch_and_remote_and_remembers_expansion()
     assert_eq!(app.screen().count("id:guide-channel-name").unwrap(), 2);
     step(app.wait_for("text:/^Only Alpha · Alpha/"));
     assert_eq!(
-        Store::open(&path).unwrap().collapsed_playlists().unwrap(),
+        crate::isolated::open_database(&path)
+            .unwrap()
+            .collapsed_playlists()
+            .unwrap(),
         [alpha.0]
     );
     // OK expands in place; Right enters that source's complete channel list.
@@ -451,7 +475,7 @@ fn adding_second_playlist_opens_combined_browser_without_management_switch() {
     let Some(home) = isolated!() else { return };
     let dir = home.data_dir();
     std::fs::create_dir_all(&dir).unwrap();
-    let mut store = Store::open(dir.join("iptv.sqlite")).unwrap();
+    let mut store = crate::isolated::open_database(dir.join("iptv.sqlite")).unwrap();
     seed(&mut store, home.path(), "Alpha");
     drop(store);
     let mut app = Headless::start(EngineConfig {
@@ -476,7 +500,7 @@ fn adding_second_playlist_opens_combined_browser_without_management_switch() {
     step(app.wait_for("text:☰  All playlists"));
     assert_eq!(app.screen().count("id:guide-channel-name").unwrap(), 3);
     assert!(
-        Store::open(dir.join("iptv.sqlite"))
+        crate::isolated::open_database(dir.join("iptv.sqlite"))
             .unwrap()
             .all_playlists()
             .unwrap()
@@ -602,7 +626,7 @@ fn automatic_join_keeps_account_format_limit_and_the_original_guide_job_and_time
     let dir = home.data_dir();
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("iptv.sqlite");
-    let mut store = Store::open(&path).unwrap();
+    let mut store = crate::isolated::open_database(&path).unwrap();
     seed(&mut store, home.path(), "Alpha");
     drop(store);
     let mut settings = Settings::new();
@@ -667,7 +691,7 @@ fn automatic_join_keeps_account_format_limit_and_the_original_guide_job_and_time
             }
         }
     });
-    let beta = Store::open(&path)
+    let beta = crate::isolated::open_database(&path)
         .unwrap()
         .sources()
         .unwrap()
@@ -678,7 +702,10 @@ fn automatic_join_keeps_account_format_limit_and_the_original_guide_job_and_time
     // Let NextCheck arrive, remove the stored guide, then run the original
     // Add's scheduled check. It must still be eligible in the combined mode.
     step(app.run_for(Duration::from_secs(1)));
-    Store::open(&path).unwrap().delete_epg(beta).unwrap();
+    crate::isolated::open_database(&path)
+        .unwrap()
+        .delete_epg(beta)
+        .unwrap();
     step(app.fast_forward(Duration::from_secs(7 * 3600)));
     step(app.wait_for_within("text:Delayed Beta guide 2", Duration::from_secs(20)));
     assert_eq!(accounts.load(Ordering::SeqCst), 1);
@@ -711,7 +738,7 @@ fn automatic_join_reloads_previous_source_whose_account_refresh_is_still_pending
     let dir = home.data_dir();
     std::fs::create_dir_all(&dir).unwrap();
     let (server, accounts, _, release) = delayed_account(true);
-    let mut store = Store::open(dir.join("iptv.sqlite")).unwrap();
+    let mut store = crate::isolated::open_database(dir.join("iptv.sqlite")).unwrap();
     let source = store
         .add_source(&Source {
             name: "Pending account".into(),
@@ -851,7 +878,7 @@ fn exercise_previous_guide_handoff(home: &super::isolated::Home, action: Previou
         .set("epg.update_interval", Value::Duration(0))
         .unwrap();
     std::fs::write(dir.join("settings.json"), settings.to_json_string()).unwrap();
-    let mut store = Store::open(dir.join("iptv.sqlite")).unwrap();
+    let mut store = crate::isolated::open_database(dir.join("iptv.sqlite")).unwrap();
     let source = store
         .add_source(&Source {
             name: "Previous".into(),
@@ -964,7 +991,7 @@ fn exercise_previous_guide_handoff(home: &super::isolated::Home, action: Previou
                 .unwrap()
         );
         assert!(
-            Store::open(dir.join("iptv.sqlite"))
+            crate::isolated::open_database(dir.join("iptv.sqlite"))
                 .unwrap()
                 .epg_guide(source)
                 .unwrap()

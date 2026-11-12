@@ -19,6 +19,7 @@ IPTV_REAL_CARGO="$(command -v cargo)" python3 tools/ci/test-locked-cargo.py
 python3 tools/ci/test-mpvkit-notices.py
 python3 tools/ci/test-macos-source-notices.py
 python3 tools/ci/test-linux-native-notices.py
+python3 tools/ci/test-crypto-native-notices.py
 python3 tools/ci/check-package-lock.py
 python3 tools/ci/test-ios-entitlements.py
 python3 tools/ci/test-unpack-signing-input.py

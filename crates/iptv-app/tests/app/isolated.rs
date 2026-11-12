@@ -76,6 +76,7 @@ impl Home {
 /// `here` is the type name of a function nested in the test:
 /// `app::<module>::<test>::here`.
 pub fn run(here: &str) -> Option<Home> {
+    initialize_key();
     let name = here
         .strip_suffix("::here")
         .and_then(|p| p.split_once("::"))
@@ -213,4 +214,19 @@ fn the_time_zone_puts_local_time_where_wanted() {
     assert_eq!(posix_tz(12 * 60, 12 * 60), "IPT+00:00");
     // Wanted 23:50 at UTC 00:10: 23 h 40 min east is 20 min west.
     assert_eq!(posix_tz(23 * 60 + 50, 10), "IPT+00:20");
+}
+
+/// Generated fixture data uses a fixed synthetic key, never the user's keychain.
+pub fn initialize_key() {
+    iptv_app::install_test_key([0x54; 32]);
+}
+
+pub fn open_database(
+    path: impl AsRef<Path>,
+) -> iptv_store_sqlite::Result<iptv_store_sqlite::Store> {
+    initialize_key();
+    iptv_store_sqlite::Store::open_encrypted(
+        path,
+        &iptv_store_sqlite::DatabaseKey::from_bytes([0x54; 32]),
+    )
 }

@@ -35,6 +35,7 @@ use std::rc::Rc;
 use std::sync::mpsc::{self, Sender, TryRecvError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crate::private_files::Client as NetClient;
 use iptv_core::wizard::{
     FailureKind, Field, ImportCounts, ImportFailure, ImportProgress, ImportStage,
 };
@@ -45,7 +46,6 @@ use iptv_import::{
     CancelToken, Catalog, Decision, EpgImport, EpgSourceConfig, ImportError, ImportOptions,
     NoProgress, Progress, ProgressSink, Trigger, import_epg, import_source_into,
 };
-use iptv_net::NetClient;
 use iptv_providers::SecretUrl;
 use iptv_providers::model::{Channel, Group, Source};
 use iptv_store_sqlite::{
@@ -203,7 +203,7 @@ pub fn data_dir() -> PathBuf {
 pub(crate) fn open_store() -> Result<Store, StoreError> {
     let dir = data_dir();
     let _ = std::fs::create_dir_all(&dir);
-    Store::open(dir.join("iptv.sqlite"))
+    crate::credential_key::open_database(&dir.join("iptv.sqlite"))
 }
 
 /// Runs `future` on the UI thread under the app's root owner.
@@ -827,7 +827,9 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
         options.allow_private_fixture = cfg!(feature = "test-support") || DEV_PLAYLIST.is_some();
     }
     let _ = std::fs::create_dir_all(data_dir());
-    let mut stage = match CatalogStage::create_in(data_dir()) {
+    let mut stage = match CatalogStage::create_in_with(data_dir(), |path| {
+        open_store()?.open_staging_connection(path)
+    }) {
         Ok(stage) => stage,
         Err(error) => {
             log::warn!("iptv data: catalog staging failed: {error}");
@@ -1052,8 +1054,9 @@ async fn download_guide<P: ProgressSink>(
     cancel: &CancelToken,
     must_load: Option<iptv_epg::SourceId>,
 ) -> Result<Downloaded, ImportError> {
-    let mut stage =
-        EpgStage::create_in(data_dir()).map_err(|e| ImportError::Storage(e.to_string()))?;
+    let store = open_store().map_err(|e| ImportError::Storage(e.to_string()))?;
+    let mut stage = EpgStage::create_in_store(&store, data_dir())
+        .map_err(|e| ImportError::Storage(e.to_string()))?;
     let epg = import_epg(
         net,
         guides,
@@ -1159,9 +1162,29 @@ pub fn keep_picked_file(name: &str, bytes: &[u8]) -> std::io::Result<String> {
     } else {
         name
     };
-    let dir = data_dir().join("playlists").join(now_unix().to_string());
-    std::fs::create_dir_all(&dir)?;
+    let mut random = [0u8; 8];
+    getrandom::fill(&mut random)
+        .map_err(|_| std::io::Error::other("cannot create document identity"))?;
+    let dir = data_dir()
+        .join("playlists")
+        .join(format!("{:016x}", u64::from_le_bytes(random)));
     let path = dir.join(name);
-    std::fs::write(&path, bytes)?;
-    Ok(path.to_string_lossy().into_owned())
+    let bytes = bytes.to_vec();
+    let store = crate::credential_key::open_database(&data_dir().join("iptv.sqlite"))
+        .map_err(|_| std::io::Error::other("private document cannot be saved"))?;
+    (|| -> Result<String, iptv_store_sqlite::StoreError> {
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder.create(&dir).map_err(|_| {
+            iptv_store_sqlite::StoreError::Unavailable("cannot create private document directory")
+        })?;
+        crate::private_files::write_atomic(store, &path, &mut bytes.as_slice())?;
+        Ok(path.to_string_lossy().into_owned())
+    })()
+    .map_err(|_| std::io::Error::other("private document cannot be saved"))
 }

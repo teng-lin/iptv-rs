@@ -3,7 +3,7 @@ use iptv_providers::{
     SecretUrl,
     model::{M3uSourceConfig, Source, SourceConfig},
 };
-use iptv_store_sqlite::{ChannelQuery, SourcePolicy, Store};
+use iptv_store_sqlite::{ChannelQuery, SourcePolicy};
 use nsh_core::{Size, element::Root, prelude::*};
 use nsh_engine::EngineConfig;
 use nsh_testing::Headless;
@@ -31,7 +31,7 @@ fn edit(app: &mut Headless, row: usize, label: &str, index: usize) {
     step(app.press_key("enter"));
 }
 fn channels(path: &std::path::Path, source: iptv_store_sqlite::SourceId) -> Vec<String> {
-    Store::open(path)
+    crate::isolated::open_database(path)
         .unwrap()
         .load_channels(source, &ChannelQuery::default())
         .unwrap()
@@ -60,7 +60,7 @@ fn organization_playlist_policies_and_remote_bindings_are_editable_and_persisted
     let playlist_path = home.path().join("synthetic.m3u");
     std::fs::write(&playlist_path, PLAYLIST).unwrap();
     let m = iptv_providers::m3u::parse_m3u(PLAYLIST);
-    let mut store = Store::open(&path).unwrap();
+    let mut store = crate::isolated::open_database(&path).unwrap();
     let source = store
         .add_source(&Source {
             name: "Synthetic library".into(),
@@ -102,7 +102,7 @@ fn organization_playlist_policies_and_remote_bindings_are_editable_and_persisted
     step(app.press("id:organization-row-0"));
     step(app.press("text:Hide item"));
     assert!(
-        Store::open(&path)
+        crate::isolated::open_database(&path)
             .unwrap()
             .load_channels(
                 source,
@@ -119,7 +119,7 @@ fn organization_playlist_policies_and_remote_bindings_are_editable_and_persisted
     step(app.press("id:organization-row-2"));
     step(app.press("text:Move to first"));
     assert_eq!(
-        Store::open(&path)
+        crate::isolated::open_database(&path)
             .unwrap()
             .load_channels(source, &ChannelQuery::default())
             .unwrap()[0]
@@ -179,7 +179,13 @@ fn organization_playlist_policies_and_remote_bindings_are_editable_and_persisted
     step(app.wait_for("text:Organize groups"));
     step(app.press("id:organization-row-0"));
     step(app.press("text:Hide item"));
-    assert!(Store::open(&path).unwrap().library_groups(source).unwrap()[0].hidden);
+    assert!(
+        crate::isolated::open_database(&path)
+            .unwrap()
+            .library_groups(source)
+            .unwrap()[0]
+            .hidden
+    );
     step(app.press("id:organization-row-0"));
     step(app.press("text:Show item"));
     edit(&mut app, 0, "Rename", 1);
@@ -187,13 +193,21 @@ fn organization_playlist_policies_and_remote_bindings_are_editable_and_persisted
     step(app.type_text("text:Empty restores the provider name", "Local news"));
     step(app.submit("text:Local news"));
     assert_eq!(
-        Store::open(&path).unwrap().library_groups(source).unwrap()[0].name,
+        crate::isolated::open_database(&path)
+            .unwrap()
+            .library_groups(source)
+            .unwrap()[0]
+            .name,
         "Local news"
     );
     edit(&mut app, 0, "Use provider name", 2);
     edit(&mut app, 0, "Move to last", 6);
     assert_eq!(
-        Store::open(&path).unwrap().library_groups(source).unwrap()[1].name,
+        crate::isolated::open_database(&path)
+            .unwrap()
+            .library_groups(source)
+            .unwrap()[1]
+            .name,
         "News"
     );
     edit(&mut app, 1, "Move earlier", 3);
@@ -202,7 +216,7 @@ fn organization_playlist_policies_and_remote_bindings_are_editable_and_persisted
     edit(&mut app, 0, "Restore provider order", 7);
     edit(&mut app, 0, "Hide all", 11);
     assert!(
-        Store::open(&path)
+        crate::isolated::open_database(&path)
             .unwrap()
             .library_groups(source)
             .unwrap()
@@ -217,7 +231,7 @@ fn organization_playlist_policies_and_remote_bindings_are_editable_and_persisted
     }
     step(app.press_key("enter"));
     assert_eq!(
-        Store::open(&path)
+        crate::isolated::open_database(&path)
             .unwrap()
             .source_policy(source)
             .unwrap()
@@ -227,7 +241,7 @@ fn organization_playlist_policies_and_remote_bindings_are_editable_and_persisted
     step(app.press_key("down"));
     step(app.press_key("enter"));
     assert!(
-        Store::open(&path)
+        crate::isolated::open_database(&path)
             .unwrap()
             .source_policy(source)
             .unwrap()
@@ -237,7 +251,7 @@ fn organization_playlist_policies_and_remote_bindings_are_editable_and_persisted
     step(app.press_key("up"));
     step(app.press_key("enter"));
     assert!(
-        !Store::open(&path)
+        !crate::isolated::open_database(&path)
             .unwrap()
             .source_policy(source)
             .unwrap()
@@ -245,7 +259,7 @@ fn organization_playlist_policies_and_remote_bindings_are_editable_and_persisted
     );
     step(app.press_key("enter"));
     assert!(
-        Store::open(&path)
+        crate::isolated::open_database(&path)
             .unwrap()
             .source_policy(source)
             .unwrap()

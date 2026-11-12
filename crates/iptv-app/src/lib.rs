@@ -14,6 +14,7 @@ mod browse_playback;
 mod channels_view;
 mod chooser;
 mod content_image;
+mod credential_key;
 mod custom_groups;
 mod data;
 mod desktop;
@@ -43,6 +44,7 @@ mod player;
 mod player_keys;
 mod player_panels;
 mod playlists_view;
+mod private_files;
 mod rail;
 mod remote_editor;
 mod scale;
@@ -872,3 +874,7 @@ pub(crate) fn go_back(ui: Ui) -> bool {
         }
     })
 }
+
+/// Explicit synthetic-key injection for the headless test binary only.
+#[cfg(feature = "test-support")]
+pub use credential_key::install_test_key;

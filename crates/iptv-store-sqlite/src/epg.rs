@@ -376,12 +376,7 @@ impl Store {
         match_fingerprint: u64,
     ) -> Result<EpgCounts> {
         stage.flush()?;
-        let path = stage
-            .path()
-            .to_str()
-            .ok_or_else(|| StoreError::InvalidData("guide stage path".into()))?;
-        self.conn
-            .execute("ATTACH DATABASE ?1 AS epg_stage", [path])?;
+        self.attach_staging_database(stage.path(), "epg_stage")?;
         // Every row references a row written just before it in the same
         // transaction: consistent by construction. Off for the copy's sake
         // (`copy_programmes`); it cannot change inside a transaction. A

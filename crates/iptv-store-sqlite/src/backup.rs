@@ -34,11 +34,39 @@ impl Store {
                 OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
             )?;
             destination.busy_timeout(Duration::from_secs(5))?;
-            Backup::new(&self.conn, &mut destination)?.run_to_completion(
-                256,
-                Duration::from_millis(5),
-                None,
-            )?;
+            if self.key.is_some() {
+                // SQLCipher deliberately rejects sqlite3_backup across codec
+                // boundaries. User-requested portable exports use its supported
+                // export API; the archive is explicitly plaintext.
+                self.conn.execute(
+                    "ATTACH DATABASE ?1 AS portable_backup KEY ''",
+                    [path
+                        .to_str()
+                        .ok_or_else(|| invalid("snapshot path is not UTF-8"))?],
+                )?;
+                let exported = (|| -> Result<()> {
+                    let transaction = self.conn.unchecked_transaction()?;
+                    transaction.query_row(
+                        "SELECT sqlcipher_export('portable_backup')",
+                        [],
+                        |_| Ok(()),
+                    )?;
+                    let version: u32 =
+                        transaction.pragma_query_value(None, "user_version", |r| r.get(0))?;
+                    transaction.pragma_update(Some("portable_backup"), "user_version", version)?;
+                    transaction.commit()?;
+                    Ok(())
+                })();
+                let detached = self.conn.execute("DETACH DATABASE portable_backup", []);
+                exported?;
+                detached?;
+            } else {
+                Backup::new(&self.conn, &mut destination)?.run_to_completion(
+                    256,
+                    Duration::from_millis(5),
+                    None,
+                )?;
+            }
             // A standalone file, even when the source uses WAL.
             destination.pragma_update(None, "journal_mode", "DELETE")?;
             drop(destination);
@@ -58,8 +86,32 @@ impl Store {
             path,
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
+        Self::validate_snapshot_connection(&conn)
+    }
+
+    pub fn validate_encrypted_snapshot(path: &Path, key: &crate::DatabaseKey) -> Result<()> {
+        let conn = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        key.apply(&conn)?;
+        Self::validate_snapshot_connection(&conn)
+    }
+
+    /// Converts validated portable restore content to the live key before it
+    /// becomes a persistent pending restore. Plaintext stores are test-only.
+    pub fn seal_snapshot(&self, path: &Path) -> Result<()> {
+        if let Some(key) = &self.key {
+            drop(Self::open_encrypted(path, key)?);
+            Self::validate_encrypted_snapshot(path, key)
+        } else {
+            Self::validate_snapshot(path)
+        }
+    }
+
+    fn validate_snapshot_connection(conn: &Connection) -> Result<()> {
         conn.pragma_update(None, "trusted_schema", false)?;
-        let version = migrate::current_version(&conn)?;
+        let version = migrate::current_version(conn)?;
         if version > SCHEMA_VERSION {
             return Err(StoreError::SchemaTooNew {
                 found: version,
@@ -75,7 +127,7 @@ impl Store {
         }
         let mut expected = Connection::open_in_memory()?;
         migrate::migrate_to(&mut expected, version, 0)?;
-        if migrate::schema_dump(&conn)? != migrate::schema_dump(&expected)? {
+        if migrate::schema_dump(conn)? != migrate::schema_dump(&expected)? {
             return Err(invalid("snapshot has an unexpected database schema"));
         }
         // schema_dump deliberately omits the derived FTS tables. Compare those
@@ -90,7 +142,7 @@ impl Store {
                 .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
                 .collect::<std::result::Result<Vec<_>, _>>()?)
         };
-        let actual_fts = derived(&conn)?;
+        let actual_fts = derived(conn)?;
         if !actual_fts.is_empty() {
             crate::search::prepare(&mut expected)?;
             if actual_fts != derived(&expected)? {
