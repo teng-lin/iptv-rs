@@ -376,13 +376,54 @@ pub enum GuideStatus {
 
 /// The status of the guide on screen (one indexed read of the store).
 pub fn guide_status() -> GuideStatus {
-    let Some(source) = SHOWN.with(Cell::get) else {
-        return GuideStatus::NoSource;
-    };
-    if updating(source) {
+    let sources = shown_sources();
+    if sources.is_empty() {
+        return if open_store().is_ok_and(|s| s.all_playlists().unwrap_or(false)) {
+            GuideStatus::Empty
+        } else {
+            GuideStatus::NoSource
+        };
+    }
+    if sources.iter().any(|&s| updating(s)) {
         return GuideStatus::Updating;
     }
-    status_of(guide_state(source).as_ref())
+    let mut updated = None;
+    let mut channels = 0;
+    for source in sources {
+        match status_of(guide_state(source).as_ref()) {
+            failed @ GuideStatus::Failed { .. } => return failed,
+            GuideStatus::Updated { at, channels: n } => {
+                updated = Some(updated.map_or(at, |old: i64| old.min(at)));
+                channels += n;
+            }
+            _ => {}
+        }
+    }
+    updated.map_or(GuideStatus::Empty, |at| GuideStatus::Updated {
+        at,
+        channels,
+    })
+}
+
+/// Individual mode has one guide owner; aggregate commands cover every
+/// enabled source, with failures and feeds still managed per playlist.
+pub fn shown_sources() -> Vec<SourceId> {
+    if let Some(source) = SHOWN.with(Cell::get) {
+        return vec![source];
+    }
+    let Ok(store) = open_store() else {
+        return Vec::new();
+    };
+    if !store.all_playlists().unwrap_or(false) {
+        return Vec::new();
+    }
+    store
+        .sources()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|s| store.source_policy(s.id).is_ok_and(|p| p.enabled))
+        .map(|s| s.id)
+        .collect()
 }
 
 /// The source whose guide is on screen.
@@ -433,10 +474,41 @@ pub fn status_of(stored: Option<&StoredGuide>) -> GuideStatus {
 
 /// "Update the guide now" of the source on screen: see [`update_source`].
 pub fn update_now(ui: Ui, done: impl FnOnce() + 'static) -> bool {
-    match SHOWN.with(Cell::get) {
-        Some(source) => update_source(ui, source, done),
-        None => false,
+    let sources = shown_sources();
+    if sources.is_empty() {
+        return false;
     }
+    let remaining = std::rc::Rc::new(Cell::new(sources.len()));
+    let done = std::rc::Rc::new(RefCell::new(Some(done)));
+    let mut started = false;
+    for source in sources {
+        let left = remaining.clone();
+        let complete = done.clone();
+        let finish = move || {
+            left.set(left.get() - 1);
+            if left.get() == 0 {
+                if let Some(done) = complete.borrow_mut().take() {
+                    done();
+                }
+            }
+        };
+        if updating(source) {
+            remaining.set(remaining.get() - 1);
+            started = true;
+            continue;
+        }
+        if update_source(ui, source, finish) {
+            started = true;
+        } else {
+            remaining.set(remaining.get() - 1);
+        }
+    }
+    if started && remaining.get() == 0 {
+        if let Some(done) = done.borrow_mut().take() {
+            done();
+        }
+    }
+    started
 }
 
 /// Downloads `source`'s guide now (every guide source switched on, with
@@ -463,10 +535,16 @@ pub fn update_source(ui: Ui, source: SourceId, done: impl FnOnce() + 'static) ->
     super::spawn_in_app(async move {
         loop {
             match rx.try_recv() {
-                Ok(Msg::Guide(imported)) if SHOWN.with(Cell::get) == Some(source) => {
+                Ok(Msg::Guide(imported))
+                    if SHOWN.with(Cell::get) == Some(source)
+                        || super::combined::includes(ui, source) =>
+                {
                     super::show(ui, imported, generation, false)
                 }
-                Ok(Msg::NextCheck { source, at }) if SHOWN.with(Cell::get) == Some(source) => {
+                Ok(Msg::NextCheck { source, at })
+                    if SHOWN.with(Cell::get) == Some(source)
+                        || super::combined::includes(ui, source) =>
+                {
                     super::schedule_check(ui, source, at, generation);
                 }
                 Ok(_) => {}
@@ -538,7 +616,7 @@ async fn download_now(
 /// settle (the refresh policy downloads changed feeds). Only for the
 /// source on screen; another one is checked when it is shown.
 pub fn guides_changed(ui: Ui, source: SourceId) {
-    if SHOWN.with(Cell::get) != Some(source) {
+    if SHOWN.with(Cell::get) != Some(source) && !super::combined::includes(ui, source) {
         return;
     }
     let edit = EDITS.with(|e| {
@@ -562,43 +640,44 @@ pub fn guides_changed(ui: Ui, source: SourceId) {
 /// thread; `done` hears whether the guide was deleted. False when no
 /// playlist is on screen.
 pub fn clear(ui: Ui, done: impl FnOnce(bool) + 'static) -> bool {
-    let Some(source) = SHOWN.with(Cell::get) else {
+    let sources = shown_sources();
+    if sources.is_empty() {
         return false;
-    };
+    }
     let generation = GENERATION.with(Cell::get);
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let deleted = match open_store().and_then(|mut s| s.delete_epg(source)) {
-            Ok(_) => true,
-            Err(e) => {
-                log::warn!("iptv data: could not delete the stored guide: {e}");
-                false
+        let mut deleted = true;
+        let mut imports = Vec::new();
+        for source in sources {
+            if let Err(e) = open_store().and_then(|mut s| s.delete_epg(source)) {
+                log::warn!("iptv data: could not delete stored guide: {e}");
+                deleted = false;
+                continue;
             }
-        };
-        let catalog = catalog(source).inspect_err(|e| log::warn!("iptv data: stored catalog: {e}"));
-        let _ = tx.send((deleted, catalog.ok()));
+            if let Ok((groups, channels)) = catalog(source) {
+                imports.push(Box::new(Imported {
+                    groups,
+                    channels,
+                    playback: Streams::Current,
+                    guide: GuideStore::default(),
+                    now: super::now_unix(),
+                    source,
+                    resume: false,
+                }));
+            }
+        }
+        let _ = tx.send((deleted, imports));
     });
     super::spawn_in_app(async move {
-        let (deleted, catalog) = loop {
+        let (deleted, imports) = loop {
             match rx.try_recv() {
                 Ok(result) => break result,
                 Err(TryRecvError::Empty) => timer(POLL).await,
                 Err(TryRecvError::Disconnected) => return done(false),
             }
         };
-        if deleted {
-            log::info!("iptv data: deleted the stored guide");
-        }
-        if let (true, Some((groups, channels))) = (deleted, catalog) {
-            let imported = Box::new(Imported {
-                groups,
-                channels,
-                playback: Streams::Current,
-                guide: GuideStore::default(),
-                now: super::now_unix(),
-                source,
-                resume: false,
-            });
+        for imported in imports {
             super::show(ui, imported, generation, false);
         }
         done(deleted);

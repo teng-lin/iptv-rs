@@ -22,6 +22,7 @@ use crate::Ui;
 pub struct Library {
     /// The stored playlist on screen; `None` before one is (first run).
     pub shown: Signal<Option<SourceId>>,
+    pub all: Signal<bool>,
     /// Refreshes of stored playlists since the app started.
     pub activity: Signal<BTreeMap<SourceId, Activity>>,
     /// Bumped when what is stored about the playlists changed.
@@ -32,6 +33,7 @@ impl Library {
     pub fn new() -> Self {
         Self {
             shown: signal(None),
+            all: signal(false),
             activity: signal(BTreeMap::new()),
             version: signal(0),
         }
@@ -144,6 +146,18 @@ pub fn set_policy(
 ) -> Result<(), StoreError> {
     open_store()?.set_source_policy(id, policy)?;
     changed(ui);
+    if super::combined::active(ui) {
+        if !policy.enabled {
+            cancel_running(id);
+        }
+        super::combined::rebuild(ui);
+        if policy.enabled {
+            if let Some(source) = load(id) {
+                run(ui, source, Purpose::Combined, false);
+            }
+        }
+        return Ok(());
+    }
     if !policy.enabled {
         cancel_running(id);
         if ui.library.shown.get_untracked() == Some(id) {
@@ -159,7 +173,10 @@ pub fn set_policy(
 }
 /// Cached startup/switch can avoid a playlist download independently of EPG policy.
 pub(super) fn network_due(id: SourceId, purpose: Purpose) -> bool {
-    if !matches!(purpose, Purpose::Startup | Purpose::Switch) {
+    if !matches!(
+        purpose,
+        Purpose::Startup | Purpose::Switch | Purpose::Combined
+    ) {
         return true;
     }
     open_store()
@@ -169,7 +186,7 @@ pub(super) fn network_due(id: SourceId, purpose: Purpose) -> bool {
                 || p.due(
                     super::now_unix(),
                     status.last_attempt_at,
-                    purpose == Purpose::Startup,
+                    matches!(purpose, Purpose::Startup | Purpose::Combined),
                 )
         })
         .unwrap_or(true)
@@ -245,6 +262,8 @@ fn cancel_running(id: SourceId) {
 /// try (saved only if they import).
 pub(super) fn run(ui: Ui, stored: StoredSource, purpose: Purpose, edit: bool) {
     let id = stored.id;
+    // A mode switch can replace a still-running job for this source.
+    cancel_running(id);
     if network_due(id, purpose) {
         ATTEMPTS.with(|a| a.borrow_mut().insert(id, super::now_unix()));
     }
@@ -316,15 +335,25 @@ pub(super) fn run(ui: Ui, stored: StoredSource, purpose: Purpose, edit: bool) {
 /// Shows stored playlist `id`: its stored channels and guide at once,
 /// refreshed in the background as at startup.
 pub fn switch_to(ui: Ui, id: SourceId) {
+    super::spawn_in_app(async move {
+        if crate::favorites::flush().await {
+            switch_to_ready(ui, id);
+        } else {
+            crate::settings_view::notify("Recent changes could not be saved; try again");
+        }
+    });
+}
+fn switch_to_ready(ui: Ui, id: SourceId) {
     if policy(id).is_ok_and(|p| !p.enabled) {
         return;
     }
-    if ui.library.shown.get_untracked() == Some(id) {
+    if !super::combined::active(ui) && ui.library.shown.get_untracked() == Some(id) {
         return;
     }
     let Some(stored) = load(id) else {
         return;
     };
+    super::combined::leave(ui);
     // A refresh of it in the background gives way to the shown one.
     cancel_running(id);
     run(ui, stored, Purpose::Switch, false);
@@ -344,7 +373,9 @@ pub fn refresh(ui: Ui, id: SourceId) {
 
 /// The shown playlist refreshes in place, another one into the store only.
 fn refresh_purpose(ui: Ui, id: SourceId) -> Purpose {
-    if ui.library.shown.get_untracked() == Some(id) {
+    if super::combined::active(ui) {
+        Purpose::Background
+    } else if ui.library.shown.get_untracked() == Some(id) {
         Purpose::Refresh
     } else {
         Purpose::Background
@@ -397,6 +428,9 @@ pub fn set_user_agent(ui: Ui, id: SourceId, user_agent: Option<String>) {
 pub fn rename(ui: Ui, id: SourceId, name: &str) -> Result<(), StoreError> {
     open_store()?.rename_source(id, name)?;
     changed(ui);
+    if super::combined::active(ui) {
+        super::combined::rebuild(ui);
+    }
     Ok(())
 }
 
@@ -426,6 +460,10 @@ pub fn delete(ui: Ui, id: SourceId) -> Result<(), StoreError> {
         a.remove(&id);
     });
     changed(ui);
+    if super::combined::active(ui) {
+        super::combined::rebuild(ui);
+        return Ok(());
+    }
     if ui.library.shown.get_untracked() != Some(id) {
         return Ok(());
     }

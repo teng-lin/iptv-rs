@@ -275,7 +275,34 @@ pub fn picked(ui: Ui, channel: usize) -> bool {
         return false;
     }
     log::info!("iptv multiview: picked {channel}");
-    apply(ui, |m, _| m.picked(channel));
+    let schedule = crate::schedule();
+    let all = schedule
+        .as_any()
+        .and_then(|s| s.downcast_ref::<iptv_guide::combined::CombinedSchedule>());
+    apply(ui, |m, _| {
+        let exceeded = all.and_then(|all| {
+            let (source, _) = all.channel_source(channel)?;
+            let allowed =
+                crate::data::combined::connection_limit(iptv_store_sqlite::SourceId(source.id))?;
+            let replacing = match m.pick() {
+                Some(iptv_core::multiview::Pick::Replace(tile)) => Some(tile),
+                _ => None,
+            };
+            let count = m
+                .tiles()
+                .iter()
+                .enumerate()
+                .filter(|(at, t)| {
+                    Some(*at) != replacing
+                        && all
+                            .channel_source(t.channel)
+                            .is_some_and(|(s, _)| s.id == source.id)
+                })
+                .count();
+            (count as u32 >= allowed).then_some(allowed)
+        });
+        m.picked_with_warning(channel, exceeded)
+    });
     true
 }
 

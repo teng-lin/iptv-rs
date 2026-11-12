@@ -113,14 +113,21 @@ fn loader(ui: Ui, source: SourceId) -> impl Fn(PageRequest) + 'static {
                 log::warn!("iptv data: older guide day: {e}");
                 GuideStore::default()
             });
-            arrived(ui, request, store, took);
+            arrived(ui, source, request, store, took);
         });
     }
 }
 
-fn arrived(ui: Ui, request: PageRequest, store: GuideStore, took: Duration) {
+fn arrived(ui: Ui, source: SourceId, request: PageRequest, store: GuideStore, took: Duration) {
     let schedule = crate::schedule();
-    let inserted = epg(&*schedule).is_some_and(|s| {
+    let child = combined(&*schedule)
+        .and_then(|s| s.source(source.0))
+        .or_else(|| {
+            (ui.library.shown.get_untracked() == Some(source))
+                .then(|| epg(&*schedule))
+                .flatten()
+        });
+    let inserted = child.is_some_and(|s| {
         let kb = store.heap_bytes() / 1024;
         let inserted = s.insert_page(request, store);
         if inserted {
@@ -145,6 +152,19 @@ fn epg(schedule: &dyn Schedule) -> Option<&EpgSchedule> {
     schedule.as_any()?.downcast_ref::<EpgSchedule>()
 }
 
+fn combined(schedule: &dyn Schedule) -> Option<&iptv_guide::combined::CombinedSchedule> {
+    schedule.as_any()?.downcast_ref()
+}
+fn each(schedule: &dyn Schedule, mut f: impl FnMut(&EpgSchedule)) {
+    if let Some(s) = epg(schedule) {
+        f(s);
+    }
+    if let Some(s) = combined(schedule) {
+        for p in s.sources() {
+            f(&p.schedule);
+        }
+    }
+}
 /// A schedule replaced the one on screen (with the whole window after a
 /// first screen, `opening.rs`): what waited for its programmes looks again.
 pub fn replaced() {
@@ -156,20 +176,22 @@ pub fn replaced() {
 /// Asks for the day holding guide `minute` before the grid shows it (where
 /// a fling of the timeline lands).
 pub fn want(schedule: &dyn Schedule, minute: i32) {
-    if let Some(s) = epg(schedule) {
-        s.ensure_loaded(s.unix(minute));
-    }
+    let unix = iptv_core::guide::unix_of(schedule, minute);
+    each(schedule, |s| {
+        s.ensure_loaded(unix);
+    });
 }
 
 /// Whether the programmes around `t` are in memory on `schedule`, so a
 /// catch-up there resolves with its programme's real times; when not, its
 /// day is pinned and asked for, and `retry` runs once a page arrived.
 pub fn ready(schedule: &Rc<dyn Schedule>, t: UnixTime, retry: impl FnOnce() + 'static) -> bool {
-    let Some(epg) = epg(&**schedule) else {
-        return true;
-    };
-    epg.pin_page(Some(t));
-    if epg.ensure_loaded(t) {
+    let mut ready = true;
+    each(&**schedule, |epg| {
+        epg.pin_page(Some(t));
+        ready &= epg.ensure_loaded(t);
+    });
+    if ready {
         return true;
     }
     log::info!("iptv data: catch-up waits for its guide day");
@@ -188,9 +210,8 @@ pub fn bind(ui: Ui) {
         };
         untracked(|| {
             let schedule = crate::schedule();
-            if let Some(s) = epg(&*schedule) {
-                s.pin_page(archive.map(|m| s.unix(m)));
-            }
+            let unix = archive.map(|m| iptv_core::guide::unix_of(&*schedule, m));
+            each(&*schedule, |s| s.pin_page(unix));
         });
     });
     let away = Cell::new(false);
@@ -200,12 +221,12 @@ pub fn bind(ui: Ui) {
         if home && away.replace(false) {
             untracked(|| {
                 let schedule = crate::schedule();
-                if let Some(s) = epg(&*schedule) {
+                each(&*schedule, |s| {
                     let dropped = s.evict_pages();
                     if dropped > 0 {
                         log::info!("iptv data: back at now; dropped {dropped} older guide days");
                     }
-                }
+                });
             });
         }
         away.set(!home);

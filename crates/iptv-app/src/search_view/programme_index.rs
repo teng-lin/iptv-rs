@@ -7,8 +7,9 @@
 use std::sync::mpsc::{self, TryRecvError};
 use std::time::{Duration, Instant};
 
+use iptv_core::guide::Schedule;
 use iptv_epg::{ChannelKey, DAY, UnixTime};
-use iptv_guide::EpgSchedule;
+use iptv_guide::{EpgSchedule, combined::CombinedSchedule};
 use iptv_search::{ProgrammeIndex, ProgrammeIndexBuilder};
 use nsh_core::prelude::*;
 
@@ -16,29 +17,54 @@ const POLL: Duration = Duration::from_millis(50);
 
 /// Builds the index of `epg`'s channels (by row) and hands it to `done` on
 /// the UI thread (not at all when the store cannot be read).
-pub fn build(epg: &EpgSchedule, rows: usize, done: impl FnOnce(ProgrammeIndex) + 'static) {
-    let keys: Vec<ChannelKey> = (0..rows)
-        .map_while(|c| epg.channel(c).map(|g| g.key.clone()))
-        .collect();
-    let Some(source) = crate::data::stored::shown().filter(|_| epg.loaded_from().is_some()) else {
-        done(ProgrammeIndex::build(epg.store(), &keys));
+pub fn build(schedule: &dyn Schedule, rows: usize, done: impl FnOnce(ProgrammeIndex) + 'static) {
+    let mut sources: Vec<(iptv_store_sqlite::SourceId, Vec<ChannelKey>, usize)> = Vec::new();
+    if let Some(all) = schedule
+        .as_any()
+        .and_then(|s| s.downcast_ref::<CombinedSchedule>())
+    {
+        let mut offset = 0;
+        for part in all.sources() {
+            let keys = (0..part.schedule.channel_count())
+                .filter_map(|c| part.schedule.channel(c).map(|c| c.key.clone()))
+                .collect();
+            sources.push((iptv_store_sqlite::SourceId(part.id), keys, offset));
+            offset += part.schedule.channel_count();
+        }
+    } else if let Some(epg) = schedule
+        .as_any()
+        .and_then(|s| s.downcast_ref::<EpgSchedule>())
+    {
+        let keys: Vec<_> = (0..rows)
+            .map_while(|c| epg.channel(c).map(|g| g.key.clone()))
+            .collect();
+        let Some(source) = crate::data::stored::shown().filter(|_| epg.loaded_from().is_some())
+        else {
+            done(ProgrammeIndex::build(epg.store(), &keys));
+            return;
+        };
+        sources.push((source, keys, 0));
+    } else {
         return;
-    };
+    }
     let keep = crate::data::stored::keep_past_days(&crate::settings::get());
     let from: UnixTime =
         crate::time::wall_unix().saturating_sub(i64::from(keep).saturating_mul(DAY));
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let started = Instant::now();
-        let mut b = ProgrammeIndexBuilder::new(keys.len());
+        let mut b = ProgrammeIndexBuilder::new(rows);
         let read = crate::data::open_store().and_then(|s| {
-            s.for_each_epg_title(
-                source,
-                &keys,
-                from,
-                UnixTime::MAX,
-                |c, start, stop, title| b.push(c, start, stop, title),
-            )
+            for (source, keys, offset) in sources {
+                s.for_each_epg_title(
+                    source,
+                    &keys,
+                    from,
+                    UnixTime::MAX,
+                    |c, start, stop, title| b.push(c + offset, start, stop, title),
+                )?;
+            }
+            Ok(())
         });
         let index = match read {
             Ok(_) => Some(b.finish()),

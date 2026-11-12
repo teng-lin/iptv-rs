@@ -255,7 +255,8 @@ fn user_agent_refresh_and_keys(t: &mut T) {
     // Keys: the focus pill, the hints, Menu opens a playlist's actions.
     t.key("down");
     t.wait("text:▲▼ choose   OK actions   Back close", 2);
-    for _ in 0..3 {
+    // Two playlist rows, All playlists, Refresh all, then Add.
+    for _ in 0..4 {
         t.key("up");
     }
     t.key("menu");

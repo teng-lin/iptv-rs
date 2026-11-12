@@ -85,7 +85,20 @@ pub fn open(ui: Ui) {
         program,
         crate::schedule().catchup_days(channel),
         now,
-        implemented,
+        |item| {
+            implemented(item)
+                && (!crate::data::combined::active(ui)
+                    || matches!(
+                        item,
+                        MenuItem::Search
+                            | MenuItem::Settings
+                            | MenuItem::Description
+                            | MenuItem::ToggleFavorite
+                            | MenuItem::StartFromBeginning
+                            | MenuItem::ManageFavorites
+                            | MenuItem::AssignEpg
+                    ))
+        },
     );
     let origin = Origin {
         channel,

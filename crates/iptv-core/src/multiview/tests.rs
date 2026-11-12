@@ -566,3 +566,41 @@ fn pause_holds_one_tile_only() {
     assert_eq!(paused(&mv), vec![true, false]);
     mv.set_paused(9, true);
 }
+
+#[test]
+fn source_specific_warning_waits_for_confirmation_and_cancels_safely() {
+    let mut mv = Multiview::open(10, DESKTOP);
+    mv.add();
+    mv.picked_with_warning(20, Some(1));
+    assert_eq!(surfaces(&mv), vec![(0, 10)]);
+    assert!(matches!(
+        mv.dialog(),
+        Some(Dialog::Warning {
+            allowed: 1,
+            focus: 1,
+            ..
+        })
+    ));
+    assert_eq!(mv.pick(), None);
+    mv.choose(1); // Cancel
+    assert_eq!(surfaces(&mv), vec![(0, 10)]);
+    mv.add();
+    mv.picked_with_warning(20, Some(1));
+    mv.choose(0);
+    assert_eq!(surfaces(&mv), vec![(0, 10), (1, 20)]);
+    mv.add();
+    mv.picked_with_warning(30, Some(1));
+    mv.key(Key::Back, ok);
+    assert!(mv.dialog().is_none());
+    mv.add();
+    mv.picked_with_warning(30, Some(1));
+    // A data replacement cancels any pending old row identity.
+    mv.retain(|_, _| true);
+    mv.choose(0);
+    assert_eq!(surfaces(&mv), vec![(0, 10), (1, 20)]);
+    // Selecting a tile already present never consumes another connection.
+    mv.add();
+    mv.picked_with_warning(10, Some(1));
+    assert!(mv.dialog().is_none());
+    assert_eq!(mv.active().channel, 10);
+}

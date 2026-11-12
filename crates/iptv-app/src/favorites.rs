@@ -24,6 +24,7 @@ use crate::Ui;
 #[derive(Default)]
 struct State {
     source: Option<SourceId>,
+    combined_sources: Vec<SourceId>,
     favorites: Favorites,
     recent: Recent,
     /// The catalog on screen, by key.
@@ -34,6 +35,7 @@ struct State {
 
 /// A store write, in the order made.
 enum Write {
+    Barrier(futures_channel::oneshot::Sender<bool>),
     MoveFavourite {
         source: SourceId,
         key: String,
@@ -111,10 +113,80 @@ pub fn set_source(source: Option<SourceId>) {
     STATE.with(|s| {
         let mut s = s.borrow_mut();
         s.source = source;
+        s.combined_sources.clear();
         s.favorites = favorites;
         s.recent = recent;
         s.has_vod = has_vod;
     });
+}
+
+/// Load enabled-source favourites into qualified UI identities. Keep already
+/// loaded in-memory keys so a guide refresh cannot overtake queued edits.
+pub fn set_combined() {
+    use iptv_guide::combined::{qualified_key, split_key};
+    let Ok(store) = crate::data::open_store() else {
+        return;
+    };
+    let Ok(sources) = store.sources() else { return };
+    let ids: Vec<_> = sources
+        .into_iter()
+        .filter(|s| store.source_policy(s.id).is_ok_and(|p| p.enabled))
+        .map(|s| s.id)
+        .collect();
+    STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        let previous = state.combined_sources.clone();
+        let mut keys: Vec<_> = state
+            .favorites
+            .keys()
+            .iter()
+            .filter(|k| {
+                split_key(k).is_some_and(|(s, _)| {
+                    previous.contains(&SourceId(s)) && ids.contains(&SourceId(s))
+                })
+            })
+            .cloned()
+            .collect();
+        for id in ids.iter().filter(|id| !previous.contains(id)) {
+            if let Ok(rows) = store.load_channels(
+                *id,
+                &ChannelQuery {
+                    favourites_only: true,
+                    include_hidden: true,
+                    ..Default::default()
+                },
+            ) {
+                keys.extend(
+                    rows.iter()
+                        .map(|r| qualified_key(id.0, r.channel.id.as_str())),
+                );
+            }
+        }
+        state.source = None;
+        state.combined_sources = ids.clone();
+        state.favorites = Favorites::from_keys(keys);
+        if previous != ids {
+            if let Ok(rows) = store.recent(None, Some(ContentKind::Live), RECENT_LIMIT as u32) {
+                state.recent = Recent::from_keys(
+                    rows.into_iter()
+                        .filter(|r| ids.contains(&r.source_id))
+                        .map(|r| qualified_key(r.source_id.0, r.item_id.as_str())),
+                );
+            }
+        }
+        state.has_vod = false;
+    });
+}
+fn write_owner(state: &State, key: &str) -> Option<(SourceId, String)> {
+    if let Some(source) = state.source {
+        Some((source, key.to_owned()))
+    } else {
+        let (s, k) = iptv_guide::combined::split_key(key)?;
+        state
+            .combined_sources
+            .contains(&SourceId(s))
+            .then(|| (SourceId(s), k.to_owned()))
+    }
 }
 
 /// A new catalog is on screen (`set_schedule`): index its keys and show
@@ -196,14 +268,14 @@ pub fn toggle(ui: Ui, channel: usize) {
 fn set_key(key: &str, on: bool) {
     let source = STATE.with(|s| {
         let mut s = s.borrow_mut();
-        s.favorites.set(key, on).then_some(s.source).flatten()
+        if s.favorites.set(key, on) {
+            write_owner(&s, key)
+        } else {
+            None
+        }
     });
-    if let Some(source) = source {
-        send(Write::Favourite {
-            source,
-            key: key.to_owned(),
-            on,
-        });
+    if let Some((source, key)) = source {
+        send(Write::Favourite { source, key, on });
     }
 }
 
@@ -212,12 +284,12 @@ pub fn played(key: &str) {
     let source = STATE.with(|s| {
         let mut s = s.borrow_mut();
         s.recent.played(key);
-        s.source
+        write_owner(&s, key)
     });
-    if let Some(source) = source {
+    if let Some((source, key)) = source {
         send(Write::Watched {
             source,
-            key: key.to_owned(),
+            key,
             at: crate::time::wall_unix(),
         });
     }
@@ -238,18 +310,32 @@ fn send(write: Write) {
 }
 
 /// The writer thread: one store connection, writes in order.
+pub(crate) async fn flush() -> bool {
+    let (tx, rx) = futures_channel::oneshot::channel();
+    send(Write::Barrier(tx));
+    rx.await.unwrap_or(false)
+}
+
 fn write_all(rx: Receiver<Write>) {
     let mut store = None;
+    let mut healthy = true;
     for write in rx {
+        if let Write::Barrier(done) = write {
+            let _ = done.send(healthy);
+            healthy = true;
+            continue;
+        }
         if store.is_none() {
             store = crate::data::open_store()
                 .map_err(|e| log::warn!("iptv favourites: store unavailable ({e})"))
                 .ok();
         }
         let Some(store) = store.as_mut() else {
+            healthy = false;
             continue;
         };
         let result = match write {
+            Write::Barrier(_) => unreachable!(),
             Write::MoveFavourite { source, key, index } => store
                 .move_favourite(source, &ContentId::from_stored(key), index)
                 .map(|_| ()),
@@ -265,6 +351,7 @@ fn write_all(rx: Receiver<Write>) {
             ),
         };
         if let Err(e) = result {
+            healthy = false;
             log::warn!("iptv favourites: could not save ({e})");
         }
     }

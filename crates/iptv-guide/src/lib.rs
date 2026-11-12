@@ -19,6 +19,7 @@
 //! ([`EpgSchedule::held_only`]): the rest shows as loading until a schedule
 //! with the whole window replaces it.
 
+pub mod combined;
 mod held;
 pub mod pages;
 pub mod playback;

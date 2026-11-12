@@ -219,7 +219,18 @@ pub fn start(ui: &Ui, channel: usize) {
             .with_untracked(|h| h.current() != Some(&key));
         ui.player.history.update(|h| h.played(&key));
         if changed {
-            save_last_channel(ui.library.shown.get_untracked(), &key);
+            if crate::data::combined::active(ui) {
+                if let Some((source, local)) = crate::data::combined::owner(ui, &key) {
+                    save_last_channel(Some(source), &local);
+                }
+                if let Err(e) =
+                    crate::data::open_store().and_then(|mut s| s.set_combined_last_channel(&key))
+                {
+                    log::warn!("iptv combined: cannot save last channel: {e}");
+                }
+            } else {
+                save_last_channel(ui.library.shown.get_untracked(), &key);
+            }
             crate::favorites::played(&key);
         }
     }
@@ -306,7 +317,10 @@ fn open(ui: Ui, surface: usize, session: u64) {
         Playback::Live => (None, 0),
         Playback::CatchUp { start, offset } => (Some(schedule.program_at(channel, start)), offset),
     };
-    let Some(epg) = real_schedule(&schedule) else {
+    let combined = schedule
+        .as_any()
+        .and_then(|s| s.downcast_ref::<iptv_guide::combined::CombinedSchedule>());
+    if real_schedule(&schedule).is_none() && combined.is_none() {
         // The synthetic guide plays the local test streams (debug builds).
         match crate::video::synthetic_url(channel, playback) {
             Some(url) => load(ui, surface, session, PlaySource::new(url)),
@@ -321,7 +335,16 @@ fn open(ui: Ui, surface: usize, session: u64) {
         return;
     };
     let at = archive.map(|p| crate::guide::unix_of(&*schedule, p.start));
-    match epg.resolve_from(channel, archive, i64::from(offset), clock(at)) {
+    let resolution = match combined {
+        Some(s) => s.resolve_from(channel, archive, i64::from(offset), clock(at)),
+        None => real_schedule(&schedule).unwrap().resolve_from(
+            channel,
+            archive,
+            i64::from(offset),
+            clock(at),
+        ),
+    };
+    match resolution {
         Resolution::Play(source) => load(ui, surface, session, source),
         Resolution::StalkerLink(link) => resolve_link(ui, surface, session, link, schedule.clone()),
         Resolution::Unavailable(why) => {
@@ -407,7 +430,9 @@ fn resolve_link(
             };
             // Keep a refreshed token for the next link, if the data is the same.
             if Rc::ptr_eq(&schedule, &crate::schedule())
-                && let Some(ctx) = real_schedule(&schedule).and_then(EpgSchedule::playback)
+                && let Some(ctx) = target(ui, surface)
+                    .and_then(|(c, _)| iptv_guide::combined::epg_channel(&*schedule, c))
+                    .and_then(|(s, _)| s.playback())
             {
                 ctx.update_stalker_session(portal.clone());
             }

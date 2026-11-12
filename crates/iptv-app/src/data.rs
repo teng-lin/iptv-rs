@@ -16,6 +16,8 @@
 //! new generation, and timers of an older one stop.
 
 pub(crate) mod assign;
+pub(crate) mod combined;
+pub use combined::switch_all;
 pub(crate) mod guides;
 mod library;
 mod opening;
@@ -105,23 +107,25 @@ pub enum Purpose {
     /// "Refresh now" of another stored source: kept in the store only; the
     /// screen and its guide timers stay as they are.
     Background,
+    /// A constituent of the aggregated guide: cached data first, independent refresh.
+    Combined,
 }
 
 impl Purpose {
     fn shows(self) -> bool {
-        self != Self::Background
+        !matches!(self, Self::Background | Self::Combined)
     }
 
     /// What the store has is shown before the network.
     fn shows_stored_first(self) -> bool {
-        matches!(self, Self::Startup | Self::Switch)
+        matches!(self, Self::Startup | Self::Switch | Self::Combined)
     }
 
     /// The guide's refresh trigger: opening uses the stored guide while it
     /// is fresh; an added or refreshed playlist downloads it again.
     fn trigger(self) -> Trigger {
         match self {
-            Self::Startup | Self::Switch => Trigger::Startup,
+            Self::Startup | Self::Switch | Self::Combined => Trigger::Startup,
             Self::Add | Self::Refresh | Self::Background => Trigger::PlaylistChanged,
         }
     }
@@ -248,6 +252,15 @@ pub fn start(ui: Ui) {
     };
     let ms = started.elapsed().as_millis();
     crate::startup::mark_with("store opened", format_args!("{ms} ms"));
+    if store
+        .as_ref()
+        .is_some_and(|s| s.all_playlists().unwrap_or(false))
+    {
+        drop(store);
+        combined::start(ui);
+        library::start_scheduler(ui);
+        return;
+    }
     match source {
         Ok(Some(stored)) => {
             if let Some(store) = &store {
@@ -295,7 +308,7 @@ pub fn start_import(ui: Ui, job: Job, on_update: impl Fn(Update) + 'static) -> C
 /// [`start_import`] with the caller's cancel token.
 fn start_import_with(ui: Ui, job: Job, cancel: CancelToken, on_update: impl Fn(Update) + 'static) {
     let purpose = job.purpose;
-    let shows = purpose.shows();
+    let shows = purpose.shows() && !combined::active(ui);
     let generation = if shows {
         next_generation()
     } else {
@@ -309,7 +322,7 @@ fn start_import_with(ui: Ui, job: Job, cancel: CancelToken, on_update: impl Fn(U
         std::thread::spawn(move || run(job, &tx, &cancel));
     }
     let show = move |imported: Box<Imported>, held: Option<opening::Held>| {
-        if shows {
+        if shows || combined::active(ui) {
             show_part(ui, imported, generation, resume, held);
         }
     };
@@ -333,7 +346,9 @@ fn start_import_with(ui: Ui, job: Job, cancel: CancelToken, on_update: impl Fn(U
                     }
                     Ok(Msg::Guide(imported)) => show(imported, None),
                     Ok(Msg::FirstScreen(imported, held)) => show(imported, Some(held)),
-                    Ok(Msg::NextCheck { source, at }) if shows => {
+                    Ok(Msg::NextCheck { source, at })
+                        if shows || combined::includes(ui, source) =>
+                    {
                         schedule_check(ui, source, at, generation);
                     }
                     Ok(Msg::NextCheck { .. }) => {}
@@ -374,6 +389,13 @@ fn show_part(
     held: Option<opening::Held>,
 ) {
     if GENERATION.with(Cell::get) != generation {
+        return;
+    }
+    if combined::active(ui) {
+        combined::show(ui, imported, held);
+        if resume {
+            combined::resume(ui);
+        }
         return;
     }
     if Some(imported.source) != ui.library.shown.get_untracked() {
@@ -467,7 +489,9 @@ fn schedule_check(ui: Ui, source: SourceId, at: i64, generation: u64) {
     log::info!("iptv data: next guide check in {} min", wait.as_secs() / 60);
     spawn_in_app(async move {
         timer(wait).await;
-        if GENERATION.with(Cell::get) == generation {
+        if GENERATION.with(Cell::get) == generation
+            && (!combined::active(ui) || combined::includes(ui, source))
+        {
             check_guide(ui, source, generation);
         }
     });

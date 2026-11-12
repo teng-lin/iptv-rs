@@ -225,6 +225,10 @@ fn run(ui: Ui, key: &'static str) {
                 crate::epg_sources_view::open_add(ui, playlist);
             }
             Some(playlist) => crate::epg_sources_view::open(ui, playlist),
+            None if crate::data::combined::active(ui) => {
+                crate::playlists_view::open(ui);
+                notify("Choose a playlist to manage its guide sources");
+            }
             None => notify("No playlist on screen"),
         },
         "epg.clear" => {
@@ -317,10 +321,11 @@ fn command_value(key: &str) -> String {
 /// The "Guide sources" row's value: how many, switched on, and failed at
 /// their last download.
 fn sources_value() -> String {
-    let Some(playlist) = stored::shown() else {
-        return "No playlist".to_owned();
-    };
-    let lines = stored::source_lines(playlist);
+    let sources = stored::shown_sources();
+    if sources.is_empty() {
+        return "No enabled playlist".to_owned();
+    }
+    let lines: Vec<_> = sources.into_iter().flat_map(stored::source_lines).collect();
     let on = lines.iter().filter(|l| l.source.enabled).count();
     let failed = lines
         .iter()
