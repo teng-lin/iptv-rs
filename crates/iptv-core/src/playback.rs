@@ -120,24 +120,13 @@ impl ChannelHistory {
 /// grouped; the last group runs to the end).
 pub fn group_range(schedule: &dyn Schedule, channel: usize) -> Range<usize> {
     let count = schedule.channel_count();
-    let groups = schedule.group_count();
-    if groups == 0 || count == 0 {
-        return 0..count;
-    }
-    for group in 0..groups {
-        let members = schedule.group_channels(group);
-        if members.contains(&channel) {
-            return members.iter().min().copied().unwrap_or(0)
-                ..members.iter().max().map_or(0, |c| c + 1);
-        }
-    }
-    0..count
+    let members = schedule.channel_group_channels(channel);
+    members.iter().min().copied().unwrap_or(0)..members.iter().max().map_or(count, |c| c + 1)
 }
 
 /// Channel up/down from `channel` by `step`, wrapping within its group.
 pub fn zap_target(schedule: &dyn Schedule, channel: usize, step: isize) -> usize {
-    let mut channels = crate::lists::group_of(schedule, channel)
-        .map_or_else(|| schedule.playlist_order(), |g| schedule.group_channels(g));
+    let mut channels = schedule.channel_group_channels(channel);
     channels.retain(|&c| !schedule.channel_hidden(c));
     if channels.is_empty() {
         return channel;

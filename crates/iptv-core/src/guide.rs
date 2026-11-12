@@ -109,6 +109,13 @@ pub trait Schedule {
         };
         (start..end).collect()
     }
+    /// The owning category's channels in display order, independent of which
+    /// category rows the browser currently shows. Channels without a category
+    /// use the playlist's order.
+    fn channel_group_channels(&self, channel: usize) -> Vec<usize> {
+        crate::lists::group_of(self, channel)
+            .map_or_else(|| self.playlist_order(), |g| self.group_channels(g))
+    }
     /// Hidden channels remain addressable for an already playing stream.
     fn channel_hidden(&self, _channel: usize) -> bool {
         false

@@ -104,7 +104,7 @@ impl ListId {
 }
 
 /// The catalog group holding `channel` (channels are stored grouped).
-pub fn group_of(catalog: &dyn Schedule, channel: usize) -> Option<usize> {
+pub fn group_of(catalog: &(impl Schedule + ?Sized), channel: usize) -> Option<usize> {
     if channel >= catalog.channel_count() || catalog.group_count() == 0 {
         return None;
     }

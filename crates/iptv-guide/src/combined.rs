@@ -166,6 +166,18 @@ impl Schedule for CombinedSchedule {
             .map(|c| c + offset)
             .collect()
     }
+    fn channel_group_channels(&self, channel: usize) -> Vec<usize> {
+        let Some(&(s, c)) = self.channels.get(channel) else {
+            return self.playlist_order();
+        };
+        let offset = self.channel_offset(s);
+        self.sources[s]
+            .schedule
+            .channel_group_channels(c)
+            .into_iter()
+            .map(|c| c + offset)
+            .collect()
+    }
     fn group_name(&self, g: usize) -> String {
         self.groups
             .get(g)
@@ -406,6 +418,46 @@ mod tests {
             &[0]
         );
         assert!(folded.toggle_playlist(0).unwrap().is_empty());
+    }
+    #[test]
+    fn collapsing_playlist_sections_does_not_change_category_zapping() {
+        use iptv_core::playback::{group_range, zap_target};
+        let source = |id, name: &str| {
+            let channel = |n| crate::GuideChannel {
+                key: ChannelKey::new(format!("generated-{n}")),
+                name: format!("{name} {n}"),
+                number: n,
+                catchup_days: 0,
+            };
+            SourceSchedule {
+                id,
+                name: name.into(),
+                schedule: Rc::new(EpgSchedule::new(
+                    vec![
+                        ("News".into(), vec![channel(1), channel(2)]),
+                        ("Sport".into(), vec![channel(3)]),
+                    ],
+                    GuideStore::default(),
+                    NOW,
+                )),
+            }
+        };
+        let expanded = CombinedSchedule::new(vec![source(1, "Alpha"), source(2, "Beta")], NOW);
+        let collapsed = CombinedSchedule::new(vec![source(1, "Alpha"), source(2, "Beta")], NOW)
+            .with_collapsed_sources([1, 2]);
+        assert_eq!(expanded.group_count(), 6);
+        assert_eq!(collapsed.group_count(), 2);
+        for schedule in [&expanded, &collapsed] {
+            // Fallback zapping is used when the selected browser list does
+            // not contain the playing channel. It must still wrap within
+            // the owning category, even when that category's row is hidden.
+            assert_eq!(zap_target(schedule, 1, 1), 0);
+            assert_eq!(zap_target(schedule, 0, -1), 1);
+            assert_eq!(zap_target(schedule, 4, 1), 3);
+            assert_eq!(zap_target(schedule, 5, 1), 5);
+            assert_eq!(group_range(schedule, 1), 0..2);
+            assert_eq!(group_range(schedule, 4), 3..5);
+        }
     }
     #[test]
     fn guide_times_descriptions_and_headers_resolve_with_the_owning_source() {
