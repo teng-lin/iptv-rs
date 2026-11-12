@@ -763,3 +763,236 @@ fn automatic_join_reloads_previous_source_whose_account_refresh_is_still_pending
     step(app.wait_for("text:/^Added Alpha · /"));
     assert!(!app.screen().matches("text:/^Cached Beta · /").unwrap());
 }
+
+enum PreviousGuideAction {
+    PlaylistRefresh,
+    ManualUpdate,
+    DeletePending,
+}
+
+fn exercise_previous_guide_handoff(home: &super::isolated::Home, action: PreviousGuideAction) {
+    let manual_guide = matches!(action, PreviousGuideAction::ManualUpdate);
+    use nsh_core::{ImageData, picker::PickedFile};
+    use std::io::{BufRead, BufReader, Write};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let _ = env_logger::builder()
+        .is_test(true)
+        .filter_level(log::LevelFilter::Info)
+        .try_init();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let playlist = "#EXTM3U\n#EXTINF:-1 tvg-id=\"previous\" group-title=\"News\",Previous channel\nhttp://stream.example.test/previous\n".to_owned();
+    let feed_requests = Arc::new(AtomicUsize::new(0));
+    let playlist_requests = Arc::new(AtomicUsize::new(0));
+    let release = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+    let observed_feeds = feed_requests.clone();
+    let observed_playlists = playlist_requests.clone();
+    let unblock = release.clone();
+    let body = playlist.clone();
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            let feeds = observed_feeds.clone();
+            let playlists = observed_playlists.clone();
+            let release = unblock.clone();
+            let playlist = body.clone();
+            std::thread::spawn(move || {
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut request = String::new();
+                let _ = reader.read_line(&mut request);
+                let mut header = String::new();
+                while reader.read_line(&mut header).unwrap_or(0) > 2 {
+                    header.clear();
+                }
+                let body = if request.contains("/playlist.m3u ") {
+                    playlists.fetch_add(1, Ordering::SeqCst);
+                    playlist
+                } else {
+                    let count = feeds.fetch_add(1, Ordering::SeqCst) + 1;
+                    if count > 1 {
+                        let (ready, signal) = &*release;
+                        drop(
+                            signal
+                                .wait_while(ready.lock().unwrap(), |ready| !*ready)
+                                .unwrap(),
+                        );
+                    }
+                    let title = if count == 1 {
+                        "Previous original guide"
+                    } else {
+                        "Previous completed guide"
+                    };
+                    let now = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs() as i64;
+                    format!(
+                        "<tv><channel id=\"previous\"><display-name>Previous channel</display-name></channel><programme channel=\"previous\" start=\"{}\" stop=\"{}\"><title>{title}</title></programme></tv>",
+                        iptv_epg::format_xmltv_time(now - 3600),
+                        iptv_epg::format_xmltv_time(now + 24 * 3600)
+                    )
+                };
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            });
+        }
+    });
+    let dir = home.data_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut settings = Settings::new();
+    settings
+        .set("general.resume_last_channel", Value::Bool(false))
+        .unwrap();
+    settings
+        .set("epg.update_interval", Value::Duration(0))
+        .unwrap();
+    std::fs::write(dir.join("settings.json"), settings.to_json_string()).unwrap();
+    let mut store = Store::open(dir.join("iptv.sqlite")).unwrap();
+    let source = store
+        .add_source(&Source {
+            name: "Previous".into(),
+            config: SourceConfig::M3u(M3uSourceConfig {
+                location: SecretUrl::new(format!("{base}/playlist.m3u")),
+                user_agent: None,
+                referrer: None,
+            }),
+        })
+        .unwrap();
+    let parsed = iptv_providers::m3u::parse_m3u(&playlist);
+    store
+        .replace_catalog(source, &parsed.groups, &parsed.channels.items, &[], &[])
+        .unwrap();
+    store
+        .set_source_policy(
+            source,
+            SourcePolicy {
+                refresh_on_start: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    store
+        .set_guide_sources(
+            source,
+            &[GuideSource {
+                feed: iptv_epg::SourceId(1001),
+                provider_index: None,
+                url: SecretUrl::new(format!("{base}/guide.xml")),
+                name: None,
+                enabled: true,
+                shift_minutes: 0,
+            }],
+        )
+        .unwrap();
+    drop(store);
+    let mut app = Headless::start(EngineConfig {
+        viewport: Size::new(px(1920.0), px(1080.0)),
+        ..EngineConfig::new(Root::of::<iptv_app::App>())
+    })
+    .unwrap();
+    app.on_pick(|_| vec![PickedFile::new("Second.m3u", "audio/x-mpegurl", ImageData::new(
+        b"#EXTM3U\n#EXTINF:-1 group-title=\"News\",Second channel\nhttp://stream.example.test/second\n".to_vec()
+    ))]);
+    step(app.wait_for_within("text:Previous original guide", Duration::from_secs(20)));
+    if manual_guide {
+        step(app.press("text:/^☰  /"));
+        step(app.press_key("left"));
+        step(app.press_key("left"));
+        step(app.press("text:Settings >> nth=0"));
+        step(app.press("text:TV guide data"));
+        step(app.press("text:Update the guide now"));
+        step(app.wait_until(
+            "explicit previous guide update held",
+            Duration::from_secs(10),
+            |_| feed_requests.load(Ordering::SeqCst) == 2,
+        ));
+        step(app.back());
+        step(app.back());
+    } else {
+        playlists(&mut app);
+        step(app.press("text:Previous"));
+        step(app.press("text:Refresh now"));
+        step(app.wait_until(
+            "previous guide refresh held after playlist",
+            Duration::from_secs(10),
+            |_| feed_requests.load(Ordering::SeqCst) == 2,
+        ));
+        // RUNNING clears at Playlist Done, before this guide response is released.
+        step(app.press("text:Previous"));
+        step(app.wait_for_within("text:Refresh now", Duration::from_secs(10)));
+        step(app.back());
+        step(app.press("text:Close"));
+    }
+    step(app.press("text:+ Add playlist"));
+    step(app.press("text:Playlist file"));
+    step(app.press("text:Choose a file…"));
+    step(app.press("text:Add playlist"));
+    step(app.wait_for_within("text:Playlist added", Duration::from_secs(20)));
+    step(app.press("text:Watch"));
+    step(app.wait_for_within("text:☰  All playlists", Duration::from_secs(20)));
+    step(app.wait_for("text:Previous original guide"));
+    step(app.wait_for("text:/^Second channel · /"));
+    step(app.wait(Duration::from_millis(300)));
+    assert_eq!(
+        feed_requests.load(Ordering::SeqCst),
+        2,
+        "handoff must not start a competing EPG fetch"
+    );
+    let deleted = matches!(action, PreviousGuideAction::DeletePending);
+    if deleted {
+        step(app.press("text:/^☰  /"));
+        step(app.press_key("left"));
+        step(app.press_key("left"));
+        step(app.press("text:Settings >> nth=0"));
+        step(app.press("text:TV guide data"));
+        step(app.press("text:Delete stored guide data"));
+        step(app.wait_for("text:Delete stored guide data?"));
+        step(app.press("text:Delete stored guide data >> nth=1"));
+        step(app.wait_for_gone("text:Previous original guide", Duration::from_secs(5)));
+    }
+    *release.0.lock().unwrap() = true;
+    release.1.notify_all();
+    if deleted {
+        step(app.wait(Duration::from_millis(300)));
+        assert!(
+            !app.screen()
+                .matches("text:Previous completed guide")
+                .unwrap()
+        );
+        assert!(
+            Store::open(dir.join("iptv.sqlite"))
+                .unwrap()
+                .epg_guide(source)
+                .unwrap()
+                .is_none()
+        );
+    } else {
+        step(app.wait_for_within("text:Previous completed guide", Duration::from_secs(20)));
+    }
+    assert_eq!(feed_requests.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        playlist_requests.load(Ordering::SeqCst),
+        usize::from(!manual_guide),
+        "retain the ready previous playlist without reimporting it"
+    );
+}
+
+#[test]
+fn automatic_join_receives_previous_inflight_guide_with_automatic_updates_disabled() {
+    let Some(home) = isolated!() else { return };
+    exercise_previous_guide_handoff(&home, PreviousGuideAction::PlaylistRefresh);
+}
+
+#[test]
+fn automatic_join_receives_previous_manual_guide_update_with_automatic_updates_disabled() {
+    let Some(home) = isolated!() else { return };
+    exercise_previous_guide_handoff(&home, PreviousGuideAction::ManualUpdate);
+}
+
+#[test]
+fn deleting_guide_supersedes_a_retained_previous_download() {
+    let Some(home) = isolated!() else { return };
+    exercise_previous_guide_handoff(&home, PreviousGuideAction::DeletePending);
+}

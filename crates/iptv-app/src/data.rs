@@ -242,6 +242,7 @@ pub fn spawn_in_app(future: impl Future<Output = ()> + 'static) {
 pub fn start(ui: Ui) {
     APP_OWNER.with(|o| o.set(Some(Owner::current())));
     combined::reset_single();
+    library::reset_imports();
     // Guide downloads a crash interrupted (none runs yet).
     EpgStage::remove_stale(data_dir());
     let started = std::time::Instant::now();
@@ -311,9 +312,16 @@ pub fn start_import(ui: Ui, job: Job, on_update: impl Fn(Update) + 'static) -> C
 /// [`start_import`] with the caller's cancel token.
 fn start_import_with(ui: Ui, job: Job, cancel: CancelToken, on_update: impl Fn(Update) + 'static) {
     let purpose = job.purpose;
-    let previous = (purpose == Purpose::Add)
-        .then(combined::ready_single)
-        .flatten();
+    let mut import_source = job.stored;
+    let completion = library::import_completion(cancel.clone());
+    if let Some(source) = import_source {
+        library::track_import(source, &completion);
+    }
+    let previous = Cell::new(
+        (purpose == Purpose::Add)
+            .then(combined::ready_single)
+            .flatten(),
+    );
     let shows = purpose.shows() && !combined::active(ui);
     let generation = if shows {
         next_generation()
@@ -341,7 +349,7 @@ fn start_import_with(ui: Ui, job: Job, cancel: CancelToken, on_update: impl Fn(U
             show_part(ui, imported, generation, resume, held);
             if merge {
                 merge_requested.set(true);
-                combined::added(ui, source, generation, previous.clone());
+                combined::added(ui, source, generation, previous.take());
             }
         }
     };
@@ -354,6 +362,21 @@ fn start_import_with(ui: Ui, job: Job, cancel: CancelToken, on_update: impl Fn(U
                 match rx.try_recv() {
                     Ok(Msg::Progress(p)) => progress = Some(p),
                     Ok(Msg::Playlist(result)) => {
+                        completion.playlist_done();
+                        if import_source.is_none() && GENERATION.with(Cell::get) == generation {
+                            if let Ok((_, imported)) = &result {
+                                import_source = Some(imported.source);
+                                library::track_added_import(imported.source, &completion);
+                            }
+                        }
+                        if import_source
+                            .is_some_and(|source| !library::import_is_current(source, &completion))
+                        {
+                            // A guide action can revoke handoff while authentication
+                            // is still running. Keep its successful playback metadata,
+                            // then cancel the superseded post-playlist guide phase.
+                            completion.cancel_guide();
+                        }
                         if let Some(p) = progress.take() {
                             on_update(Update::Progress(p));
                         }
@@ -363,7 +386,11 @@ fn start_import_with(ui: Ui, job: Job, cancel: CancelToken, on_update: impl Fn(U
                             counts
                         })));
                     }
-                    Ok(Msg::Guide(imported)) => show(imported, None),
+                    Ok(Msg::Guide(imported)) => {
+                        if library::import_is_current(imported.source, &completion) {
+                            show(imported, None);
+                        }
+                    }
                     Ok(Msg::FirstScreen(imported, held)) => show(imported, Some(held)),
                     Ok(Msg::NextCheck { source, at })
                         if shows || combined::includes(ui, source) =>
@@ -390,6 +417,7 @@ fn start_import_with(ui: Ui, job: Job, cancel: CancelToken, on_update: impl Fn(U
             }
             timer(POLL).await;
         }
+        completion.finish();
     });
 }
 
@@ -522,32 +550,55 @@ fn schedule_check(ui: Ui, source: SourceId, at: i64, generation: u64) {
 /// A guide check on its own thread: downloads the guide again when the
 /// refresh policy says so, then schedules the next check.
 fn check_guide(ui: Ui, source: SourceId, generation: u64) {
-    read_guide(ui, source, generation, false);
+    spawn_in_app(read_guide(ui, source, generation, GuideRead::Check, None));
 }
 
 /// Reattach a retained source after changing generations. A first-screen
 /// snapshot may still hold only a few channels/hours, so install the full
 /// cached window even when the refresh policy does not request a download.
 fn restore_guide(ui: Ui, source: SourceId, generation: u64) {
-    read_guide(ui, source, generation, true);
+    spawn_in_app(read_guide(
+        ui,
+        source,
+        generation,
+        GuideRead::RestoreAndCheck,
+        None,
+    ));
 }
 
-fn read_guide(ui: Ui, source: SourceId, generation: u64, restore_cached: bool) {
+#[derive(Clone, Copy)]
+enum GuideRead {
+    Check,
+    RestoreAndCheck,
+    CacheOnly,
+}
+
+async fn read_guide(
+    ui: Ui,
+    source: SourceId,
+    generation: u64,
+    read: GuideRead,
+    handoff: Option<library::ImportCompletion>,
+) {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        with_runtime(|| guide_pipeline(source, &tx, restore_cached));
+        with_runtime(|| guide_pipeline(source, &tx, read));
     });
-    spawn_in_app(async move {
-        loop {
-            match rx.try_recv() {
-                Ok(Msg::Guide(imported)) => show(ui, imported, generation, false),
-                Ok(Msg::NextCheck { source, at }) => schedule_check(ui, source, at, generation),
-                Ok(_) => {}
-                Err(TryRecvError::Empty) => timer(POLL).await,
-                Err(TryRecvError::Disconnected) => break,
-            }
+    loop {
+        if handoff
+            .as_ref()
+            .is_some_and(|job| !library::import_is_current(source, job))
+        {
+            return;
         }
-    });
+        match rx.try_recv() {
+            Ok(Msg::Guide(imported)) => show(ui, imported, generation, false),
+            Ok(Msg::NextCheck { source, at }) => schedule_check(ui, source, at, generation),
+            Ok(_) => {}
+            Err(TryRecvError::Empty) => timer(POLL).await,
+            Err(TryRecvError::Disconnected) => break,
+        }
+    }
 }
 
 /// Runs `future` on a small tokio runtime on this thread; false when the
@@ -576,7 +627,7 @@ fn run(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
 }
 
 /// The timer's guide check: the stored feeds for the stored channels.
-async fn guide_pipeline(source: SourceId, tx: &Sender<Msg>, restore_cached: bool) {
+async fn guide_pipeline(source: SourceId, tx: &Sender<Msg>, read: GuideRead) {
     let now = now_unix();
     let state = stored::guide_state(source);
     let guides = stored::current_configs(source, state.as_ref());
@@ -592,7 +643,7 @@ async fn guide_pipeline(source: SourceId, tx: &Sender<Msg>, restore_cached: bool
         channels: &channels,
         overrides: &overrides,
     };
-    if restore_cached {
+    if !matches!(read, GuideRead::Check) {
         let _ = tx.send(Msg::Guide(Box::new(Imported {
             groups: groups.clone(),
             channels: channels.clone(),
@@ -602,6 +653,9 @@ async fn guide_pipeline(source: SourceId, tx: &Sender<Msg>, restore_cached: bool
             source,
             resume: false,
         })));
+    }
+    if matches!(read, GuideRead::CacheOnly) {
+        return;
     }
     match stored::plan(Trigger::Timer, &guides, matching, state.as_ref(), now) {
         Decision::Refresh(reason) => {

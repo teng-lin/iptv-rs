@@ -27,6 +27,8 @@ pub(super) struct SingleSchedule {
     source: SourceId,
     schedule: Rc<EpgSchedule>,
     limit: Option<u32>,
+    pending: Option<library::ImportCompletion>,
+    revision: library::ImportRevision,
 }
 pub(super) fn reset_single() {
     SINGLE.with(|s| s.borrow_mut().take());
@@ -38,7 +40,13 @@ pub(super) fn single() -> Option<SingleSchedule> {
 /// can still replace a cached source's provisional playback metadata, so that
 /// source must go through the normal combined loader instead of being retained.
 pub(super) fn ready_single() -> Option<SingleSchedule> {
-    single().filter(|s| !library::running(s.source))
+    single()
+        .filter(|s| !library::running(s.source) && s.schedule.playback().is_some())
+        .map(|mut s| {
+            s.pending = library::pending_import(s.source);
+            s.revision = library::import_revision(s.source);
+            s
+        })
 }
 pub(super) fn remember_single(source: SourceId, schedule: Rc<EpgSchedule>) {
     SINGLE.with(|s| {
@@ -46,6 +54,8 @@ pub(super) fn remember_single(source: SourceId, schedule: Rc<EpgSchedule>) {
             source,
             schedule,
             limit: crate::multiview::account_limit(),
+            pending: None,
+            revision: library::import_revision(source),
         })
     });
 }
@@ -80,8 +90,10 @@ pub(super) fn added(ui: Ui, source: SourceId, generation: u64, previous: Option<
         ui.library.all.set(true);
         PARTS.with(|p| p.borrow_mut().clear());
         LIMITS.with(|p| p.borrow_mut().clear());
-        let previous = previous.filter(|s| enabled(s.source));
-        let previous_source = previous.as_ref().map(|s| s.source);
+        let previous = previous.filter(|s| {
+            enabled(s.source) && library::import_revision_is_current(s.source, &s.revision)
+        });
+        let previous_guide = previous.as_ref().map(|s| (s.source, s.pending.clone()));
         for kept in previous.into_iter().chain(std::iter::once(added)) {
             PARTS.with(|p| p.borrow_mut().insert(kept.source, kept.schedule));
             LIMITS.with(|p| p.borrow_mut().insert(kept.source, kept.limit));
@@ -93,8 +105,8 @@ pub(super) fn added(ui: Ui, source: SourceId, generation: u64, previous: Option<
         rebuild(ui);
         // The previous single source's timer belonged to its older generation.
         // Reattach guide work without fetching its playlist/account again.
-        if let Some(previous) = previous_source.filter(|id| *id != source) {
-            super::restore_guide(ui, previous, generation);
+        if let Some((previous, pending)) = previous_guide.filter(|(id, _)| *id != source) {
+            reattach_guide(ui, previous, generation, pending);
         }
         for playlist in playlists.into_iter().filter(|p| p.policy.enabled) {
             if !PARTS.with(|p| p.borrow().contains_key(&playlist.id)) {
@@ -105,6 +117,54 @@ pub(super) fn added(ui: Ui, source: SourceId, generation: u64, previous: Option<
         }
     });
 }
+/// A previous source can finish its original EPG download after Add has moved
+/// the browser to a new generation. Keep the worker identity until its final
+/// cache is restored; newer imports and explicit guide changes revoke it.
+fn reattach_guide(
+    ui: Ui,
+    source: SourceId,
+    generation: u64,
+    pending: Option<library::ImportCompletion>,
+) {
+    let Some(pending) = pending else {
+        super::restore_guide(ui, source, generation);
+        return;
+    };
+    super::spawn_in_app(async move {
+        let current = || {
+            super::GENERATION.with(Cell::get) == generation
+                && includes(ui, source)
+                && library::import_is_current(source, &pending)
+        };
+        if !current() {
+            return;
+        }
+        // Complete this initial restore before the final one so an older cache
+        // read cannot arrive after the original download's successful result.
+        super::read_guide(
+            ui,
+            source,
+            generation,
+            super::GuideRead::CacheOnly,
+            Some(pending.clone()),
+        )
+        .await;
+        while current() && !pending.finished() {
+            nsh_core::prelude::timer(super::POLL).await;
+        }
+        if current() {
+            super::read_guide(
+                ui,
+                source,
+                generation,
+                super::GuideRead::RestoreAndCheck,
+                Some(pending),
+            )
+            .await;
+        }
+    });
+}
+
 pub fn active(ui: Ui) -> bool {
     ui.library.all.get_untracked()
 }
@@ -290,7 +350,15 @@ pub fn resume(ui: Ui) {
             Some(iptv_guide::combined::qualified_key(source.0, &key))
         })
     });
-    if let Some(c) = key.and_then(|k| crate::schedule().find_channel(&k)) {
+    let schedule = crate::schedule();
+    if let Some(c) = key.and_then(|k| schedule.find_channel(&k)) {
+        // Another playlist's import may call resume while the target portal is
+        // still only cached rows. Wait for that owning source's authentication.
+        if iptv_guide::combined::epg_channel(&*schedule, c)
+            .is_none_or(|(child, _)| child.playback().is_none())
+        {
+            return;
+        }
         RESUME.with(|r| r.set(false));
         ui.play(c, crate::Playback::Live);
         ui.mode.set(crate::ViewMode::Fullscreen);
