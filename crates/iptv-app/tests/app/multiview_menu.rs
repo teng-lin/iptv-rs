@@ -108,6 +108,7 @@ fn the_tile_menu_is_a_side_panel_with_pause_and_search_and_add() {
 
     step(app.wait_for("text:No playlists yet"));
     step(app.press("text:Add playlist"));
+    step(app.wait_for("text:Playlist file"));
     step(app.press("text:Playlist file"));
     step(app.press("text:Choose a file…"));
     step(app.wait_for("text:synthetic.m3u"));

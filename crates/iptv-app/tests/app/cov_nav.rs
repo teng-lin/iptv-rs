@@ -30,7 +30,9 @@ const TILE: &str = "id:multiview-tile";
 const MENU: &str = "id:multiview-menu";
 /// A programme's channel and times, as the details popover (and a search
 /// result) shows them.
-const TIMES: &str = "text:/^Test Channel One · [0-9:]+–[0-9:]+$/";
+// A time on another local day carries its weekday and date ("Thu 12 · 00:22"):
+// late in the evening the programme two hours on ends, or starts, tomorrow.
+const TIMES: &str = "text:/^Test Channel One · ([A-Z][a-z]{2} [0-9]{1,2} · )?[0-9:]+–([A-Z][a-z]{2} [0-9]{1,2} · )?[0-9:]+$/";
 
 /// How many lines of channel one's programme times show: the details
 /// popover adds one (it stays mounted, empty, while closed).
@@ -177,6 +179,7 @@ fn keys_drive_the_guide_search_the_channel_list_and_multiview() {
     });
     step(app.wait_for("text:No playlists yet"));
     step(app.press("text:Add playlist"));
+    step(app.wait_for("text:Playlist file"));
     step(app.press("text:Playlist file"));
     step(app.press("text:Choose a file…"));
     step(app.wait_for("text:synthetic.m3u"));

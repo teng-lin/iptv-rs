@@ -70,6 +70,7 @@ fn older_days_are_read_in_when_browsing_back() {
     let step = |r: Result<(), String>| r.unwrap_or_else(|e| panic!("{e}"));
     step(app.wait_for("text:No playlists yet"));
     step(app.press("text:Add playlist"));
+    step(app.wait_for("text:Playlist file"));
     step(app.press("text:Playlist file"));
     step(app.press("text:Choose a file…"));
     step(app.wait_for("text:synthetic.m3u"));

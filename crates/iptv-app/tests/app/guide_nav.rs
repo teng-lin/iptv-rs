@@ -85,6 +85,7 @@ fn the_timeline_pans_by_touch_and_left_goes_from_replays_to_groups_and_search() 
     let gone = |app: &mut Headless, s: &str| app.wait_for_gone(s, Duration::from_secs(3));
     step(app.wait_for("text:No playlists yet"));
     step(app.press("text:Add playlist"));
+    step(app.wait_for("text:Playlist file"));
     step(app.press("text:Playlist file"));
     step(app.press("text:Choose a file…"));
     step(app.wait_for("text:synthetic.m3u"));

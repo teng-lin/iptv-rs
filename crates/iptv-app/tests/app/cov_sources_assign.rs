@@ -61,7 +61,10 @@ fn choosing_a_channels_guide_data() {
     t.app.on_pick(move |_| support::picked(playlist.clone()));
     t.wait("text:No playlists yet", 5);
     t.press("text:Add playlist");
+    // The wizard's options come on a later frame (slow on a loaded machine).
+    t.wait("text:Playlist file", 5);
     t.press("text:Playlist file");
+    t.wait("text:Choose a file…", 5);
     t.press("text:Choose a file…");
     t.press("text:Add playlist");
     t.wait("text:Playlist added", 30);

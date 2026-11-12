@@ -53,6 +53,7 @@ fn the_pip_windows_controls_follow_the_pointer() {
     });
     step(app.wait_for("text:No playlists yet"));
     step(app.press("text:Add playlist"));
+    step(app.wait_for("text:Playlist file"));
     step(app.press("text:Playlist file"));
     step(app.press("text:Choose a file…"));
     step(app.wait_for("text:synthetic.m3u"));

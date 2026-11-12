@@ -66,6 +66,7 @@ fn a_tablet_first_run_shows_whole_numbers_and_no_development_defaults() {
     // The playlist link starts empty: its placeholder, no address.
     step(app.wait_for("text:No playlists yet"));
     step(app.press("text:Add playlist"));
+    step(app.wait_for("text:Playlist link"));
     step(app.press("text:Playlist link"));
     if option_env!("IPTV_RS_DEV_PLAYLIST").is_none() {
         step(app.wait_for("text:http://…/playlist.m3u"));

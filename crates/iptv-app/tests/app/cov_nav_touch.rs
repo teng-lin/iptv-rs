@@ -37,7 +37,9 @@ const GROUPS: &str = "id:channel-list-groups";
 const WAIT: Duration = Duration::from_secs(3);
 /// "Gala Evening"'s channel and times: its result's second line, and the
 /// details popover's (mounted, empty, while closed).
-const GALA: &str = "text:/^Test Channel One · [0-9:]+–[0-9:]+$/";
+// A time on another local day carries its weekday and date ("Thu 12 · 00:22"):
+// late in the evening the programme two hours on ends, or starts, tomorrow.
+const GALA: &str = "text:/^Test Channel One · ([A-Z][a-z]{2} [0-9]{1,2} · )?[0-9:]+–([A-Z][a-z]{2} [0-9]{1,2} · )?[0-9:]+$/";
 
 /// As in `cov_nav.rs`: "Morning Talk" on now on channel one, "Recital
 /// Replay" two hours back (replayable), "Gala Evening" two hours on;
@@ -136,6 +138,7 @@ fn pointer_and_touch_drive_search_the_channel_list_and_multiview() {
     });
     step(app.wait_for("text:No playlists yet"));
     step(app.press("text:Add playlist"));
+    step(app.wait_for("text:Playlist file"));
     step(app.press("text:Playlist file"));
     step(app.press("text:Choose a file…"));
     step(app.wait_for("text:synthetic.m3u"));
