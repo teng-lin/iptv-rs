@@ -101,6 +101,15 @@ impl<C: Clone + PartialEq> Multiview<C> {
     pub fn choose(&mut self, index: usize) -> Outcome<C> {
         match self.dialog.take() {
             None => Outcome::Stay,
+            Some(Dialog::Warning { .. }) if self.pending_pick.is_some() => {
+                let (pick, channel) = self.pending_pick.take().unwrap();
+                if WARNING_CHOICES.get(index) == Some(&WarningChoice::AddAnyway) {
+                    self.pick = Some(pick);
+                    self.picked(channel)
+                } else {
+                    Outcome::Stay
+                }
+            }
             Some(Dialog::Warning { search, .. }) => match WARNING_CHOICES.get(index) {
                 Some(WarningChoice::AddAnyway) => {
                     self.insisted = true;

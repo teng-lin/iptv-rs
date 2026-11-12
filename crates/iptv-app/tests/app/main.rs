@@ -21,7 +21,9 @@ mod personalization;
 /// What the guide sources scenarios share.
 mod support;
 
+mod backup_restore;
 mod cold_start;
+mod combined_playlists;
 mod cov_data;
 mod cov_data_player;
 mod cov_mpv_pip_window;

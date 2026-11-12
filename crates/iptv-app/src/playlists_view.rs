@@ -44,7 +44,10 @@ pub fn open(ui: Ui) {
     if is_open(ui) || crate::wizard_view::is_open(ui) {
         return;
     }
-    let screen = Screen::new(load(), ui.library.shown.get_untracked());
+    let mut screen = Screen::new(load(), ui.library.shown.get_untracked());
+    if ui.library.all.get_untracked() {
+        screen.focus_all();
+    }
     ui.playlists.set(Some(screen));
     if ui.mode.get_untracked() == ViewMode::Fullscreen {
         ui.mode.set(ViewMode::Guide);
@@ -132,6 +135,11 @@ fn cancel(ui: Ui) {
 fn perform(ui: Ui, effect: Effect) {
     log::info!("iptv playlists: {}", effect_name(&effect));
     let result = match effect {
+        Effect::AllPlaylists => {
+            close(ui);
+            data::switch_all(ui);
+            Ok(())
+        }
         Effect::Add => {
             crate::wizard_view::open_add(ui);
             Ok(())
@@ -204,6 +212,7 @@ fn perform(ui: Ui, effect: Effect) {
 fn effect_name(effect: &Effect) -> String {
     match effect {
         Effect::Add => "add".to_owned(),
+        Effect::AllPlaylists => "show all playlists".to_owned(),
         Effect::Show(id) => format!("show {}", id.0),
         Effect::Refresh(id) => format!("refresh {}", id.0),
         Effect::Policy(id, _) => format!("playlist policy {}", id.0),
@@ -326,7 +335,10 @@ fn row(ui: Ui, size: Scale, index: usize, focused_index: Memo<Option<usize>>) ->
                 .count()
         })
     };
-    let shown = move || playlist().is_some_and(|p| ui.library.shown.get() == Some(p.id));
+    let shown = move || {
+        playlist().is_some_and(|p| !ui.library.all.get() && ui.library.shown.get() == Some(p.id))
+            || (item() == Some(Item::AllPlaylists) && ui.library.all.get())
+    };
     let activity = move |id: SourceId| ui.library.activity.with(|a| a.get(&id).cloned());
     let status = move || match (playlist(), item()) {
         (Some(p), _) => words::status(&p, activity(p.id).as_ref(), crate::time::wall_unix()),
@@ -336,6 +348,7 @@ fn row(ui: Ui, size: Scale, index: usize, focused_index: Memo<Option<usize>>) ->
     let title = move || match (playlist(), item()) {
         (Some(p), _) => p.name,
         (None, Some(Item::RefreshAll)) => "Refresh all playlists".to_owned(),
+        (None, Some(Item::AllPlaylists)) => "All playlists".to_owned(),
         _ => "+ Add playlist".to_owned(),
     };
     let summary = move || match (playlist(), item()) {
@@ -343,10 +356,18 @@ fn row(ui: Ui, size: Scale, index: usize, focused_index: Memo<Option<usize>>) ->
         (None, Some(Item::RefreshAll)) => {
             "Each one downloads again; the one on screen updates in place".to_owned()
         }
+        (None, Some(Item::AllPlaylists)) => "Browse enabled playlists together".to_owned(),
         _ => "M3U link or file, Xtream Codes login, Stalker portal".to_owned(),
     };
     let mark = move || mark(ui, focused_index.get() == Some(index));
     list_rows::row(size, ROW_THREE, mark)
+        .test_id(
+            if state(ui, |s| s.items().get(index) == Some(&Item::AllPlaylists)).unwrap_or(false) {
+                "playlists-all"
+            } else {
+                "playlist-row"
+            },
+        )
         .flex_row()
         .items_center()
         .justify_start()

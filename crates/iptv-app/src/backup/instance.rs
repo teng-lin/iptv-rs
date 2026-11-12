@@ -1,0 +1,136 @@
+//! Hold the application storage lock for the process lifetime. The lock is a
+//! sibling of the data directory, so activating a restore never moves it.
+use std::fs::{File, OpenOptions};
+use std::path::Path;
+use std::sync::{Mutex, OnceLock};
+
+const ALREADY_RUNNING: &str =
+    "Patina is already running. Close the other instance before opening it again";
+static FILE: OnceLock<File> = OnceLock::new();
+static ACQUIRING: Mutex<()> = Mutex::new(());
+
+/// Acquire before settings, restore activation or any storage worker starts.
+/// Activity/root recreation in this process reuses the already-held lock.
+pub(super) fn acquire(root: &Path) -> Result<(), &'static str> {
+    let _guard = ACQUIRING
+        .lock()
+        .map_err(|_| "Could not lock application storage")?;
+    if FILE.get().is_some() {
+        return Ok(());
+    }
+    let name = root
+        .file_name()
+        .ok_or("Invalid application storage directory")?;
+    let parent = root.parent().ok_or("Application storage has no parent")?;
+    std::fs::create_dir_all(parent).map_err(|_| "Could not open application storage")?;
+    let mut lock_name = name.to_os_string();
+    lock_name.push(".instance-lock");
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    }
+    let file = options
+        .open(parent.join(lock_name))
+        .map_err(|_| "Could not open the application storage lock")?;
+    match file.try_lock() {
+        Ok(()) => {}
+        Err(std::fs::TryLockError::WouldBlock) => return Err(ALREADY_RUNNING),
+        Err(std::fs::TryLockError::Error(_)) => return Err("Could not lock application storage"),
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))
+            .map_err(|_| "Could not protect the application storage lock")?;
+    }
+    FILE.set(file)
+        .map_err(|_| "Could not retain the application storage lock")?;
+    // Do not unlink or explicitly unlock: every app-owned detached worker may
+    // still have database handles until this process exits.
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::process::{Command, Stdio};
+    const ROOT: &str = "IPTV_RS_INSTANCE_LOCK_TEST_ROOT";
+    const MODE: &str = "IPTV_RS_INSTANCE_LOCK_TEST_MODE";
+    const CHILD: &str = "backup::instance::tests::lock_child_process";
+
+    fn child(root: &Path, mode: &str) -> Command {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["--exact", CHILD, "--nocapture"])
+            .env(ROOT, root)
+            .env(MODE, mode);
+        command
+    }
+    #[test]
+    fn lock_child_process() {
+        let Some(root) = std::env::var_os(ROOT) else {
+            return;
+        };
+        let root = Path::new(&root);
+        match std::env::var(MODE).unwrap().as_str() {
+            "holder" => {
+                acquire(root).unwrap();
+                acquire(root).unwrap(); // Same-process root recreation is safe.
+                println!("instance-lock-ready");
+                std::io::stdout().flush().unwrap();
+                let mut release = [0];
+                std::io::stdin().read_exact(&mut release).unwrap();
+            }
+            "contender" => assert_eq!(acquire(root), Err(ALREADY_RUNNING)),
+            "successor" => acquire(root).unwrap(),
+            mode => panic!("unknown synthetic child mode: {mode}"),
+        }
+    }
+    #[test]
+    fn another_process_is_rejected_during_restore_directory_swap_until_owner_exits() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("synthetic-app");
+        std::fs::create_dir(&root).unwrap();
+        let mut holder = child(&root, "holder")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap();
+        let mut output = BufReader::new(holder.stdout.take().unwrap());
+        loop {
+            let mut line = String::new();
+            assert!(
+                output.read_line(&mut line).unwrap() > 0,
+                "holder ended before acquiring the lock"
+            );
+            if line.contains("instance-lock-ready") {
+                break;
+            }
+        }
+        // The data directory can be moved and replaced while the held lock
+        // remains outside it. A second process still cannot open that storage.
+        std::fs::rename(&root, dir.path().join("synthetic-app.restore-previous")).unwrap();
+        std::fs::create_dir(&root).unwrap();
+        assert!(child(&root, "contender").output().unwrap().status.success());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(dir.path().join("synthetic-app.instance-lock"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+        holder.stdin.take().unwrap().write_all(b"x").unwrap();
+        assert!(holder.wait().unwrap().success());
+        assert!(child(&root, "successor").output().unwrap().status.success());
+    }
+}

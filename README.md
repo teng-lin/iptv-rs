@@ -12,6 +12,8 @@ Plan and decisions: [`.plans/2026-11-09-tivimate-ux-replication.md`](.plans/2026
 Android video/input research: [`docs/research/android-video-and-input.md`](docs/research/android-video-and-input.md).
 Feature backlog: [Playlist, settings and channel/group gaps](docs/missing-features-2026-11-11.md).
 Guide and list work: [Browsing behavior, custom groups and appearance](docs/guide-personalization.md).
+Combined sources: [All playlists browsing, search and playback](docs/combined-playlists.md).
+Whole-app backups: [Export, restore and platform support](docs/whole-app-backup.md).
 
 ## Layout
 

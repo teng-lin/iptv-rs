@@ -27,6 +27,7 @@
 //!   The wiring for app start and background refresh is documented in
 //!   `src/epg.rs` and the README.
 
+mod backup;
 mod catalog;
 mod channels;
 mod codec;

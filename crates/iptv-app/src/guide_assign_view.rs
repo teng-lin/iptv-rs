@@ -33,10 +33,10 @@ const PANEL_W: f32 = 680.0;
 /// screen; a notice when there is none or it has no guide at all.
 pub fn open(ui: Ui, channel: usize) {
     let schedule = crate::schedule();
-    let (Some(playlist), Some(key)) = (
-        ui.library.shown.get_untracked(),
-        schedule.channel_key(channel),
-    ) else {
+    let Some((playlist, key)) = schedule
+        .channel_key(channel)
+        .and_then(|k| crate::data::combined::owner(ui, &k))
+    else {
         crate::settings_view::notify("No playlist on screen");
         return;
     };

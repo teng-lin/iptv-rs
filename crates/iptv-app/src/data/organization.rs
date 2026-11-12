@@ -39,6 +39,10 @@ pub fn apply(schedule: &EpgSchedule, source: SourceId) {
 }
 pub fn changed(ui: Ui, source: SourceId) {
     ui.library.version.update(|v| *v += 1);
+    if super::combined::active(ui) {
+        super::combined::organization_changed(ui, source);
+        return;
+    }
     if ui.library.shown.get_untracked() != Some(source) {
         return;
     }

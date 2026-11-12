@@ -78,6 +78,8 @@ pub const WIRED: &[&str] = &[
 
 /// The commands the app runs (`settings_view::run`).
 pub const COMMANDS: &[&str] = &[
+    "general.backup",
+    "general.restore",
     "epg.add_source",
     "epg.manage_sources",
     "epg.update_now",
@@ -145,6 +147,9 @@ static CURRENT: RwLock<Option<Arc<Settings>>> = RwLock::new(None);
 pub fn offer(key: &str) -> Offer {
     // Leaving the app into a picture-in-picture window: Android only.
     let android = cfg!(target_os = "android");
+    if matches!(key, "general.backup" | "general.restore") && cfg!(target_os = "ios") {
+        return Offer::NotYet;
+    }
     if WIRED.contains(&key)
         || COMMANDS.contains(&key)
         || (key == keys::LONG_PRESS.0 && crate::input::LONG_PRESS)

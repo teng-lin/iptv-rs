@@ -122,6 +122,8 @@ pub struct Multiview<C> {
     insisted: bool,
     dialog: Option<Dialog>,
     pick: Option<Pick>,
+    /// A source-specific limit can only be checked after choosing a channel.
+    pending_pick: Option<(Pick, C)>,
     /// The key hint shows (until a key, or the caller's timeout).
     hint: bool,
     /// The tile watched full screen, the grid waiting.
@@ -149,6 +151,7 @@ impl<C: Clone + PartialEq> Multiview<C> {
             insisted: false,
             dialog: None,
             pick: None,
+            pending_pick: None,
             hint: true,
             detour: None,
         }
@@ -262,7 +265,10 @@ impl<C: Clone + PartialEq> Multiview<C> {
                     let at = *focus;
                     return self.choose(at);
                 }
-                Key::Back | Key::Menu => self.dialog = None,
+                Key::Back | Key::Menu => {
+                    self.dialog = None;
+                    self.pending_pick = None;
+                }
                 _ => {}
             }
             return Outcome::Stay;
@@ -295,6 +301,7 @@ impl<C: Clone + PartialEq> Multiview<C> {
     /// only closes it.
     pub fn tap(&mut self, index: usize, failed: impl Fn(usize) -> bool) -> Outcome<C> {
         if self.dialog.take().is_some() || index >= self.tiles.len() || self.detour.is_some() {
+            self.pending_pick = None;
             return Outcome::Stay;
         }
         if index == self.active {
@@ -346,6 +353,24 @@ impl<C: Clone + PartialEq> Multiview<C> {
         self.leave(self.active)
     }
 
+    /// Defer a chosen channel behind the usual connection warning. The caller
+    /// counts streams for its owning account, excluding any replaced tile.
+    pub fn picked_with_warning(&mut self, channel: C, exceeded: Option<u32>) -> Outcome<C> {
+        if let (Some(pick), Some(allowed)) = (self.pick, exceeded) {
+            if !self.tiles.iter().any(|t| t.channel == channel) {
+                self.pick = None;
+                self.pending_pick = Some((pick, channel));
+                self.dialog = Some(Dialog::Warning {
+                    allowed,
+                    focus: 1,
+                    search: false,
+                });
+                return Outcome::Stay;
+            }
+        }
+        self.picked(channel)
+    }
+
     /// The channel list chose `channel` for the pending pick. A channel
     /// already on a tile only makes that tile active.
     pub fn picked(&mut self, channel: C) -> Outcome<C> {
@@ -388,6 +413,9 @@ impl<C: Clone + PartialEq> Multiview<C> {
     /// Keeps the tiles `f` keeps (it may change their channel, e.g. when
     /// the data changed); `false` when none is left.
     pub fn retain(&mut self, mut f: impl FnMut(usize, &mut C) -> bool) -> bool {
+        if self.pending_pick.take().is_some() {
+            self.dialog = None;
+        }
         let mut at = 0;
         while at < self.tiles.len() {
             let t = &mut self.tiles[at];

@@ -2,7 +2,7 @@
 
 This backlog follows the [functionality audit](parity-audit-2026-11-11.md).
 The current implementation work covers the four priorities below. Further
-multiview enhancements, backup/restore, and parental controls are deferred;
+multiview enhancements and parental controls are deferred;
 channel/group blocking and PIN enforcement remain outside this work.
 
 ## 1. Hide/show channels and groups
@@ -81,7 +81,7 @@ See [behavior, UI entry points and validation](guide-personalization.md).
 
 ## Remaining backlog, outside this implementation
 
-- Playlist manual ordering, combined All playlists view, source-specific
+- Playlist manual ordering, source-specific
   logo/catch-up overrides, advanced Stalker identity/login fields.
 - Remaining guide visibility/emphasis controls, history limits, animations,
   advanced logo-source preferences and additional playback settings.
@@ -108,7 +108,7 @@ as a usable feature. See the audit for evidence and reference uncertainty.
 | Area | Missing or incomplete workflow | What completing it requires | Priority |
 | --- | --- | --- | --- |
 | Playlist order | User-defined order of stored playlists | Remote/pointer move editor, persistence, restore order, valid focus after deletion | Next |
-| All playlists | A combined live catalogue across enabled sources | Source-qualified channel identity, duplicate display names, per-source refresh/failure state, playback/source switching without losing guide focus | Later |
+| All playlists | A combined live catalogue across enabled sources | Implemented: source-qualified browsing, search, favorites, guide and playback; see [scope and validation](combined-playlists.md) | Implemented |
 | Source overrides | Per-playlist logo and catch-up policy | Distinguish provider defaults from overrides; validate URL templates without showing secrets; refresh/reset behavior | Later |
 | Stalker setup | Advanced device/login identity fields | Optional serial/device identity/login UI, validation, retained credentials and tested session renewal; supported fields must be confirmed against provider behavior | Later |
 | Shared EPG | Reuse one feed across multiple playlists | Shared-source identity/lifecycle, per-playlist matching/shift, default feed selection, refresh ownership and deletion consequences | Next |
@@ -128,6 +128,6 @@ as a usable feature. See the audit for evidence and reference uncertainty.
 | Recording/reminders | Scheduling, storage and conflict journeys | End-to-end scheduler and persistence, permission/storage UI, recording state, failure/retry/cancellation; enums alone are insufficient | Later product scope |
 | VOD | Movies/series, watched state, resume/next episode | Usable catalogue/detail/season/episode screens, player integration, persisted progress and navigation/focus restoration | Later product scope |
 
-Multiview enhancements, backup/restore, parental controls and blocking/PIN
-work remain explicitly deferred. This backlog does not require them to
+Whole-app backup/restore is implemented; see [coverage and platform support](whole-app-backup.md).
+Multiview enhancements, parental controls and blocking/PIN work remain explicitly deferred. This backlog does not require them to
 ship the four library/input priorities.

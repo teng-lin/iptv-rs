@@ -17,6 +17,7 @@ pub enum Item {
     Playlist(SourceId),
     /// Shown with two playlists or more.
     RefreshAll,
+    AllPlaylists,
     Add,
 }
 
@@ -108,6 +109,7 @@ pub enum Effect {
     Guides(SourceId),
     Delete(SourceId),
     RefreshAll,
+    AllPlaylists,
     /// Load the stored details of `id` for [`Screen::open_details`].
     OpenDetails(SourceId),
     /// Import these new details; they replace the stored ones if they work.
@@ -151,6 +153,12 @@ impl Screen {
         }
     }
 
+    pub fn focus_all(&mut self) {
+        if self.items().contains(&Item::AllPlaylists) {
+            self.focus = Item::AllPlaylists;
+        }
+    }
+
     pub fn rows(&self) -> &[Playlist] {
         &self.rows
     }
@@ -183,6 +191,9 @@ impl Screen {
     /// more), then "Add playlist".
     pub fn items(&self) -> Vec<Item> {
         let mut items: Vec<Item> = self.rows.iter().map(|r| Item::Playlist(r.id)).collect();
+        if !self.rows.is_empty() {
+            items.push(Item::AllPlaylists);
+        }
         if self.rows.len() > 1 {
             items.push(Item::RefreshAll);
         }
@@ -287,6 +298,7 @@ impl Screen {
             (Key::Down, _) => self.focus = items[(at + 1).min(items.len() - 1)],
             (Key::Ok, Item::Add) => return Some(Effect::Add),
             (Key::Ok, Item::RefreshAll) => return Some(Effect::RefreshAll),
+            (Key::Ok, Item::AllPlaylists) => return Some(Effect::AllPlaylists),
             (Key::Ok | Key::Menu, Item::Playlist(id)) => {
                 self.layer = Layer::Actions {
                     id,
@@ -568,6 +580,9 @@ mod tests {
         assert_eq!(s.focus(), Item::Playlist(B));
         s.key(Key::Down);
         s.key(Key::Down);
+        assert_eq!(s.focus(), Item::AllPlaylists);
+        assert_eq!(s.key(Key::Ok), Some(Effect::AllPlaylists));
+        s.key(Key::Down);
         assert_eq!(s.focus(), Item::RefreshAll);
         assert_eq!(s.key(Key::Ok), Some(Effect::RefreshAll));
         s.key(Key::Down);
@@ -601,7 +616,7 @@ mod tests {
         // One playlist left: no "Refresh all" row.
         assert_eq!(
             Screen::new(vec![row(A, "First")], None).items(),
-            [Item::Playlist(A), Item::Add]
+            [Item::Playlist(A), Item::AllPlaylists, Item::Add]
         );
     }
 

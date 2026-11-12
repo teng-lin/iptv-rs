@@ -205,13 +205,15 @@ fn update(ui: Ui, f: impl FnOnce(&mut Screen, &Ctx) -> Effect) {
 }
 
 /// Tells the rows to read their status again.
-fn refresh(ui: Ui) {
+pub(crate) fn refresh(ui: Ui) {
     ui.settings.update(|v| *v += 1);
 }
 
 /// Runs a command (`settings::COMMANDS`).
 fn run(ui: Ui, key: &'static str) {
     match key {
+        "general.backup" => crate::backup::export_ui(),
+        "general.restore" => crate::backup::restore_ui(ui),
         "epg.update_now" => {
             if stored::update_now(ui, move || refresh(ui)) {
                 refresh(ui);
@@ -225,6 +227,10 @@ fn run(ui: Ui, key: &'static str) {
                 crate::epg_sources_view::open_add(ui, playlist);
             }
             Some(playlist) => crate::epg_sources_view::open(ui, playlist),
+            None if crate::data::combined::active(ui) => {
+                crate::playlists_view::open(ui);
+                notify("Choose a playlist to manage its guide sources");
+            }
             None => notify("No playlist on screen"),
         },
         "epg.clear" => {
@@ -299,6 +305,7 @@ fn lit_page(page: &Page) -> bool {
 /// What a command row shows on its right.
 fn command_value(key: &str) -> String {
     match key {
+        "general.restore" if crate::backup::is_pending() => "Scheduled for next launch".to_owned(),
         "epg.update_now" => match stored::guide_status() {
             GuideStatus::NoSource => "No playlist".to_owned(),
             GuideStatus::Updating => "Updating…".to_owned(),
@@ -317,10 +324,11 @@ fn command_value(key: &str) -> String {
 /// The "Guide sources" row's value: how many, switched on, and failed at
 /// their last download.
 fn sources_value() -> String {
-    let Some(playlist) = stored::shown() else {
-        return "No playlist".to_owned();
-    };
-    let lines = stored::source_lines(playlist);
+    let sources = stored::shown_sources();
+    if sources.is_empty() {
+        return "No enabled playlist".to_owned();
+    }
+    let lines: Vec<_> = sources.into_iter().flat_map(stored::source_lines).collect();
     let on = lines.iter().filter(|l| l.source.enabled).count();
     let failed = lines
         .iter()

@@ -146,10 +146,18 @@ fn details(ui: Ui, program: Memo<Focused>, size: Scale) -> impl IntoElement {
     let description = computed(move || {
         settled.with(|p| {
             let (_, _, _, ch, p) = (*p)?;
-            crate::schedule()
+            let schedule = crate::schedule();
+            if let Some(s) = schedule
                 .as_any()
-                .and_then(|s| s.downcast_ref::<iptv_guide::EpgSchedule>())
-                .and_then(|s| s.description(ch, p))
+                .and_then(|s| s.downcast_ref::<iptv_guide::combined::CombinedSchedule>())
+            {
+                s.description(ch, p)
+            } else {
+                schedule
+                    .as_any()
+                    .and_then(|s| s.downcast_ref::<iptv_guide::EpgSchedule>())
+                    .and_then(|s| s.description(ch, p))
+            }
         })
     });
     let favourite = move || {

@@ -17,6 +17,7 @@ mod staged;
 #[path = "../stream_support/mod.rs"]
 mod stream_support;
 
+mod backup;
 mod catalog;
 mod concurrency;
 mod epg;

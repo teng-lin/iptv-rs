@@ -285,7 +285,12 @@ fn prepare(ui: Ui) {
             }
         });
     }
-    if epg(&*schedule).is_none() {
+    if epg(&*schedule).is_none()
+        && schedule
+            .as_any()
+            .and_then(|s| s.downcast_ref::<iptv_guide::combined::CombinedSchedule>())
+            .is_none()
+    {
         set_programmes(ui, Programmes::Unavailable);
         return;
     }
@@ -306,11 +311,11 @@ fn prepare(ui: Ui) {
             wanted && i.building.replace(version) != Some(version)
         });
         let schedule = crate::schedule();
-        let Some(epg) = epg(&*schedule).filter(|_| wanted) else {
+        if !wanted {
             return;
-        };
+        }
         let t = Instant::now();
-        programme_index::build(epg, schedule.channel_count(), move |index| {
+        programme_index::build(&*schedule, schedule.channel_count(), move |index| {
             let current = INDEXES.with(|i| {
                 let mut i = i.borrow_mut();
                 if i.building == Some(version) {
