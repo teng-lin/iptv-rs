@@ -19,7 +19,8 @@ Recreating an Activity/window in the same process does not apply a restore.
 The archive contains a consistent online SQLite snapshot, including committed
 WAL pages. It preserves all database tables, including:
 
-- Provider configurations and credentials, active playlist, refresh policies,
+- Provider configurations and credentials, active playlist/All playlists mode,
+  combined-view last channel, refresh policies,
   guide-source configuration, and per-channel guide assignments.
 - Cached channels/groups/VOD metadata and cached EPG/programme descriptions.
 - Favorites and their order, channel/group names, visibility and manual order,

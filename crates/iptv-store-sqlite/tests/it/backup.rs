@@ -29,15 +29,21 @@ fn wal_snapshot_preserves_credentials_organization_history_and_cached_catalog() 
         .record_watch(id, &last, ContentKind::Live, 12345, Some(17))
         .unwrap();
     store.set_active_source(id).unwrap();
+    let combined_key = format!("source:{}:{}", id.0, last.as_str());
+    store.set_all_playlists(true).unwrap();
+    store.set_combined_last_channel(&combined_key).unwrap();
     assert_eq!(store.journal_mode().unwrap(), "wal");
     assert!(live.with_extension("sqlite-wal").exists());
     store.snapshot_to(&archive).unwrap();
     // Subsequent writes never leak into the completed snapshot.
     store.rename_source(id, "Changed after backup").unwrap();
+    store.set_all_playlists(false).unwrap();
     Store::validate_snapshot(&archive).unwrap();
     let restored = Store::open(&archive).unwrap();
     assert_eq!(restored.source(id).unwrap().unwrap().source, source);
     assert_eq!(restored.active_source().unwrap(), Some(id));
+    assert!(restored.all_playlists().unwrap());
+    assert_eq!(restored.combined_last_channel().unwrap(), Some(combined_key));
     assert!(restored.is_favourite(id, &last).unwrap());
     let channels = restored
         .load_channels(id, &ChannelQuery::default())
