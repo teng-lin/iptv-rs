@@ -44,6 +44,10 @@ are disabled. Per-channel guide assignment remains available in either mode.
 Adding a playlist keeps its successful import's playback context and guide
 work when the browser automatically joins it with the other sources. It does
 not require another login or playlist download to enter the combined view.
+Pending guide downloads, including manual updates, still reach the combined
+view when automatic EPG updates are off. Newer source/guide edits and deletion
+supersede older work. Startup resume waits for the owning source's playback
+context, and a cached portal whose login failed is loaded again when joining.
 Each constituent otherwise loads its cached channels and guide before refreshing.
 Refresh failures retain its cache and leave other sources available. Source
 refresh/status/guide-source management stays accessible in Playlists.
@@ -95,7 +99,7 @@ platform smoke testing. No Android or iOS host code changes are required.
 Earlier aggregate-mode Android validation on an owned `tab36` emulator showed six channels
 from two generated playlists, retained All playlists after process restart,
 and restored the same combined view through a whole-app backup round trip.
-The browser change passes 177 Linux app unit tests and 43 UI scenarios, plus
+The browser change passes 177 Linux app unit tests and 49 UI scenarios, plus
 core, guide and store tests and the core/guide WebAssembly builds. A fresh
 `tab36` smoke run with two generated cached M3U sources showed all six channels
 by default, touch collapse of one playlist, remote Down/Right selection of the
