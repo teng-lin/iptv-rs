@@ -259,8 +259,25 @@ class PlayerComponent(
         ) = emitFormat(null, format)
     }
 
+    /**
+     * The screen stays on while this player means to play: set to play and
+     * buffering or playing, so a live stream's rebuffers and the app's
+     * reconnects keep it on, not only the frames. Paused, stopped, failed
+     * or ended, the system's screen timeout applies again. (A view's
+     * `keepScreenOn` holds the window's flag while the view is shown: the
+     * guide's preview, a multiview tile, picture in picture.)
+     */
+    private fun keepScreen() {
+        val state = player.playbackState
+        surface.keepScreenOn = player.playWhenReady &&
+            (state == Player.STATE_BUFFERING || state == Player.STATE_READY)
+    }
+
     private val listener = object : Player.Listener {
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) = keepScreen()
+
         override fun onPlaybackStateChanged(state: Int) {
+            keepScreen()
             // The stop of [background]: the app sees the stream as it was.
             if (away) return
             val name = when (state) {
@@ -536,6 +553,7 @@ class PlayerComponent(
         ticker.removeCallbacks(tick)
         player.removeListener(listener)
         player.removeAnalyticsListener(formats)
+        surface.keepScreenOn = false
         player.release()
         onDestroyed(this)
     }
