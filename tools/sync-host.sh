@@ -6,6 +6,7 @@
 # ABIS also limits development builds (default x86_64,arm64-v8a).
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
+source "$root/tools/ci/locked-build-env.sh"
 app="$root/crates/iptv-app"
 nsh=${NSH:-$root/../nsh/target/release/nsh}
 out="$root/hosts/android/app/build/nsh"

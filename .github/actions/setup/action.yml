@@ -13,7 +13,7 @@ runs:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       with:
         repository: teng-lin/nsh
-        ref: 297e718f48c3e85a640dba2abbb1d06daee8c5c6
+        ref: 4439410f78174fadacc35f6677b8a767ff206c90
         path: nsh-source
         persist-credentials: false
     - shell: bash
@@ -30,7 +30,13 @@ runs:
         fi
     - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       with:
+        toolchain: 1.99.1
+        components: clippy, rustfmt
         targets: wasm32-unknown-unknown
+    - shell: bash
+      run: |
+        source tools/ci/locked-build-env.sh
+        echo "RUSTUP_TOOLCHAIN=$RUSTUP_TOOLCHAIN" >> "$GITHUB_ENV"
     - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       if: inputs.cache == 'true'
       with:
@@ -38,3 +44,5 @@ runs:
         workspaces: |
           .
           ../nsh
+    - shell: bash
+      run: cargo install cargo-deny --version 0.20.2 --locked

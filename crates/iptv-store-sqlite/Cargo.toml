@@ -3,6 +3,7 @@ name = "iptv-store-sqlite"
 description = "Native SQLite store of iptv-rs: sources, provider catalog replaced on refresh, user overlays keyed by stable ids. Bundled SQLite (builds for Android via the NDK); not wasm."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
 

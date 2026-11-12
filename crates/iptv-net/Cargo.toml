@@ -3,6 +3,7 @@ name = "iptv-net"
 description = "Native network adapter of iptv-rs: performs iptv-providers HttpRequests with reqwest (rustls + ring, webpki roots; no OpenSSL) and implements iptv_import::Fetch. Native only (tokio); not part of the portable core."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
 
