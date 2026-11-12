@@ -12,7 +12,7 @@ runs:
           hosts/android/**/*.gradle.kts
           hosts/android/gradle.properties
           hosts/android/gradle/wrapper/gradle-wrapper.properties
-    - uses: android-actions/setup-android@v3
+    - uses: android-actions/setup-android@v4
     - name: Install Android build tools
       shell: bash
       run: |
