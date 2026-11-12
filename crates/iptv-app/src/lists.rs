@@ -179,6 +179,12 @@ pub fn navigate(ui: Ui, m: Move) {
 
 /// OK on the guide screen.
 pub fn ok(ui: Ui) {
+    if ui.focus.with_untracked(|f| f.pane) == Pane::Groups
+        && toggle_playlist(ui, ui.focus.with_untracked(|f| f.group))
+    {
+        return;
+    }
+
     let o = step(ui, |f, cols, view| f.ok(cols, view));
     follow(ui, o);
 }
@@ -207,6 +213,8 @@ pub fn open_rail(ui: Ui) {
 pub fn tap_entry(ui: Ui, entry: usize) {
     let o = step(ui, |f, cols, _| f.tap_entry(entry, cols));
     follow(ui, o);
+    // A parent previews its source before changing section visibility.
+    toggle_playlist(ui, entry);
 }
 
 /// The player's channel list chose groups column `entry`: the guide shows
@@ -265,4 +273,33 @@ fn arm_hint(ui: Ui) {
 /// Whether the rail and groups show beside the guide.
 pub fn columns_shown(ui: Ui) -> bool {
     ui.focus.with(|f| f.pane) != Pane::Guide
+}
+
+fn toggle_playlist(ui: Ui, entry: usize) -> bool {
+    match Entry::at(entry) {
+        Entry::Group(group) => crate::data::combined::toggle_playlist(ui, group),
+        _ => false,
+    }
+}
+
+pub fn browser_entry_name(entry: usize) -> String {
+    let schedule = crate::schedule();
+    let name = iptv_core::lists::entry_name(entry, &*schedule);
+    if let Entry::Group(g) = Entry::at(entry) {
+        if schedule.group_is_playlist(g) {
+            return format!(
+                "{}  {}",
+                if schedule.group_is_collapsed(g) {
+                    "▸"
+                } else {
+                    "▾"
+                },
+                name
+            );
+        }
+        if schedule.group_depth(g) > 0 {
+            return format!("    {name}");
+        }
+    }
+    name
 }

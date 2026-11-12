@@ -130,9 +130,7 @@ fn combined_browsing_routes_duplicate_keys_favorites_search_and_playback() {
         ..EngineConfig::new(Root::of::<iptv_app::App>())
     })
     .unwrap();
-    step(app.wait_for_within("text:Only Alpha", Duration::from_secs(20)));
-    playlists(&mut app);
-    step(app.press("id:playlists-all"));
+    // Multiple enabled sources are the default, without a visit to management.
     step(app.wait_for_within("text:/^Shared · Alpha/", Duration::from_secs(20)));
     step(app.wait_for("text:/^Shared · Beta/"));
     step(app.wait_for_within("text:Alpha bulletin", Duration::from_secs(20)));
@@ -354,5 +352,131 @@ fn leaving_combined_mode_cancels_a_missing_startup_channel_before_manual_return(
     assert!(
         opened.lock().unwrap().is_empty(),
         "manual All playlists entry must not resume the old startup request"
+    );
+}
+
+#[test]
+fn guide_browses_playlist_sections_by_touch_and_remote_and_remembers_expansion() {
+    let Some(home) = isolated!() else { return };
+    let dir = home.data_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("iptv.sqlite");
+    let mut store = Store::open(&path).unwrap();
+    let alpha = seed(&mut store, home.path(), "Alpha");
+    seed(&mut store, home.path(), "Beta");
+    let disabled = seed(&mut store, home.path(), "Disabled");
+    store
+        .set_source_policy(
+            disabled,
+            SourcePolicy {
+                enabled: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    // No aggregate preference is set: the enabled sources are visible together.
+    assert!(!store.all_playlists().unwrap());
+    drop(store);
+    let start = || {
+        Headless::start(EngineConfig {
+            viewport: Size::new(px(1920.0), px(1080.0)),
+            ..EngineConfig::new(Root::of::<iptv_app::App>())
+        })
+        .unwrap()
+    };
+    let mut app = start();
+    step(app.wait_for_within("text:/^Only Beta · Beta/", Duration::from_secs(20)));
+    step(app.press("text:☰  All playlists"));
+    step(app.wait_for("id:guide-groups >> text:▾  Alpha"));
+    step(app.wait_for("id:guide-groups >> text:▾  Beta"));
+    assert_eq!(
+        app.screen()
+            .count("id:guide-groups >> text:    News")
+            .unwrap(),
+        2
+    );
+    assert_eq!(app.screen().count("text:▾  Disabled").unwrap(), 0);
+    // A parent previews only that playlist, and a tap folds its children.
+    step(app.press("id:guide-groups >> text:▾  Alpha"));
+    step(app.wait_for("id:guide-groups >> text:▸  Alpha"));
+    assert_eq!(
+        app.screen()
+            .count("id:guide-groups >> text:    News")
+            .unwrap(),
+        1
+    );
+    assert_eq!(app.screen().count("id:guide-channel-name").unwrap(), 2);
+    step(app.wait_for("text:/^Only Alpha · Alpha/"));
+    assert_eq!(
+        Store::open(&path).unwrap().collapsed_playlists().unwrap(),
+        [alpha.0]
+    );
+    // OK expands in place; Right enters that source's complete channel list.
+    step(app.press_key("enter"));
+    step(app.wait_for("id:guide-groups >> text:▾  Alpha"));
+    step(app.press_key("right"));
+    step(app.wait_for_gone("id:guide-groups", Duration::from_secs(3)));
+    step(app.wait_for("text:☰  Alpha"));
+    step(app.press("text:☰  Alpha"));
+    step(app.press("id:guide-groups >> text:    News >> nth=1"));
+    step(app.wait_for("text:/^Only Beta · Beta/"));
+    assert_eq!(app.screen().count("id:guide-channel-name").unwrap(), 2);
+    // Fold Alpha again, then move down: Beta's header is the very next row.
+    step(app.press("id:guide-groups >> text:▾  Alpha"));
+    step(app.press_key("down"));
+    step(app.press_key("right"));
+    step(app.wait_for("text:☰  Beta"));
+    step(app.wait_for("text:/^Only Beta · Beta/"));
+    drop(app);
+    // Expansion survives a fresh application, while all channels stay available.
+    let mut app = start();
+    step(app.wait_for_within("text:/^Only Beta · Beta/", Duration::from_secs(20)));
+    step(app.press("text:☰  All playlists"));
+    step(app.wait_for("id:guide-groups >> text:▸  Alpha"));
+    step(app.wait_for("id:guide-groups >> text:▾  Beta"));
+    assert_eq!(app.screen().count("id:guide-channel-name").unwrap(), 4);
+    assert_eq!(
+        app.screen()
+            .count("id:guide-groups >> text:    News")
+            .unwrap(),
+        1
+    );
+}
+
+#[test]
+fn adding_second_playlist_opens_combined_browser_without_management_switch() {
+    use nsh_core::{ImageData, picker::PickedFile};
+    let Some(home) = isolated!() else { return };
+    let dir = home.data_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut store = Store::open(dir.join("iptv.sqlite")).unwrap();
+    seed(&mut store, home.path(), "Alpha");
+    drop(store);
+    let mut app = Headless::start(EngineConfig {
+        viewport: Size::new(px(1920.0), px(1080.0)),
+        ..EngineConfig::new(Root::of::<iptv_app::App>())
+    })
+    .unwrap();
+    app.on_pick(|_| vec![PickedFile::new("Beta.m3u", "audio/x-mpegurl", ImageData::new(
+        b"#EXTM3U\n#EXTINF:-1 group-title=\"Sport\",Added Beta\nhttp://stream.example.test/added-beta\n".to_vec()
+    ))]);
+    step(app.wait_for_within("text:Only Alpha", Duration::from_secs(20)));
+    step(app.press("text:☰  All channels"));
+    step(app.press_key("m"));
+    step(app.press("text:Playlist file"));
+    step(app.press("text:Choose a file…"));
+    step(app.wait_for("text:Beta.m3u"));
+    step(app.press("text:Add playlist"));
+    step(app.wait_for_within("text:Playlist added", Duration::from_secs(20)));
+    step(app.press("text:Watch"));
+    step(app.wait_for_within("text:/^Only Alpha · Alpha/", Duration::from_secs(20)));
+    step(app.wait_for("text:/^Added Beta · /"));
+    step(app.wait_for("text:☰  All playlists"));
+    assert_eq!(app.screen().count("id:guide-channel-name").unwrap(), 3);
+    assert!(
+        Store::open(dir.join("iptv.sqlite"))
+            .unwrap()
+            .all_playlists()
+            .unwrap()
     );
 }

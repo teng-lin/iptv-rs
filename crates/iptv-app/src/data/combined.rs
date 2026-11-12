@@ -32,6 +32,12 @@ pub fn owner(ui: Ui, key: &str) -> Option<(SourceId, String)> {
         Some((ui.library.shown.get_untracked()?, key.to_owned()))
     }
 }
+/// The normal browser includes every enabled source once there is a choice.
+pub fn has_multiple_enabled() -> bool {
+    library::playlists()
+        .is_ok_and(|sources| sources.iter().filter(|s| s.policy.enabled).take(2).count() == 2)
+}
+
 pub fn start(ui: Ui) {
     RESUME.with(|r| r.set(true));
     // Startup precedes user edits; install the empty real guide at once.
@@ -155,7 +161,13 @@ pub fn rebuild(ui: Ui) {
     crate::favorites::set_combined();
     crate::set_schedule(
         &ui,
-        Rc::new(CombinedSchedule::new(sources, EPOCH.with(Cell::get))),
+        Rc::new(
+            CombinedSchedule::new(sources, EPOCH.with(Cell::get)).with_collapsed_sources(
+                super::open_store()
+                    .and_then(|s| s.collapsed_playlists())
+                    .unwrap_or_default(),
+            ),
+        ),
     );
     pages::replaced();
 }
@@ -177,13 +189,41 @@ pub fn resume(ui: Ui) {
         RESUME.with(|r| r.set(false));
         return;
     }
-    let key = super::open_store()
-        .ok()
-        .and_then(|s| s.combined_last_channel().ok().flatten());
+    let key = super::open_store().ok().and_then(|s| {
+        s.combined_last_channel().ok().flatten().or_else(|| {
+            // On first opening the combined browser, keep the previous
+            // single-source startup preference, including legacy files.
+            let source = s.active_source().ok().flatten()?;
+            if !s.source_policy(source).ok()?.enabled {
+                return None;
+            }
+            let key = crate::player::resume::last_key(source)?;
+            Some(iptv_guide::combined::qualified_key(source.0, &key))
+        })
+    });
     if let Some(c) = key.and_then(|k| crate::schedule().find_channel(&k)) {
         RESUME.with(|r| r.set(false));
         ui.play(c, crate::Playback::Live);
         ui.mode.set(crate::ViewMode::Fullscreen);
         ui.show_playing();
     }
+}
+
+/// Toggle a parent row without changing the channel catalogue or player surface.
+pub fn toggle_playlist(ui: Ui, group: usize) -> bool {
+    let schedule = crate::schedule();
+    let Some(all) = schedule
+        .as_any()
+        .and_then(|a| a.downcast_ref::<CombinedSchedule>())
+    else {
+        return false;
+    };
+    let Some(collapsed) = all.toggle_playlist(group) else {
+        return false;
+    };
+    match super::open_store().and_then(|mut s| s.set_collapsed_playlists(&collapsed)) {
+        Ok(()) => rebuild(ui),
+        Err(e) => log::warn!("iptv browser: could not save expansion: {e}"),
+    }
+    true
 }

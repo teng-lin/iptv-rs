@@ -14,6 +14,28 @@ use crate::{SourceId, Store};
 const ACTIVE_SOURCE: &str = "active_source";
 
 impl Store {
+    /// Playlist sections folded in the guide, stored by stable source ID.
+    pub fn collapsed_playlists(&self) -> Result<Vec<i64>> {
+        let json: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT value FROM store_meta WHERE key='collapsed_playlists'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(json
+            .map(|v| serde_json::from_str(&v))
+            .transpose()?
+            .unwrap_or_default())
+    }
+    pub fn set_collapsed_playlists(&mut self, ids: &[i64]) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO store_meta(key,value) VALUES('collapsed_playlists',?1)",
+            [serde_json::to_string(ids)?],
+        )?;
+        Ok(())
+    }
     /// Persisted aggregation preference, independent of the last individual source.
     pub fn all_playlists(&self) -> Result<bool> {
         Ok(self
@@ -84,6 +106,23 @@ pub(crate) fn forget_active(conn: &rusqlite::Connection, id: SourceId) -> Result
         "DELETE FROM store_meta WHERE key = ?1 AND value = ?2",
         params![ACTIVE_SOURCE, id.0.to_string()],
     )?;
+    // SQLite can reuse a deleted source ID. A newly added playlist must not
+    // inherit the deleted playlist's collapsed section.
+    let json: Option<String> = conn
+        .query_row(
+            "SELECT value FROM store_meta WHERE key='collapsed_playlists'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(json) = json {
+        let mut ids: Vec<i64> = serde_json::from_str(&json).unwrap_or_default();
+        ids.retain(|source| *source != id.0);
+        conn.execute(
+            "UPDATE store_meta SET value=?1 WHERE key='collapsed_playlists'",
+            [serde_json::to_string(&ids)?],
+        )?;
+    }
     Ok(())
 }
 
@@ -96,6 +135,8 @@ mod combined_tests {
         let path = dir.path().join("store.sqlite");
         let mut store = Store::open(&path).unwrap();
         assert!(!store.all_playlists().unwrap());
+        assert!(store.collapsed_playlists().unwrap().is_empty());
+        store.set_collapsed_playlists(&[2, 9]).unwrap();
         assert!(store.combined_last_channel().unwrap().is_none());
         store.set_all_playlists(true).unwrap();
         store
@@ -104,6 +145,7 @@ mod combined_tests {
         drop(store);
         let mut store = Store::open(&path).unwrap();
         assert!(store.all_playlists().unwrap());
+        assert_eq!(store.collapsed_playlists().unwrap(), [2, 9]);
         assert_eq!(
             store.combined_last_channel().unwrap().as_deref(),
             Some("source:2:synthetic-channel")

@@ -2,7 +2,7 @@
 //! remain local; UI identities are qualified by the owning source.
 use crate::EpgSchedule;
 use iptv_core::guide::{Program, Schedule};
-use std::rc::Rc;
+use std::{collections::BTreeSet, rc::Rc};
 
 pub fn qualified_key(source: i64, key: &str) -> String {
     format!("source:{source}:{key}")
@@ -23,7 +23,8 @@ pub struct SourceSchedule {
 pub struct CombinedSchedule {
     sources: Vec<SourceSchedule>,
     channels: Vec<(usize, usize)>,
-    groups: Vec<(usize, usize)>,
+    groups: Vec<(usize, Option<usize>)>,
+    collapsed: BTreeSet<i64>,
     epoch: i64,
 }
 impl CombinedSchedule {
@@ -36,14 +37,36 @@ impl CombinedSchedule {
         let groups = sources
             .iter()
             .enumerate()
-            .flat_map(|(s, p)| (0..p.schedule.group_count()).map(move |g| (s, g)))
+            .flat_map(|(s, p)| {
+                std::iter::once((s, None))
+                    .chain((0..p.schedule.group_count()).map(move |g| (s, Some(g))))
+            })
             .collect();
         Self {
             sources,
             channels,
             groups,
             epoch,
+            collapsed: BTreeSet::new(),
         }
+    }
+    pub fn with_collapsed_sources(mut self, ids: impl IntoIterator<Item = i64>) -> Self {
+        self.collapsed = ids.into_iter().collect();
+        self.groups
+            .retain(|(s, g)| g.is_none() || !self.collapsed.contains(&self.sources[*s].id));
+        self
+    }
+    /// New expansion state, identified by source rather than display position.
+    pub fn toggle_playlist(&self, group: usize) -> Option<Vec<i64>> {
+        let &(source, None) = self.groups.get(group)? else {
+            return None;
+        };
+        let mut collapsed = self.collapsed.clone();
+        let id = self.sources[source].id;
+        if !collapsed.remove(&id) {
+            collapsed.insert(id);
+        }
+        Some(collapsed.into_iter().collect())
     }
     pub fn sources(&self) -> &[SourceSchedule] {
         &self.sources
@@ -124,8 +147,11 @@ impl Schedule for CombinedSchedule {
     fn group_key(&self, g: usize) -> String {
         self.groups
             .get(g)
-            .map(|&(s, g)| {
-                qualified_key(self.sources[s].id, &self.sources[s].schedule.group_key(g))
+            .map(|&(s, g)| match g {
+                None => format!("playlist:{}", self.sources[s].id),
+                Some(g) => {
+                    qualified_key(self.sources[s].id, &self.sources[s].schedule.group_key(g))
+                }
             })
             .unwrap_or_default()
     }
@@ -134,9 +160,8 @@ impl Schedule for CombinedSchedule {
             return Vec::new();
         };
         let offset = self.channel_offset(s);
-        self.sources[s]
-            .schedule
-            .group_channels(g)
+        let child = &self.sources[s].schedule;
+        g.map_or_else(|| child.playlist_order(), |g| child.group_channels(g))
             .into_iter()
             .map(|c| c + offset)
             .collect()
@@ -145,13 +170,26 @@ impl Schedule for CombinedSchedule {
         self.groups
             .get(g)
             .map(|&(s, g)| {
-                format!(
-                    "{} · {}",
-                    self.sources[s].name,
-                    self.sources[s].schedule.group_name(g)
+                g.map_or_else(
+                    || self.sources[s].name.clone(),
+                    |g| self.sources[s].schedule.group_name(g),
                 )
             })
             .unwrap_or_default()
+    }
+    fn group_is_playlist(&self, group: usize) -> bool {
+        self.groups.get(group).is_some_and(|(_, g)| g.is_none())
+    }
+    fn group_is_collapsed(&self, group: usize) -> bool {
+        self.groups
+            .get(group)
+            .is_some_and(|(s, g)| g.is_none() && self.collapsed.contains(&self.sources[*s].id))
+    }
+    fn group_depth(&self, group: usize) -> usize {
+        usize::from(self.groups.get(group).is_some_and(|(_, g)| g.is_some()))
+    }
+    fn all_channels_name(&self) -> String {
+        "All playlists".into()
     }
     fn program_at(&self, c: usize, m: i32) -> Program {
         let Some((s, c)) = self.channel_source(c) else {
@@ -322,11 +360,12 @@ mod tests {
         assert_eq!(a.schedule.channel_key(0), b.schedule.channel_key(0));
         let all = CombinedSchedule::new(vec![a, b], NOW);
         assert_eq!(all.channel_count(), 2);
-        assert_eq!(all.group_count(), 2);
+        assert_eq!(all.group_count(), 4);
         assert_ne!(all.channel_key(0), all.channel_key(1));
-        assert_ne!(all.group_key(0), all.group_key(1));
-        assert_eq!(all.group_name(1), "Beta · News");
-        assert_eq!(all.group_channels(1), vec![1]);
+        assert_ne!(all.group_key(1), all.group_key(3));
+        assert_eq!(all.group_name(2), "Beta");
+        assert_eq!(all.group_name(3), "News");
+        assert_eq!(all.group_channels(2), vec![1]);
         let beta = all.channel_key(1).unwrap();
         let (source, key) = split_key(&beta).unwrap();
         assert_eq!(source, 2);
@@ -340,6 +379,33 @@ mod tests {
             Some((4, "custom:9:channel"))
         );
         assert!(split_key("source:invalid:key").is_none());
+    }
+    #[test]
+    fn collapsing_one_playlist_preserves_parent_channels_and_other_group_identity() {
+        use iptv_core::lists::{ChannelList, Entry, ListId, group_of};
+        let all = CombinedSchedule::new(vec![part(1, "Alpha", NOW), part(2, "Beta", NOW)], NOW);
+        let beta_group = ListId::of(Entry::Group(3).index(), &all);
+        let beta_channel = all.channel_key(1).unwrap();
+        assert_eq!(all.all_channels_name(), "All playlists");
+        assert_eq!(group_of(&all, 0), Some(1));
+        assert!(all.toggle_playlist(1).is_none());
+        let collapsed = all.toggle_playlist(0).unwrap();
+        let folded =
+            CombinedSchedule::new(vec![part(1, "Renamed", NOW), part(2, "Beta", NOW)], NOW)
+                .with_collapsed_sources(collapsed);
+        assert_eq!(folded.group_count(), 3);
+        assert_eq!(folded.group_key(0), "playlist:1");
+        assert!(folded.group_is_collapsed(0));
+        assert_eq!(folded.group_name(0), "Renamed");
+        assert_eq!(group_of(&folded, 0), Some(0));
+        assert_eq!(beta_group.find(&folded), Entry::Group(2).index());
+        assert_eq!(folded.find_channel(&beta_channel), Some(1));
+        assert_eq!(folded.channel_count(), 2);
+        assert_eq!(
+            ChannelList::build(Entry::Group(0).index(), &folded, &[], &[]).channels(),
+            &[0]
+        );
+        assert!(folded.toggle_playlist(0).unwrap().is_empty());
     }
     #[test]
     fn guide_times_descriptions_and_headers_resolve_with_the_owning_source() {

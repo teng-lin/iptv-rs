@@ -232,3 +232,20 @@ fn policies_and_bulk_edits_require_a_source_and_delete_cascades_preferences() {
     assert_eq!(store.source_policy(fresh).unwrap(), SourcePolicy::default());
     assert!(!store.library_groups(fresh).unwrap()[0].hidden);
 }
+
+#[test]
+fn deleting_playlist_forgets_its_collapsed_section_before_source_id_reuse() {
+    let mut store = Store::open_in_memory().unwrap();
+    let first = store.add_source(&m3u_source("First")).unwrap();
+    let second = store.add_source(&m3u_source("Second")).unwrap();
+    store.set_collapsed_playlists(&[first.0, second.0]).unwrap();
+    store.delete_source(second).unwrap();
+    assert_eq!(store.collapsed_playlists().unwrap(), [first.0]);
+    let replacement = store.add_source(&m3u_source("Replacement")).unwrap();
+    assert!(
+        !store
+            .collapsed_playlists()
+            .unwrap()
+            .contains(&replacement.0)
+    );
+}

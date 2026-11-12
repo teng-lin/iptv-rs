@@ -1,9 +1,10 @@
 //! Real data: imports a source and its EPG off the UI thread, keeps it in
 //! the SQLite store, and swaps the guide to the imported schedule.
 //!
-//! At startup the stored source shown last (the active playlist, kept in
-//! the store) is refreshed, else the newest; with none, the add-playlist
-//! wizard opens on its empty state (`wizard_view`). The wizard adds sources
+//! At startup enabled sources are browsed together when several are saved;
+//! otherwise the stored source shown last (else the newest) is refreshed.
+//! With none, the add-playlist wizard opens on its empty state (`wizard_view`).
+//! The wizard adds sources
 //! through [`start_import`]. A new source is stored only once its import
 //! succeeded, so a failed or cancelled attempt leaves nothing behind. The
 //! playlists screen switches, refreshes, renames and deletes stored
@@ -236,8 +237,8 @@ pub fn spawn_in_app(future: impl Future<Output = ()> + 'static) {
     });
 }
 
-/// Startup: refreshes the active (else the newest) stored source, or
-/// opens the wizard.
+/// Startup: browse enabled playlists together when there is more than one,
+/// otherwise refresh the active source or open the wizard.
 pub fn start(ui: Ui) {
     APP_OWNER.with(|o| o.set(Some(Owner::current())));
     // Guide downloads a crash interrupted (none runs yet).
@@ -255,6 +256,7 @@ pub fn start(ui: Ui) {
     if store
         .as_ref()
         .is_some_and(|s| s.all_playlists().unwrap_or(false))
+        || combined::has_multiple_enabled()
     {
         drop(store);
         combined::start(ui);
@@ -324,6 +326,10 @@ fn start_import_with(ui: Ui, job: Job, cancel: CancelToken, on_update: impl Fn(U
     let show = move |imported: Box<Imported>, held: Option<opening::Held>| {
         if shows || combined::active(ui) {
             show_part(ui, imported, generation, resume, held);
+            if purpose == Purpose::Add && !combined::active(ui) && combined::has_multiple_enabled()
+            {
+                combined::switch_all(ui);
+            }
         }
     };
     spawn_in_app(async move {

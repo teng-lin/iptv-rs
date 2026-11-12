@@ -4,7 +4,7 @@
 //! last channel once the startup refresh brought it (`player.rs`).
 //!
 //! What it checks: a second playlist added from the playlists screen
-//! replaces what plays; showing another one brings its stored channels
+//! opens the combined browser; showing another one brings its stored channels
 //! and guide; a background refresh changes only the store; a refresh that
 //! moved the playing channel keeps it, one that removed it stops it;
 //! "Refresh all"; rename; a User-Agent tried and saved, then one whose
@@ -14,7 +14,7 @@
 //! stored guide data"; a cold start whose last channel (in the file of
 //! older builds) arrives with the startup refresh; deleting a playlist in
 //! the background, the one on screen (the newest other shows), the last
-//! one (the first-run wizard).
+//! one (an empty, recoverable combined library).
 //!
 //! Synthetic data only: playlists and guides written to the temporary
 //! home and "picked" from files.
@@ -140,7 +140,7 @@ fn start() -> Headless {
 
 /// The groups, then the rail beside them, then one of its items.
 fn rail(app: &mut Headless, item: &str) {
-    step(app.press("text:☰  All channels"));
+    step(app.press("text:/^☰  /"));
     step(app.press_key("left"));
     step(app.press_key("left"));
     step(app.press(&format!("text:{item} >> nth=0")));
@@ -298,12 +298,18 @@ fn stored_playlists_switch_refresh_and_go() {
     step(app.back());
     step(app.wait_for("text:★ Alpha Two"));
 
-    // A second playlist from the playlists screen: shown at once; what
-    // played belongs to the first one, so it stops.
+    // A second playlist from the playlists screen opens both sources;
+    // explicit single-source browsing still stops the previous playback.
     rail(&mut app, "Playlists");
     step(app.wait_for("text:first"));
     step(app.press("text:+ Add playlist >> nth=1"));
     add(&mut app, "second.m3u");
+    step(app.wait_for_within("text:Beta One · second", IMPORT));
+    step(app.wait_for("text:★ Alpha Two · first"));
+    // Both sources are visible. Explicit single-source actions remain
+    // available for this journey's organization/background-refresh checks.
+    rail(&mut app, "Playlists");
+    act(&mut app, "second", "Show this playlist");
     step(app.wait_for_within("text:Beta One", IMPORT));
     assert!(!iptv_app::player_has_source(0), "playback stopped");
     assert!(
@@ -524,25 +530,35 @@ fn stored_playlists_switch_refresh_and_go() {
     std::fs::write(data.join("last_channel"), key).unwrap();
     let mut app = start();
     on_pick(&mut app);
-    step(app.wait_for_within("id:player-banner >> text:/Alpha Nine$/", IMPORT));
+    step(app.wait_for_within("id:player-banner >> text:/Alpha Nine · first$/", IMPORT));
     assert!(iptv_app::player_has_source(0), "Alpha Nine plays");
     drop(app);
 
-    // A stored last channel starts before the guide is read; the guide's
-    // arrival makes it the playing channel, its card up full screen.
+    // A saved combined key resumes the owning source's channel, with its
+    // banner up full screen when the cached catalogue arrives.
     let one = iptv_providers::m3u::parse_m3u(&nine).channels.items[0]
         .id
         .as_str()
         .to_owned();
-    std::fs::write(data.join(format!("last_channel-{}", first_id.0)), one).unwrap();
+    std::fs::write(data.join(format!("last_channel-{}", first_id.0)), &one).unwrap();
+    store(&data)
+        .set_combined_last_channel(&format!("source:{}:{one}", first_id.0))
+        .unwrap();
     let mut app = start();
-    step(app.wait_for_within("id:player-card >> text:/Alpha One$/", IMPORT));
+    step(app.wait_for_within("id:player-banner >> text:/Alpha One · first$/", IMPORT));
     assert!(iptv_app::player_has_source(0), "Alpha One plays");
     drop(app);
 
-    // No last channel kept at all: the guide, nothing playing.
+    // Startup playback disabled: the combined guide, nothing playing.
     let _ = std::fs::remove_file(data.join(format!("last_channel-{}", first_id.0)));
     let _ = std::fs::remove_file(data.join("last_channel"));
+    settings
+        .set(
+            "general.resume_last_channel",
+            iptv_settings::Value::Bool(false),
+        )
+        .unwrap();
+    std::fs::write(data.join("settings.json"), settings.to_json_string()).unwrap();
     let mut app = start();
     on_pick(&mut app);
     step(app.wait_for_within("text:Alpha Now", IMPORT));
@@ -573,10 +589,14 @@ fn stored_playlists_switch_refresh_and_go() {
     step(app.wait_for_gone("text:Renamed list", Duration::from_secs(2)));
     act(&mut app, "third_list", "Delete");
     step(app.press("text:Delete"));
-    step(app.wait_for_within("text:Alpha One", IMPORT));
+    step(app.wait_for_within("text:Alpha One · first", IMPORT));
     act(&mut app, "first", "Delete");
     step(app.press("text:Delete"));
-    step(app.wait_for_within("text:No playlists yet", IMPORT));
+    step(app.wait_for_within(
+        "text:M3U link or file, Xtream Codes login, Stalker portal",
+        IMPORT,
+    ));
+    assert_eq!(app.screen().count("id:guide-channel-name").unwrap(), 0);
     assert!(store(&data).sources().unwrap().is_empty());
     assert!(!data.join(format!("last_channel-{}", first_id.0)).exists());
     drop(app);
