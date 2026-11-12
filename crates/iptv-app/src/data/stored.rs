@@ -718,7 +718,7 @@ pub fn error_kind(error: &ImportError) -> ImportErrorKind {
         ImportError::Network { .. } => ImportErrorKind::Network,
         ImportError::HttpStatus { .. } => ImportErrorKind::HttpStatus,
         ImportError::Auth { .. } => ImportErrorKind::AccountRejected,
-        ImportError::Parse { .. } => ImportErrorKind::InvalidBody,
+        ImportError::Parse { .. } | ImportError::Limit { .. } => ImportErrorKind::InvalidBody,
         ImportError::Portal { .. } | ImportError::Empty { .. } | ImportError::Storage(_) => {
             ImportErrorKind::Other
         }

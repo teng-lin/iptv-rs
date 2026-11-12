@@ -17,6 +17,7 @@ use crate::error::Step;
 /// What to import and the caller's clock.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImportOptions {
+    pub limits: iptv_core::import_limits::ImportLimits,
     /// Unix seconds; used for Xtream expiry checks.
     pub now: i64,
     /// Xtream/Stalker movie categories and lists.
@@ -35,6 +36,7 @@ impl ImportOptions {
     /// Live channels only.
     pub fn new(now: i64) -> Self {
         Self {
+            limits: Default::default(),
             now,
             include_vod: false,
             include_series: false,

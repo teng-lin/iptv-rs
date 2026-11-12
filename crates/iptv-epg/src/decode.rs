@@ -5,10 +5,12 @@ use std::fmt;
 use std::io::Write;
 
 use flate2::write::MultiGzDecoder;
+use iptv_core::import_limits::{DecodeBuffer, ImportLimits, LimitExceeded, LimitKind};
 
 /// Fatal problems with the byte stream itself (not with XMLTV content).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DecodeError {
+    Limit(LimitExceeded),
     /// The gzip stream is corrupt or truncated.
     Gzip(String),
     /// UTF-16/UTF-32 input (detected by its byte-order mark).
@@ -18,6 +20,7 @@ pub enum DecodeError {
 impl fmt::Display for DecodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            DecodeError::Limit(error) => error.fmt(f),
             DecodeError::Gzip(e) => write!(f, "corrupt gzip stream: {e}"),
             DecodeError::UnsupportedEncoding(e) => write!(f, "unsupported encoding: {e}"),
         }
@@ -48,7 +51,7 @@ enum Stage {
     /// Waiting for two bytes to look for the gzip magic.
     Detect,
     Plain,
-    Gzip(Box<MultiGzDecoder<Vec<u8>>>),
+    Gzip(Box<MultiGzDecoder<DecodeBuffer>>),
     Failed,
 }
 
@@ -60,6 +63,8 @@ const DECL_PROBE: usize = 512;
 
 pub(crate) struct InputDecoder {
     stage: Stage,
+    limits: ImportLimits,
+    decoded: u64,
     mode: Compression,
     head: Vec<u8>,
     /// `None` until the XML declaration (or its absence) is seen.
@@ -73,9 +78,16 @@ pub(crate) struct InputDecoder {
 }
 
 impl InputDecoder {
+    #[cfg(test)]
     pub(crate) fn new(mode: Compression) -> Self {
+        Self::with_limits(mode, ImportLimits::default())
+    }
+
+    pub(crate) fn with_limits(mode: Compression, limits: ImportLimits) -> Self {
         InputDecoder {
             stage: Stage::Detect,
+            limits,
+            decoded: 0,
             mode,
             head: Vec::new(),
             charset: None,
@@ -115,17 +127,15 @@ impl InputDecoder {
             Stage::Plain => self.text(input, out),
             Stage::Gzip(gz) => {
                 if let Err(e) = gz.write_all(input).and_then(|()| gz.flush()) {
+                    let error = gz
+                        .get_ref()
+                        .limit_error()
+                        .map_or_else(|| DecodeError::Gzip(e.to_string()), DecodeError::Limit);
                     self.stage = Stage::Failed;
-                    return Err(DecodeError::Gzip(e.to_string()));
+                    return Err(error);
                 }
-                let mut decoded = std::mem::take(gz.get_mut());
-                let r = self.text(&decoded, out);
-                // Hand the allocation back to the inflater.
-                if let Stage::Gzip(gz) = &mut self.stage {
-                    decoded.clear();
-                    *gz.get_mut() = decoded;
-                }
-                r
+                let decoded = gz.get_mut().take();
+                self.text(&decoded, out)
             }
         }
     }
@@ -141,10 +151,14 @@ impl InputDecoder {
         }
         if let Stage::Gzip(gz) = &mut self.stage {
             if let Err(e) = gz.try_finish() {
+                let error = gz
+                    .get_ref()
+                    .limit_error()
+                    .map_or_else(|| DecodeError::Gzip(e.to_string()), DecodeError::Limit);
                 self.stage = Stage::Failed;
-                return Err(DecodeError::Gzip(e.to_string()));
+                return Err(error);
             }
-            let decoded = std::mem::take(gz.get_mut());
+            let decoded = gz.get_mut().take();
             self.text(&decoded, out)?;
         }
         if self.charset.is_none() {
@@ -167,7 +181,9 @@ impl InputDecoder {
             Compression::Gzip => true,
         };
         self.stage = if gzip {
-            Stage::Gzip(Box::new(MultiGzDecoder::new(Vec::new())))
+            Stage::Gzip(Box::new(MultiGzDecoder::new(DecodeBuffer::new(
+                self.limits.decoded_bytes,
+            ))))
         } else {
             Stage::Plain
         };
@@ -175,6 +191,13 @@ impl InputDecoder {
 
     /// Decompressed bytes: settle the charset, then convert.
     fn text(&mut self, bytes: &[u8], out: &mut Vec<u8>) -> Result<(), DecodeError> {
+        self.decoded = self.decoded.saturating_add(bytes.len() as u64);
+        LimitExceeded::check(
+            LimitKind::DecodedBytes,
+            self.decoded,
+            self.limits.decoded_bytes,
+        )
+        .map_err(DecodeError::Limit)?;
         if self.charset.is_some() {
             self.emit(bytes, out);
             return Ok(());
@@ -404,5 +427,32 @@ mod tests {
             )
             .and_then(|()| d.finish(&mut out));
         assert!(matches!(r, Err(DecodeError::Gzip(_))));
+    }
+}
+
+#[cfg(test)]
+mod limits_tests {
+    use super::*;
+    #[test]
+    fn gzip_budget_fails_before_expansion_is_retained() {
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        encoder.write_all(&vec![b'x'; 100_000]).unwrap();
+        let bytes = encoder.finish().unwrap();
+        let mut decoder = InputDecoder::with_limits(
+            Compression::Auto,
+            ImportLimits {
+                decoded_bytes: 1024,
+                ..Default::default()
+            },
+        );
+        let mut out = Vec::new();
+        assert!(matches!(
+            decoder.push(&bytes, &mut out),
+            Err(DecodeError::Limit(LimitExceeded {
+                kind: LimitKind::DecodedBytes,
+                ..
+            }))
+        ));
+        assert!(out.len() <= 1024);
     }
 }

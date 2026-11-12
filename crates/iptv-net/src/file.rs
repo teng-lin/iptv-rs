@@ -29,12 +29,16 @@ pub(crate) fn io_error(e: &std::io::Error) -> FetchError {
 }
 
 pub(crate) async fn open(path: &PathBuf) -> Result<(tokio::fs::File, Option<u64>), FetchError> {
+    let meta = tokio::fs::metadata(path).await.map_err(|e| io_error(&e))?;
+    if !meta.is_file() {
+        return Err(FetchError::new(FetchErrorKind::Io, "not a regular file"));
+    }
     let file = tokio::fs::File::open(path)
         .await
         .map_err(|e| io_error(&e))?;
     let meta = file.metadata().await.map_err(|e| io_error(&e))?;
-    if meta.is_dir() {
-        return Err(FetchError::new(FetchErrorKind::Io, "is a directory"));
+    if !meta.is_file() {
+        return Err(FetchError::new(FetchErrorKind::Io, "not a regular file"));
     }
     Ok((file, Some(meta.len())))
 }

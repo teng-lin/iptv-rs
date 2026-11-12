@@ -29,6 +29,8 @@ pub struct HttpRequest {
     /// expects them; matching is case-insensitive via [`HttpRequest::header`].
     pub headers: Vec<(String, String)>,
     pub body: Option<Vec<u8>>,
+    /// Remaining end-to-end import time. Adapters enforce it across response reads.
+    pub timeout: Option<std::time::Duration>,
     /// Substrings of `url` that are secrets, replaced in `Debug` output.
     redact: Vec<String>,
 }
@@ -58,6 +60,7 @@ impl HttpRequest {
             url: url.into(),
             headers: Vec::new(),
             body: None,
+            timeout: None,
             redact: Vec::new(),
         }
     }

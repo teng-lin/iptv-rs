@@ -5,6 +5,7 @@
 //! are distinct variants, summarised by [`ImportError::kind`]. Messages
 //! never contain credentials, tokens or response bodies.
 
+use iptv_core::import_limits::LimitExceeded;
 use std::fmt;
 
 use iptv_epg::SourceId;
@@ -101,6 +102,10 @@ pub enum ParseProblem {
 /// An import that produced no catalog or guide.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ImportError {
+    Limit {
+        step: Step,
+        error: LimitExceeded,
+    },
     InvalidConfig(String),
     Cancelled,
     Network {
@@ -141,7 +146,7 @@ impl ImportError {
             Self::Network { .. } => FailureKind::Network,
             Self::HttpStatus { .. } | Self::Portal { .. } => FailureKind::Server,
             Self::Auth { .. } => FailureKind::Auth,
-            Self::Parse { .. } => FailureKind::Parse,
+            Self::Parse { .. } | Self::Limit { .. } => FailureKind::Parse,
             Self::Empty { .. } => FailureKind::Empty,
             Self::Storage(_) => FailureKind::Storage,
         }
@@ -151,7 +156,8 @@ impl ImportError {
     pub fn step(&self) -> Option<Step> {
         match self {
             Self::InvalidConfig(_) | Self::Cancelled | Self::Storage(_) => None,
-            Self::Network { step, .. }
+            Self::Limit { step, .. }
+            | Self::Network { step, .. }
             | Self::HttpStatus { step, .. }
             | Self::Portal { step, .. }
             | Self::Auth { step, .. }
@@ -213,6 +219,14 @@ impl ImportError {
         matches!(
             self,
             Self::Cancelled
+                | Self::Limit { .. }
+                | Self::Network {
+                    error: FetchError {
+                        kind: crate::FetchErrorKind::TooLarge | crate::FetchErrorKind::Deadline,
+                        ..
+                    },
+                    ..
+                }
                 | Self::Storage(_)
                 | Self::Auth {
                     problem: AuthProblem::Stalker(_),
@@ -227,6 +241,7 @@ impl fmt::Display for ImportError {
         match self {
             Self::InvalidConfig(why) => write!(f, "invalid source settings: {why}"),
             Self::Cancelled => f.write_str("import cancelled"),
+            Self::Limit { step, error } => write!(f, "{step}: {error}"),
             Self::Network { step, error } => write!(f, "{step}: {error}"),
             Self::HttpStatus { step, status } => write!(f, "{step}: server answered HTTP {status}"),
             Self::Portal { step, error } => write!(f, "{step}: {error}"),

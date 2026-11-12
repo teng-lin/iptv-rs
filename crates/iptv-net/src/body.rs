@@ -1,7 +1,5 @@
 //! Chunked response bodies (network or local file).
 
-use std::future::Future;
-
 use iptv_import::{BodyStream, FetchError, FetchErrorKind};
 use tokio::io::AsyncReadExt;
 
@@ -11,7 +9,11 @@ use crate::error::from_reqwest;
 const FILE_CHUNK: usize = 64 * 1024;
 
 /// A body read with [`BodyStream::next_chunk`].
-pub struct NetBody(pub(crate) Inner);
+pub struct NetBody {
+    pub(crate) inner: Inner,
+    pub(crate) remaining: u64,
+    pub(crate) deadline: tokio::time::Instant,
+}
 
 pub(crate) enum Inner {
     Http(reqwest::Response),
@@ -21,7 +23,7 @@ pub(crate) enum Inner {
 
 impl std::fmt::Debug for NetBody {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let what = match self.0 {
+        let what = match self.inner {
             Inner::Http(_) => "http",
             Inner::File(_) => "file",
             Inner::Done => "done",
@@ -33,7 +35,7 @@ impl std::fmt::Debug for NetBody {
 impl NetBody {
     async fn next(&mut self) -> Result<Option<Vec<u8>>, FetchError> {
         loop {
-            let chunk = match &mut self.0 {
+            let chunk = match &mut self.inner {
                 Inner::Http(resp) => resp.chunk().await.map_err(from_reqwest)?.map(Vec::from),
                 Inner::File(file) => {
                     let mut buf = vec![0; FILE_CHUNK];
@@ -50,7 +52,7 @@ impl NetBody {
                 Some(c) if c.is_empty() => continue,
                 Some(c) => return Ok(Some(c)),
                 None => {
-                    self.0 = Inner::Done;
+                    self.inner = Inner::Done;
                     return Ok(None);
                 }
             }
@@ -59,7 +61,20 @@ impl NetBody {
 }
 
 impl BodyStream for NetBody {
-    fn next_chunk(&mut self) -> impl Future<Output = Result<Option<Vec<u8>>, FetchError>> {
-        self.next()
+    async fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, FetchError> {
+        let chunk = tokio::time::timeout_at(self.deadline, self.next())
+            .await
+            .map_err(|_| {
+                FetchError::new(FetchErrorKind::Deadline, "total response deadline exceeded")
+            })??;
+        if let Some(bytes) = &chunk {
+            self.remaining = self
+                .remaining
+                .checked_sub(bytes.len() as u64)
+                .ok_or_else(|| {
+                    FetchError::new(FetchErrorKind::TooLarge, "stream byte budget exceeded")
+                })?;
+        }
+        Ok(chunk)
     }
 }

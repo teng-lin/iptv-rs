@@ -2544,6 +2544,7 @@ version = "0.1.0"
 name = "iptv-epg"
 version = "0.1.0"
 dependencies = [
+ "iptv-core",
  "flate2",
  "memchr",
  "quick-xml",
@@ -2563,6 +2564,7 @@ dependencies = [
 name = "iptv-import"
 version = "0.1.0"
 dependencies = [
+ "iptv-core",
  "flate2",
  "iptv-epg",
  "iptv-providers",
@@ -2591,6 +2593,7 @@ dependencies = [
 name = "iptv-providers"
 version = "0.1.0"
 dependencies = [
+ "iptv-core",
  "percent-encoding",
  "serde_json",
  "sha1_smol",

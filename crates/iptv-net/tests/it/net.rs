@@ -338,3 +338,59 @@ fn debug_output_is_redacted() {
     let shown = format!("{net:?}");
     assert!(!shown.contains("proxy-secret"), "{shown}");
 }
+
+#[tokio::test]
+async fn streamed_responses_have_byte_and_total_time_budgets() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = [0; 1024];
+        let _ = stream.read(&mut request).await;
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
+            .await
+            .unwrap();
+        loop {
+            if stream.write_all(b"1\r\nx\r\n").await.is_err() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    });
+    let net = NetClient::new(NetConfig {
+        request_timeout: Duration::from_millis(80),
+        read_timeout: Duration::from_secs(1),
+        ..Default::default()
+    })
+    .unwrap();
+    let mut body = net
+        .fetch_stream(HttpRequest::get(format!("http://{address}/synthetic")))
+        .await
+        .unwrap()
+        .body;
+    let error = loop {
+        match body.next_chunk().await {
+            Ok(Some(_)) => {}
+            Ok(None) => panic!("fixture must not finish"),
+            Err(error) => break error,
+        }
+    };
+    assert_eq!(error.kind, FetchErrorKind::Deadline);
+    server.abort();
+
+    let server = TestServer::http(|_| Resp::ok(vec![b'x'; 1000])).await;
+    let net = NetClient::new(NetConfig {
+        max_streamed_bytes: 16,
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(
+        net.fetch(HttpRequest::get(server.url("/synthetic")))
+            .await
+            .unwrap_err()
+            .kind,
+        FetchErrorKind::TooLarge
+    );
+}

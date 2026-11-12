@@ -18,6 +18,7 @@
 mod catchup;
 mod extinf;
 
+use iptv_core::import_limits::{ImportLimits, LimitExceeded, LimitKind};
 use std::collections::HashMap;
 
 pub use catchup::{
@@ -53,6 +54,8 @@ pub struct M3uHeader {
 /// The parse result.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct M3uPlaylist {
+    /// A resource failure invalidates the entire result, including completed rows.
+    pub error: Option<LimitExceeded>,
     pub header: M3uHeader,
     /// Groups in first-seen order.
     pub groups: Vec<Group>,
@@ -76,7 +79,12 @@ struct Pending {
 /// Incremental parser. See the module docs.
 #[derive(Default)]
 pub struct M3uParser {
+    limits: ImportLimits,
+    bytes: u64,
+    items: u64,
+    error: Option<LimitExceeded>,
     line_no: u64,
+    last_cr: bool,
     partial: Vec<u8>,
     header: M3uHeader,
     pending: Option<Pending>,
@@ -100,21 +108,60 @@ impl M3uParser {
         Self::default()
     }
 
-    /// Feeds the next chunk of the file. Chunks may split lines anywhere.
-    pub fn feed(&mut self, chunk: &[u8]) {
-        let mut start = 0;
-        while let Some(pos) = chunk[start..].iter().position(|&b| b == b'\n') {
-            let end = start + pos;
-            if self.partial.is_empty() {
-                self.line(&chunk[start..end]);
-            } else {
-                let mut line = std::mem::take(&mut self.partial);
-                line.extend_from_slice(&chunk[start..end]);
-                self.line(&line);
-            }
-            start = end + 1;
+    pub fn with_limits(limits: ImportLimits) -> Self {
+        Self {
+            limits,
+            ..Self::default()
         }
-        self.partial.extend_from_slice(&chunk[start..]);
+    }
+
+    /// Compatibility entry point. Resource failures remain sticky and are
+    /// returned in `M3uPlaylist::error`; importers use `try_feed` to stop early.
+    pub fn feed(&mut self, chunk: &[u8]) {
+        if let Err(error) = self.try_feed(chunk) {
+            self.error = Some(error);
+        }
+    }
+
+    pub fn try_feed(&mut self, chunk: &[u8]) -> Result<(), LimitExceeded> {
+        if let Some(error) = self.error {
+            return Err(error);
+        }
+        let result = self.feed_checked(chunk);
+        if let Err(error) = result {
+            self.error = Some(error);
+        }
+        result
+    }
+
+    fn feed_checked(&mut self, chunk: &[u8]) -> Result<(), LimitExceeded> {
+        self.bytes = self.bytes.saturating_add(chunk.len() as u64);
+        LimitExceeded::check(
+            LimitKind::DecodedBytes,
+            self.bytes,
+            self.limits.decoded_bytes,
+        )?;
+        for part in chunk.split_inclusive(|b| matches!(b, b'\n' | b'\r')) {
+            if self.last_cr && part == b"\n" {
+                self.last_cr = false;
+                continue;
+            }
+            self.last_cr = part.last() == Some(&b'\r');
+            LimitExceeded::check(
+                LimitKind::RecordBytes,
+                self.partial.len().saturating_add(part.len()) as u64,
+                self.limits.record_bytes as u64,
+            )?;
+            self.partial.extend_from_slice(part);
+            if part.last().is_some_and(|b| matches!(b, b'\n' | b'\r')) {
+                let line = std::mem::take(&mut self.partial);
+                self.line(&line);
+                if let Some(error) = self.error {
+                    return Err(error);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Channels parsed so far, removed from the parser (for batched writes).
@@ -129,7 +176,7 @@ impl M3uParser {
 
     /// Flushes the last line and returns everything not yet taken.
     pub fn finish(mut self) -> M3uPlaylist {
-        if !self.partial.is_empty() {
+        if self.error.is_none() && !self.partial.is_empty() {
             let line = std::mem::take(&mut self.partial);
             self.line(&line);
         }
@@ -140,6 +187,7 @@ impl M3uParser {
             );
         }
         M3uPlaylist {
+            error: self.error,
             header: self.header,
             groups: self.groups,
             channels: self.out,
@@ -270,6 +318,11 @@ impl M3uParser {
     }
 
     fn url_line(&mut self, line: &str) {
+        self.items = self.items.saturating_add(1);
+        if let Err(error) = LimitExceeded::check(LimitKind::Items, self.items, self.limits.items) {
+            self.error = Some(error);
+            return;
+        }
         let pending = self.pending.take().unwrap_or_else(|| Pending {
             line: self.line_no,
             attrs: Vec::new(),

@@ -297,3 +297,42 @@ fn interrupted_pending_replacement_is_recovered_and_cancellation_cannot_resurrec
         assert!(!sibling(&root, "restore-replaced").exists());
     }
 }
+
+#[test]
+fn structured_entry_budgets_preserve_current_and_pending_data() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("current");
+    seed(&root, "Synthetic retained");
+    let saved = dir.path().join("saved.patinabackup");
+    export(&root, &saved, &Settings::new().to_json_string()).unwrap();
+    stage(&root, &mut File::open(&saved).unwrap()).unwrap();
+    let pending = sibling(&root, "restore-pending");
+    let before = fs::read(pending.join("iptv.sqlite")).unwrap();
+    for name in ["settings.json", "search-history.json", "last_channel-1"] {
+        assert_eq!(entry_limit(name, 2 << 20), Err(BackupEntryLimit));
+        let manifest = serde_json::to_vec(&json!({"format":"patina-whole-app", "version":1, "root":"/synthetic", "files":[{"name":name,"length":2 << 20}]})).unwrap();
+        let mut bytes = MAGIC.to_vec();
+        bytes.extend((manifest.len() as u64).to_le_bytes());
+        bytes.extend(manifest);
+        assert_eq!(
+            stage(&root, &mut bytes.as_slice()),
+            Err("Backup structured entry is too large")
+        );
+        assert_eq!(fs::read(pending.join("iptv.sqlite")).unwrap(), before);
+    }
+    // A staged file modified between shutdown and startup is revalidated
+    // before the current working directory is moved aside.
+    File::create(pending.join("settings.json"))
+        .unwrap()
+        .set_len((1 << 20) + 1)
+        .unwrap();
+    assert_eq!(activate(&root), Err("Backup structured entry is too large"));
+    assert_eq!(
+        Store::open(root.join("iptv.sqlite"))
+            .unwrap()
+            .sources()
+            .unwrap()[0]
+            .name,
+        "Synthetic retained"
+    );
+}

@@ -12,3 +12,5 @@ mod epg;
 mod m3u;
 mod stalker;
 mod xtream;
+
+mod limits;

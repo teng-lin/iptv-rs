@@ -338,8 +338,10 @@ async fn load_source<F: Fetch, S: GuideSink, P: ProgressSink>(
         skipped: 0,
         failed: None,
     };
-    let decode =
-        |e: iptv_epg::DecodeError| ImportError::parse(step, ParseProblem::Decode(e.to_string()));
+    let decode = |e: iptv_epg::DecodeError| match e {
+        iptv_epg::DecodeError::Limit(error) => ImportError::Limit { step, error },
+        e => ImportError::parse(step, ParseProblem::Decode(e.to_string())),
+    };
     ctx.phase(Phase::Guide(cfg.id));
     let bytes = ctx
         .stream(step, Phase::Guide(cfg.id), req, |chunk| {

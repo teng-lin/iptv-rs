@@ -6,6 +6,7 @@
 //! pages and all-malformed files are [`ParseProblem`]s; only a well-formed
 //! playlist without entries is [`ImportError::Empty`].
 
+use iptv_core::import_limits::{DecodeBuffer, ImportLimits, LimitExceeded, LimitKind};
 use std::io::Write;
 
 use flate2::write::MultiGzDecoder;
@@ -27,17 +28,21 @@ const SNIFF: usize = 512;
 pub(crate) struct M3uFeeder {
     parser: M3uParser,
     head: Vec<u8>,
-    gzip: Option<Box<MultiGzDecoder<Vec<u8>>>>,
+    gzip: Option<Box<MultiGzDecoder<DecodeBuffer>>>,
     decided: bool,
     sniff: Vec<u8>,
     /// Channels moved out of the parser as they complete (progress counts).
     taken: Vec<Channel>,
+    limits: ImportLimits,
+    bytes: u64,
 }
 
 impl M3uFeeder {
-    pub fn new() -> Self {
+    pub fn new(limits: ImportLimits) -> Self {
         Self {
-            parser: M3uParser::new(),
+            parser: M3uParser::with_limits(limits),
+            limits,
+            bytes: 0,
             head: Vec::new(),
             gzip: None,
             decided: false,
@@ -48,6 +53,9 @@ impl M3uFeeder {
 
     /// Feeds raw bytes; returns the number of channels parsed so far.
     pub fn push(&mut self, bytes: &[u8]) -> Result<u64, ImportError> {
+        self.bytes = self.bytes.saturating_add(bytes.len() as u64);
+        LimitExceeded::check(LimitKind::InputBytes, self.bytes, self.limits.input_bytes)
+            .map_err(limit_error)?;
         if self.decided {
             self.decoded(bytes)?;
         } else {
@@ -65,19 +73,25 @@ impl M3uFeeder {
     fn decide(&mut self) {
         self.decided = true;
         if self.head.starts_with(&[0x1f, 0x8b]) {
-            self.gzip = Some(Box::new(MultiGzDecoder::new(Vec::new())));
+            self.gzip = Some(Box::new(MultiGzDecoder::new(DecodeBuffer::new(
+                self.limits.decoded_bytes,
+            ))));
         }
     }
 
     fn decoded(&mut self, bytes: &[u8]) -> Result<(), ImportError> {
         match &mut self.gzip {
-            None => text(&mut self.sniff, &mut self.parser, bytes),
+            None => text(&mut self.sniff, &mut self.parser, bytes)?,
             Some(gz) => {
                 // Small slices bound the inflated buffer.
                 for piece in bytes.chunks(16 * 1024) {
-                    gz.write_all(piece).map_err(gzip_error)?;
-                    let out = std::mem::take(gz.get_mut());
-                    text(&mut self.sniff, &mut self.parser, &out);
+                    gz.write_all(piece).map_err(|e| {
+                        gz.get_ref()
+                            .limit_error()
+                            .map_or_else(|| gzip_error(e), limit_error)
+                    })?;
+                    let out = gz.get_mut().take();
+                    text(&mut self.sniff, &mut self.parser, &out)?;
                 }
             }
         }
@@ -91,11 +105,18 @@ impl M3uFeeder {
             self.decoded(&head)?;
         }
         if let Some(mut gz) = self.gzip.take() {
-            gz.try_finish().map_err(gzip_error)?;
-            let out = std::mem::take(gz.get_mut());
-            text(&mut self.sniff, &mut self.parser, &out);
+            gz.try_finish().map_err(|e| {
+                gz.get_ref()
+                    .limit_error()
+                    .map_or_else(|| gzip_error(e), limit_error)
+            })?;
+            let out = gz.get_mut().take();
+            text(&mut self.sniff, &mut self.parser, &out)?;
         }
         let mut playlist = self.parser.finish();
+        if let Some(error) = playlist.error {
+            return Err(limit_error(error));
+        }
         self.taken.append(&mut playlist.channels.items);
         playlist.channels.items = self.taken;
         Ok((playlist, self.sniff))
@@ -103,12 +124,19 @@ impl M3uFeeder {
 }
 
 /// Decoded playlist text: keep the first bytes for sniffing, then parse.
-fn text(sniff: &mut Vec<u8>, parser: &mut M3uParser, bytes: &[u8]) {
+fn limit_error(error: LimitExceeded) -> ImportError {
+    ImportError::Limit {
+        step: Step::Playlist,
+        error,
+    }
+}
+
+fn text(sniff: &mut Vec<u8>, parser: &mut M3uParser, bytes: &[u8]) -> Result<(), ImportError> {
     if sniff.len() < SNIFF {
         let n = (SNIFF - sniff.len()).min(bytes.len());
         sniff.extend_from_slice(&bytes[..n]);
     }
-    parser.feed(bytes);
+    parser.try_feed(bytes).map_err(limit_error)
 }
 
 fn gzip_error(e: std::io::Error) -> ImportError {
@@ -198,7 +226,7 @@ pub(crate) async fn import_m3u<F: Fetch, P: ProgressSink>(
         req = req.with_header("Referer", r);
     }
     ctx.phase(Phase::Playlist);
-    let mut feeder = M3uFeeder::new();
+    let mut feeder = M3uFeeder::new(ctx.limits);
     ctx.stream(Step::Playlist, Phase::Playlist, req, |chunk| {
         feeder.push(chunk)
     })
@@ -223,7 +251,7 @@ pub fn import_m3u_text(
     progress: &mut impl ProgressSink,
     cancel: &CancelToken,
 ) -> Result<Catalog, ImportError> {
-    let mut feeder = M3uFeeder::new();
+    let mut feeder = M3uFeeder::new(ImportLimits::default());
     let mut p = Progress::phase(Phase::Playlist);
     p.total_bytes = Some(bytes.len() as u64);
     for chunk in bytes.chunks(REPORT_EVERY_BYTES as usize) {

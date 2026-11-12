@@ -240,6 +240,7 @@ fn export(root: &Path, destination: &Path, settings: &str) -> Result<()> {
             .map_err(|_| "Could not read backup files")?
             .len()
         };
+        entry_limit(name, len).map_err(|_| "Backup structured entry is too large")?;
         total = total.checked_add(len).ok_or("Backup is too large")?;
         if total > MAX_BYTES {
             return Err("Backup is too large");
@@ -302,7 +303,56 @@ fn export(root: &Path, destination: &Path, settings: &str) -> Result<()> {
     result
 }
 
+/// Structured files are read as a whole. Enforce their individual budget both
+/// while staging archive entries and before startup revalidation allocates.
+#[derive(Debug, PartialEq, Eq)]
+struct BackupEntryLimit;
+
+fn entry_limit(name: &str, bytes: u64) -> std::result::Result<(), BackupEntryLimit> {
+    let maximum = match name {
+        "settings.json" | "search-history.json" => 1 << 20,
+        name if name == "last_channel" || name.starts_with("last_channel-") => 64 << 10,
+        _ => MAX_BYTES,
+    };
+    if bytes > maximum {
+        Err(BackupEntryLimit)
+    } else {
+        Ok(())
+    }
+}
+
+fn read_small_file(path: &Path, name: &str) -> Result<String> {
+    let maximum = if name == "last_channel" {
+        64 << 10
+    } else {
+        1 << 20
+    };
+    if !fs::symlink_metadata(path)
+        .map_err(|_| "Could not read backup file size")?
+        .file_type()
+        .is_file()
+    {
+        return Err("Backup structured entry is not a regular file");
+    }
+    let file = File::open(path).map_err(|_| "Could not read backup settings")?;
+    entry_limit(
+        name,
+        file.metadata()
+            .map_err(|_| "Could not read backup file size")?
+            .len(),
+    )
+    .map_err(|_| "Backup structured entry is too large")?;
+    let mut text = String::new();
+    file.take(maximum + 1)
+        .read_to_string(&mut text)
+        .map_err(|_| "Could not read backup settings")?;
+    entry_limit(name, text.len() as u64).map_err(|_| "Backup structured entry is too large")?;
+    Ok(text)
+}
+
 fn validate_settings(text: &str) -> Result<()> {
+    entry_limit("settings.json", text.len() as u64)
+        .map_err(|_| "Backup structured entry is too large")?;
     let (_, report) = Settings::from_json(text)
         .map_err(|_| "Backup settings are invalid or from a newer version")?;
     if !report.is_clean() {
@@ -364,6 +414,7 @@ fn stage(root: &Path, input: &mut impl Read) -> Result<()> {
         let len = entry["length"]
             .as_u64()
             .ok_or("Backup file size is invalid")?;
+        entry_limit(name, len).map_err(|_| "Backup structured entry is too large")?;
         total = total.checked_add(len).ok_or("Backup is too large")?;
         if total > MAX_BYTES {
             return Err("Backup is too large");
@@ -393,8 +444,7 @@ fn stage(root: &Path, input: &mut impl Read) -> Result<()> {
     {
         return Err("Backup has unexpected trailing data");
     }
-    let settings = fs::read_to_string(work.0.join("settings.json"))
-        .map_err(|_| "Could not read backup settings")?;
+    let settings = read_small_file(&work.0.join("settings.json"), "settings.json")?;
     validate_settings(&settings)?;
     Store::validate_snapshot(&work.0.join("iptv.sqlite"))
         .map_err(|_| "Backup library is invalid or from a newer version")?;
@@ -528,12 +578,25 @@ fn activate(root: &Path) -> Result<()> {
         return Ok(());
     }
     // Revalidate persisted staging before moving the working state aside.
+    for entry in fs::read_dir(&pending).map_err(|_| "Could not read pending backup")? {
+        let entry = entry.map_err(|_| "Could not read pending backup entry")?;
+        if let Some(name) = entry.file_name().to_str() {
+            entry_limit(
+                name,
+                entry
+                    .metadata()
+                    .map_err(|_| "Could not read backup file size")?
+                    .len(),
+            )
+            .map_err(|_| "Backup structured entry is too large")?;
+        }
+    }
     Store::validate_snapshot(&pending.join("iptv.sqlite"))
         .map_err(|_| "The pending backup library is invalid; current data was kept")?;
-    validate_settings(
-        &fs::read_to_string(pending.join("settings.json"))
-            .map_err(|_| "The pending backup settings are unreadable; current data was kept")?,
-    )?;
+    validate_settings(&read_small_file(
+        &pending.join("settings.json"),
+        "settings.json",
+    )?)?;
     if root.exists() {
         fs::rename(root, &previous)
             .map_err(|_| "Could not prepare the restore; current data was kept")?;

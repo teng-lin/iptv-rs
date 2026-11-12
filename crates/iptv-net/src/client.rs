@@ -4,10 +4,9 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-use iptv_import::{Fetch, FetchError, FetchErrorKind, StreamingResponse};
+use iptv_import::{BodyStream, Fetch, FetchError, FetchErrorKind, StreamingResponse};
 use iptv_providers::{HttpRequest, HttpResponse, Method};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, USER_AGENT};
-use tokio::io::AsyncReadExt;
 
 use crate::body::{Inner, NetBody};
 use crate::error::from_reqwest;
@@ -21,6 +20,10 @@ pub struct NetConfig {
     /// Maximum silence while waiting for response headers or body bytes.
     pub read_timeout: Duration,
     pub max_redirects: usize,
+    /// Total time including headers, redirects, and the response body.
+    pub request_timeout: Duration,
+    /// Bytes delivered after HTTP content decoding, including streamed reads.
+    pub max_streamed_bytes: u64,
     /// Sent when a request has no `User-Agent` of its own. Providers that
     /// filter on it get theirs per source (M3U setting, Xtream/Stalker
     /// clients).
@@ -43,6 +46,8 @@ impl Default for NetConfig {
             connect_timeout: Duration::from_secs(15),
             read_timeout: Duration::from_secs(30),
             max_redirects: 10,
+            request_timeout: Duration::from_secs(300),
+            max_streamed_bytes: 512 << 20,
             user_agent: iptv_providers::xtream::DEFAULT_USER_AGENT.to_owned(),
             max_buffered_bytes: 128 * 1024 * 1024,
             extra_roots_der: Vec::new(),
@@ -73,6 +78,7 @@ impl std::fmt::Debug for NetConfig {
 pub struct NetClient {
     client: reqwest::Client,
     config: Arc<NetConfig>,
+    started: std::time::Instant,
 }
 
 impl std::fmt::Debug for NetClient {
@@ -106,6 +112,7 @@ impl NetClient {
         Ok(Self {
             client,
             config: Arc::new(config),
+            started: std::time::Instant::now(),
         })
     }
 
@@ -127,26 +134,12 @@ impl NetClient {
             return Err(too_large(limit));
         }
         let mut body = Vec::with_capacity(resp.content_length.unwrap_or(0).min(1 << 20) as usize);
-        match resp.body.0 {
-            Inner::Http(mut r) => {
-                while let Some(chunk) = r.chunk().await.map_err(from_reqwest)? {
-                    if body.len() + chunk.len() > limit {
-                        return Err(too_large(limit));
-                    }
-                    body.extend_from_slice(&chunk);
-                }
+        let mut stream = resp.body;
+        while let Some(chunk) = stream.next_chunk().await? {
+            if body.len().saturating_add(chunk.len()) > limit {
+                return Err(too_large(limit));
             }
-            Inner::File(f) => {
-                let mut limited = f.take(limit as u64 + 1);
-                limited
-                    .read_to_end(&mut body)
-                    .await
-                    .map_err(|e| file::io_error(&e))?;
-                if body.len() > limit {
-                    return Err(too_large(limit));
-                }
-            }
-            Inner::Done => {}
+            body.extend_from_slice(&chunk);
         }
         Ok(HttpResponse::new(resp.status, body))
     }
@@ -156,6 +149,23 @@ impl NetClient {
     pub async fn fetch_stream(
         &self,
         request: HttpRequest,
+    ) -> Result<StreamingResponse<NetBody>, FetchError> {
+        let deadline = tokio::time::Instant::now()
+            + request
+                .timeout
+                .unwrap_or(self.config.request_timeout)
+                .min(self.config.request_timeout);
+        tokio::time::timeout_at(deadline, self.fetch_stream_inner(request, deadline))
+            .await
+            .map_err(|_| {
+                FetchError::new(FetchErrorKind::Deadline, "total response deadline exceeded")
+            })?
+    }
+
+    async fn fetch_stream_inner(
+        &self,
+        request: HttpRequest,
+        deadline: tokio::time::Instant,
     ) -> Result<StreamingResponse<NetBody>, FetchError> {
         if let Some(path) = file::local_path(&request.url) {
             if !self.config.allow_files {
@@ -169,7 +179,11 @@ impl NetClient {
             return Ok(StreamingResponse {
                 status: 200,
                 content_length: len,
-                body: NetBody(Inner::File(f)),
+                body: NetBody {
+                    inner: Inner::File(f),
+                    remaining: self.config.max_streamed_bytes,
+                    deadline,
+                },
             });
         }
         let shown = request.redacted_url();
@@ -183,7 +197,11 @@ impl NetClient {
         Ok(StreamingResponse {
             status,
             content_length: resp.content_length(),
-            body: NetBody(Inner::Http(resp)),
+            body: NetBody {
+                inner: Inner::Http(resp),
+                remaining: self.config.max_streamed_bytes,
+                deadline,
+            },
         })
     }
 
@@ -229,6 +247,10 @@ fn too_large(limit: usize) -> FetchError {
 
 impl Fetch for NetClient {
     type Body = NetBody;
+
+    fn elapsed(&self) -> Duration {
+        self.started.elapsed()
+    }
 
     fn fetch(
         &self,
