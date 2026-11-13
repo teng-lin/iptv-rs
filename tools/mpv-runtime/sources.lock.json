@@ -1,0 +1,183 @@
+{
+  "schema": 1,
+  "toolchain": {
+    "name": "llvm-mingw",
+    "version": "20261104-ucrt-ubuntu-22.04-x86_64",
+    "url": "https://github.com/mstorsjo/llvm-mingw/releases/download/20261104/llvm-mingw-20261104-ucrt-ubuntu-22.04-x86_64.tar.xz",
+    "sha256": "919380403de87dca3c581c2053230cd298af5e891286628ba0613b7fed370926",
+    "license_files": [
+      "LICENSE.TXT",
+      "x86_64-w64-mingw32/share/mingw32/COPYING",
+      "x86_64-w64-mingw32/share/mingw32/COPYING.MinGW-w64-runtime.txt",
+      "x86_64-w64-mingw32/share/mingw32/COPYING.MinGW-w64.txt",
+      "x86_64-w64-mingw32/share/mingw32/COPYING.winpthreads.txt",
+      "x86_64-w64-mingw32/share/mingw32/COPYING.winstorecompat.txt",
+      "share/gendef/COPYING.txt",
+      "share/widl/COPYING.txt"
+    ]
+  },
+  "sources": [
+    {
+      "name": "llvm-project",
+      "version": "23.1.5",
+      "url": "https://github.com/llvm/llvm-project/archive/392dfff97d29b59d77e5cac6d4b6ef2585fe7117.tar.gz",
+      "sha256": "d6dd769a5c981bc0ec5d877e55ca141e826aca1bca5c5e7d6128e70341dd3ae0",
+      "license_files": [
+        "llvm/LICENSE.TXT",
+        "libcxx/LICENSE.TXT",
+        "libcxxabi/LICENSE.TXT",
+        "libunwind/LICENSE.TXT",
+        "compiler-rt/LICENSE.TXT"
+      ]
+    },
+    {
+      "name": "llvm-mingw-scripts",
+      "version": "20261104",
+      "url": "https://github.com/mstorsjo/llvm-mingw/archive/faadbb30c41a4137d3f29b558a876cf2d048967a.tar.gz",
+      "sha256": "1bee2aff0fa6b4652039ccb0b82c042d48a38948715749c88493d1f760f16412",
+      "license_files": [
+        "LICENSE.txt"
+      ]
+    },
+    {
+      "name": "mpv",
+      "version": "0.42.0",
+      "url": "https://github.com/mpv-player/mpv/archive/b0841e8c4d156b8403dc1876c4cbd9011eb583f3.tar.gz",
+      "sha256": "a4a79fa6ca728762ac407734b0f93dbcbba250c3bb3bf97b77a342042be802e4",
+      "license_files": [
+        "Copyright",
+        "LICENSE.LGPL",
+        "LICENSE.GPL"
+      ]
+    },
+    {
+      "name": "libplacebo",
+      "version": "7.387.0",
+      "url": "https://github.com/haasn/libplacebo/archive/275f7dea27924cdd34ab2e6c20e448b6bc4fab65.tar.gz",
+      "sha256": "adbca47395410ada01414bc527e0103c716b9b758be857464c40e5ff0ec695be",
+      "license_files": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "libass",
+      "version": "0.17.4",
+      "url": "https://github.com/libass/libass/archive/bbb3c7f1570a4a021e52683f3fbdf74fe492ae84.tar.gz",
+      "sha256": "93796cd47cc878220f3466352315888daba8a48d673cdd8c44350b26f516e064",
+      "license_files": [
+        "COPYING"
+      ]
+    },
+    {
+      "name": "freetype",
+      "version": "2.14.1",
+      "url": "https://github.com/freetype/freetype/archive/526ec5c47b9ebccc4754c85ac0c0cdf7c85a5e9b.tar.gz",
+      "sha256": "d24f53b60034dc5c48e90d122d432a8f04a05b9e0a98c8d8e49b4a759207ce2e",
+      "license_files": [
+        "LICENSE.TXT",
+        "docs/FTL.TXT",
+        "docs/GPLv2.TXT"
+      ]
+    },
+    {
+      "name": "harfbuzz",
+      "version": "12.2.0",
+      "url": "https://github.com/harfbuzz/harfbuzz/archive/0426759f2b03e479495e987608f10e0866e70180.tar.gz",
+      "sha256": "a41aae311e28701bfe954b15834ffb5c79e13d81e9b67f956fa78e557cb47a30",
+      "license_files": [
+        "COPYING"
+      ]
+    },
+    {
+      "name": "fribidi",
+      "version": "1.0.16",
+      "url": "https://github.com/fribidi/fribidi/archive/68162babff4f39c4e2dc164a5e825af93bda9983.tar.gz",
+      "sha256": "fa34a057a414c85f7e1f3c0fd717bc93d74d370ed474ef2feca90868b4938f72",
+      "license_files": [
+        "COPYING"
+      ]
+    },
+    {
+      "name": "zlib",
+      "version": "1.3.1",
+      "url": "https://github.com/madler/zlib/archive/51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf.tar.gz",
+      "sha256": "d9e270d46252734aa49770fbc544125391617956266f220bd63216c834f3a522",
+      "license_files": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "dav1d",
+      "version": "1.5.2",
+      "url": "https://github.com/videolan/dav1d/archive/c720f4d3556a01916324aea155555d3efba842e8.tar.gz",
+      "sha256": "6b15b0df3c10a60ae912b12e64f731888346d39fdc35d58966f2f26cca95745d",
+      "license_files": [
+        "COPYING"
+      ]
+    },
+    {
+      "name": "mingw-w64",
+      "version": "ee9bd87644156c41072a11ad957d1e11831a72df",
+      "url": "https://github.com/mingw-w64/mingw-w64/archive/ee9bd87644156c41072a11ad957d1e11831a72df.tar.gz",
+      "sha256": "6a346a2e3eafa0e5ec8e30df89b16a05add8b50cb4cece8c47593799ca19e43b",
+      "license_files": [
+        "COPYING",
+        "COPYING.MinGW-w64/COPYING.MinGW-w64.txt",
+        "COPYING.MinGW-w64-runtime/COPYING.MinGW-w64-runtime.txt"
+      ]
+    },
+    {
+      "name": "ffmpeg",
+      "version": "8.1.3",
+      "url": "https://ffmpeg.org/releases/ffmpeg-8.1.3.tar.xz",
+      "sha256": "7138d28c96d9d3e3af4ee3d8cad72741f8ffb40da90c1112235dea3ecd3178a3",
+      "license_files": [
+        "LICENSE.md",
+        "COPYING.LGPLv2.1",
+        "COPYING.LGPLv3",
+        "COPYING.GPLv2",
+        "COPYING.GPLv3"
+      ]
+    },
+    {
+      "name": "fast_float",
+      "version": "97b54ca9e75f5303507699d27c6b4f4efe4641a1",
+      "url": "https://github.com/fastfloat/fast_float/archive/97b54ca9e75f5303507699d27c6b4f4efe4641a1.tar.gz",
+      "sha256": "2b132274539286e41f37857cac22aa8441d21bd86d55de825a3342b149f66801",
+      "license_files": [
+        "LICENSE-APACHE",
+        "LICENSE-BOOST",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "name": "jinja",
+      "version": "15206881c006c79667fe5154fe80c01c65410679",
+      "url": "https://github.com/pallets/jinja/archive/15206881c006c79667fe5154fe80c01c65410679.tar.gz",
+      "sha256": "b88a20dcc2e34072fcf4159325bc6c34cd4b29a81a8b83d15d2f28ba561da296",
+      "license_files": [
+        "LICENSE.txt"
+      ]
+    },
+    {
+      "name": "markupsafe",
+      "version": "297fc8e356e6836a62087949245d09a28e9f1b13",
+      "url": "https://github.com/pallets/markupsafe/archive/297fc8e356e6836a62087949245d09a28e9f1b13.tar.gz",
+      "sha256": "da7c010c9c81a66ac73036558c1fcb6212b50482f43211cd1254035b94f82414",
+      "license_files": [
+        "LICENSE.txt"
+      ]
+    },
+    {
+      "name": "Vulkan-Headers",
+      "version": "74d8a6cb930c68ef617b202c3ff3c59d919e086b",
+      "url": "https://github.com/KhronosGroup/Vulkan-Headers/archive/74d8a6cb930c68ef617b202c3ff3c59d919e086b.tar.gz",
+      "sha256": "75967a8288ff16044a86d1af462b96d2e75c435937efb75f2bb4102ab0382f29",
+      "license_files": [
+        "LICENSE.md",
+        "LICENSES/Apache-2.0.txt",
+        "LICENSES/MIT.txt"
+      ]
+    }
+  ]
+}

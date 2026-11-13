@@ -17,13 +17,16 @@ The random 256-bit database key is held by the platform credential broker:
   Unlock prompts have a maximum thirty-second wait rather than blocking forever.
 - macOS and iOS: the application-specific Keychain entry. Apple builds use SQLCipher's
   CommonCrypto backend, avoiding another OpenSSL alongside MPVKit.
+- Windows: a per-user Windows Credential Manager entry; app data is stored under
+  `%LOCALAPPDATA%\Patina`, inheriting the user profile ACL. SQLCipher uses bundled
+  OpenSSL. Reparse points in the app storage tree are refused.
 - Android: a non-exportable Android Keystore AES-256 key wraps the random database key
   using AES-GCM. Only the authenticated ciphertext is persisted in `noBackupFilesDir`.
   The host installs the unwrapped key through JNI before mounting the Rust app. A
   missing key, malformed ciphertext, or authentication failure leaves storage closed.
 
 Keys and keyring payloads are zeroized on drop and never included in Debug or errors.
-The Linux/Apple broker stores a hexadecimal secret so KDE Wallet's UTF-8-only Secret
+The Linux/Apple/Windows broker stores a hexadecimal secret so KDE Wallet's UTF-8-only Secret
 Service implementation is supported. First key creation is serialized by a filesystem
 lock. The app's existing instance lock prevents competing production store workers.
 
@@ -120,3 +123,9 @@ Desktop startup requires an absolute HOME, makes app directories 0700 and files
 files, including SQLite sidecars and copied playlists, are repaired at startup;
 symbolic links in private app storage are refused rather than followed.
 
+
+Windows flushes payload files before publication, but does not flush directory
+handles (unlike Unix). Pending/previous restore directories still provide
+restart recovery; directory metadata durability across sudden power loss is
+not guaranteed. Legacy encryption closes its SQLite handle before replacing
+the database on Windows, under the application's process-lifetime instance lock.

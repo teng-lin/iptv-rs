@@ -202,15 +202,21 @@ impl Store {
                 .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
             checked.conn.pragma_update(None, "journal_mode", "DELETE")?;
             drop(checked);
-            File::open(&destination)
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&destination)
                 .and_then(|file| file.sync_all())
                 .map_err(io_error)?;
+            #[cfg(windows)]
+            drop(original);
             std::fs::rename(&destination, path).map_err(io_error)?;
+            #[cfg(unix)]
             if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
                 File::open(parent)
                     .and_then(|dir| dir.sync_all())
                     .map_err(io_error)?;
             }
+            #[cfg(not(windows))]
             drop(original);
             Ok(())
         })();

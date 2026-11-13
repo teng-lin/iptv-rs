@@ -128,6 +128,8 @@ preparation is a separate follow-up; this pipeline retains the complete runtime.
 
 ## Locked package builds
 
+Windows installer distribution prerequisites are listed in the Windows section below.
+
 Rust is pinned in `rust-toolchain.toml`. Source builds use `Cargo.lock`.
 NSH generates a workspace containing additional platform runners, so its
 resolved superset lives in `tools/ci/package.Cargo.lock`. Package scripts
@@ -163,3 +165,38 @@ The build environment also exports the repository toolchain to commands that
 change directory into NSH. Its patched xtask adds `--locked` to nested runtime
 builds and metadata calls: Cargo resets `CARGO` inside `cargo run`, so relying
 only on a wrapper environment variable would not protect those nested builds.
+
+## Windows installer (experimental)
+
+Windows PR checks build and test the app. Installer generation runs only in the
+release workflow for tags and manual desktop selections, using
+`tools/package-windows.ps1`. It produces one x64 `.exe` installer, with no portable
+ZIP. The per-user install bundles libmpv and the VC runtime, adds a Start menu
+shortcut, and preserves application data on uninstall. Signing is not configured.
+The package smoke check uses synthetic data and verifies the executable and window
+icons, launch, clean exit, and uninstall.
+
+The native runtime comes from the separate, manually dispatched
+`.github/workflows/mpv-runtime.yml` dependency workflow. It prepares checksum-pinned
+source and toolchain archives, compiles in a pinned Linux Docker environment with
+network access disabled, and tests the packaged DLL on Windows with generated
+MPEG-TS and local HLS media. Publication depends on that smoke test. Normal app PRs
+and releases download the selected runtime; they do not rebuild the native graph.
+
+The dependency release tag includes a digest of the source lock and build scripts.
+It contains the runtime ZIP, exact corresponding-source archive, `runtime.json`
+and checksums. This ZIP is a build dependency, not a portable Patina distribution.
+After publishing a new dependency release, review and commit its `runtime.json`
+as `tools/mpv-runtime/runtime.json`. See the [native build instructions](../tools/mpv-runtime/README.md)
+for local commands and the update procedure.
+
+Installer generation verifies the bundled DLL against that committed pin and the
+native component inventory. It copies all native licenses, the source lock,
+inventory, build configuration and `SOURCE.txt` into `notices/libmpv`.
+`SOURCE.txt` identifies the exact retained source asset for the installed DLL.
+
+Never prune, replace or delete these dependency releases or their source assets.
+Every distributed installer must retain access to its matching sources, including
+after a newer runtime is selected. Keep notices and the same source availability
+when redistributing installers. If a dependency release is incomplete or invalid,
+correct the inputs and publish a new digest; do not overwrite published bytes.

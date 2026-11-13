@@ -36,7 +36,7 @@ fn latest_snapshot_is_the_fresh_schema() {
     let path = dir.path().join("fresh.db");
     drop(Store::open(&path).unwrap());
     let conn = rusqlite::Connection::open(&path).unwrap();
-    assert_eq!(schema_dump(&conn).unwrap(), snapshot);
+    assert_eq!(schema_dump(&conn).unwrap(), snapshot.replace("\r\n", "\n"));
 }
 
 /// A historical version: its schema snapshot and the data files to load

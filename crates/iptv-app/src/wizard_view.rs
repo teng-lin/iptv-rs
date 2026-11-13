@@ -383,7 +383,7 @@ fn choose_type(ui: Ui) -> impl IntoElement {
 fn shown_value(field: Field, value: &str) -> String {
     match field {
         // The file field holds the app's copy; its name is what matters.
-        Field::PlaylistFile => value.rsplit('/').next().unwrap_or(value).to_owned(),
+        Field::PlaylistFile => value.rsplit(['/', '\\']).next().unwrap_or(value).to_owned(),
         _ if field.is_secret() => "•".repeat(value.chars().count().clamp(4, 16)),
         _ => value.to_owned(),
     }

@@ -15,7 +15,13 @@ pub(crate) fn data_dir() -> PathBuf {
             .expect("Android host must initialize its files directory")
             .clone()
     }
-    #[cfg(not(target_os = "android"))]
+    #[cfg(windows)]
+    {
+        home_directory(std::env::var_os("LOCALAPPDATA"))
+            .expect("LOCALAPPDATA must identify an absolute directory before app startup")
+            .join("Patina")
+    }
+    #[cfg(not(any(target_os = "android", windows)))]
     {
         let home = home_directory(std::env::var_os("HOME"))
             .expect("HOME must identify an absolute directory before app startup");
@@ -60,7 +66,9 @@ pub extern "system" fn Java_com_hantekllc_iptvrs_host_TvActivity_initializeDataD
 /// Called before opening settings, the database, restore state, or any worker.
 /// The restrictive process mask also covers SQLite WAL/SHM and temporary files.
 pub(crate) fn initialize() -> io::Result<()> {
-    #[cfg(not(target_os = "android"))]
+    #[cfg(windows)]
+    home_directory(std::env::var_os("LOCALAPPDATA"))?;
+    #[cfg(not(any(target_os = "android", windows)))]
     home_directory(std::env::var_os("HOME"))?;
     #[cfg(unix)]
     // SAFETY: umask has no pointer arguments; making the process mask more
@@ -78,7 +86,7 @@ fn home_directory(home: Option<std::ffi::OsString>) -> io::Result<PathBuf> {
         .ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
-                "HOME must be an absolute directory; refusing temporary storage",
+                "App data base must be an absolute directory; refusing temporary storage",
             )
         })
 }
@@ -99,6 +107,17 @@ fn protect_directory(path: &Path) -> io::Result<()> {
 
 fn protect_tree(path: &Path) -> io::Result<()> {
     let metadata = fs::symlink_metadata(path)?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        // Reject junctions and all other reparse points, not just symlinks.
+        if metadata.file_attributes() & 0x400 != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "App storage contains a reparse point",
+            ));
+        }
+    }
     if metadata.file_type().is_symlink() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -151,8 +170,8 @@ mod tests {
         assert!(home_directory(Some("".into())).is_err());
         assert!(home_directory(Some("relative".into())).is_err());
         assert_eq!(
-            home_directory(Some("/synthetic/user".into())).unwrap(),
-            PathBuf::from("/synthetic/user")
+            home_directory(Some(std::env::temp_dir().into_os_string())).unwrap(),
+            std::env::temp_dir()
         );
     }
 

@@ -39,6 +39,50 @@ pub fn allowed(name: &str) -> bool {
             .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
             || name.starts_with("playlists/"))
 }
+
+/// Normalize an absolute storage path from any supported host without consulting
+/// the local filesystem. Windows device namespaces other than verbatim drive and
+/// UNC paths are not storage roots. Archive entry names still use `allowed`.
+pub fn portable_absolute_path(value: &str) -> Option<String> {
+    fn drive_absolute(path: &str) -> bool {
+        path.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
+            && path.as_bytes().get(1) == Some(&b':')
+            && matches!(path.as_bytes().get(2), Some(b'/' | b'\\'))
+    }
+    fn unc_component(part: &str) -> bool {
+        !part.is_empty()
+            && !matches!(part, "." | "..")
+            && !part
+                .chars()
+                .any(|c| c.is_control() || "<>:\"/\\|?*".contains(c))
+    }
+    if value.contains('\0') {
+        return None;
+    }
+    let path = if let Some(rest) = value.strip_prefix(r"\\?\") {
+        if let Some(unc) = rest.strip_prefix(r"UNC\") {
+            format!("//{}", unc.replace('\\', "/"))
+        } else if drive_absolute(rest) {
+            rest.replace('\\', "/")
+        } else {
+            return None;
+        }
+    } else {
+        // A single leading backslash is relative to the current Windows drive.
+        if value.starts_with('\\') && !value.starts_with(r"\\") {
+            return None;
+        }
+        value.replace('\\', "/")
+    };
+    let absolute = if let Some(unc) = path.strip_prefix("//") {
+        let mut parts = unc.split('/');
+        parts.next().is_some_and(unc_component) && parts.next().is_some_and(unc_component)
+    } else {
+        path.starts_with('/') || drive_absolute(&path)
+    };
+    absolute.then_some(path)
+}
+
 pub fn parse(bytes: &[u8]) -> Result<Manifest, &'static str> {
     if bytes.len() as u64 > MAX_MANIFEST {
         return Err("Backup header is too large");
@@ -50,7 +94,7 @@ pub fn parse(bytes: &[u8]) -> Result<Manifest, &'static str> {
     let root = manifest["root"]
         .as_str()
         .ok_or("Backup storage path is missing")?;
-    if !root.starts_with('/') || root.contains('\0') {
+    if portable_absolute_path(root).is_none() {
         return Err("Backup storage path is invalid");
     }
     let files = manifest["files"]
@@ -89,4 +133,71 @@ pub fn parse(bytes: &[u8]) -> Result<Manifest, &'static str> {
         root: root.into(),
         files: out,
     })
+}
+
+#[cfg(test)]
+mod windows_tests {
+    use super::*;
+    #[test]
+    fn backup_roots_accept_absolute_storage_paths_but_not_device_or_relative_paths() {
+        for (root, valid) in [
+            (r"C:\Users\Synthetic\Patina", true),
+            ("C:/Patina", true),
+            (r"\\synthetic-server\share\Patina", true),
+            ("//synthetic-server/share/Patina", true),
+            (r"\\?\C:\Users\Synthetic\Patina", true),
+            (r"\\?\UNC\synthetic-server\share\Patina", true),
+            (r"\\synthetic-server\share", true),
+            ("C:Patina", false),
+            ("Patina", false),
+            (r"\Patina", false),
+            (r"\\synthetic-server", false),
+            (r"\\synthetic-server\", false),
+            (r"\\?\UNC\synthetic-server", false),
+            (r"\\?\UNC\\share\Patina", false),
+            (r"\\?\C:Patina", false),
+            (r"\\?\Patina", false),
+            (r"\\?\GLOBALROOT\Device\Synthetic", false),
+            (r"\\.\C:\Patina", false),
+            ("//./C:/Patina", false),
+            ("//?/C:/Patina", false),
+            ("C:/Patina\0", false),
+            ("/home/synthetic", true),
+        ] {
+            let bytes = serde_json::to_vec(&serde_json::json!({
+                "format": "patina-whole-app", "version": 1, "root": root,
+                "files": [{"name": "iptv.sqlite", "length": 0}, {"name": "settings.json", "length": 0}]
+            })).unwrap();
+            assert_eq!(parse(&bytes).is_ok(), valid, "{root}");
+        }
+    }
+
+    #[test]
+    fn unc_storage_roots_do_not_allow_absolute_or_traversing_archive_entries() {
+        for name in [
+            r"\\synthetic-server\share\outside.m3u",
+            r"\\?\C:\outside.m3u",
+            "C:/outside.m3u",
+            "/outside.m3u",
+            "playlists/../outside.m3u",
+            r"playlists\outside.m3u",
+            "playlists/drive:stream",
+        ] {
+            let bytes = serde_json::to_vec(&serde_json::json!({
+                "format": "patina-whole-app", "version": 1,
+                "root": r"\\synthetic-server\share\Patina",
+                "files": [
+                    {"name": "iptv.sqlite", "length": 0},
+                    {"name": "settings.json", "length": 0},
+                    {"name": name, "length": 0}
+                ]
+            }))
+            .unwrap();
+            assert_eq!(
+                parse(&bytes),
+                Err("Backup contains an unsafe or duplicate file path"),
+                "{name}"
+            );
+        }
+    }
 }

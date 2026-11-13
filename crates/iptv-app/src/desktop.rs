@@ -19,8 +19,8 @@ pub mod pip_window;
 pub mod x11;
 
 /// The desktop backends, where the app owns the window and the sound:
-/// Linux and macOS.
-pub const DESKTOP: bool = cfg!(any(target_os = "linux", target_os = "macos"));
+/// Linux, macOS and Windows.
+pub const DESKTOP: bool = cfg!(any(target_os = "linux", target_os = "macos", windows));
 
 thread_local! {
     static WINDOW: RefCell<Option<WindowRef>> = const { RefCell::new(None) };

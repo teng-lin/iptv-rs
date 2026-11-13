@@ -8,6 +8,7 @@ Masters (see art/icon/README.md):
 Writes:
   crates/iptv-app/icon.png                     desktop icon, 1024 (nsh.json
                                                "icon": macOS .icns, Linux)
+  crates/iptv-app/icon.ico                     Windows executable/window icon
   hosts/android/.../mipmap-*/ic_launcher_{foreground,background}.png
   hosts/android/.../drawable/ic_launcher_monochrome.xml  themed icon (vector)
   hosts/android/.../drawable-*/banner.png      Android TV banner, 320x180 dp
@@ -141,6 +142,8 @@ def desktop():
     rim.putalpha(Image.fromarray((np.clip(edge, 0, 255) * 0.30).astype(np.uint8)))
     out.alpha_composite(rim)
     out.save(ROOT / "crates" / "iptv-app" / "icon.png", optimize=True)
+    out.save(ROOT / "crates" / "iptv-app" / "icon.ico",
+             sizes=[(n, n) for n in (16, 24, 32, 48, 64, 128, 256)])
 
 
 def android():

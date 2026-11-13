@@ -12,11 +12,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 #[test]
 fn cached_playlist_still_downloads_its_guide_when_epg_startup_refresh_is_enabled() {
     let Some(home) = isolated!() else { return };
-    let dir = if cfg!(target_os = "macos") {
-        home.path().join("Library/Application Support/iptv-rs")
-    } else {
-        home.path().join(".local/share/iptv-rs")
-    };
+    let dir = crate::isolated::data_dir(home.path());
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("iptv.sqlite");
     let text = "#EXTM3U\n#EXTINF:-1 tvg-id=\"a.test\" group-title=\"News\",Cached A\nhttp://stream.example.test/a\n";

@@ -17,7 +17,7 @@ use std::cell::Cell;
 use serde_json::Value;
 
 /// The window's video view: what the app mounts in it (no props).
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 #[cfg_attr(test, allow(unused_imports))] // GTK's (`test_host` registers nothing)
 pub use crate::desktop::pip_window::VIEW;
 
@@ -53,7 +53,7 @@ pub(super) fn forget(id: u64) {
 
 /// The player the window shows, if any (the desktops'; iOS has no
 /// window to show it in).
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub(super) fn wanted() -> Option<u64> {
     WANTED.with(Cell::get)
 }

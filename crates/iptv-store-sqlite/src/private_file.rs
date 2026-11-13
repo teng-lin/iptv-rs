@@ -132,7 +132,9 @@ impl Store {
             )?;
             tx.commit()?;
             drop(conn);
-            std::fs::File::open(path)
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(path)
                 .and_then(|file| file.sync_all())
                 .map_err(|_| StoreError::Unavailable("cannot finish private document"))?;
             Ok(())

@@ -26,6 +26,7 @@ python3 tools/ci/test-macos-source-notices.py
 python3 tools/ci/test-linux-native-notices.py
 python3 tools/ci/test-crypto-native-notices.py
 python3 tools/ci/check-package-lock.py
+python3 tools/ci/test-package-lock.py
 python3 tools/ci/test-ios-entitlements.py
 python3 tools/ci/test-unpack-signing-input.py
 python3 tools/ci/test-nsh-tool-key.py

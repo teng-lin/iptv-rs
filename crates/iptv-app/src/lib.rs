@@ -30,7 +30,7 @@ mod list_rows;
 mod lists;
 mod media;
 mod menu_view;
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "ios", windows))]
 mod mpv;
 mod multiview;
 mod multiview_picker;
@@ -89,6 +89,12 @@ use theme::Theme;
 #[native_module("iptv-rs/native")]
 fn native_module(registry: &mut Registry) {
     registry.register::<App>();
+}
+
+#[cfg(windows)]
+#[native_components(windows)]
+pub fn components(components: &nsh_platform_windows::Components) {
+    mpv::register(components);
 }
 
 /// The Linux desktop's native components: `tv.player` on libmpv (the

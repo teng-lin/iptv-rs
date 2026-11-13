@@ -19,6 +19,7 @@ impl Mpv {
         // SAFETY: mpv refuses to start under a locale whose numbers are not
         // C's (GTK set the user's); only number formatting changes.
         let h = unsafe {
+            #[cfg(unix)]
             libc::setlocale(libc::LC_NUMERIC, c"C".as_ptr());
             ffi::mpv_create()
         };
@@ -35,6 +36,7 @@ impl Mpv {
             ("terminal", "no".to_owned()),
             ("config", "no".to_owned()),
             ("load-scripts", "no".to_owned()),
+            ("ytdl", "no".to_owned()),
             ("autoload-files", "no".to_owned()),
             ("input-default-bindings", "no".to_owned()),
             ("input-vo-keyboard", "no".to_owned()),
@@ -47,10 +49,6 @@ impl Mpv {
             ("user-agent", DEFAULT_UA.to_owned()),
             ("hwdec", hwdec),
         ];
-        // No youtube-dl hook (MPVKit's iOS build has none to turn off).
-        if !cfg!(target_os = "ios") {
-            options.push(("ytdl", "no".to_owned()));
-        }
         // A tablet's GPU draws every frame on the main thread: mpv's fast
         // profile (bilinear scaling, no dithering or debanding).
         if cfg!(target_os = "ios") {
@@ -100,7 +98,13 @@ impl Mpv {
             return;
         };
         // SAFETY: a live handle and NUL-terminated strings.
-        if unsafe { ffi::mpv_set_option_string(self.0, n.as_ptr(), v.as_ptr()) } < 0 {
+        let result = unsafe { ffi::mpv_set_option_string(self.0, n.as_ptr(), v.as_ptr()) };
+        // Runtimes built without scripting omit these options entirely. Still
+        // disable them whenever present; only OPTION_NOT_FOUND is harmless,
+        // and only when disabling these two optional scripting facilities.
+        let scripting_compiled_out =
+            result == -5 && value == "no" && matches!(name, "load-scripts" | "ytdl");
+        if result < 0 && !scripting_compiled_out {
             log::warn!("iptv mpv: option {name} not set");
         }
     }
@@ -202,15 +206,21 @@ mod tests {
             (c"vo", "libmpv"),
             (c"idle", "yes"),
             (c"keep-open", "no"),
-            (c"load-scripts", "no"),
             (c"input-default-bindings", "no"),
             (c"osd-level", "0"),
             (c"audio-display", "no"),
             (c"prefetch-playlist", "yes"),
-            (c"ytdl", "no"),
             (c"user-agent", DEFAULT_UA),
         ] {
             assert_eq!(mpv.get(name).as_deref(), Some(want), "{name:?}");
+        }
+        // A runtime with scripting compiled out has neither capability nor
+        // its option. Runtimes that expose either must have it disabled.
+        for name in [c"load-scripts", c"ytdl"] {
+            assert!(
+                matches!(mpv.get(name).as_deref(), None | Some("no")),
+                "{name:?}"
+            );
         }
         assert_eq!(mpv.get_f64(c"network-timeout"), Some(15.0));
         if std::env::var_os("IPTV_RS_HWDEC").is_none() {

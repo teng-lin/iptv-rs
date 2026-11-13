@@ -57,11 +57,7 @@ fn until(app: &mut Headless, what: &str, timeout: Duration, mut ready: impl FnMu
 #[test]
 fn startup_and_periodic_refresh_skip_disabled_sources_and_failures_keep_the_cache() {
     let Some(home) = isolated!() else { return };
-    let dir = if cfg!(target_os = "macos") {
-        home.path().join("Library/Application Support/iptv-rs")
-    } else {
-        home.path().join(".local/share/iptv-rs")
-    };
+    let dir = crate::isolated::data_dir(home.path());
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("iptv.sqlite");
     let mut store = crate::isolated::open_database(&path).unwrap();

@@ -1,5 +1,6 @@
 """Synthetic workspace regression tests: python3 -m unittest discover -s tools -p 'test_version.py'."""
 import importlib.util
+import json
 from pathlib import Path
 import subprocess
 import os
@@ -70,9 +71,14 @@ class BuildHashTests(unittest.TestCase):
     def test_worktree_detached_and_archive(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            binary = root / "build-script"
-            source = Path(__file__).resolve().parents[1] / "crates/iptv-app/build.rs"
-            subprocess.run(["rustc", "--edition=2024", str(source), "-o", str(binary)], check=True)
+            binary = root / ("build-script.exe" if os.name == "nt" else "build-script")
+            source = Path(__file__).resolve().parents[1] / "crates/iptv-app/build_version.rs"
+            # Compile the exact production version module without the Cargo
+            # build script's platform-specific linking/resource dependencies.
+            harness = root / "version_harness.rs"
+            harness.write_text(f'#[path = {json.dumps(source.as_posix(), ensure_ascii=False)}]\nmod build_version;\n'
+                               'fn main() { build_version::emit(); }\n', encoding="utf-8")
+            subprocess.run(["rustc", "--edition=2024", str(harness), "-o", str(binary)], check=True)
             repo = root / "repo"
             repo.mkdir()
 

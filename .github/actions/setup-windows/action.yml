@@ -1,0 +1,24 @@
+name: Windows build prerequisites
+description: Pinned NSH and Rust for the Windows app
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      with:
+        repository: teng-lin/nsh
+        ref: 4439410f78174fadacc35f6677b8a767ff206c90
+        path: nsh-source
+        persist-credentials: false
+    - shell: pwsh
+      run: |
+        $source = (Resolve-Path -LiteralPath ./nsh-source).Path
+        $destination = Join-Path (Split-Path $env:GITHUB_WORKSPACE -Parent) 'nsh'
+        if (Test-Path -LiteralPath $destination) { throw 'NSH destination already exists.' }
+        Move-Item -LiteralPath $source -Destination $destination
+        'C:\Strawberry\perl\bin' >> $env:GITHUB_PATH
+        'C:\Strawberry\c\bin' >> $env:GITHUB_PATH
+        'C:\Program Files\NASM' >> $env:GITHUB_PATH
+    - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+      with:
+        toolchain: 1.99.1
+        targets: wasm32-unknown-unknown

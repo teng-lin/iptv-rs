@@ -356,11 +356,7 @@ fn settings(app: &mut Headless, home: &Path) {
     step(app.press_key("down"));
     step(app.wait_for("text:Start playing the channel that was on when the app was last closed."));
     // A failed write is visible and leaves the live setting unchanged.
-    let data = if cfg!(target_os = "macos") {
-        home.join("Library/Application Support/iptv-rs")
-    } else {
-        home.join(".local/share/iptv-rs")
-    };
+    let data = crate::isolated::data_dir(home);
     let blocked = data.join("settings.json.tmp");
     std::fs::create_dir(&blocked).unwrap();
     row_value(app, "Play the last channel on start", "On");

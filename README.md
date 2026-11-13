@@ -1,7 +1,7 @@
 # Patina IPTV
 
 A bring-your-own-playlist IPTV player for Android TV, Android tablets,
-Linux, macOS and iPad, written in Rust on
+Linux, macOS, Windows (experimental) and iPad, written in Rust on
 [Native Shell (NSH)](https://github.com/longbridge/nsh).
 
 Patina is inspired by the TV guide experience of TiviMate on Android TV
@@ -89,6 +89,64 @@ The AppImage bundles them.
 - **Android:** JDK 21, Android SDK (platform 35, build-tools 35.0.1), NDK 30.
 - **iPad:** Xcode. `tools/fetch-mpvkit.sh` downloads the libmpv build.
 - `python3` and `ffmpeg` for the synthetic test streams.
+
+### Windows (x64, experimental)
+
+Windows uses the NSH fork's Win32/Direct2D backend. Install Visual Studio
+2022 Build Tools with **Desktop development with C++** and a Windows SDK,
+Rust's MSVC toolchain, and Strawberry Perl on `PATH` (for bundled OpenSSL).
+Keep the `tv-keys` NSH checkout next to this repository as above; its CLI
+is not needed for the Windows build. The build script applies the small
+`tools/patches/nsh-windows-pointer-leave.patch` fix to that checkout; it keeps
+PiP controls visible when crossing from a drag region onto a button.
+
+From PowerShell:
+
+```powershell
+./tools/build-windows.ps1 -Check -Run
+# Optimized executable and libmpv DLL in target/release:
+./tools/build-windows.ps1 -Release
+```
+
+The script downloads Patina's checksum-pinned x64 libmpv runtime and copies
+`libmpv-2.dll` beside `iptv-app.exe`. Keep these two files together when
+running the app. Windows release tags and manual desktop releases also build
+`Patina-<version>-windows-x86_64-setup.exe`; PRs run tests but do not build
+the installer. The per-user installer adds a Start menu shortcut, bundles
+libmpv and the VC runtime, and preserves settings and playlists on uninstall.
+Windows installers are currently unsigned; no portable app ZIP is produced.
+The runtime has a separate [dependency build workflow](tools/mpv-runtime/README.md)
+with pinned sources, offline compilation, native component notices and retained
+source archives. Installers include those notices and the exact source download
+location. See [the release guide](docs/release.md#windows-installer-experimental)
+for dependency updates and source retention requirements.
+
+Settings and encrypted data live in `%LOCALAPPDATA%\Patina`; the database
+key lives in Windows Credential Manager. The existing desktop keyboard,
+fullscreen, multiview and picture-in-picture paths are enabled. PiP shares
+the original player. Video is composed below the UI through mpv's software
+renderer, with output capped at 1920×1080 and scaled by Direct2D. This is
+CPU intensive; high-resolution playback and multiview need performance
+validation. GPU rendering is not yet implemented on Windows.
+
+The Windows CI job and `-Check` command run native builds, encrypted-storage
+and app tests, and the portable core's WebAssembly build. A first build also
+compiles OpenSSL from source and can take several minutes. For direct Cargo
+commands, put Strawberry Perl's `perl/bin` and `c/bin` directories, plus
+`target/mpv`, on `PATH`.
+
+To build the installer locally (requires Python and `cargo-about` 0.9.3):
+
+```powershell
+cargo install cargo-about --version 0.9.3 --features cli --locked
+./tools/package-windows.ps1
+./tools/ci/check-windows-package.ps1
+```
+
+The packaging script installs a checksum-pinned Inno Setup compiler under
+`target/tools`, embeds Patina's icon, and includes dependency notices. The smoke
+check uses a fresh synthetic profile and refuses to replace an existing installed
+copy. Release CI uploads only the installer, alongside the other platform packages.
 
 ### Run
 

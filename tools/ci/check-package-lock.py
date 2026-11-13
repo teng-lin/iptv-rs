@@ -17,6 +17,14 @@ def validate_references(packages):
             if len(matches) != 1:
                 raise SystemExit(f"Regenerate runner lock; ambiguous or missing dependency {dependency!r} in {package['name']}")
 
+def validate_source_identities(packaged, source):
+    """Every required source package must exist, including newly introduced names."""
+    identities = {(p["name"], p["version"], p.get("source"), p.get("checksum")) for p in packaged}
+    missing = [f'{p["name"]} {p["version"]}' for p in source
+               if (p["name"], p["version"], p.get("source"), p.get("checksum")) not in identities]
+    if missing:
+        raise SystemExit("Regenerate tools/ci/package.Cargo.lock; missing or mismatched source dependencies: " + ", ".join(missing))
+
 def main():
     root = Path(__file__).resolve().parents[2]
     packaged = tomllib.loads((root / "tools/ci/package.Cargo.lock").read_text())["package"]
@@ -36,13 +44,7 @@ def main():
     needed = {(p["name"], p["version"], p["source"]) for p in metadata["packages"] if p["id"] in reachable}
     source = [p for p in tomllib.loads((root / "Cargo.lock").read_text())["package"]
               if (p["name"], p["version"], p.get("source")) in needed]
-    names = {(p["name"], p.get("source")) for p in packaged}
-    identities = {(p["name"], p["version"], p.get("source"), p.get("checksum")) for p in packaged}
-    missing = [f'{p["name"]} {p["version"]}' for p in source
-               if (p["name"], p.get("source")) in names and
-               (p["name"], p["version"], p.get("source"), p.get("checksum")) not in identities]
-    if missing:
-        raise SystemExit("Regenerate tools/ci/package.Cargo.lock; mismatched source dependencies: " + ", ".join(missing))
+    validate_source_identities(packaged, source)
     print("shared source and runner lock identities agree")
 
 if __name__ == "__main__":
