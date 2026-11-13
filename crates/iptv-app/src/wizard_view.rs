@@ -313,11 +313,11 @@ fn hint(ui: Ui, size: Scale, keys: &'static str) -> impl IntoElement {
     ui_kit::caption(size, move || if ui.keys_shown() { keys } else { "" }).mt(move || size.px(6.0))
 }
 
-/// A step that Back leaves: the keys' hint, or on touch a Back button
-/// (an iPad has no Back key).
+/// A step that Back leaves: the keys' hint and, on pointer and touch
+/// devices, a visible Back button.
 fn hint_or_back(ui: Ui, size: Scale, keys: &'static str) -> impl IntoElement {
     view().child(hint(ui, size, keys)).child(when(
-        move || ui.touch_controls(),
+        move || ui.back_controls(),
         move || {
             ui_kit::button(
                 ui,

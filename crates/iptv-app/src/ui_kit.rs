@@ -16,7 +16,7 @@ use crate::scale::Scale;
 use crate::theme::{FOCUS_ALPHA, FOCUSED_TEXT, LIST_TEXT, RADIUS, RADIUS_LARGE, RESTING_ALPHA};
 use crate::{Ui, tint};
 
-/// A round ‹, an iPad's way back where a remote has Back: out of the
+/// A round ‹ for pointer and touch navigation: out of the
 /// full-screen player, from the guide to its groups, from the groups to
 /// the rail. `side` across on `bg`, its press reaching `slop` around it,
 /// named `label` (VoiceOver, tests).

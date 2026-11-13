@@ -159,7 +159,7 @@ pub fn layer(ui: Ui) -> impl IntoElement {
                 .absolute()
                 .inset_0()
                 .pointer_events(PointerEvents::BoxNone)
-                .child(when(move || ui.touch_controls(), move || back(ui)))
+                .child(when(move || ui.back_controls(), move || back(ui)))
                 .child(bar(ui))
         },
     )

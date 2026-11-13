@@ -346,15 +346,15 @@ pub fn header(ui: Ui) -> impl IntoElement {
         )
 }
 
-/// Whether the guide's ‹ shows: an iPad being touched, until the rail
+/// Whether the guide's ‹ shows: on pointer and touch devices, until the rail
 /// (the top of the chain) is open.
 fn corner_back_shown(ui: Ui) -> bool {
-    ui.touch_controls()
+    ui.back_controls()
         && ui.mode.get() == ViewMode::Guide
         && ui.focus.with(|f| f.pane) != Pane::Rail
 }
 
-/// An iPad's way to the left columns, top left over the preview where
+/// A pointer or touch route to the left columns, over the preview where
 /// the full-screen player keeps its ‹: one step of the chain a remote's
 /// Back and Left walk, the guide to its groups, the groups to the rail
 /// with its names (Search, Settings).
