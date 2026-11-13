@@ -274,6 +274,7 @@ fn organization_playlist_policies_and_remote_bindings_are_editable_and_persisted
     step(app.wait_for("text:Remote bindings"));
     step(app.press("id:remote-Action")); // Toggle favourite -> Nothing.
     step(app.press("id:remote-Save"));
+    step(app.wait_for("text:/^Currently: .* · custom binding$/"));
     let json = std::fs::read_to_string(dir.join("settings.json")).unwrap();
     let (settings, _) = iptv_settings::Settings::from_json(&json).unwrap();
     let bindings = settings.key_bindings(
@@ -287,7 +288,9 @@ fn organization_playlist_policies_and_remote_bindings_are_editable_and_persisted
     step(app.press("id:remote-Save"));
     step(app.wait_for("text:Replace the existing binding?"));
     step(app.back());
+    step(app.wait_for_gone("text:Replace the existing binding?", Duration::from_secs(2)));
     step(app.press("id:remote-Clear"));
+    step(app.wait_for("text:/^Currently: .* · default binding$/"));
     let json = std::fs::read_to_string(dir.join("settings.json")).unwrap();
     let (settings, _) = iptv_settings::Settings::from_json(&json).unwrap();
     assert!(
@@ -300,6 +303,7 @@ fn organization_playlist_policies_and_remote_bindings_are_editable_and_persisted
     );
     // Separate contexts/presses, physical capture, accepted replacement, and reset confirmation.
     step(app.press("id:remote-Save"));
+    step(app.wait_for("text:/^Currently: .* · custom binding$/"));
     assert_eq!(read_bindings(&dir).len(), 1);
     step(app.press("id:remote-Context"));
     step(app.press("id:remote-Press"));
@@ -324,8 +328,12 @@ fn organization_playlist_policies_and_remote_bindings_are_editable_and_persisted
     assert_eq!(read_bindings(&dir), saved);
     step(app.press("id:remote-Action"));
     step(app.press("id:remote-Save"));
+    step(app.wait_for("text:Replace the existing binding?"));
     step(app.press_key("left"));
     step(app.press_key("enter"));
+    // Replacement keeps the custom marker, so observe the confirmation closing
+    // after save() persists the new action rather than matching the old marker.
+    step(app.wait_for_gone("text:Replace the existing binding?", Duration::from_secs(2)));
     assert_eq!(read_bindings(&dir).len(), 2);
     assert!(
         read_bindings(&dir)
@@ -333,11 +341,16 @@ fn organization_playlist_policies_and_remote_bindings_are_editable_and_persisted
             .any(|b| b.key == "green" && b.action == "move_down")
     );
     step(app.press("id:remote-Reset"));
+    step(app.wait_for("text:Restore all defaults?"));
     step(app.press("text:Cancel"));
+    step(app.wait_for_gone("text:Restore all defaults?", Duration::from_secs(2)));
     assert_eq!(read_bindings(&dir).len(), 2);
     step(app.press("id:remote-Reset"));
+    step(app.wait_for("text:Restore all defaults?"));
     step(app.press_key("up"));
     step(app.press_key("enter"));
+    step(app.wait_for_gone("text:Restore all defaults?", Duration::from_secs(2)));
+    step(app.wait_for("text:/^Currently: .* · default binding$/"));
     assert!(read_bindings(&dir).is_empty());
     // Back closes the editor; reopening starts a fresh draft with defaults intact.
     step(app.back());
@@ -356,6 +369,7 @@ fn organization_playlist_policies_and_remote_bindings_are_editable_and_persisted
     }
     step(app.wait_for("text:Action: Search"));
     step(app.press("id:remote-Save"));
+    step(app.wait_for("text:/^Currently: .* · custom binding$/"));
     assert_eq!(read_bindings(&dir)[0].action, "open_search");
     step(app.press("id:remote-editor-screen >> text:Close"));
     step(app.back());
