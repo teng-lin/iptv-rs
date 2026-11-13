@@ -1,6 +1,6 @@
 //! Multiview in the app: the play bar's or the control row's Multiview
-//! turns the playing channel into the first tile and opens the channel
-//! list for the next one; each tile plays on its own player surface
+//! turns the playing channel into the first tile and opens a searchable
+//! group picker for the next one; each tile plays on its own player surface
 //! (`player.rs`, `video.rs`; surface 0 is the full-screen player). The
 //! state machine is `iptv_core::multiview`; this runs it, starts and stops
 //! the surfaces its tiles name, mutes all but the active one, places the
@@ -15,7 +15,7 @@
 //! enlarge buttons. A long press on a tile enlarges or reduces it.
 //!
 //! The menu's Search and add opens the search screen over the grid to
-//! pick (`search_view/pick.rs`), as Add screen opens the channel list;
+//! pick (`search_view/pick.rs`), as Add screen opens `multiview_picker`;
 //! Pause holds that tile's player alone (`video.rs`'s `paused`, and its
 //! stall checks), and a pause made full screen on a detour stays with
 //! the tile when the grid comes back.
@@ -39,7 +39,6 @@ mod pointer;
 
 use std::cell::Cell;
 
-use iptv_core::channel_list::ListMode;
 use iptv_core::multiview::{Key, Limits, MAX_SURFACES, Multiview, Outcome};
 use iptv_core::play_bar::PlayBar;
 use iptv_import::SourceMeta;
@@ -349,7 +348,7 @@ fn apply(ui: Ui, f: impl FnOnce(&mut State, &dyn Fn(usize) -> bool) -> Outcome<u
         Outcome::Stay => {}
         Outcome::PickChannel => {
             ui.play_bar.update(PlayBar::hide);
-            crate::channels_view::open(ui, ListMode::Overlay);
+            crate::multiview_picker::open(ui);
         }
         Outcome::SearchChannel => {
             ui.play_bar.update(PlayBar::hide);

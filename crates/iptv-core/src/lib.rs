@@ -11,6 +11,7 @@
 pub mod browse;
 pub mod browse_playback;
 pub mod channel_list;
+pub mod channel_picker;
 pub mod clock;
 pub mod editor;
 pub mod favorites;

@@ -32,6 +32,7 @@ const SLOT: i64 = 3600;
 const FIELD: &str = "id:search-field";
 const TILE: &str = "id:multiview-tile";
 const MENU: &str = "id:multiview-menu";
+const PICKER: &str = "id:multiview-picker";
 const PAUSED: &str = "id:multiview-paused";
 const GROUPS: &str = "id:channel-list-groups";
 const WAIT: Duration = Duration::from_secs(3);
@@ -283,7 +284,7 @@ fn multiview_past_the_account(app: &mut Headless, now: i64) {
     step(app.press(&format!("{MENU} >> text:Add screen")));
     step(app.press("text:Add it anyway"));
     gone(app, WARNING);
-    step(app.press("text:/^2  Xtream Channel 2$/"));
+    step(app.press(&format!("{PICKER} >> text:/^2  Xtream Channel 2$/")));
     step(app.wait_for(&tile("Xtream Channel 2")));
     assert_eq!(tiles(app), 2);
 }
@@ -432,14 +433,14 @@ fn multiview_by_pointer(app: &mut Headless) {
     step(app.press("label:Video"));
     step(app.press("label:Multiview"));
     step(app.wait_for(TILE));
-    step(app.press("text:/^2  Test Channel Two$/"));
+    step(app.press(&format!("{PICKER} >> text:/^2  Test Channel Two$/")));
     step(app.wait_for(&tile("Test Channel Two")));
     assert_eq!(tiles(app), 2);
     // A tap on the other tile makes it active and shows the chrome: the
     // toolbar's Add screen adds one.
     step(app.press(&tile("Test Channel Three")));
     step(app.press("label:Add screen"));
-    step(app.press("text:/^4  Test Channel Four$/"));
+    step(app.press(&format!("{PICKER} >> text:/^4  Test Channel Four$/")));
     step(app.wait_for(&tile("Test Channel Four")));
     assert_eq!(tiles(app), 3);
     // A tile's enlarge button enlarges it, then reduces it.
@@ -529,7 +530,7 @@ fn multiview_by_pointer(app: &mut Headless) {
     // A fourth: the toolbar names the device's limit instead of Add screen.
     step(app.press(&tile("Test Channel Three")));
     step(app.press("label:Add screen"));
-    step(app.press("text:/^1  Test Channel One$/"));
+    step(app.press(&format!("{PICKER} >> text:/^1  Test Channel One$/")));
     step(app.wait_for(&tile("Test Channel One")));
     step(app.press(&tile("Test Channel Two")));
     step(app.wait_for("text:This device plays up to 4 at once"));
@@ -556,7 +557,7 @@ fn multiview_on_a_tablet(app: &mut Headless) {
     }
     step(app.press("label:Multiview"));
     step(app.wait_for(TILE));
-    step(app.press("text:/^3  Test Channel Three$/"));
+    step(app.press(&format!("{PICKER} >> text:/^3  Test Channel Three$/")));
     step(app.wait_for(&tile("Test Channel Three")));
     step(app.press(&tile("Test Channel Two")));
     const REMOVE: &str = "label:Remove screen: Test Channel Three";

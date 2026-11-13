@@ -12,6 +12,7 @@ pub fn split_key(key: &str) -> Option<(i64, &str)> {
     Some((source.parse().ok()?, key))
 }
 
+#[derive(Clone)]
 pub struct SourceSchedule {
     pub id: i64,
     pub name: String,
@@ -55,6 +56,14 @@ impl CombinedSchedule {
         self.groups
             .retain(|(s, g)| g.is_none() || !self.collapsed.contains(&self.sources[*s].id));
         self
+    }
+    /// An independent browser projection over the same sources and channel
+    /// indices. Rebuilds all group rows so previously folded sections can open.
+    pub fn with_browser_expansion(&self, collapsed: impl IntoIterator<Item = i64>) -> Self {
+        Self::new(self.sources.clone(), self.epoch).with_collapsed_sources(collapsed)
+    }
+    pub fn collapsed_sources(&self) -> impl Iterator<Item = i64> + '_ {
+        self.collapsed.iter().copied()
     }
     /// New expansion state, identified by source rather than display position.
     pub fn toggle_playlist(&self, group: usize) -> Option<Vec<i64>> {
@@ -418,6 +427,43 @@ mod tests {
             &[0]
         );
         assert!(folded.toggle_playlist(0).unwrap().is_empty());
+    }
+    #[test]
+    fn independent_browser_expansion_keeps_the_guides_selected_category_and_channel_indices() {
+        use iptv_core::lists::{ChannelList, Entry, ListId};
+        let guide = CombinedSchedule::new(vec![part(1, "Alpha", NOW), part(2, "Beta", NOW)], NOW)
+            .with_collapsed_sources([2]);
+        let selected = Entry::Group(1).index();
+        let category = ListId::of(selected, &guide);
+        let keys: Vec<_> = (0..guide.channel_count())
+            .map(|c| guide.channel_key(c).unwrap())
+            .collect();
+        let picker = guide.with_browser_expansion(guide.toggle_playlist(0).unwrap());
+        assert_eq!(picker.group_count(), 2);
+        assert_eq!(picker.collapsed_sources().collect::<Vec<_>>(), [1, 2]);
+        assert_eq!(guide.collapsed_sources().collect::<Vec<_>>(), [2]);
+        assert_eq!(guide.group_count(), 3);
+        assert_eq!(category.find(&guide), selected);
+        assert_eq!(
+            ChannelList::build(selected, &guide, &[], &[]).channels(),
+            &[0]
+        );
+
+        // Expanding a previously folded projection restores its category rows.
+        let expanded = picker.with_browser_expansion(picker.toggle_playlist(0).unwrap());
+        assert_eq!(expanded.group_count(), 3);
+        assert_eq!(category.find(&expanded), selected);
+        assert_eq!(expanded.collapsed_sources().collect::<Vec<_>>(), [2]);
+        for projection in [&picker, &expanded] {
+            assert_eq!(projection.epoch_unix(), guide.epoch_unix());
+            for (channel, key) in keys.iter().enumerate() {
+                assert_eq!(projection.find_channel(key), Some(channel));
+                let (original, local) = guide.channel_source(channel).unwrap();
+                let (projected, projected_local) = projection.channel_source(channel).unwrap();
+                assert_eq!((projected.id, projected_local), (original.id, local));
+                assert!(Rc::ptr_eq(&projected.schedule, &original.schedule));
+            }
+        }
     }
     #[test]
     fn collapsing_playlist_sections_does_not_change_category_zapping() {

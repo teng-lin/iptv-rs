@@ -102,6 +102,92 @@ fn favorite_names(path: &Path, source: SourceId) -> Vec<String> {
 }
 
 #[test]
+fn multiview_picker_expansion_preserves_the_guides_category_and_saved_expansion() {
+    let Some(home) = isolated!() else { return };
+    let dir = home.data_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("iptv.sqlite");
+    let mut store = crate::isolated::open_database(&path).unwrap();
+    seed(&mut store, home.path(), "Alpha");
+    let beta = seed(&mut store, home.path(), "Beta");
+    store.set_collapsed_playlists(&[beta.0]).unwrap();
+    drop(store);
+    let mut settings = Settings::new();
+    settings
+        .set("guide.stay_on_guide", Value::Bool(true))
+        .unwrap();
+    settings.set("guide.switch_delay", Value::secs(0)).unwrap();
+    settings
+        .set("general.resume_last_channel", Value::Bool(false))
+        .unwrap();
+    std::fs::write(dir.join("settings.json"), settings.to_json_string()).unwrap();
+    let mut app = Headless::start(EngineConfig {
+        viewport: Size::new(px(1920.0), px(1080.0)),
+        clock: nsh_core::time::Clock::manual(SystemTime::now()),
+        ..EngineConfig::new(Root::of::<iptv_app::App>())
+    })
+    .unwrap();
+    step(app.wait_for_within("text:/^Only Beta · Beta/", Duration::from_secs(20)));
+    step(app.press("text:☰  All playlists"));
+    step(app.wait_for("id:guide-groups >> text:▾  Alpha"));
+    step(app.wait_for("id:guide-groups >> text:▸  Beta"));
+    step(app.press("id:guide-groups >> text:    News"));
+    step(app.press_key("right"));
+    step(app.wait_for("text:☰  News"));
+    assert_eq!(app.screen().count("id:guide-channel-name").unwrap(), 2);
+    assert!(!app.screen().matches("text:/^Only Beta · Beta/").unwrap());
+
+    step(app.press("text:/^Only Alpha · Alpha/"));
+    step(app.wait_for("text:▶"));
+    step(app.press("text:/^Only Alpha · Alpha/"));
+    step(app.press("label:Video"));
+    step(app.press("label:Multiview"));
+    let picker = "id:multiview-picker";
+    step(app.wait_for(picker));
+    // The picker's expansion is temporary. In particular, folding Alpha must
+    // not remove the guide's selected News category from its own catalogue.
+    step(app.press(&format!("{picker} >> text:▾  Alpha")));
+    step(app.wait_for(&format!("{picker} >> text:▸  Alpha")));
+    step(app.press(&format!("{picker} >> text:▸  Alpha")));
+    step(app.wait_for(&format!("{picker} >> text:▾  Alpha")));
+    step(app.press(&format!("{picker} >> text:▾  Alpha")));
+    step(app.wait_for(&format!("{picker} >> text:▸  Alpha")));
+    step(app.press(&format!("{picker} >> text:▸  Beta")));
+    step(app.wait_for(&format!("{picker} >> text:▾  Beta")));
+    // Give any erroneously queued preference writes or catalogue rebuilds a
+    // chance to finish before checking that the stored guide choice is intact.
+    step(app.run_for(Duration::from_secs(1)));
+    assert_eq!(
+        crate::isolated::open_database(&path)
+            .unwrap()
+            .collapsed_playlists()
+            .unwrap(),
+        [beta.0],
+        "picker expansion must not overwrite the guide's saved expansion"
+    );
+    step(app.press(&format!("{picker} >> text:Close")));
+    step(app.wait_for_gone(picker, Duration::from_secs(3)));
+    assert_eq!(app.screen().count("id:multiview-tile").unwrap(), 1);
+    step(app.press_key("backspace"));
+    step(app.wait_for_gone("id:multiview-tile", Duration::from_secs(3)));
+    step(app.press_key("f"));
+    step(app.wait_for("text:☰  News"));
+    assert_eq!(app.screen().count("id:guide-channel-name").unwrap(), 2);
+    step(app.wait_for("text:/^Only Alpha · Alpha/"));
+    assert!(!app.screen().matches("text:/^Only Beta · Beta/").unwrap());
+    step(app.press("text:☰  News"));
+    step(app.wait_for("id:guide-groups >> text:▾  Alpha"));
+    step(app.wait_for("id:guide-groups >> text:▸  Beta"));
+    assert_eq!(
+        app.screen()
+            .count("id:guide-groups >> text:    News")
+            .unwrap(),
+        1,
+        "the guide keeps its own expanded playlist and selected category"
+    );
+}
+
+#[test]
 fn combined_browsing_routes_duplicate_keys_favorites_search_and_playback() {
     let Some(home) = isolated!() else { return };
     let dir = if cfg!(target_os = "macos") {
@@ -724,8 +810,19 @@ fn automatic_join_keeps_account_format_limit_and_the_original_guide_job_and_time
     step(app.press("text:/^Imported Beta One · /"));
     step(app.press("label:Video"));
     step(app.press("label:Multiview"));
-    step(app.wait_for("text:/^4  Imported Beta Two · /"));
-    step(app.press("text:/^4  Imported Beta Two · /"));
+    // Playlist parents in the picker expand their categories without closing
+    // it or changing the guide's list. The source filter survives both toggles.
+    let picker = "id:multiview-picker";
+    step(app.press(&format!("{picker} >> text:▾  Alpha")));
+    step(app.wait_for(&format!("{picker} >> text:▸  Alpha")));
+    step(app.press(&format!("{picker} >> text:▸  Alpha")));
+    step(app.wait_for(&format!("{picker} >> text:▾  Alpha")));
+    step(app.press(&format!("{picker} >> text:/^    News$/ >> nth=0")));
+    step(app.type_text("id:multiview-channel-search", "Imported Beta"));
+    step(app.wait_for("text:No matching channels. Clear the search or choose another group."));
+    step(app.press(&format!("{picker} >> text:All playlists")));
+    step(app.wait_for(&format!("{picker} >> text:/^4  Imported Beta Two · /")));
+    step(app.press(&format!("{picker} >> text:/^4  Imported Beta Two · /")));
     step(app.wait_for("text:Your account allows 1 stream at once"));
 }
 
