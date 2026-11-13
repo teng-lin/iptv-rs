@@ -2,13 +2,14 @@
 
 PRs and pushes to master run tools/check.sh on Linux and macOS, including
 the headless app scenarios and portable crates' wasm builds. The separate
-Android packages workflow runs on PRs only when Android host files, Cargo
+Android packaging job runs on PRs only when Android host files, Cargo
 manifests/lockfile, app build or package metadata/assets, packaging tooling, or
 its workflow/setup actions change (see `.github/workflows/android.yml`). It also
-runs on every master push and can be started manually. Ordinary Rust source
-and documentation PRs run Tests without building Android packages. Do not make
-the path-filtered Android workflow a required PR check, since skipped workflows
-can remain pending; keep Tests required instead.
+runs on every master push and can be started manually. A lightweight change
+check runs on every PR so the required `android` check can report skipped for
+ordinary Rust source and documentation changes. Change-detection failures fail
+the required check. Desktop packaging is path-filtered at the workflow level
+and must not be required, since skipped workflows can remain pending.
 
 Desktop Package checks likewise run only for package/build inputs on PRs and
 support manual dispatch. Signed release packaging still runs on tags or manual
