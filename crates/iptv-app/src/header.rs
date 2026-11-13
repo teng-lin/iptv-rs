@@ -5,6 +5,8 @@
 //! group's name at the right), and its description in grey. At the right
 //! the list on screen (a tap opens the groups) and Add playlist.
 
+use crate::i18n::tr;
+
 use iptv_core::lists::group_of;
 use std::time::Duration;
 
@@ -369,7 +371,9 @@ fn corner_back(ui: Ui) -> impl IntoElement {
             crate::ui_kit::TOUCH,
             0.0,
             crate::play_bar::back_bg(ui),
-            move || if groups() { "Groups" } else { "Menu" },
+            move || {
+                if groups() { tr("Groups") } else { "Menu" }
+            },
             move || {
                 ui.touched();
                 if groups() {

@@ -2194,7 +2194,7 @@ checksum = "791930b43c0d5973160d90a8f3894509f2b273430f5c5c73b668636d0287c5c0"
 
 [[package]]
 name = "iptv-app"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2236,6 +2236,7 @@ dependencies = [
  "objc2-ui-kit",
  "rusqlite",
  "serde_json",
+ "sys-locale",
  "tempfile",
  "tokio",
  "zeroize",
@@ -2243,11 +2244,11 @@ dependencies = [
 
 [[package]]
 name = "iptv-core"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "iptv-epg"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "flate2",
  "iptv-core",
@@ -2258,7 +2259,7 @@ dependencies = [
 
 [[package]]
 name = "iptv-guide"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "iptv-core",
  "iptv-epg",
@@ -2267,7 +2268,7 @@ dependencies = [
 
 [[package]]
 name = "iptv-import"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "flate2",
  "iptv-core",
@@ -2280,11 +2281,11 @@ dependencies = [
 
 [[package]]
 name = "iptv-nav"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "iptv-net"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cookie_store",
  "flate2",
@@ -2305,7 +2306,7 @@ dependencies = [
 
 [[package]]
 name = "iptv-providers"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "iptv-core",
  "percent-encoding",
@@ -2318,7 +2319,7 @@ dependencies = [
 
 [[package]]
 name = "iptv-search"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "iptv-core",
  "iptv-epg",
@@ -2327,14 +2328,14 @@ dependencies = [
 
 [[package]]
 name = "iptv-settings"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "iptv-store-sqlite"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "iptv-epg",
  "iptv-guide",
@@ -4546,6 +4547,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.10",
+]
+
+[[package]]
+name = "sys-locale"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8eab9a99a024a169fe8a903cf9d4a3b3601109bcc13bd9e3c6fff259138626c4"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

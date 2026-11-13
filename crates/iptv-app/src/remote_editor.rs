@@ -1,4 +1,6 @@
 //! Live, validated remote overrides. Editor/menu input stays at defaults.
+use crate::i18n::tr;
+
 use crate::scale::Scale;
 use crate::settings_view::remote_keys::{KEYBOARD_KEYS, KEYS, action_name, key_name};
 use crate::{Ui, settings, ui_kit};
@@ -245,8 +247,8 @@ pub fn layer(ui: Ui) -> impl IntoElement {
             view().absolute().inset_0().items_center().justify_center().bg(crate::tint(0,190))
                 .child(ui_kit::card(ui,size,600.0)
                     .child(ui_kit::title(size,move||if state(ui,|s|s.confirm)==Some(Some(Confirm::Replace)){"Replace the existing binding?"}else{"Restore all defaults?"}))
-                    .child(ui_kit::action(ui,size,"Cancel",move||state(ui,|s|!s.accept).unwrap_or(false),0xFFFFFF,move||{update(ui,|s|s.confirm=None);}))
-                    .child(ui_kit::action(ui,size,"Confirm",move||state(ui,|s|s.accept).unwrap_or(false),0xFFFFFF,move||{update(ui,|s|s.accept=true);if let Some(f)=state(ui,|s|s.focus){activate(ui,f)}})))
+                    .child(ui_kit::action(ui,size,move || tr("Cancel"),move||state(ui,|s|!s.accept).unwrap_or(false),0xFFFFFF,move||{update(ui,|s|s.confirm=None);}))
+                    .child(ui_kit::action(ui,size,move || tr("Confirm"),move||state(ui,|s|s.accept).unwrap_or(false),0xFFFFFF,move||{update(ui,|s|s.accept=true);if let Some(f)=state(ui,|s|s.focus){activate(ui,f)}})))
         }))
         },
     )

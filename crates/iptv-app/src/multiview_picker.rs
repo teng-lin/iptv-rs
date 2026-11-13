@@ -2,9 +2,12 @@
 //! The portable picker owns selection, filtering and remote focus; the
 //! guide's list and the persistent player surfaces stay in place.
 
+use crate::i18n::tr;
+use crate::lists::entry_name;
+
 use iptv_core::channel_picker::{ChannelPicker, Pane};
 use iptv_core::guide::Schedule;
-use iptv_core::lists::{Entry, ListId, entry_count, entry_name};
+use iptv_core::lists::{Entry, ListId, entry_count};
 use iptv_guide::combined::CombinedSchedule;
 use iptv_nav::Action;
 use nsh_base::input;
@@ -260,7 +263,7 @@ fn screen(ui: Ui) -> impl IntoElement {
             view().flex_row().flex_1().gap(move || size.px(20.0))
                 .child(
                     view().w(move || size.px(240.0)).gap(move || size.px(8.0))
-                        .child(ui_kit::heading(size, "Groups"))
+                        .child(ui_kit::heading(size, move || tr("Groups")))
                         .child(
                             virtual_list(
                                 move || { ui.data_version.get(); entry_count(&*catalog(ui)) },
@@ -353,14 +356,14 @@ fn header(ui: Ui, size: Scale) -> impl IntoElement {
         .child(ui_kit::button(
             ui,
             size,
-            "Clear",
+            tr("Clear"),
             move || focused(ui, Pane::Clear),
             move || type_query(ui, ""),
         ))
         .child(ui_kit::button(
             ui,
             size,
-            "Close",
+            tr("Close"),
             move || focused(ui, Pane::Close),
             move || close(ui),
         ))

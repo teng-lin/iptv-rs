@@ -5,6 +5,8 @@
 //! focused programme is. Left from the groups lands on Search. The icons
 //! are our own simple line drawings.
 
+use crate::i18n::tr;
+
 use iptv_core::browse::RailItem;
 use iptv_core::guide::Pane;
 use nsh_core::element::ImageSrc;
@@ -33,14 +35,14 @@ pub fn width(ui: Ui) -> f32 {
 
 fn label(item: RailItem) -> &'static str {
     match item {
-        RailItem::Search => "Search",
-        RailItem::Tv => "Live TV",
-        RailItem::Movies => "Films",
-        RailItem::Shows => "Series",
-        RailItem::Recordings => "Recordings",
-        RailItem::MyList => "Watchlist",
-        RailItem::Playlists => "Playlists",
-        RailItem::Settings => "Settings",
+        RailItem::Search => tr("Search"),
+        RailItem::Tv => tr("Live TV"),
+        RailItem::Movies => tr("Films"),
+        RailItem::Shows => tr("Series"),
+        RailItem::Recordings => tr("Recordings"),
+        RailItem::MyList => tr("Watchlist"),
+        RailItem::Playlists => tr("Playlists"),
+        RailItem::Settings => tr("Settings"),
     }
 }
 

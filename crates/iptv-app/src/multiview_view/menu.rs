@@ -6,6 +6,8 @@
 //! scaled with the guide (`scale.rs`): on a TV (× 0.8) the panel is
 //! 208 dp wide, 8 dp from the edge, with 40 dp rows.
 
+use crate::i18n::tr;
+
 use iptv_core::multiview::{Dialog, TileAction};
 use nsh_core::prelude::*;
 
@@ -29,12 +31,12 @@ const WHITE: u32 = 0xFFFFFF;
 
 pub fn action_label(action: TileAction) -> &'static str {
     match action {
-        TileAction::Retry => "Try again",
+        TileAction::Retry => tr("Try again"),
         TileAction::Add => "Add screen",
-        TileAction::SearchAdd => "Search and add",
+        TileAction::SearchAdd => tr("Search and add"),
         TileAction::Replace => "Change channel",
-        TileAction::Pause => "Pause",
-        TileAction::Play => "Play",
+        TileAction::Pause => tr("Pause"),
+        TileAction::Play => tr("Play"),
         TileAction::Enlarge => "Enlarge screen",
         TileAction::Reduce => "Reduce screen",
         TileAction::FullScreen => "Full screen",

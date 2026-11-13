@@ -13,6 +13,8 @@
 //! action is tappable; a tap beside a sheet closes it. Text entry uses the
 //! wizard's sheet (`wizard_view::entry`). Wording is iptv-rs's own.
 
+use crate::i18n::tr;
+
 mod details;
 mod details_card;
 mod state;
@@ -284,7 +286,7 @@ pub fn layer(ui: Ui) -> impl IntoElement {
         move || is_open(ui),
         move || {
             ui_kit::screen(ui, size)
-                .child(ui_kit::header(ui, size, "Playlists", close))
+                .child(ui_kit::header(ui, size, move || tr("Playlists"), close))
                 .child(ui_kit::caption(size, move || hint(ui)))
                 .child(list(ui, size))
                 .child(sheet(ui, size))
@@ -507,7 +509,7 @@ fn actions_card(ui: Ui, size: Scale, id: SourceId) -> impl IntoElement {
                 (Act::RefreshInterval, Some(p)) => format!(
                     "Automatic refresh: {}",
                     match p.policy.refresh_seconds {
-                        0 => "Off".to_owned(),
+                        0 => tr("Off").to_owned(),
                         n => format!("every {} hours", n / 3600),
                     }
                 ),
@@ -605,7 +607,7 @@ fn confirm_card(ui: Ui, size: Scale, id: SourceId) -> impl IntoElement {
         .child(ui_kit::action(
             ui,
             size,
-            "Delete",
+            tr("Delete"),
             focused(true),
             ERROR,
             move || {

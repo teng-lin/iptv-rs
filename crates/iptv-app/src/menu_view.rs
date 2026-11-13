@@ -2,6 +2,8 @@
 //! the programme description popover. State lives in `iptv_core::menu`;
 //! this opens, draws and performs it. Labels are iptv-rs's own wording.
 
+use crate::i18n::tr;
+
 use iptv_core::menu::{Heading, Menu, MenuItem, Origin, Row, program_menu};
 use nsh_core::prelude::*;
 
@@ -38,28 +40,28 @@ fn implemented(item: MenuItem) -> bool {
 fn label(item: MenuItem, favorite: bool) -> &'static str {
     use MenuItem::*;
     match item {
-        Search => "Search",
-        Settings => "Settings",
-        StartFromBeginning => "Play from the beginning",
-        ExternalPlayer => "Open in another player",
-        Reminder => "Remind me",
-        Record => "Record",
+        Search => tr("Search"),
+        Settings => tr("Settings"),
+        StartFromBeginning => tr("Play from the beginning"),
+        ExternalPlayer => tr("Open in another player"),
+        Reminder => tr("Remind me"),
+        Record => tr("Record"),
         CustomRecording => "Schedule a recording…",
         SaveToList => "Save to my list",
-        Description => "Details",
-        ToggleFavorite if favorite => "Remove from favourites",
-        ToggleFavorite => "Add to favourites",
-        BlockChannel => "Block channel",
-        HideChannel => "Hide channel",
-        AssignEpg => "Choose guide data…",
-        ChannelOptions => "Channel options…",
-        ManageFavorites => "Manage favourites…",
+        Description => tr("Details"),
+        ToggleFavorite if favorite => tr("Remove from favourites"),
+        ToggleFavorite => tr("Add to favourites"),
+        BlockChannel => tr("Block channel"),
+        HideChannel => tr("Hide channel"),
+        AssignEpg => tr("Choose guide data…"),
+        ChannelOptions => tr("Channel options…"),
+        ManageFavorites => tr("Manage favourites…"),
         ManageBlocked => "Manage blocked channels…",
         ManageHidden => "Manage hidden channels…",
-        ReorderChannels => "Reorder channels",
+        ReorderChannels => tr("Reorder channels"),
         CopyChannels => "Copy channels to a group…",
-        CreateGroup => "New group…",
-        GroupOptions => "Group options…",
+        CreateGroup => tr("New group…"),
+        GroupOptions => tr("Group options…"),
     }
 }
 

@@ -18,6 +18,8 @@
 //! (a tile watched full screen) its Multiview button goes back to the
 //! grid.
 
+use crate::i18n::tr;
+
 pub(crate) mod icons;
 mod progress;
 
@@ -187,9 +189,9 @@ fn back(ui: Ui) -> impl IntoElement {
             back_bg(ui),
             move || {
                 if crate::multiview::detour(ui) {
-                    "Multiview"
+                    tr("Multiview")
                 } else {
-                    "Guide"
+                    tr("Guide")
                 }
             },
             move || {
@@ -257,7 +259,7 @@ fn button(
         .rounded(px(size / 2.0))
         .items_center()
         .justify_center()
-        .label(name)
+        .label(move || tr(name))
         .hover(|s| s.bg(tint(WHITE, RESTING_ALPHA * 2)))
         .on_press(move || {
             ui.touched();
@@ -539,9 +541,9 @@ fn right(ui: Ui) -> impl IntoElement {
             // On a detour it returns to the grid.
             .label(move || {
                 if crate::multiview::detour(ui) {
-                    "Back to multiview"
+                    tr("Back to multiview")
                 } else {
-                    "Multiview"
+                    tr("Multiview")
                 }
             }),
         )

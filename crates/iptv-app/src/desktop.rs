@@ -5,6 +5,8 @@
 //! player panels. Off desktops the window has no state, so these read "not
 //! full screen" and do nothing.
 
+use crate::i18n::tr;
+
 use std::cell::{Cell, RefCell};
 
 use nsh_core::desktop::{MenuRole, WindowMode};
@@ -81,7 +83,7 @@ pub fn menus(ui: Ui) {
             ],
         ),
         MenuItem::submenu(
-            "Edit",
+            tr("Edit"),
             [
                 role(MenuRole::Undo),
                 role(MenuRole::Redo),

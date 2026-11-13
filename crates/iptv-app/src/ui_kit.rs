@@ -7,6 +7,8 @@
 //! the desktop window (`scale.rs`). Sizes live here and in `fonts.rs`
 //! only: `tests/app/type_drift.rs` fails on a literal text size elsewhere.
 
+use crate::i18n::tr;
+
 use nsh_core::element::ImageSrc;
 use nsh_core::prelude::*;
 
@@ -329,7 +331,13 @@ pub fn header(
         .items_center()
         .gap(move || size.px(12.0))
         .child(title(size, content).flex_1())
-        .child(button(ui, size, "Close", || false, move || close(ui)))
+        .child(button(
+            ui,
+            size,
+            move || tr("Close"),
+            || false,
+            move || close(ui),
+        ))
 }
 
 #[cfg(test)]

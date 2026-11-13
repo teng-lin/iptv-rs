@@ -3,6 +3,8 @@
 //! titles in Roboto Condensed at the guide's sizes, the focus its light
 //! pill.
 
+use crate::i18n::tr;
+
 use super::*;
 use crate::fonts::{CAPTION, CONDENSED, SANS};
 use crate::list_rows::{self, Mark, ROW, ROW_TWO};
@@ -74,7 +76,7 @@ fn hint(ui: Ui) -> &'static str {
 }
 
 fn button(ui: Ui, size: Scale, label: &'static str, act: fn(Ui)) -> impl IntoElement {
-    ui_kit::button(ui, size, label, || false, move || act(ui))
+    ui_kit::button(ui, size, move || tr(label), || false, move || act(ui))
 }
 
 fn header(ui: Ui, size: Scale) -> impl IntoElement {
@@ -107,9 +109,9 @@ fn header(ui: Ui, size: Scale) -> impl IntoElement {
         .gap(move || size.px(12.0))
         .child(ui_kit::title(size, move || {
             if pick::picking(ui) {
-                "Search and add"
+                tr("Search and add")
             } else {
-                "Search"
+                tr("Search")
             }
         }))
         .child(
@@ -117,7 +119,7 @@ fn header(ui: Ui, size: Scale) -> impl IntoElement {
                 .element_ref(&field)
                 .flex_1()
                 .value(move || state(ui, |s| s.state.query().to_owned()).unwrap_or_default())
-                .placeholder("Channel, number or programme")
+                .placeholder(tr("Channel, number or programme"))
                 .auto_focus(want_keyboard.get_untracked())
                 .auto_capitalize(AutoCapitalize::None)
                 .auto_correct(false)
@@ -181,9 +183,9 @@ fn history(ui: Ui, size: Scale) -> impl IntoElement {
             if !options(&crate::settings::read(ui)).show_history {
                 ""
             } else if count() == 0 {
-                "No recent searches yet"
+                tr("No recent searches yet")
             } else {
-                "Recent searches"
+                tr("Recent searches")
             }
         }))
         .child(
@@ -206,7 +208,7 @@ fn tab_button(ui: Ui, tab: Tab, size: Scale) -> impl IntoElement {
 
 fn status(ui: Ui) -> String {
     state(ui, |s| match s.state.phase() {
-        Phase::Typing => "Searching…".to_owned(),
+        Phase::Typing => tr("Searching…").to_owned(),
         Phase::NoResults => format!("Nothing found for “{}”", s.state.query().trim()),
         Phase::Idle | Phase::Results => String::new(),
     })
@@ -300,7 +302,7 @@ fn result_row(
         _ => String::new(),
     };
     let line2 = move || match item() {
-        Some((ResultId::Channel(c), _)) if ui.playing.get() == Some(c) => "Playing".to_owned(),
+        Some((ResultId::Channel(c), _)) if ui.playing.get() == Some(c) => tr("Playing").to_owned(),
         Some((_, Some(h))) => {
             let epoch = guide_epoch();
             format!(

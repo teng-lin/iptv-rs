@@ -9,6 +9,8 @@
 //! Entry points: first run without a stored source, the top bar's "Add
 //! playlist" (tap), and Menu in the groups pane (remote).
 
+use crate::i18n::tr;
+
 pub(crate) mod entry;
 pub(crate) mod words;
 
@@ -322,7 +324,7 @@ fn hint_or_back(ui: Ui, size: Scale, keys: &'static str) -> impl IntoElement {
             ui_kit::button(
                 ui,
                 size,
-                "‹ Back",
+                tr("‹ Back"),
                 || false,
                 move || send(ui, WizardEvent::Back),
             )
@@ -337,7 +339,7 @@ fn button(ui: Ui, size: Scale, label: &'static str, target: Target) -> impl Into
     ui_kit::button(
         ui,
         size,
-        label,
+        move || tr(label),
         move || focused(ui, target),
         move || send(ui, WizardEvent::Tap(target)),
     )
@@ -348,7 +350,7 @@ fn button(ui: Ui, size: Scale, label: &'static str, target: Target) -> impl Into
 fn empty(ui: Ui) -> impl IntoElement {
     let size = Scale::new();
     card(ui, size)
-        .child(ui_kit::title(size, "No playlists yet"))
+        .child(ui_kit::title(size, move || tr("No playlists yet")))
         .child(ui_kit::body(
             size,
             "Patina has no channels of its own. Add the playlist or account \
@@ -375,7 +377,9 @@ fn choose_type(ui: Ui) -> impl IntoElement {
             )
     };
     card(ui, size)
-        .child(ui_kit::title(size, "What did your provider give you?"))
+        .child(ui_kit::title(size, move || {
+            tr("What did your provider give you?")
+        }))
         .children(PlaylistKind::ALL.map(row))
         .child(hint_or_back(ui, size, "▲▼ choose   OK next   Back back"))
 }
@@ -395,9 +399,13 @@ fn field_row(ui: Ui, size: Scale, field: Field) -> impl IntoElement {
     let error = move || read(ui, |w| w.error(field)).flatten();
     let mark = move || mark(ui, target);
     let paste = field.accepts_paste().then(|| {
-        ui_kit::row_button(ui, size, "Paste", mark, move || {
-            send(ui, WizardEvent::PasteInto(field))
-        })
+        ui_kit::row_button(
+            ui,
+            size,
+            move || tr("Paste"),
+            mark,
+            move || send(ui, WizardEvent::PasteInto(field)),
+        )
     });
     list_rows::row(size, ROW, mark)
         .flex_row()
@@ -445,7 +453,7 @@ fn field_row(ui: Ui, size: Scale, field: Field) -> impl IntoElement {
 fn form(ui: Ui, kind: PlaylistKind) -> impl IntoElement {
     let banner = move || {
         read(ui, |w| match (w.notice(), w.failure()) {
-            (Some(Notice::ClipboardEmpty), _) => Some("There is no text to paste."),
+            (Some(Notice::ClipboardEmpty), _) => Some(tr("There is no text to paste.")),
             (None, Some(f)) => Some(words::failure(kind, f)),
             (None, None) => None,
         })
@@ -504,7 +512,7 @@ fn processing(ui: Ui) -> impl IntoElement {
     let kind = read(ui, Wizard::kind).unwrap_or(PlaylistKind::M3uUrl);
     let size = Scale::new();
     card(ui, size)
-        .child(ui_kit::title(size, "Adding the playlist"))
+        .child(ui_kit::title(size, move || tr("Adding the playlist")))
         .child(ui_kit::body(size, words::kind_title(kind)))
         .child(
             ui_kit::body(size, move || words::stage(progress()))
@@ -540,9 +548,11 @@ fn succeeded(ui: Ui) -> impl IntoElement {
     };
     let size = Scale::new();
     card(ui, size)
-        .child(ui_kit::title(size, "Playlist added"))
+        .child(ui_kit::title(size, move || tr("Playlist added")))
         .child(ui_kit::body(size, counts).text_color(rgb(LIST_TEXT)))
-        .child(ui_kit::body(size, "The guide now shows its channels."))
+        .child(ui_kit::body(size, move || {
+            tr("The guide now shows its channels.")
+        }))
         .child(button(ui, size, "Watch", Target::Done))
         .child(hint(ui, size, "OK continue"))
 }
@@ -558,7 +568,9 @@ fn failed(ui: Ui) -> impl IntoElement {
     };
     let size = Scale::new();
     card(ui, size)
-        .child(ui_kit::title(size, "This source cannot be used"))
+        .child(ui_kit::title(size, move || {
+            tr("This source cannot be used")
+        }))
         .child(ui_kit::body(size, message))
         .child(button(
             ui,

@@ -1,4 +1,6 @@
-//! The wizard's wording (iptv-rs's own; i18n later).
+//! The wizard's wording (iptv-rs's own).
+
+use crate::i18n::tr;
 
 use iptv_core::wizard::{
     FailureKind, Field, FieldError, ImportFailure, ImportProgress, ImportStage, PlaylistKind,
@@ -6,8 +8,8 @@ use iptv_core::wizard::{
 
 pub fn kind_title(kind: PlaylistKind) -> &'static str {
     match kind {
-        PlaylistKind::M3uUrl => "Playlist link",
-        PlaylistKind::M3uFile => "Playlist file",
+        PlaylistKind::M3uUrl => tr("Playlist link"),
+        PlaylistKind::M3uFile => tr("Playlist file"),
         PlaylistKind::Xtream => "Xtream Codes login",
         PlaylistKind::Stalker => "Stalker portal",
     }
@@ -24,15 +26,15 @@ pub fn kind_detail(kind: PlaylistKind) -> &'static str {
 
 pub fn label(field: Field) -> &'static str {
     match field {
-        Field::PlaylistUrl => "Playlist link",
-        Field::PlaylistFile => "File",
-        Field::Server => "Server",
-        Field::Username => "Username",
-        Field::Password => "Password",
-        Field::PortalUrl => "Portal",
-        Field::Mac => "MAC address",
-        Field::Name => "Name",
-        Field::EpgUrl => "Guide link",
+        Field::PlaylistUrl => tr("Playlist link"),
+        Field::PlaylistFile => tr("File"),
+        Field::Server => tr("Server"),
+        Field::Username => tr("Username"),
+        Field::Password => tr("Password"),
+        Field::PortalUrl => tr("Portal"),
+        Field::Mac => tr("MAC address"),
+        Field::Name => tr("Name"),
+        Field::EpgUrl => tr("Guide link"),
     }
 }
 
@@ -40,9 +42,9 @@ pub fn label(field: Field) -> &'static str {
 pub fn placeholder(field: Field) -> &'static str {
     match field {
         Field::PlaylistUrl => "http://…/playlist.m3u",
-        Field::PlaylistFile => "Choose a file…",
+        Field::PlaylistFile => tr("Choose a file…"),
         Field::Server => "http://server:port",
-        Field::Username | Field::Password => "Required",
+        Field::Username | Field::Password => tr("Required"),
         Field::PortalUrl => "http://portal/c/",
         Field::Mac => "00:1A:79:00:00:00",
         Field::Name => "Optional: how the playlist is listed",
@@ -52,11 +54,11 @@ pub fn placeholder(field: Field) -> &'static str {
 
 pub fn field_error(error: FieldError) -> &'static str {
     match error {
-        FieldError::Required => "Fill this in",
-        FieldError::ContainsWhitespace => "Remove the spaces",
+        FieldError::Required => tr("Fill this in"),
+        FieldError::ContainsWhitespace => tr("Remove the spaces"),
         FieldError::MissingScheme => "Start with http:// or https://",
         FieldError::UnsupportedScheme => "Only http:// and https:// links work",
-        FieldError::InvalidHost => "Check the server name",
+        FieldError::InvalidHost => tr("Check the server name"),
         FieldError::InvalidPort => "The port is a number from 1 to 65535",
         FieldError::InvalidMac => "A MAC address has 12 hexadecimal digits",
     }
@@ -97,13 +99,13 @@ pub fn failure(kind: PlaylistKind, failure: ImportFailure) -> &'static str {
 
 pub fn stage(progress: Option<ImportProgress>) -> String {
     let Some(p) = progress else {
-        return "Starting…".to_owned();
+        return tr("Starting…").to_owned();
     };
     let what = match p.stage {
-        ImportStage::Connecting => "Connecting…",
-        ImportStage::Downloading => "Downloading…",
-        ImportStage::Parsing => "Reading the channels…",
-        ImportStage::Saving => "Saving…",
+        ImportStage::Connecting => tr("Connecting…"),
+        ImportStage::Downloading => tr("Downloading…"),
+        ImportStage::Parsing => tr("Reading the channels…"),
+        ImportStage::Saving => tr("Saving…"),
     };
     match p.percent() {
         Some(pc) => format!("{what} {pc}%"),

@@ -9,6 +9,8 @@
 //! reduces it; the video surfaces are below (`video.rs`). On a detour (a
 //! tile watched full screen) none of this shows.
 
+use crate::i18n::tr;
+
 mod chrome;
 mod menu;
 
@@ -33,7 +35,7 @@ const LONG_PRESS_MS: f32 = 800.0;
 fn warning_label(choice: WarningChoice) -> &'static str {
     match choice {
         WarningChoice::AddAnyway => "Add it anyway",
-        WarningChoice::Cancel => "Cancel",
+        WarningChoice::Cancel => tr("Cancel"),
     }
 }
 
@@ -173,7 +175,7 @@ fn tile(ui: Ui, index: usize) -> impl IntoElement {
                         .text_color(rgb(WHITE)),
                     )
                     .child(
-                        text("Try again")
+                        text(move || tr("Try again"))
                             .px(px(16.0))
                             .py(px(6.0))
                             .rounded(px(RADIUS))

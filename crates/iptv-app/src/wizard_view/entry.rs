@@ -5,6 +5,8 @@
 //! values in the same sheet ([`panel`]), the playlists screen through
 //! [`text_sheet`].
 
+use crate::i18n::tr;
+
 use std::rc::Rc;
 
 use iptv_core::wizard::{Field, WizardEvent};
@@ -66,7 +68,7 @@ fn set_text(ui: Ui, text: &str) {
 }
 
 fn button(ui: Ui, size: Scale, label: &'static str, act: fn(Ui)) -> impl IntoElement {
-    ui_kit::button(ui, size, label, || false, move || act(ui))
+    ui_kit::button(ui, size, move || tr(label), || false, move || act(ui))
 }
 
 /// A sheet's field: the kit's, outlined in the accent on the window's

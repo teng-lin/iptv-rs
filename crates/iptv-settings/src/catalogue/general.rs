@@ -79,8 +79,7 @@ pub static GENERAL: &[Setting] = &[
         "general.language",
         text(TextKind::Locale, 35, "system"),
         "Interface language: `system` follows the device, otherwise a language tag.",
-    )
-    .restart(),
+    ),
     // default: ours
     general(
         "language",
