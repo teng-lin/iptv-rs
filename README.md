@@ -1,7 +1,7 @@
 # Patina IPTV
 
 A bring-your-own-playlist IPTV player for Android TV, Android tablets,
-iPad, Linux and macOS, written in Rust on
+Linux, macOS and iPad, written in Rust on
 [Native Shell (NSH)](https://github.com/longbridge/nsh).
 
 Patina is inspired by the TV guide experience of TiviMate on Android TV
@@ -10,8 +10,28 @@ over live video that works just as well with touch, mouse and keyboard.
 Patina is an independent project, not affiliated with TiviMate, and
 shares none of its code or artwork.
 
+![The TV guide on Android TV, with the playing channel in the preview](docs/screenshots/tv-guide.png)
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/tv-groups.png" alt="The menu and channel groups beside the guide"></td>
+    <td><img src="docs/screenshots/tv-playback.png" alt="Full-screen playback with the programme card"></td>
+  </tr>
+</table>
+
+<sub>Screenshots use the repository's synthetic playlist, guide and test
+streams. No real channels are shown.</sub>
+
 Patina provides no channels or content. You add the playlist or account
 your IPTV provider gave you.
+
+### Why "Patina"
+
+A patina is the finish that metal earns with age and handling, like the
+green of weathered copper. The name fits the app's look (dark ink surfaces
+with mineral accents, and the metal P of its icon) and the way it is meant
+to be used: a player that settles into a household's habits through its
+favourites, custom groups and history.
 
 ## Features
 
@@ -40,6 +60,7 @@ Release builds are published on
 | Android TV and tablets (Android 8.0+) | `.apk` |
 | Linux x86_64 (glibc 2.39+, GTK 4.14+) | `.deb`, `.rpm`, `.pkg.tar.zst`, `.AppImage` |
 | macOS (Apple silicon) | `.dmg` (ad hoc signed, not notarized) |
+| iPad | Not released yet; [build from source](#ipad) |
 
 The native Linux packages need the system's GTK 4, libmpv and GStreamer.
 The AppImage bundles them.
@@ -79,12 +100,23 @@ tools/sync-host.sh               # builds libnsh.so into the Android host
 adb install -r hosts/android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-iPad (simulator):
+#### iPad
+
+The iPad app is complete and runs on devices, but it is not yet
+distributed. It plays video through the same libmpv player as the
+desktops (MPVKit's LGPL build) and adds touch navigation of its own.
 
 ```sh
-tools/fetch-mpvkit.sh
-(cd crates/iptv-app && nsh package . --target ios-simulator -o ../../target/ios-sim)
+tools/fetch-mpvkit.sh            # libmpv xcframeworks, checksums pinned
+cd crates/iptv-app
+nsh package . --target ios-simulator -o ../../target/ios-sim
+nsh package . --target ios -o ../../target/ios \
+  --sign <signing identity SHA-1> --profile <app.mobileprovision>
+xcrun devicectl device install app --device <id> ../../target/ios/Patina.app
 ```
+
+Installing on a device needs Developer Mode on the iPad and a development
+profile for `com.hantekllc.iptvrs`.
 
 Desktop packages: `tools/ci/package-linux.sh` and `tools/package-macos.sh`.
 
