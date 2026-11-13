@@ -4,6 +4,10 @@ on:
   push:
     branches: [master]
   workflow_call:
+# Superseded PR checks need not keep occupying runners. Releases are never cancelled.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('tests-pr-{0}', github.event.pull_request.number) || format('tests-run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 permissions:
   contents: read
 jobs:

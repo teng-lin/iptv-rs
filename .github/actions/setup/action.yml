@@ -41,6 +41,9 @@ runs:
       if: inputs.cache == 'true'
       with:
         cache-on-failure: ${{ inputs.cache-on-failure }}
+        # Per-PR copies of these gigabyte-sized caches evict the reusable tools.
+        # PRs can restore master caches; only master refreshes bulk dependencies.
+        save-if: ${{ github.ref == 'refs/heads/master' }}
         workspaces: |
           .
           ../nsh

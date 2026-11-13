@@ -4,6 +4,10 @@ on:
   push:
     branches: [master]
   workflow_dispatch:
+# Cancel only superseded PR builds; keep pushes and manual runs independent.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('android-pr-{0}', github.event.pull_request.number) || format('android-run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 permissions:
   contents: read
 jobs:
@@ -29,7 +33,8 @@ jobs:
           import subprocess
           patterns = (
               ".github/workflows/android.yml", ".github/actions/android/**",
-              ".github/actions/setup/**", "hosts/android/**", "Cargo.toml",
+              ".github/actions/setup/**", ".github/actions/nsh-cli/**",
+              ".cargo/config", ".cargo/config.toml", "hosts/android/**", "Cargo.toml",
               "Cargo.lock", "crates/**/Cargo.toml", "crates/iptv-app/build.rs",
               "crates/iptv-app/nsh.json", "crates/iptv-app/icon.png",
               "crates/iptv-app/fonts/**", "tools/sync-host.sh", "tools/ci/**",
@@ -49,8 +54,9 @@ jobs:
   android:
     needs: changes
     # Keep the required android check present even when packaging is skipped.
-    # A detection failure must fail this check, not silently skip it.
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.package == 'true') }}
+    # A detection failure must fail this check, not silently skip it. Unlike
+    # always(), !cancelled() lets superseded PR runs release their runner.
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.package == 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
