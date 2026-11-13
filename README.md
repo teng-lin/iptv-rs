@@ -19,8 +19,11 @@ shares none of its code or artwork.
   </tr>
 </table>
 
-<sub>Screenshots use the repository's synthetic playlist, guide and test
-streams. No real channels are shown.</sub>
+![The guide on an Android tablet, with a live channel in the preview](docs/screenshots/tablet-guide.png)
+
+<sub>The Android TV screenshots use the repository's synthetic playlist,
+guide and test streams. The tablet screenshot shows a real provider's
+playlist.</sub>
 
 Patina provides no channels or content. You add the playlist or account
 your IPTV provider gave you.
