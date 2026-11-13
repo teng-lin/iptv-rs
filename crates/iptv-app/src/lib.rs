@@ -237,7 +237,7 @@ pub struct Ui {
     /// The channel list over full-screen video, while open.
     pub channels: Signal<Option<iptv_core::channel_list::ChannelList>>,
     /// Group and search selection while adding or replacing a multiview tile.
-    pub channel_picker: Signal<Option<iptv_core::channel_picker::ChannelPicker>>,
+    pub channel_picker: Signal<Option<multiview_picker::Screen>>,
     /// The picture-in-picture window, as the host reports it (`pip.rs`).
     pub pip: Signal<iptv_core::pip::Pip>,
     /// A Long Back acted: the platform's Back on its release is swallowed

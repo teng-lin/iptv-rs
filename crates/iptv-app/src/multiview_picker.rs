@@ -3,30 +3,60 @@
 //! guide's list and the persistent player surfaces stay in place.
 
 use iptv_core::channel_picker::{ChannelPicker, Pane};
+use iptv_core::guide::Schedule;
 use iptv_core::lists::{Entry, ListId, entry_count, entry_name};
+use iptv_guide::combined::CombinedSchedule;
 use iptv_nav::Action;
 use nsh_base::input;
 use nsh_core::prelude::*;
+use std::rc::Rc;
 
 use crate::fonts::CONDENSED;
 use crate::list_rows::{self, Mark, ROW, ROW_TWO};
 use crate::scale::Scale;
 use crate::{Ui, clock, ui_kit};
 
+/// An independent browser over the shared channel catalogue. The portable
+/// schedule owns playlist expansion; replacing this snapshot never changes
+/// the guide's selected category or its persisted expansion preferences.
+#[derive(Clone)]
+pub struct Screen {
+    state: ChannelPicker,
+    catalog: Rc<dyn Schedule>,
+}
+
+impl PartialEq for Screen {
+    fn eq(&self, other: &Self) -> bool {
+        self.state == other.state && Rc::ptr_eq(&self.catalog, &other.catalog)
+    }
+}
+
+fn catalog(ui: Ui) -> Rc<dyn Schedule> {
+    ui.channel_picker
+        .with(|p| p.as_ref().map(|p| p.catalog.clone()))
+        .unwrap_or_else(crate::schedule)
+}
+
+fn combined(catalog: &dyn Schedule) -> Option<&CombinedSchedule> {
+    catalog.as_any()?.downcast_ref()
+}
+
 pub fn is_open(ui: Ui) -> bool {
     ui.channel_picker.with(Option::is_some)
 }
 
 fn state<T>(ui: Ui, f: impl FnOnce(&ChannelPicker) -> T) -> Option<T> {
-    ui.channel_picker.with(|p| p.as_ref().map(f))
+    ui.channel_picker.with(|p| p.as_ref().map(|p| f(&p.state)))
 }
 
 pub fn open(ui: Ui) {
     let catalog = crate::schedule();
     let group = ListId::of(ui.list.with_untracked(|l| l.entry()), &*catalog);
     let channel = crate::multiview::pick_from(ui).and_then(|c| catalog.channel_key(c));
-    ui.channel_picker
-        .set(Some(ChannelPicker::open(group, channel)));
+    ui.channel_picker.set(Some(Screen {
+        state: ChannelPicker::open(group, channel),
+        catalog,
+    }));
     refresh(ui);
 }
 
@@ -38,16 +68,36 @@ pub fn close(ui: Ui) {
 fn update(ui: Ui, f: impl FnOnce(&mut ChannelPicker)) {
     ui.channel_picker.update(|p| {
         if let Some(p) = p {
-            f(p);
+            f(&mut p.state);
         }
     });
 }
 
 fn refresh(ui: Ui) {
-    let catalog = crate::schedule();
+    let catalog = catalog(ui);
     let favorites = crate::favorites::favorite_channels();
     let recent = crate::favorites::recent_channels();
     update(ui, |p| p.refresh(&*catalog, &favorites, &recent));
+}
+
+/// A new data generation keeps picker-local expansion by source identity.
+/// Channel indices remain those of the shared catalogue, so selecting a row
+/// still routes playback to its current source and stream.
+fn refresh_catalog(ui: Ui) {
+    let current = crate::schedule();
+    let previous = catalog(ui);
+    let next: Rc<dyn Schedule> = match (combined(&*current), combined(&*previous)) {
+        (Some(current), Some(previous)) => {
+            Rc::new(current.with_browser_expansion(previous.collapsed_sources()))
+        }
+        _ => current,
+    };
+    ui.channel_picker.update(|p| {
+        if let Some(p) = p {
+            p.catalog = next;
+        }
+    });
+    refresh(ui);
 }
 
 fn type_query(ui: Ui, query: &str) {
@@ -58,18 +108,30 @@ fn type_query(ui: Ui, query: &str) {
 }
 
 fn choose(ui: Ui, row: usize) {
-    update(ui, |p| p.focus_row(row));
-    if let Some(channel) = state(ui, ChannelPicker::selected).flatten() {
+    let key = state(ui, |p| p.channels().get(row).map(|c| c.key.clone())).flatten();
+    if let Some(channel) = key.and_then(|key| crate::schedule().find_channel(&key)) {
+        update(ui, |p| p.focus_row(row));
         crate::multiview::picked(ui, channel);
         close(ui);
+    } else {
+        refresh_catalog(ui);
     }
 }
 
 fn group(ui: Ui, entry: usize, toggle: bool) {
-    let catalog = crate::schedule();
+    let catalog = catalog(ui);
     update(ui, |p| p.group(entry, &*catalog));
-    if toggle && let Entry::Group(g) = Entry::at(entry) {
-        crate::data::combined::toggle_playlist(ui, g);
+    if toggle
+        && let Entry::Group(g) = Entry::at(entry)
+        && let Some(all) = combined(&*catalog)
+        && let Some(collapsed) = all.toggle_playlist(g)
+    {
+        let next = Rc::new(all.with_browser_expansion(collapsed));
+        ui.channel_picker.update(|p| {
+            if let Some(p) = p {
+                p.catalog = next;
+            }
+        });
     }
     refresh(ui);
 }
@@ -83,7 +145,7 @@ pub fn key(ui: Ui, action: Action) {
                 Action::PageUp => -8,
                 _ => 8,
             };
-            let catalog = crate::schedule();
+            let catalog = catalog(ui);
             let before = state(ui, |p| p.entry(&*catalog));
             update(ui, |p| p.vertical(by, &*catalog));
             if state(ui, |p| p.entry(&*catalog)) != before {
@@ -103,7 +165,7 @@ pub fn key(ui: Ui, action: Action) {
                 }
             }
             Some(Pane::Groups) => {
-                let catalog = crate::schedule();
+                let catalog = catalog(ui);
                 if let Some(entry) = state(ui, |p| p.entry(&*catalog)) {
                     if matches!(Entry::at(entry), Entry::Group(g) if catalog.group_is_playlist(g)) {
                         group(ui, entry, true);
@@ -136,7 +198,7 @@ pub fn layer(ui: Ui) -> impl IntoElement {
     effect(move || {
         ui.data_version.get();
         if untracked(|| is_open(ui)) {
-            untracked(|| refresh(ui));
+            untracked(|| refresh_catalog(ui));
         }
     });
     effect(move || {
@@ -157,14 +219,14 @@ fn screen(ui: Ui) -> impl IntoElement {
     let row = computed(move || state(ui, ChannelPicker::row).flatten());
     let entry = computed(move || {
         ui.data_version.get();
-        state(ui, |p| p.entry(&*crate::schedule())).unwrap_or(0)
+        state(ui, |p| p.entry(&*catalog(ui))).unwrap_or(0)
     });
     // A touch scroll does not move selection. Changing the group or query must
     // reveal it again even when the selected channel still occupies the same
     // row (or a query keeps the exact same results).
     let scroll_target = computed(move || {
         ui.data_version.get();
-        let catalog = crate::schedule();
+        let catalog = catalog(ui);
         state(ui, |p| {
             let row = p.row()?;
             Some((
@@ -201,7 +263,7 @@ fn screen(ui: Ui) -> impl IntoElement {
                         .child(ui_kit::heading(size, "Groups"))
                         .child(
                             virtual_list(
-                                move || { ui.data_version.get(); entry_count(&*crate::schedule()) },
+                                move || { ui.data_version.get(); entry_count(&*catalog(ui)) },
                                 move |at| group_row(ui, at, size, entry),
                             ).element_ref(&groups).estimated_item_size(list_rows::pitch(size, ROW)).flex_1(),
                         ),
@@ -210,7 +272,7 @@ fn screen(ui: Ui) -> impl IntoElement {
                     view().flex_1().gap(move || size.px(8.0))
                         .child(ui_kit::heading(size, move || {
                             ui.data_version.get();
-                            let catalog = crate::schedule();
+                            let catalog = catalog(ui);
                             state(ui, |p| {
                                 let count = p.channels().len();
                                 let unit = if count == 1 { "channel" } else { "channels" };
@@ -304,6 +366,23 @@ fn header(ui: Ui, size: Scale) -> impl IntoElement {
         ))
 }
 
+fn group_name(ui: Ui, entry: usize) -> String {
+    let catalog = catalog(ui);
+    let name = entry_name(entry, &*catalog);
+    match Entry::at(entry) {
+        Entry::Group(g) if catalog.group_is_playlist(g) => {
+            let arrow = if catalog.group_is_collapsed(g) {
+                "▸"
+            } else {
+                "▾"
+            };
+            format!("{arrow}  {name}")
+        }
+        Entry::Group(g) if catalog.group_depth(g) > 0 => format!("    {name}"),
+        _ => name,
+    }
+}
+
 fn group_row(ui: Ui, at: Position, size: Scale, entry: Memo<usize>) -> impl IntoElement {
     let mark = move || {
         Mark::of(
@@ -319,7 +398,7 @@ fn group_row(ui: Ui, at: Position, size: Scale, entry: Memo<usize>) -> impl Into
         .child(
             list_rows::name(size, move || {
                 ui.data_version.get();
-                crate::lists::browser_entry_name(at.index())
+                group_name(ui, at.index())
             })
             .text_color(move || mark().text()),
         )
@@ -352,7 +431,7 @@ fn channel_row(ui: Ui, at: Position, size: Scale, row: Memo<Option<usize>>) -> i
                         return String::new();
                     };
                     let now = ui.focus.with(|f| f.now);
-                    let catalog = crate::schedule();
+                    let catalog = catalog(ui);
                     let programme = catalog.program_at(channel.index, now);
                     format!(
                         "{}  {}",
