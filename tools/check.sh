@@ -23,4 +23,5 @@ python3 tools/ci/test-crypto-native-notices.py
 python3 tools/ci/check-package-lock.py
 python3 tools/ci/test-ios-entitlements.py
 python3 tools/ci/test-unpack-signing-input.py
+python3 tools/ci/test-nsh-tool-key.py
 echo "all checks passed"

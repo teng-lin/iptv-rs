@@ -1,0 +1,45 @@
+name: Pinned NSH CLI
+description: Reuse the finished CLI independently of application dependencies
+inputs:
+  cache:
+    description: Restore and save the tool artifact (disabled for release builds)
+    default: 'true'
+runs:
+  using: composite
+  steps:
+    - name: Identify NSH CLI inputs
+      id: identity
+      if: inputs.cache == 'true'
+      shell: bash
+      run: |
+        key=$(python3 tools/ci/nsh-tool-key.py cli)
+        [[ "$key" =~ ^[0-9a-f]{64}$ ]] || exit 1
+        root=$(cd ../nsh && pwd)
+        echo "key=$key" >> "$GITHUB_OUTPUT"
+        echo "path=$root/target/release/nsh" >> "$GITHUB_OUTPUT"
+    - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      if: inputs.cache == 'true'
+      id: cli
+      with:
+        path: ${{ steps.identity.outputs.path }}
+        key: nsh-cli-${{ runner.os }}-${{ runner.arch }}-${{ steps.identity.outputs.key }}
+    - name: Build NSH CLI
+      if: steps.cli.outputs.cache-hit != 'true'
+      shell: bash
+      # Bootstrap tools are not shipped. Keep their profile identical on all hosts.
+      env:
+        CARGO_PROFILE_RELEASE_LTO: 'false'
+        CARGO_PROFILE_RELEASE_OPT_LEVEL: '1'
+        CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
+      run: cargo build --release --locked --manifest-path ../nsh/Cargo.toml -p nsh-cli
+    # Save now: a later app failure must not discard a successful tool build.
+    - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      if: inputs.cache == 'true' && steps.cli.outputs.cache-hit != 'true'
+      with:
+        path: ${{ steps.identity.outputs.path }}
+        key: nsh-cli-${{ runner.os }}-${{ runner.arch }}-${{ steps.identity.outputs.key }}
+    - name: Select NSH CLI
+      shell: bash
+      run: |
+        test -x ../nsh/target/release/nsh
+        echo "NSH=$(cd ../nsh && pwd)/target/release/nsh" >> "$GITHUB_ENV"

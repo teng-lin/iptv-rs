@@ -93,3 +93,35 @@ Git HEAD and branch refs, including linked worktrees and detached CI builds.
 Uncommitted edits retain the HEAD hash; builds from source archives without Git
 show `v0.2.1(unknown)`. Package metadata keeps the plain numeric version required
 by platform installers.
+
+## Pinned NSH tool artifacts
+
+Nonsigning CI caches the finished NSH CLI and Android runtime separately from
+Cargo dependency caches. Exact identities include the NSH commit, Rust compiler,
+host OS/architecture, build recipe, compiler flags and inherited Cargo configuration. The Android recipe pins
+its ABI, NDK and SDK versions; its identity also includes the JDK and installed
+build-tools inventory/revisions, since NSH selects the newest installed tools.
+IPTV source and lockfile changes do not invalidate these tool artifacts.
+
+The shared CLI action uses the same bootstrap profile for desktop and Android
+(no LTO, optimization level 1). Caches restore after the general Rust cache and
+save immediately after successful tool compilation, before app/package checks.
+There are no fallback keys: a changed tool input builds a new artifact. Release
+packaging still disables caches, and signing jobs remain isolated. Cache sharing
+is subject to GitHub branch scope; PRs can read a default-branch cache but cannot
+warm caches for unrelated PRs. The default-branch Android workflow warms the
+Linux CLI and Android runtime caches used by subsequent PRs. macOS CLI caches
+are reused within a PR; dispatch Package checks on master to seed a macOS cache
+that other PRs can restore, since desktop packaging has no master push trigger.
+
+Only master writes the bulk Rust dependency caches. PRs restore those caches
+and may save the much smaller finished-tool artifacts. This avoids duplicating
+gigabytes of Rust dependencies per PR and evicting the shared tool caches.
+Dispatching Package checks on master also seeds desktop packaging dependencies.
+
+After changing this pipeline, compare a cold run with a second run at the same
+NSH pin: the latter must skip both NSH build steps while still building the app,
+generating notices, linting, packaging and verifying signatures. The expected
+saving is the skipped compilation time minus the artifact restore overhead;
+measure this in CI before claiming an improvement. Upstream Java-only runtime
+preparation is a separate follow-up; this pipeline retains the complete runtime.
