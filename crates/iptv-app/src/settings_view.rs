@@ -316,7 +316,7 @@ fn command_value(key: &str) -> String {
             GuideStatus::Failed { at, .. } => format!("Failed {}", time_label(at)),
         },
         "epg.manage_sources" => sources_value(),
-        "general.about" => format!("Version {}", env!("CARGO_PKG_VERSION")),
+        "general.about" => format!("v{}({})", env!("CARGO_PKG_VERSION"), env!("IPTV_GIT_HASH")),
         _ => String::new(),
     }
 }
