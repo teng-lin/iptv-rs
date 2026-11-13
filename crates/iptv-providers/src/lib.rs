@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Provider layer of iptv-rs: M3U/M3U8 playlists, Xtream Codes panels and
 //! Stalker/Ministra portals, mapped to one provider-neutral model.
 //!

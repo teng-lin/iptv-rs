@@ -487,10 +487,10 @@ pub fn update_now(ui: Ui, done: impl FnOnce() + 'static) -> bool {
         let complete = done.clone();
         let finish = move || {
             left.set(left.get() - 1);
-            if left.get() == 0 {
-                if let Some(done) = complete.borrow_mut().take() {
-                    done();
-                }
+            if left.get() == 0
+                && let Some(done) = complete.borrow_mut().take()
+            {
+                done();
             }
         };
         if updating(source) {
@@ -504,10 +504,11 @@ pub fn update_now(ui: Ui, done: impl FnOnce() + 'static) -> bool {
             remaining.set(remaining.get() - 1);
         }
     }
-    if started && remaining.get() == 0 {
-        if let Some(done) = done.borrow_mut().take() {
-            done();
-        }
+    if started
+        && remaining.get() == 0
+        && let Some(done) = done.borrow_mut().take()
+    {
+        done();
     }
     started
 }

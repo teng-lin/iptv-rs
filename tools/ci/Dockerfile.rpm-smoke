@@ -1,0 +1,4 @@
+FROM fedora:43
+RUN dnf install -y python3 xwininfo xorg-x11-server-Xvfb xorg-x11-xauth dbus-x11 procps-ng && dnf clean all
+COPY smoke-desktop.py /smoke-desktop.py
+ENTRYPOINT ["bash", "-ec", "dnf install -y /packages/*.rpm; test -s /opt/patina/notices/THIRD-PARTY.html; test -s /opt/patina/notices/runner-components.json; timeout 90 xvfb-run -a dbus-run-session -- python3 /smoke-desktop.py /usr/bin/patina"]

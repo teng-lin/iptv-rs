@@ -668,6 +668,14 @@ fn unescape_lenient(s: &str) -> String {
     out
 }
 
+/// `value` with its superscript badges folded ([`fold_superscripts`]).
+fn folded(value: String) -> String {
+    match crate::fold_superscripts(&value) {
+        std::borrow::Cow::Borrowed(_) => value,
+        std::borrow::Cow::Owned(f) => f,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -691,13 +699,5 @@ mod tests {
         assert_eq!(next_element_start(b"<programmes><channel>", 0), Some(12));
         assert_eq!(next_element_start(b"<channel", 0), None);
         assert_eq!(next_element_start(b"nothing", 0), None);
-    }
-}
-
-/// `value` with its superscript badges folded ([`fold_superscripts`]).
-fn folded(value: String) -> String {
-    match crate::fold_superscripts(&value) {
-        std::borrow::Cow::Borrowed(_) => value,
-        std::borrow::Cow::Owned(f) => f,
     }
 }

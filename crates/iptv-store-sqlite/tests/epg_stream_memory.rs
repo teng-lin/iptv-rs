@@ -28,21 +28,26 @@ fn add(n: isize) {
 
 struct Counting;
 
+// SAFETY: every allocation operation delegates unchanged to System.
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, l: Layout) -> *mut u8 {
         add(l.size() as isize);
+        // SAFETY: the caller supplies the allocator pointer/layout contract; System receives them unchanged.
         unsafe { System.alloc(l) }
     }
     unsafe fn alloc_zeroed(&self, l: Layout) -> *mut u8 {
         add(l.size() as isize);
+        // SAFETY: the caller supplies the allocator pointer/layout contract; System receives them unchanged.
         unsafe { System.alloc_zeroed(l) }
     }
     unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
         add(-(l.size() as isize));
+        // SAFETY: the caller supplies the allocator pointer/layout contract; System receives them unchanged.
         unsafe { System.dealloc(p, l) }
     }
     unsafe fn realloc(&self, p: *mut u8, l: Layout, new: usize) -> *mut u8 {
         add(new as isize - l.size() as isize);
+        // SAFETY: the caller supplies the allocator pointer/layout contract; System receives them unchanged.
         unsafe { System.realloc(p, l, new) }
     }
 }
@@ -76,6 +81,7 @@ fn import(days: i64) -> (usize, usize, usize, u64) {
     let base = LIVE.load(Ordering::Relaxed);
     PEAK.store(base, Ordering::Relaxed);
     // SAFETY: plain counter reads of the bundled SQLite.
+    // SAFETY: SQLite memory counters take no pointers and are safe to query here.
     unsafe { rusqlite::ffi::sqlite3_memory_highwater(1) };
     let mut stage = EpgStage::create_in(dir.path()).unwrap();
     let epg = block_on(import_epg(
@@ -89,6 +95,7 @@ fn import(days: i64) -> (usize, usize, usize, u64) {
         &CancelToken::new(),
     ))
     .unwrap();
+    // SAFETY: SQLite memory counters take no pointers and are safe to query here.
     let staging = unsafe { rusqlite::ffi::sqlite3_memory_highwater(0) } as usize;
     let feeds = EpgFeedMeta::from_import(&epg, &configs, NOW);
     let counts = store
@@ -96,6 +103,7 @@ fn import(days: i64) -> (usize, usize, usize, u64) {
         .unwrap();
     drop(stage);
     let peak = (PEAK.load(Ordering::Relaxed) - base).max(0) as usize;
+    // SAFETY: SQLite memory counters take no pointers and are safe to query here.
     let sqlite = unsafe { rusqlite::ffi::sqlite3_memory_highwater(0) } as usize;
     (peak, staging, sqlite, counts.programmes)
 }

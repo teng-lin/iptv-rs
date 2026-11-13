@@ -1,0 +1,78 @@
+name: Package checks
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/package-check.yml'
+      - '.github/actions/setup/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/**/Cargo.toml'
+      - 'crates/iptv-app/build.rs'
+      - 'crates/iptv-app/nsh.json'
+      - 'crates/iptv-app/icon.png'
+      - 'crates/iptv-app/fonts/**'
+      - 'rust-toolchain.toml'
+      - 'about.toml'
+      - 'tools/ci/**'
+      - 'tools/package-macos.sh'
+      - 'tools/bundle-macos.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  desktop-packages:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            os: ubuntu-24.04
+          - platform: macos
+            os: macos-15
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Package prerequisites
+        shell: bash
+        run: |
+          python3 tools/ci/version.py
+          echo "NSH=$(cd ../nsh && pwd)/target/release/nsh" >> "$GITHUB_ENV"
+          cargo install cargo-about --version 0.9.3 --features cli --locked
+          cargo build --release --locked --manifest-path ../nsh/Cargo.toml -p nsh-cli
+        env:
+          CARGO_PROFILE_RELEASE_LTO: 'false'
+          CARGO_PROFILE_RELEASE_OPT_LEVEL: '1'
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
+      - name: Linux package installation and smoke tests
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get install -y ruby-dev rpm zstd libarchive-tools patchelf file desktop-file-utils \
+            libgirepository1.0-dev librsvg2-dev xvfb x11-utils xauth dbus-x11
+          sudo gem install fpm -v 1.16.0 --no-document
+          bash tools/ci/setup-linux-packaging.sh
+          export PATH="$RUNNER_TEMP/linux-packaging:$PATH"
+          export APPIMAGE_EXTRACT_AND_RUN=1 CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target"
+          bash tools/ci/package-linux.sh
+          bash tools/ci/check-linux-packages.sh
+      - name: macOS ad hoc package installation and smoke test
+        if: matrix.platform == 'macos'
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+        run: |
+          bash tools/package-macos.sh
+          bash tools/ci/package-macos.sh
+          mkdir -p "$RUNNER_TEMP/signing-download"
+          COPYFILE_DISABLE=1 tar -cf "$RUNNER_TEMP/signing-download/signing-input.tar" target/package
+          mv target/package target/package-before-transfer
+          PACKAGE_PLATFORM=macos python3 tools/ci/unpack-signing-input.py
+          IPTV_SIGNING_STAGE=1 bash tools/ci/package-macos.sh
+          bash tools/ci/smoke-macos-dmg.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unsigned-packages-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error

@@ -3,6 +3,7 @@ name = "iptv-providers"
 description = "Provider layer of iptv-rs: M3U/M3U8 parser, Xtream Codes and Stalker/Ministra clients. Sans-IO (builds requests, parses responses), no NSH, must build for wasm32."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
 
@@ -12,3 +13,6 @@ url.workspace = true
 percent-encoding.workspace = true
 xxhash-rust.workspace = true
 sha1_smol.workspace = true
+
+[lints]
+workspace = true

@@ -210,10 +210,10 @@ pub fn playlists() -> Result<Vec<Playlist>, StoreError> {
 
 /// The playlist to open at startup: the one shown last, else the newest.
 pub(super) fn startup_source(store: &Store) -> Result<Option<StoredSource>, StoreError> {
-    if let Some(id) = store.active_source()? {
-        if store.source_policy(id)?.enabled {
-            return store.source(id);
-        }
+    if let Some(id) = store.active_source()?
+        && store.source_policy(id)?.enabled
+    {
+        return store.source(id);
     }
     for summary in store.sources()?.iter().rev() {
         if store.source_policy(summary.id)?.enabled {
@@ -242,10 +242,10 @@ pub fn set_policy(
             cancel_running(id);
         }
         super::combined::rebuild(ui);
-        if policy.enabled {
-            if let Some(source) = load(id) {
-                run(ui, source, Purpose::Combined, false);
-            }
+        if policy.enabled
+            && let Some(source) = load(id)
+        {
+            run(ui, source, Purpose::Combined, false);
         }
         return Ok(());
     }
@@ -291,19 +291,18 @@ pub fn start_scheduler(ui: Ui) {
                 timer(std::time::Duration::from_secs(60)).await;
                 continue;
             }
-            if let Ok(store) = open_store() {
-                if let Ok(sources) = store.sources() {
-                    for source in sources {
-                        let Ok(policy) = store.source_policy(source.id) else {
-                            continue;
-                        };
-                        let attempted = ATTEMPTS
-                            .with(|a| a.borrow().get(&source.id).copied())
-                            .or(source.import.last_attempt_at);
-                        if policy.due(super::now_unix(), attempted, startup) && !running(source.id)
-                        {
-                            refresh(ui, source.id);
-                        }
+            if let Ok(store) = open_store()
+                && let Ok(sources) = store.sources()
+            {
+                for source in sources {
+                    let Ok(policy) = store.source_policy(source.id) else {
+                        continue;
+                    };
+                    let attempted = ATTEMPTS
+                        .with(|a| a.borrow().get(&source.id).copied())
+                        .or(source.import.last_attempt_at);
+                    if policy.due(super::now_unix(), attempted, startup) && !running(source.id) {
+                        refresh(ui, source.id);
                     }
                 }
             }

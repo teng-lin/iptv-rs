@@ -10,6 +10,10 @@ and documentation PRs run Tests without building Android packages. Do not make
 the path-filtered Android workflow a required PR check, since skipped workflows
 can remain pending; keep Tests required instead.
 
+Desktop Package checks likewise run only for package/build inputs on PRs and
+support manual dispatch. Signed release packaging still runs on tags or manual
+requests.
+
 Android packages builds the arm64 native library and the Gradle host's debug APK/AAB,
 verifies the APK signature, and uploads both as the android-debug artifact.
 It uses a generated debug key and does not receive release secrets.
@@ -58,7 +62,7 @@ version such as `0.2.1`) from the repository root using Python 3.11 or newer.
 Add `--dry-run` to preview. The script also accepts an absolute path when
 invoked from another directory.
 The command updates `Cargo.toml`, every inherited workspace package version in
-`Cargo.lock`, and the NSH packaging version in `crates/iptv-app/nsh.json` without
+`Cargo.lock` and `tools/ci/package.Cargo.lock`, and the NSH packaging version in `crates/iptv-app/nsh.json` without
 updating dependencies. It accepts increasing MAJOR.MINOR.PATCH versions.
 Review and commit those changes, then tag that commit `v<version>` when ready.
 The command does not commit, tag, or publish. Tag/version mismatch fails.

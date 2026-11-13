@@ -342,8 +342,12 @@ mod tests {
         assert_eq!(TITLE, HEADER_TITLE);
         assert_eq!(BUTTON, HEADER_TIMES);
         assert_eq!(LIST_SECONDARY, HEADER_BODY);
-        assert!(TOUCH >= 48.0 && HEADING_ROW < ROW && ROW_THREE > list_rows::ROW_TWO);
+        const {
+            assert!(TOUCH >= 48.0 && HEADING_ROW < ROW && ROW_THREE > list_rows::ROW_TWO);
+        };
         // A field: Roboto's line (≥ 1.17 × its size) and the padding.
-        assert!(1.17 * LIST_ITEM + 2.0 * FIELD_PAD_Y >= TOUCH);
+        const {
+            assert!(1.17 * LIST_ITEM + 2.0 * FIELD_PAD_Y >= TOUCH);
+        };
     }
 }

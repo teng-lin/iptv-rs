@@ -1,4 +1,5 @@
 plugins {
+    id("com.github.jk1.dependency-license-report") version "3.1.5"
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
@@ -41,7 +42,8 @@ android {
         // keeps simpleperf working on it.
         getByName("release") {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.findByName("distribution") ?: signingConfigs.getByName("debug")
+            signingConfig = if (System.getenv("IPTV_UNSIGNED_RELEASE") == "1") null
+                else signingConfigs.findByName("distribution") ?: signingConfigs.getByName("debug")
         }
     }
 
@@ -56,12 +58,25 @@ android {
     kotlinOptions { jvmTarget = "17" }
 
     packaging { jniLibs { useLegacyPackaging = false } }
-    lint { abortOnError = false }
+    lint {
+        abortOnError = true
+        checkReleaseBuilds = true
+    }
 }
 
 dependencies {
+    implementation("androidx.core:core:1.15.0")
     val media3 = "1.5.1"
     implementation("androidx.media3:media3-exoplayer:$media3")
     implementation("androidx.media3:media3-exoplayer-hls:$media3")
     implementation("androidx.media3:media3-ui:$media3")
+}
+
+licenseReport {
+    renderers = arrayOf(
+        com.github.jk1.license.render.InventoryHtmlReportRenderer(),
+        com.github.jk1.license.render.JsonReportRenderer(),
+    )
+    configurations = arrayOf("releaseRuntimeClasspath")
+    outputDir = layout.buildDirectory.dir("reports/dependency-license").get().asFile.path
 }

@@ -19,7 +19,11 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       matrix: ${{ steps.platforms.outputs.matrix }}
+      signing_matrix: ${{ steps.platforms.outputs.signing_matrix }}
     steps:
+      - name: Refuse manual releases outside master
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/master'
+        run: exit 1
       - id: platforms
         env:
           PLATFORMS: ${{ inputs.platforms || 'android-desktop' }}
@@ -40,24 +44,27 @@ jobs:
               platforms.append({"platform": "ios", "os": "macos-15"})
           with open(os.environ["GITHUB_OUTPUT"], "a") as out:
               out.write("matrix=" + json.dumps({"include": platforms}) + "\n")
+              out.write("signing_matrix=" + json.dumps({"include": [p for p in platforms if p["platform"] != "linux"]}) + "\n")
           PY
   tests:
     uses: ./.github/workflows/ci.yml
   package:
-    needs: plan
-    environment: release
+    needs: [plan, tests]
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
         with:
-          cache-on-failure: 'true'
+          cache: 'false'
+      - name: Install dependency notice generator
+        run: |
+          cargo install cargo-about --version 0.9.3 --features cli --locked
       - name: Set release metadata
         shell: bash
         run: |
@@ -71,6 +78,8 @@ jobs:
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
       - uses: ./.github/actions/android
         if: matrix.platform == 'android'
+        with:
+          cache: ''
       - name: Build Android native library
         if: matrix.platform == 'android'
         env:
@@ -87,6 +96,69 @@ jobs:
           export APPIMAGE_EXTRACT_AND_RUN=1 CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target"
           bash tools/ci/package-linux.sh
           bash tools/ci/check-linux-packages.sh
+      - name: Prepare unsigned Android artifacts
+        if: matrix.platform == 'android'
+        run: bash tools/ci/prepare-android.sh
+      - name: Build macOS app without signing credentials
+        if: matrix.platform == 'macos'
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+        run: |
+          bash tools/package-macos.sh
+          bash tools/ci/package-macos.sh
+      - name: Build iOS app without signing credentials
+        if: matrix.platform == 'ios'
+        run: bash tools/ci/prepare-ios.sh
+      - name: Preserve prepared signing inputs
+        if: matrix.platform != 'linux'
+        shell: bash
+        run: |
+          case "${{ matrix.platform }}" in
+            android) input=target/android-unsigned ;;
+            macos) input=target/package ;;
+            ios) input=target/ios ;;
+          esac
+          COPYFILE_DISABLE=1 tar -cf target/signing-input.tar "$input"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: matrix.platform != 'linux'
+        with:
+          name: signing-input-${{ matrix.platform }}
+          path: target/signing-input.tar
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: matrix.platform == 'linux'
+        with:
+          name: packages-linux
+          path: dist/*
+          if-no-files-found: error
+  sign:
+    needs: [plan, tests, package]
+    environment: release
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.signing_matrix) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      # A fresh runner with trusted scripts, no build cache or dependency build.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: signing-input-${{ matrix.platform }}
+          path: ${{ runner.temp }}/signing-download
+      - name: Unpack only prepared artifacts
+        env:
+          PACKAGE_PLATFORM: ${{ matrix.platform }}
+        run: |
+          python3 tools/ci/unpack-signing-input.py
+          python3 tools/ci/version.py
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
+        if: matrix.platform == 'android'
+      - name: Install Android signing tools
+        if: matrix.platform == 'android'
+        run: sdkmanager "build-tools;35.0.1"
       - name: Android tablet and TV
         if: matrix.platform == 'android'
         env:
@@ -101,10 +173,16 @@ jobs:
           export KEYSTORE_PATH="$RUNNER_TEMP/release.jks"
           bash tools/ci/package-android.sh
       - name: macOS disk image
+        env:
+          IPTV_SIGNING_STAGE: '1'
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         if: matrix.platform == 'macos'
-        run: |
-          export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target"
-          bash tools/ci/package-macos.sh
+        run: bash tools/ci/package-macos.sh
       - name: Signed iPad package
         if: matrix.platform == 'ios'
         env:
@@ -117,23 +195,35 @@ jobs:
         if: always()
         shell: bash
         run: |
-          rm -f "$RUNNER_TEMP/release.jks" "$RUNNER_TEMP/ios.p12" "$RUNNER_TEMP/ios.mobileprovision"
-          if [ "${{ matrix.platform }}" = ios ]; then
-            security delete-keychain "$RUNNER_TEMP/release.keychain-db" || true
+          rm -f "$RUNNER_TEMP/macos.p12" "$RUNNER_TEMP/notarize.zip" "$RUNNER_TEMP/release.jks" "$RUNNER_TEMP/ios-profile.plist" "$RUNNER_TEMP/ios.entitlements" "$RUNNER_TEMP/ios.p12" "$RUNNER_TEMP/ios.mobileprovision"
+          if [ "${{ matrix.platform }}" = macos ]; then
+            if [ -e "$RUNNER_TEMP/macos-release.keychain-db" ]; then
+              security delete-keychain "$RUNNER_TEMP/macos-release.keychain-db"
+            fi
+            test ! -e "$RUNNER_TEMP/macos-release.keychain-db"
           fi
-      - uses: actions/upload-artifact@v4
+          if [ "${{ matrix.platform }}" = ios ]; then
+            if [ -e "$RUNNER_TEMP/release.keychain-db" ]; then
+              security delete-keychain "$RUNNER_TEMP/release.keychain-db"
+            fi
+            test ! -e "$RUNNER_TEMP/release.keychain-db"
+          fi
+      - name: Smoke signed macOS package after credential cleanup
+        if: matrix.platform == 'macos'
+        run: bash tools/ci/smoke-macos-dmg.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: packages-${{ matrix.platform }}
           path: dist/*
           if-no-files-found: error
   publish:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [tests, package]
+    needs: [tests, package, sign]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: packages-*
           merge-multiple: true
@@ -146,6 +236,6 @@ jobs:
         run: |
           cd dist
           sha256sum ./* > SHA256SUMS
-          gh release create "$TAG" --verify-tag --draft --generate-notes
-          gh release upload "$TAG" ./*
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --verify-tag --draft --generate-notes
+          gh release upload "$TAG" ./* --clobber
           gh release edit "$TAG" --draft=false

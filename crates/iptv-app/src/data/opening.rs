@@ -164,7 +164,7 @@ mod tests {
 
     #[test]
     fn the_first_screen_is_the_hour_before_now_to_six_hours_on() {
-        let hour = 1_800_000_000 - 1_800_000_000 % 3600;
+        let hour = 1_800_000_000;
         assert_eq!(first_screen(hour + 1234), (hour - 3600, hour + 6 * 3600));
         assert_eq!(first_screen(hour), (hour - 3600, hour + 6 * 3600));
     }

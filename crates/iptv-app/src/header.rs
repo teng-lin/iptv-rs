@@ -131,7 +131,7 @@ fn settled(ui: Ui, program: Memo<Focused>) -> Signal<Focused> {
         if shown.with_untracked(Option::is_some) {
             shown.set(None);
         }
-        let _ = set_timeout(SETTLE, move || {
+        let _task = set_timeout(SETTLE, move || {
             if generation.with(|now| *now == g) {
                 shown.set(program.get_untracked());
             }
@@ -317,20 +317,6 @@ fn overlay_wanted(debug_build: bool, env: Option<&str>) -> bool {
     debug_build || env.is_some_and(|v| !v.is_empty() && v != "0")
 }
 
-#[cfg(test)]
-mod tests {
-    use super::overlay_wanted;
-
-    #[test]
-    fn the_key_timing_line_is_for_development_only() {
-        assert!(!overlay_wanted(false, None), "release builds hide it");
-        assert!(!overlay_wanted(false, Some("")));
-        assert!(!overlay_wanted(false, Some("0")));
-        assert!(overlay_wanted(false, Some("1")), "unless asked for");
-        assert!(overlay_wanted(true, None), "debug builds show it");
-    }
-}
-
 pub fn header(ui: Ui) -> impl IntoElement {
     let size = Scale::new();
     let program = computed(move || {
@@ -392,4 +378,18 @@ fn corner_back(ui: Ui) -> impl IntoElement {
                 }
             },
         ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::overlay_wanted;
+
+    #[test]
+    fn the_key_timing_line_is_for_development_only() {
+        assert!(!overlay_wanted(false, None), "release builds hide it");
+        assert!(!overlay_wanted(false, Some("")));
+        assert!(!overlay_wanted(false, Some("0")));
+        assert!(overlay_wanted(false, Some("1")), "unless asked for");
+        assert!(overlay_wanted(true, None), "debug builds show it");
+    }
 }

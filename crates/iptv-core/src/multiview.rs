@@ -356,17 +356,17 @@ impl<C: Clone + PartialEq> Multiview<C> {
     /// Defer a chosen channel behind the usual connection warning. The caller
     /// counts streams for its owning account, excluding any replaced tile.
     pub fn picked_with_warning(&mut self, channel: C, exceeded: Option<u32>) -> Outcome<C> {
-        if let (Some(pick), Some(allowed)) = (self.pick, exceeded) {
-            if !self.tiles.iter().any(|t| t.channel == channel) {
-                self.pick = None;
-                self.pending_pick = Some((pick, channel));
-                self.dialog = Some(Dialog::Warning {
-                    allowed,
-                    focus: 1,
-                    search: false,
-                });
-                return Outcome::Stay;
-            }
+        if let (Some(pick), Some(allowed)) = (self.pick, exceeded)
+            && !self.tiles.iter().any(|t| t.channel == channel)
+        {
+            self.pick = None;
+            self.pending_pick = Some((pick, channel));
+            self.dialog = Some(Dialog::Warning {
+                allowed,
+                focus: 1,
+                search: false,
+            });
+            return Outcome::Stay;
         }
         self.picked(channel)
     }

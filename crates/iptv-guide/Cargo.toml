@@ -3,6 +3,7 @@ name = "iptv-guide"
 description = "The real guide schedule for iptv-rs: imported channels and groups plus the EPG store behind iptv-core's Schedule trait. No NSH; wasm-safe."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
 
@@ -10,3 +11,6 @@ license.workspace = true
 iptv-core.workspace = true
 iptv-epg.workspace = true
 iptv-providers.workspace = true
+
+[lints]
+workspace = true

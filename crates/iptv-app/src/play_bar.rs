@@ -104,7 +104,7 @@ fn update(ui: Ui, f: impl FnOnce(&mut PlayBar, u64)) {
     let Some(at) = ui.play_bar.with_untracked(PlayBar::hide_at_ms) else {
         return;
     };
-    let _ = set_timeout(Duration::from_millis(at.saturating_sub(now)), move || {
+    let _task = set_timeout(Duration::from_millis(at.saturating_sub(now)), move || {
         let now = ui.now_ms();
         // Later input moved the deadline: then this does nothing.
         if ui

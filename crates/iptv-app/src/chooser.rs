@@ -231,7 +231,7 @@ fn play_recent(ui: Ui, key: &str) {
 fn start_sleep(ui: Ui, minutes: u32) {
     let now = ui.now_ms();
     ui.sleep.update(|t| t.set(minutes, now));
-    let _ = set_timeout(Duration::from_secs(u64::from(minutes) * 60), move || {
+    let _task = set_timeout(Duration::from_secs(u64::from(minutes) * 60), move || {
         let mut fired = false;
         let now = ui.now_ms();
         ui.sleep.update(|t| fired = t.fire_if_due(now));

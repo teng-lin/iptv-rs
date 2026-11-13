@@ -34,18 +34,21 @@ def bump(root, requested, dry_run=False):
         package = tomllib.loads((root / member / "Cargo.toml").read_text())["package"]
         if package.get("version") == {"workspace": True}:
             names.add(package["name"])
-    lock = root / "Cargo.lock"
-    blocks = lock.read_text().split("[[package]]")
-    found = set()
-    for index, block in enumerate(blocks[1:], 1):
-        package = tomllib.loads(block)
-        if package["name"] in names and "source" not in package:
-            if package["version"] != current:
-                raise ValueError(f"Lockfile version is out of sync: {package['name']}")
-            blocks[index] = block.replace(f'version = "{current}"', f'version = "{version}"', 1)
-            found.add(package["name"])
-    if found != names:
-        raise ValueError("Workspace packages missing from Cargo.lock; run cargo check first")
+    changes = {}
+    for relative in ("Cargo.lock", "tools/ci/package.Cargo.lock"):
+        lock = root / relative
+        blocks = lock.read_text().split("[[package]]")
+        found = set()
+        for index, block in enumerate(blocks[1:], 1):
+            package = tomllib.loads(block)
+            if package["name"] in names and "source" not in package:
+                if package["version"] != current:
+                    raise ValueError(f"{relative} version is out of sync: {package['name']}")
+                blocks[index] = block.replace(f'version = "{current}"', f'version = "{version}"', 1)
+                found.add(package["name"])
+        if found != names:
+            raise ValueError(f"Workspace packages missing from {relative}; regenerate it first")
+        changes[lock] = "[[package]]".join(blocks)
     updated, count = re.subn(
         r'(\[workspace\.package\]\s*\nversion = ")[^"]+(")',
         lambda match: match[1] + version + match[2], original,
@@ -55,8 +58,8 @@ def bump(root, requested, dry_run=False):
     config_path = root / "crates/iptv-app/nsh.json"
     config = json.loads(config_path.read_text())
     config["version"] = version
-    changes = {manifest: updated, lock: "[[package]]".join(blocks),
-               config_path: json.dumps(config, indent=2) + "\n"}
+    changes[manifest] = updated
+    changes[config_path] = json.dumps(config, indent=2) + "\n"
     if not dry_run:
         for path, content in changes.items():
             path.write_text(content)

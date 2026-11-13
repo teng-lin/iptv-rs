@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+"""A stale runner lock must fail before any compilation/network resolution."""
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+
+root = Path(__file__).resolve().parents[2]
+with tempfile.TemporaryDirectory() as directory:
+    package = Path(directory)
+    (package / "src").mkdir()
+    (package / "src/lib.rs").write_text("")
+    (package / "Cargo.toml").write_text('[package]\nname="lock-check"\nversion="0.1.0"\nedition="2024"\n')
+    subprocess.run([os.environ["IPTV_REAL_CARGO"], "generate-lockfile", "--offline"], cwd=package, check=True)
+    manifest = package / "Cargo.toml"
+    manifest.write_text(manifest.read_text().replace('version="0.1.0"', 'version="0.2.0"'))
+    result = subprocess.run([str(root / "tools/ci/locked-cargo.py"), "check", "--offline"], cwd=package, capture_output=True, text=True)
+    assert result.returncode != 0 and "lock" in result.stderr.lower(), result.stderr
+print("stale lock refused")
+# Exercise the generated-workspace seeding path, including an equals-style
+# manifest argument and a stale committed runner lock.
+import shutil
+with tempfile.TemporaryDirectory() as directory:
+    fixture = Path(directory)
+    scripts = fixture / "tools/ci"
+    scripts.mkdir(parents=True)
+    wrapper = scripts / "locked-cargo.py"
+    shutil.copyfile(root / "tools/ci/locked-cargo.py", wrapper)
+    wrapper.chmod(0o755)
+    package = fixture / "crates/iptv-app/.nsh/rust"
+    (package / "src").mkdir(parents=True)
+    (package / "src/lib.rs").write_text("")
+    manifest = package / "Cargo.toml"
+    manifest.write_text('[package]\nname="runner-lock-check"\nversion="0.1.0"\nedition="2024"\n')
+    subprocess.run([os.environ["IPTV_REAL_CARGO"], "generate-lockfile", "--offline"], cwd=package, check=True)
+    shutil.copyfile(package / "Cargo.lock", scripts / "package.Cargo.lock")
+    (package / "Cargo.lock").unlink()
+    command = [str(wrapper), "--color", "never", "--quiet", "check", "--offline", "--manifest-path=" + str(manifest)]
+    subprocess.run(command, check=True)
+    manifest.write_text(manifest.read_text().replace('version="0.1.0"', 'version="0.2.0"'))
+    result = subprocess.run(command, capture_output=True, text=True)
+    assert result.returncode != 0 and "lock" in result.stderr.lower(), result.stderr
+# A rustc separator must not swallow the wrapper's lock flag.
+    result = subprocess.run([str(wrapper), "rustc", "--offline", "--manifest-path", str(manifest), "--", "--cfg", "synthetic"], capture_output=True, text=True)
+    assert result.returncode != 0 and "lock" in result.stderr.lower(), result.stderr
+print("generated runner lock seeded; stale runner lock refused")
+# A nested command in the sibling NSH workspace must not use its/default Rust.
+import tomllib
+expected = tomllib.loads((root / "rust-toolchain.toml").read_text())["toolchain"]["channel"]
+environment = dict(os.environ, RUSTUP_TOOLCHAIN="synthetic-wrong-toolchain")
+environment["IPTV_REAL_CARGO"] = "/synthetic/wrong/cargo"
+result = subprocess.run([
+    "bash", "-c", 'source "$1"; printf "%s\\n%s\\n" "$RUSTUP_TOOLCHAIN" "$IPTV_REAL_CARGO"',
+    "locked-environment", str(root / "tools/ci/locked-build-env.sh")
+], cwd=tempfile.gettempdir(), env=environment, text=True, capture_output=True, check=True)
+channel, executable = result.stdout.strip().splitlines()
+assert channel == expected, result.stdout
+assert Path(executable).is_absolute() and Path(executable).is_file(), result.stdout
+assert executable != str(root / "tools/ci/locked-cargo.py")
+print("nested toolchain pinned and real Cargo resolved outside the repository")

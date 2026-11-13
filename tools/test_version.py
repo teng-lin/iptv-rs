@@ -22,6 +22,9 @@ class VersionTests(unittest.TestCase):
         (self.root / "crates/iptv-app/nsh.json").write_text('{"name": "Synthetic"}\n')
         (self.root / "Cargo.lock").write_text('version = 4\n\n[[package]]\nname = "synthetic-app"\nversion = "1.2.3"\n\n[[package]]\nname = "dependency"\nversion = "1.2.3"\n')
 
+        (self.root / "tools/ci").mkdir(parents=True)
+        (self.root / "tools/ci/package.Cargo.lock").write_bytes((self.root / "Cargo.lock").read_bytes())
+
     def snapshot(self):
         return {p: p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
 
@@ -30,6 +33,7 @@ class VersionTests(unittest.TestCase):
         lock = (self.root / "Cargo.lock").read_text()
         self.assertIn('name = "synthetic-app"\nversion = "1.3.0"', lock)
         self.assertIn('name = "dependency"\nversion = "1.2.3"', lock)
+        self.assertEqual(lock, (self.root / "tools/ci/package.Cargo.lock").read_text())
         self.assertIn('"version": "1.3.0"', (self.root / "crates/iptv-app/nsh.json").read_text())
 
     def test_dry_run_and_increment_choices(self):

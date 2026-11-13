@@ -42,21 +42,26 @@ fn add(n: isize) {
 
 struct Counting;
 
+// SAFETY: every allocation operation delegates unchanged to System.
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, l: Layout) -> *mut u8 {
         add(l.size() as isize);
+        // SAFETY: the caller supplies the allocator pointer/layout contract; System receives them unchanged.
         unsafe { System.alloc(l) }
     }
     unsafe fn alloc_zeroed(&self, l: Layout) -> *mut u8 {
         add(l.size() as isize);
+        // SAFETY: the caller supplies the allocator pointer/layout contract; System receives them unchanged.
         unsafe { System.alloc_zeroed(l) }
     }
     unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
         add(-(l.size() as isize));
+        // SAFETY: the caller supplies the allocator pointer/layout contract; System receives them unchanged.
         unsafe { System.dealloc(p, l) }
     }
     unsafe fn realloc(&self, p: *mut u8, l: Layout, new: usize) -> *mut u8 {
         add(new as isize - l.size() as isize);
+        // SAFETY: the caller supplies the allocator pointer/layout contract; System receives them unchanged.
         unsafe { System.realloc(p, l, new) }
     }
 }
@@ -119,6 +124,7 @@ fn in_memory_import(shape: Shape) -> Report {
 
 /// SQLite's own heap (page cache, statements), not counted above.
 fn sqlite_heap() -> usize {
+    // SAFETY: SQLite memory counters take no pointers and are safe to query here.
     usize::try_from(unsafe { rusqlite::ffi::sqlite3_memory_used() }).unwrap_or(0)
 }
 

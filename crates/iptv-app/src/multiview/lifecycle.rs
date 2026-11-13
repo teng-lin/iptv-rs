@@ -98,7 +98,7 @@ pub fn bind(ui: Ui) {
     });
     effect(move || {
         if hint.get() {
-            let _ = set_timeout(Duration::from_millis(HINT_MS), move || {
+            let _task = set_timeout(Duration::from_millis(HINT_MS), move || {
                 if ui
                     .multiview
                     .with_untracked(|m| m.as_ref().is_some_and(State::hint))

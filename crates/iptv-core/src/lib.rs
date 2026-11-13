@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! The UI-independent core of iptv-rs. Everything here is plain Rust: no NSH,
 //! no platform APIs, no blocking I/O, and it must build for
 //! `wasm32-unknown-unknown` (see README).

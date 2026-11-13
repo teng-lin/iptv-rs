@@ -360,9 +360,8 @@ pub fn layer(ui: Ui) -> impl IntoElement {
                     .child(ui_kit::card(ui,size,620.0).child(ui_kit::title(size,move||state(ui,|s|s.editor.focused().map(|i|i.name.clone())).flatten().unwrap_or_default()))
                         .child({
                             let rows=element_ref();
-                            effect(move||{if let Some(edit)=state(ui,|s|s.editor.action).flatten(){
-                                if let Some(at)=ACTIONS.iter().position(|a|*a==edit){rows.scroll_to_index(at as u32,percentage(0.5),px(0.0),false);}
-                            }});
+                            effect(move||{if let Some(edit)=state(ui,|s|s.editor.action).flatten()
+                                && let Some(at)=ACTIONS.iter().position(|a|*a==edit){rows.scroll_to_index(at as u32,percentage(0.5),px(0.0),false);}});
                             virtual_list(move||ACTIONS.len(),move|at|{
                                 let edit=ACTIONS[at.index()];
                                 ui_kit::action(ui,size,

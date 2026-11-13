@@ -121,10 +121,10 @@ impl Editor {
         self.action.take().is_some()
     }
     pub fn toggle_selection(&mut self) {
-        if let Some(id) = self.focus.clone() {
-            if !self.selected.remove(&id) {
-                self.selected.insert(id);
-            }
+        if let Some(id) = self.focus.clone()
+            && !self.selected.remove(&id)
+        {
+            self.selected.insert(id);
         }
         self.action = None;
     }

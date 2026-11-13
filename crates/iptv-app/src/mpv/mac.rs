@@ -166,6 +166,7 @@ define_class!(
     #[ivars = LayerIvars]
     struct VideoLayer;
 
+    // SAFETY: this NSObject subclass inherits the NSObject protocol implementation.
     unsafe impl NSObjectProtocol for VideoLayer {}
 
     impl VideoLayer {
@@ -174,6 +175,7 @@ define_class!(
             match &self.ivars().gl {
                 // SAFETY: the caller releases what it is given.
                 Some(gl) => unsafe { CGLRetainPixelFormat(gl.pixel_format) },
+                // SAFETY: forward Core Animation's arguments to the superclass implementation.
                 None => unsafe { msg_send![super(self), copyCGLPixelFormatForDisplayMask: mask] },
             }
         }
@@ -183,6 +185,7 @@ define_class!(
             match &self.ivars().gl {
                 // SAFETY: the caller releases what it is given.
                 Some(gl) => unsafe { CGLRetainContext(gl.context) },
+                // SAFETY: forward the live pixel format to the superclass implementation.
                 None => unsafe { msg_send![super(self), copyCGLContextForPixelFormat: pixel_format] },
             }
         }
@@ -254,6 +257,7 @@ define_class!(
     #[ivars = Retained<VideoLayer>]
     struct VideoView;
 
+    // SAFETY: this NSObject subclass inherits the NSObject protocol implementation.
     unsafe impl NSObjectProtocol for VideoView {}
 
     impl VideoView {
