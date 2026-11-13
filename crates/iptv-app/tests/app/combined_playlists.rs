@@ -724,8 +724,19 @@ fn automatic_join_keeps_account_format_limit_and_the_original_guide_job_and_time
     step(app.press("text:/^Imported Beta One · /"));
     step(app.press("label:Video"));
     step(app.press("label:Multiview"));
-    step(app.wait_for("text:/^4  Imported Beta Two · /"));
-    step(app.press("text:/^4  Imported Beta Two · /"));
+    // Playlist parents in the picker expand their categories without closing
+    // it or changing the guide's list. The source filter survives both toggles.
+    let picker = "id:multiview-picker";
+    step(app.press(&format!("{picker} >> text:▾  Alpha")));
+    step(app.wait_for(&format!("{picker} >> text:▸  Alpha")));
+    step(app.press(&format!("{picker} >> text:▸  Alpha")));
+    step(app.wait_for(&format!("{picker} >> text:▾  Alpha")));
+    step(app.press(&format!("{picker} >> text:/^    News$/ >> nth=0")));
+    step(app.type_text("id:multiview-channel-search", "Imported Beta"));
+    step(app.wait_for("text:No matching channels. Clear the search or choose another group."));
+    step(app.press(&format!("{picker} >> text:All playlists")));
+    step(app.wait_for(&format!("{picker} >> text:/^4  Imported Beta Two · /")));
+    step(app.press(&format!("{picker} >> text:/^4  Imported Beta Two · /")));
     step(app.wait_for("text:Your account allows 1 stream at once"));
 }
 

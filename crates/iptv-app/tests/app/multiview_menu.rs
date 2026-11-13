@@ -6,7 +6,7 @@
 //! Play resumes it; Search and add opens the search screen over the grid,
 //! whose result becomes a new tile, and Back from it adds nothing.
 //!
-//! Synthetic data only: a three-channel playlist "picked" from a file.
+//! Synthetic data only: a generated playlist "picked" from a file.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -24,6 +24,8 @@ http://stream.example.test/one.m3u8
 http://stream.example.test/two.m3u8
 #EXTINF:-1 tvg-id=\"three\" group-title=\"Sport\",Test Channel Three
 http://stream.example.test/three.m3u8
+#EXTINF:-1 tvg-id=\"four\" group-title=\"Cinema\",Test Channel Four
+http://stream.example.test/four.m3u8
 ";
 
 const IMPORT: Duration = Duration::from_secs(20);
@@ -130,9 +132,26 @@ fn the_tile_menu_is_a_side_panel_with_pause_and_search_and_add() {
     // The harness's window size, again after the environment changed.
     step(app.set_viewport(Size::new(px(W), px(H))));
     step(app.wait_for("text:3  Test Channel Three"));
-    step(app.press_key("down"));
-    step(app.press_key("down"));
+    // Add screen exposes groups and a search scoped to the chosen group.
+    let picker = "id:multiview-picker";
+    let field = "id:multiview-channel-search";
+    step(app.wait_for(field));
+    step(app.press(&format!("{picker} >> text:News")));
+    step(gone(
+        &mut app,
+        &format!("{picker} >> text:3  Test Channel Three"),
+    ));
+    step(app.type_text(field, "tHrEe"));
+    step(app.wait_for("text:No matching channels. Clear the search or choose another group."));
+    assert_eq!(tiles(&app), 1, "filtering does not start streams");
+    // The query remains while switching groups, with the group's original number.
+    step(app.press(&format!("{picker} >> text:Sport")));
+    step(app.wait_for(&format!("{picker} >> text:1  Test Channel Three")));
+    step(app.press(&format!("{picker} >> text:Clear")));
+    // From the group column, Right enters the matching channels; OK adds.
+    step(app.press_key("right"));
     step(app.press_key("enter"));
+    step(gone(&mut app, picker));
     step(app.wait_for(&format!("{TILE} >> text:/Test Channel Three$/")));
     assert_eq!(tiles(&app), 2);
 
@@ -243,4 +262,24 @@ fn the_tile_menu_is_a_side_panel_with_pause_and_search_and_add() {
     step(app.wait_for(MENU));
     let l = labels(&app);
     assert_eq!(&l[l.len() - 2..], ["Full screen", "Remove screen"]);
+
+    // Replacement uses the same group/search picker and keeps the tile count.
+    step(app.press(&format!("{MENU} >> text:Change channel")));
+    step(app.wait_for(field));
+    step(app.type_text(field, "Four"));
+    step(app.wait_for(&format!("{picker} >> text:4  Test Channel Four")));
+    step(app.press(&format!("{picker} >> text:4  Test Channel Four")));
+    step(gone(&mut app, picker));
+    step(app.wait_for(&format!("{TILE} >> text:/Test Channel Four$/")));
+    assert_eq!(tiles(&app), 3);
+
+    // Reopening starts unfiltered; closing a replacement keeps the old stream.
+    step(app.press_key("enter"));
+    step(app.press(&format!("{MENU} >> text:Change channel")));
+    step(app.wait_for(&format!("{picker} >> text:1  Test Channel One")));
+    step(app.type_text(field, "missing"));
+    step(app.press(&format!("{picker} >> text:Close")));
+    step(gone(&mut app, picker));
+    assert_eq!(tiles(&app), 3);
+    step(app.wait_for(&format!("{TILE} >> text:/Test Channel Four$/")));
 }

@@ -520,18 +520,25 @@ fn channel_list_keys(app: &mut Headless) {
 /// focus pill's dark colour.
 fn lit(screen: &nsh_testing::Screen, text: &str) -> bool {
     let dark = nsh_core::Color((iptv_app::theme::FOCUSED_TEXT << 8) | 0xff);
-    ["id:channel-list", "id:channel-list-groups"]
-        .iter()
-        .any(|scope| {
-            screen
-                .span_style(&format!("{scope} >> text:{text}"))
-                .is_ok_and(|s| s.color == dark)
-        })
+    [
+        "id:channel-list",
+        "id:channel-list-groups",
+        "id:multiview-picker",
+    ]
+    .iter()
+    .any(|scope| {
+        screen
+            .span_style(&format!("{scope} >> text:{text}"))
+            .is_ok_and(|s| s.color == dark)
+    })
 }
 
 /// Whether the channel list shows: one of its rows or entries has the
 /// focus pill (the layer stays mounted, unseen, while closed).
 fn list_open(screen: &nsh_testing::Screen) -> bool {
+    if screen.matches("id:multiview-picker").unwrap_or(false) {
+        return true;
+    }
     let entries = [
         "Favourites",
         "Recently watched",

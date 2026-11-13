@@ -33,6 +33,7 @@ mod menu_view;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))]
 mod mpv;
 mod multiview;
+mod multiview_picker;
 mod multiview_view;
 mod numbers;
 mod organization_view;
@@ -235,6 +236,8 @@ pub struct Ui {
     pub multiview: Signal<Option<multiview::State>>,
     /// The channel list over full-screen video, while open.
     pub channels: Signal<Option<iptv_core::channel_list::ChannelList>>,
+    /// Group and search selection while adding or replacing a multiview tile.
+    pub channel_picker: Signal<Option<iptv_core::channel_picker::ChannelPicker>>,
     /// The picture-in-picture window, as the host reports it (`pip.rs`).
     pub pip: Signal<iptv_core::pip::Pip>,
     /// A Long Back acted: the platform's Back on its release is swallowed
@@ -563,6 +566,7 @@ fn ready_app() -> impl IntoElement {
         media: media::Media::new(),
         multiview: signal(None),
         channels: signal(None),
+        channel_picker: signal(None),
         pip: signal(Default::default()),
         back_guard: signal(iptv_nav::BackGuard::default()),
     };
@@ -717,6 +721,7 @@ fn ui_layers(ui: Ui, groups: ElementRef, rows: ElementRef) -> View {
         .child(player_panels::layer(ui))
         .child(multiview_view::layer(ui))
         .child(channels_view::layer(ui))
+        .child(multiview_picker::layer(ui))
         .child(search_view::layer(ui))
         .child(menu_view::layer(ui))
         .child(chooser::layer(ui))
@@ -780,6 +785,7 @@ fn pointer_moved(ui: Ui, e: &MouseEvent) {
         || ui.wizard.with_untracked(Option::is_some)
         || untracked(|| {
             search_view::is_open(ui)
+                || multiview_picker::is_open(ui)
                 || organization_view::is_open(ui)
                 || remote_editor::is_open(ui)
                 || playlists_view::is_open(ui)
@@ -816,7 +822,8 @@ fn bind_back(ui: Ui) {
             || ui.chooser.with(Option::is_some)
             || ui.editor.with(Option::is_some)
             || ui.focus.with(|f| f.hint)
-            || channels_view::is_open(ui);
+            || channels_view::is_open(ui)
+            || multiview_picker::is_open(ui);
         (ui.mode.get(), ui.focus.with(|f| f.pane), panels || menu)
     });
     effect(move || {
@@ -885,6 +892,10 @@ pub(crate) fn go_back(ui: Ui) -> bool {
             }
             _ if channels_view::is_open(ui) => {
                 channels_view::key(ui, iptv_nav::Action::Back);
+                true
+            }
+            _ if multiview_picker::is_open(ui) => {
+                multiview_picker::key(ui, iptv_nav::Action::Back);
                 true
             }
             _ if desktop::fullscreen() => {
