@@ -75,7 +75,7 @@ pub const FILES: [(&str, &[u8]); 3] = [
 ///
 /// The WOFF2 files are unpacked on their own thread first: NSH would unpack
 /// each one twice on the UI thread (for its family name, then to register
-/// it), about 0.7 s of a cold start on a 32-bit TV box (`docs/perf.md`).
+/// it), about 0.7 s of a cold start on a 32-bit TV box.
 pub fn register() {
     let started = std::time::Instant::now();
     let (tx, rx) = futures_channel::oneshot::channel();

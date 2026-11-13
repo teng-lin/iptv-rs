@@ -3,7 +3,7 @@
 //! and Android from `/proc/self/stat`; elsewhere since the first mark),
 //! with what it took or counted. Each phase is logged once per process:
 //! later imports, guide checks and zaps stay quiet. `tools/perf-android.sh`
-//! reads them for its phase table (`docs/perf.md`).
+//! reads them for its phase table.
 //!
 //! The phases, in the order a stored playlist's cold start reaches them:
 //! `rust root` (the app's root component runs), `settings loaded`,
@@ -61,7 +61,7 @@ pub fn shown(steps: &[(&str, Duration)]) {
 /// With `adb shell setprop debug.iptvrs.profile 1`: logs where the app's
 /// library is loaded, for symbolizing a simpleperf profile of a cold
 /// start (simpleperf can miss the mapping of a library loaded from the
-/// APK before it attached; `docs/perf.md`).
+/// APK before it attached).
 pub fn log_library_base() {
     #[cfg(target_os = "android")]
     {

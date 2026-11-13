@@ -1,387 +1,205 @@
-# iptv-rs
+# Patina IPTV
 
-Codename for an IPTV player for Android TV and Android tablets, written in Rust
-with [Native Shell (NSH)](https://github.com/longbridge/nsh). The UX targets
-parity with the reference TV player described in `~/src/tivimate/docs` (remote
-first, guide over live video, touch as a first-class second input). The
-product is Patina IPTV Player ("Patina" on the launchers, the menu bar and
-the packages); `iptv-rs` stays the codename, the crate names and the data
-directories' name.
+A bring-your-own-playlist IPTV player for Android TV, Android tablets,
+Linux, macOS and iPad, written in Rust on
+[Native Shell (NSH)](https://github.com/longbridge/nsh).
 
-Plan and decisions: [`.plans/2026-11-09-tivimate-ux-replication.md`](.plans/2026-11-09-tivimate-ux-replication.md).
-Android video/input research: [`docs/research/android-video-and-input.md`](docs/research/android-video-and-input.md).
-Feature backlog: [Playlist, settings and channel/group gaps](docs/missing-features-2026-11-11.md).
-Guide and list work: [Browsing behavior, custom groups and appearance](docs/guide-personalization.md).
-Combined sources: [All playlists browsing, search and playback](docs/combined-playlists.md).
-Whole-app backups: [Export, restore and platform support](docs/whole-app-backup.md).
+Patina is inspired by the TV guide experience of TiviMate on Android TV
+and brings that experience to desktops and tablets: a remote-first guide
+over live video that works just as well with touch, mouse and keyboard.
+Patina is an independent project, not affiliated with TiviMate, and
+shares none of its code or artwork.
 
-## Layout
+![The TV guide on Android TV, with the playing channel in the preview](docs/screenshots/tv-guide.png)
 
-| Path | What |
+<table>
+  <tr>
+    <td><img src="docs/screenshots/tv-groups.png" alt="The menu and channel groups beside the guide"></td>
+    <td><img src="docs/screenshots/tv-playback.png" alt="Full-screen playback with the programme card"></td>
+  </tr>
+</table>
+
+![The guide on an Android tablet, with a live channel in the preview](docs/screenshots/tablet-guide.png)
+
+<sub>The Android TV screenshots use the repository's synthetic playlist,
+guide and test streams. The tablet screenshot shows a real provider's
+playlist.</sub>
+
+Patina provides no channels or content. You add the playlist or account
+your IPTV provider gave you.
+
+### Why "Patina"
+
+A patina is the finish that metal earns with age and handling, like the
+green of weathered copper. Rust is iron's patina, and Patina is written in
+Rust. The name also fits the app's look (dark ink surfaces with mineral
+accents, and the metal P of its icon) and the way it is meant to be used:
+a player that settles into a household's habits through its favourites,
+custom groups and history.
+
+## Features
+
+- **Sources:** M3U playlists (by URL or file), Xtream Codes and Stalker
+  portals, with several playlists browsable together.
+- **Guide:** XMLTV EPG (plain or gzip) with automatic channel matching,
+  per-channel guide choice, catch-up playback where the provider offers it.
+- **Watching:** guide over live video, channel list beside the video,
+  multiview (up to four tiles on desktop, two on Android),
+  picture-in-picture on the desktops, track and picture-size choice.
+- **Library:** favourites, custom groups, reordering, hiding, history and
+  channel/programme search.
+- **Resilient live playback:** streams that the provider cuts reconnect
+  without dropping to an error screen.
+- **Private by default:** the local catalog, including credentials, is
+  encrypted with SQLCipher; HTTPS is the default transport. Whole-app
+  backup and restore to a `.patinabackup` file.
+
+## Install
+
+Release builds are published on
+[GitHub Releases](https://github.com/teng-lin/patina-iptv/releases):
+
+| Platform | Package |
 | --- | --- |
-| `crates/iptv-core` | UI-independent core: guide model and focus, channel lists and the rail/groups/guide navigation, favourites, player panels, context menus. No NSH, wasm-safe |
-| `crates/iptv-nav` | Remote keys, short/long press, layered key → action map. Wasm-safe |
-| `crates/iptv-settings` | One settings schema: catalogue, scoped store, versioned backup JSON. Wasm-safe |
-| `crates/iptv-epg` | Sans-IO XMLTV parser (gzip), EPG channel matching, compact guide store. Wasm-safe |
-| `crates/iptv-providers` | Sans-IO M3U parser, Xtream and Stalker clients, stable ids, catch-up URLs. Wasm-safe |
-| `crates/iptv-guide` | The real guide schedule: imported channels + EPG store behind the `Schedule` trait, with gap filling and older days of a stored guide paged in on demand; stream resolution (URL + headers, live and catch-up) per provider. Wasm-safe |
-| `crates/iptv-import` | Runtime-agnostic import pipeline: M3U/Xtream/Stalker sources into a `Catalog`; XMLTV guides streamed into a `GuideSink` (the app stages them on disk) and matched; typed failures, progress, cancel; EPG refresh policy. Wasm-safe |
-| `crates/iptv-net` | Native HTTP adapter (reqwest + rustls) implementing `Fetch`; strips identity headers on cross-host redirects |
-| `crates/iptv-store-sqlite` | SQLite store: provider catalog and guide data replaced per refresh (the guide from a download staged in its own file; with each feed's result and channel list), guide sources per playlist, user overlays (favourites, order, hidden, history, a channel's guide choice) kept by stable id, FTS5 search, tested migrations |
-| `crates/iptv-search` | Channel and programme search (folded, ranked, favourites first), history, search-screen state. Wasm-safe |
-| `crates/iptv-app` | NSH shell: screens, original Patina theme, bundled Roboto and Roboto Condensed (`fonts/`, SIL OFL 1.1; `tools/fetch-fonts.sh` rebuilds them), video layer; on Linux and macOS the `tv.player` component on libmpv (`src/mpv/`: the player, with `gtk.rs` and `mac.rs` for each desktop's view) |
-| `hosts/android` | Kotlin host: `NshView`, Media3 `tv.player` component, TV launcher manifest |
-| `tools/` | `sync-host.sh`, `make-hls-fixtures.sh`, `make-track-fixtures.sh`, `make-iptv-fixtures.py`, `mock-server.py`, `mock-xtream.py`, `mock-live-cuts.py`, `burst.sh`, `package-macos.sh` and `bundle-macos.py` (the self-contained macOS app), `fetch-fonts.sh` (the bundled fonts from Google's release, pinned by SHA-256) |
+| Android TV and tablets (Android 8.0+) | `.apk` |
+| Linux x86_64 (glibc 2.39+, GTK 4.14+) | `.deb`, `.rpm`, `.pkg.tar.zst`, `.AppImage` |
+| macOS (Apple silicon) | `.dmg` (ad hoc signed, not notarized) |
+| iPad | Not released yet; [build from source](#ipad) |
 
-## Prerequisites
+The native Linux packages need the system's GTK 4, libmpv and GStreamer.
+The AppImage bundles them.
 
-- Rust stable with `x86_64-linux-android`, `aarch64-linux-android`, `wasm32-unknown-unknown`.
-- JDK 21, Android SDK (platform 35, build-tools 35.0.1, platform-tools, emulator), NDK 30.
-- The NSH fork checked out next to this repository (`../nsh`, branch `tv-keys`;
-  `git clone -b tv-keys https://github.com/teng-lin/nsh.git`), with its CLI built:
-  `cargo build --release -p nsh-cli`. Cargo, Gradle and `tools/sync-host.sh` find it there.
-- `ffmpeg` and `python3` for synthetic test streams.
-- Linux desktop: GTK 4 and libmpv 2 (client API 2.x, `pkg-config mpv`;
-  Arch `mpv`, Debian/Ubuntu `libmpv-dev`). The player links `libmpv.so.2`.
-- macOS desktop: Xcode's command line tools and Homebrew's `mpv`
-  (`brew install mpv`: libmpv 2, found through `pkg-config` or Homebrew's
-  prefix by `crates/iptv-app/build.rs`). The player links `libmpv.2.dylib`.
+## Build from source
 
-## Run
+### Prerequisites
+
+- Rust (the version pinned in `rust-toolchain.toml`) with the
+  `wasm32-unknown-unknown` target, and for Android also
+  `aarch64-linux-android` and `x86_64-linux-android`.
+- The NSH fork checked out next to this repository and its CLI built:
+
+  ```sh
+  git clone -b tv-keys https://github.com/teng-lin/nsh.git ../nsh
+  (cd ../nsh && cargo build --release -p nsh-cli)
+  ```
+
+- **Linux:** GTK 4 and libmpv 2 (`mpv` on Arch, `libmpv-dev` on
+  Debian/Ubuntu).
+- **macOS:** Xcode command line tools and `brew install mpv`.
+- **Android:** JDK 21, Android SDK (platform 35, build-tools 35.0.1), NDK 30.
+- **iPad:** Xcode. `tools/fetch-mpvkit.sh` downloads the libmpv build.
+- `python3` and `ffmpeg` for the synthetic test streams.
+
+### Run
 
 ```sh
-cargo test -p iptv-core                                   # focus/guide model
-cargo build -p iptv-core --target wasm32-unknown-unknown  # portability check
-cargo run -p iptv-app                                     # Linux or macOS desktop (see below)
-
-tools/make-hls-fixtures.sh --serve &                      # synthetic HLS on :8089
-tools/make-track-fixtures.sh --serve &                    # several video/audio/subtitle tracks on :8097
-                                                          # (--host 10.0.2.2:8097 for the emulators)
-tools/mock-live-cuts.py &                                 # live streams the server cuts, on :8090
-tools/sync-host.sh                                        # build libnsh.so (x86_64, arm64) into the host
-(cd hosts/android && ./gradlew assembleDebug)
-adb -s emulator-5554 install -r hosts/android/app/build/outputs/apk/debug/app-debug.apk
+cargo run -p iptv-app            # Linux or macOS desktop
 ```
 
-### Live streams the provider cuts
+Android:
 
-Providers cut live connections every minute or so, and a player has to
-play on. `tools/mock-live-cuts.py` (ffmpeg and python3; a synthetic test
-pattern with a burned-in clock and frame counter, made live) reproduces
-both kinds of cut:
+```sh
+tools/sync-host.sh               # builds libnsh.so into the Android host
+(cd hosts/android && ./gradlew assembleDebug)
+adb install -r hosts/android/app/build/outputs/apk/debug/app-debug.apk
+```
 
-- live HLS, `/live/<name>.m3u8`: a 302 to a tokenized address whose
-  playlist reloads are refused (403) once the token is older than
-  `--hls-token-secs` (default 40). ffmpeg (mpv) reloads the redirected
-  address and reaches the end of the stream; Media3 reloads the address
-  it was given and gets a new token;
-- live MPEG-TS, `/live/<name>.ts`: the live segments in real time, the
-  connection closed after `--ts-close-secs` (default 70).
+#### iPad
 
-`/playlist.m3u` lists two channels of each kind (`--port`, default
-8090). The app bridges both on the desktop and TS on Android (see
-`crates/iptv-app/src/mpv/worker.rs` and `PlayerComponent.kt`); measured
-gaps are in [`docs/perf.md`](docs/perf.md).
+The iPad app is complete and runs on devices, but it is not yet
+distributed. It plays video through the same libmpv player as the
+desktops (MPVKit's LGPL build) and adds touch navigation of its own.
 
-Emulators: `tab36` (Pixel Tablet, API 36) and `tv36` (Android TV, API 36).
-Start them with `QT_QPA_PLATFORM=xcb` so the host keyboard reaches them.
+```sh
+tools/fetch-mpvkit.sh            # libmpv xcframeworks, checksums pinned
+cd crates/iptv-app
+nsh package . --target ios-simulator -o ../../target/ios-sim
+nsh package . --target ios -o ../../target/ios \
+  --sign <signing identity SHA-1> --profile <app.mobileprovision>
+xcrun devicectl device install app --device <id> ../../target/ios/Patina.app
+```
 
-### Linux desktop
+Installing on a device needs Developer Mode on the iPad and a development
+profile for `com.hantekllc.iptvrs`.
 
-`cargo run -p iptv-app` opens a 960×540 window (Wayland or X11). Video plays
-through libmpv rendering into a GTK GL area under the UI. Without a stored
-playlist the wizard opens with an empty playlist link; a build with
-`IPTV_RS_DEV_PLAYLIST` set starts it with that address instead (e.g.
-`IPTV_RS_DEV_PLAYLIST=http://127.0.0.1:8089/iptv/playlist.m3u cargo run -p iptv-app`
-for the mock server; generate desktop fixtures with
-`python3 -I tools/make-iptv-fixtures.py --host 127.0.0.1:8089`; for the
-emulator `IPTV_RS_DEV_PLAYLIST=http://10.0.2.2:8089/iptv/playlist.m3u tools/sync-host.sh`).
-Release builds never carry a development address: the synthetic guide shown
-before a playlist plays the mock server's streams in debug builds only.
-Data lives in
-`~/.local/share/iptv-rs` (settings in `settings.json` there). Settings open
-from the guide's menu (Menu, `m`).
+Desktop packages: `tools/ci/package-linux.sh` and `tools/package-macos.sh`.
+
+### Try it with synthetic data
+
+The repository has no real provider data. Local mock servers stand in:
+
+```sh
+python3 -I tools/make-iptv-fixtures.py --host 127.0.0.1:8089
+tools/make-hls-fixtures.sh --serve &      # playlist, EPG and HLS on :8089
+IPTV_RS_DEV_PLAYLIST=http://127.0.0.1:8089/iptv/playlist.m3u cargo run -p iptv-app
+```
+
+Use `10.0.2.2` instead of `127.0.0.1` from an Android emulator. Other
+mocks: `tools/mock-xtream.py` (Xtream API), `tools/mock-live-cuts.py`
+(live streams the server keeps cutting), `tools/make-track-fixtures.sh`
+(multiple audio and subtitle tracks).
+
+## Keyboard
 
 | Remote | Keyboard |
 | --- | --- |
-| D-pad, OK | arrows, Enter |
-| Back | Escape, Backspace (Backspace edits text in a field) |
-| Menu | `m`, the context-menu key |
-| Channel up / down | Page Up / Page Down or `=` / `-` (over video they zap, in the guide they page) |
-| Digits | `0`–`9` |
-| Play/pause | Space |
+| D-pad, OK | Arrows, Enter |
+| Back | Escape |
+| Menu | `m` |
+| Channel up / down | Page Up / Page Down |
+| Play / pause | Space |
 | Info, Guide | `i`, `g` |
-| Previous channel, back to live | `p`, `n` |
+| Previous channel | `p` |
 | Rewind / fast-forward (catch-up) | `[`, `]` |
-| Stop (Long Back on a remote) | the Stop media key |
-| Long Left over video (channel list beside it) | Shift+Left |
-| Search | `/`, Ctrl+F (Cmd+F on macOS) |
-| Long Left in the guide (the groups) | Tab, Shift+Tab |
-| Volume up / down, mute (desktop only) | Ctrl+Up, Ctrl+Down, Ctrl+M |
-| Window full screen | F11, a double click on the video (Escape leaves it first) |
-| Overlay / full screen (development) | `o`, `f` |
+| Search | `/` or Ctrl+F (Cmd+F) |
+| Volume, mute | Ctrl+Up / Ctrl+Down (Cmd on macOS), Ctrl+M |
+| Full screen | F11 (Ctrl+Cmd+F on macOS) or double-click the video |
 
-In the guide Left walks back through the programmes a channel can replay
-(catch-up: down to the oldest inside its archive and the stored guide;
-without catch-up: to the programme on air) and from there opens the
-groups; Left in the groups focuses the rail's Search. Right walks on to
-the end of the stored guide. Home goes back to now, Shift+Left/Right an
-hour, Ctrl (Cmd)+Left/Right a day, both stopping where Left and Right
-do. The timeline pans back as far as the list's catch-up goes (no
-further than now's half hour without catch-up); past programmes a row
-cannot replay are dimmed.
+## Development
 
-Over full-screen video: OK shows the info card with TV guide and
-History, Down the control row (Up back), Menu the control row at once,
-Long OK the menu; Left the guide's list (Left in it: the groups), Long
-Left the list beside the video, Right the most recent channel, Up/Down
-change channel, Long Back stops. During catch-up Left/Right seek.
+| Path | What |
+| --- | --- |
+| `crates/iptv-core` | UI-independent state: guide model, focus, lists, panels, menus |
+| `crates/iptv-nav` | Remote keys, long presses, key-to-action map |
+| `crates/iptv-settings` | Settings schema, store and backup JSON |
+| `crates/iptv-providers` | M3U parser, Xtream and Stalker clients |
+| `crates/iptv-epg` | XMLTV parser and channel matching |
+| `crates/iptv-guide` | Guide schedule and stream resolution |
+| `crates/iptv-import` | Source and guide import pipeline |
+| `crates/iptv-search` | Channel and programme search |
+| `crates/iptv-net` | HTTP adapter (reqwest + rustls) |
+| `crates/iptv-store-sqlite` | Encrypted SQLite store |
+| `crates/iptv-app` | NSH app: screens, theme, video layer (libmpv on desktop and iPad) |
+| `hosts/android` | Kotlin host with the Media3 player |
+| `tools/` | Mock servers, fixtures, packaging and CI scripts |
 
-With a mouse or a touchscreen (never on a TV) the video has a play bar:
-moving the mouse shows it, a tap or click on the video shows it and
-another hides it; it hides 3 s after the last input, but not while the
-mouse rests on it. It has mute and (desktop) volume, the stream's
-quality, the channel, rewind/play-pause/fast-forward (catch-up), the
-favourite star, tracks, programme details, picture size, the channel
-list, the guide, (desktop) window full screen and the frame rate; under
-it the programme's progress, where a click or a drag seeks in catch-up.
-Any remote key hides it; OK still shows the info card.
+All crates except `iptv-app`, `iptv-net` and `iptv-store-sqlite` are
+sans-IO and build for `wasm32-unknown-unknown`.
 
-Multiview (the control row's or the play bar's Multiview): the playing
-channel becomes the first tile and the channel list opens to add the next
-(up to four on the desktop, two on Android); the screen holds only the
-tiles. Arrows choose the tile that is heard (a thin light outline), OK
-opens its menu, a panel at the right edge that leaves the tiles in view
-(Try again after a failure, Add screen, Search and add, Change channel,
-Pause or Play for that tile alone, Enlarge screen or Reduce screen, Full
-screen, Remove screen), Long OK enlarges or reduces it, Back watches the
-active tile full screen. Search and add opens the search screen over the
-tiles: a channel or programme result adds its channel as a new tile.
-Full screen is a detour: Back (or Multiview again) returns to the same
-tiles; changing channel there ends multiview. A tap makes a tile active,
-a tap on the active one opens its menu, a long press enlarges it; a
-moving mouse or a tap beside the tiles shows a toolbar (Add screen, Exit
-multiview) and each tile's enlarge and remove buttons.
-Adding more streams than an Xtream account allows asks first.
-
-Environment: `IPTV_RS_AUDIO=null` mutes the player (mpv `ao`; use it for
-tests), `IPTV_RS_HWDEC` sets mpv's `hwdec` (default `auto-copy-safe`),
-`IPTV_RS_LIVE_BRIDGE=0` turns off playing on across live connections the
-server closes (each one is then reconnected by the app),
-`RUST_LOG=info` shows the player's state (never stream addresses).
-The guide header's key-timing line ("keys N · X µs") shows in debug builds,
-or with `IPTV_RS_DEBUG_OVERLAY=1`; the matching log line is always written.
-`GDK_DEBUG=no-portals` makes the playlist-file picker GTK's own dialog
-instead of the desktop portal's.
-
-A live channel recovers by itself: after a cut or an error it keeps its
-last frame (with a small "Reconnecting…" after a second) and retries,
-fast at first (1, 2, 4, 4, 4 s), then after 5 and 10 s and every 20 s,
-for as long as it stays selected; the "Can't play" card shows only when
-a retry cannot help (the stream is gone, its format is not supported,
-the account is refused) or after 2.5 minutes down, and even then retries
-go on behind it every 30 s. Try again (OK) retries at once. A refusal by
-the provider (often the account's streams are all in use elsewhere) says
-how many streams the account allows when the provider told us.
-
-On Android nothing plays in the background: when the activity stops
-(Home, another app, the screen off) every player stops and closes its
-connections, and when it starts again each one reopens its stream (live at
-the live edge, catch-up where it was). A minimised desktop window plays on.
-
-Android and mpv use a bounded playback transport that keeps identity headers
-(Cookie, Authorization, SN and X-User-Agent) on the stream's exact origin
-(scheme, host and port), including redirects and HLS/DASH subresources.
-
-Package (release runner, `.desktop` entry and a `.tar.gz`; libmpv stays a
-system dependency):
+Run every check before committing:
 
 ```sh
-(cd crates/iptv-app && ../../../nsh/target/release/nsh package --target linux -o ../../target/package .)
+tools/check.sh
 ```
 
-### macOS desktop
+The app's scenario tests in `crates/iptv-app/tests/app/` run the whole app
+headless, each in its own process with an empty `$HOME`.
+`cargo test -p iptv-app --features test-support <name>` runs one.
 
-The app opens at 1280×720 (`nsh.json` `"window"`, which NSH's runners
-read: `nsh run --target macos`, `nsh package --target macos`;
-`cargo run -p iptv-app` sets the same size) through NSH's AppKit backend.
-Video plays through libmpv rendering into a `CAOpenGLLayer` under the UI,
-one per player surface (mpv's render API has no Metal backend). Everything
-above applies, with macOS's keys and places:
+Useful environment variables: `IPTV_RS_AUDIO=null` (mute),
+`IPTV_RS_HWDEC` (mpv `hwdec`), `RUST_LOG=info` (player state, never stream
+addresses).
 
-- Menus: the app menu (About, Settings… ⌘,, Hide, Quit), Edit (cut, copy
-  and paste in text fields), View (Enter Full Screen) and Window.
-- Data lives in `~/Library/Application Support/iptv-rs`; a `HOME`
-  override moves it (and NSH's own data) for test runs.
-- Window full screen: Ctrl+Cmd+F or fn+F (View menu), the play bar's
-  button, a double click on the video; Escape leaves it first.
-- Volume: Cmd+Up / Cmd+Down (macOS keeps Ctrl+Up/Down for Mission
-  Control); mute Ctrl+M.
-- `IPTV_RS_AUDIO=null`, `IPTV_RS_HWDEC` (default `auto-copy-safe`:
-  VideoToolbox) and `RUST_LOG=info` as on Linux.
-- Fonts: the bundled Roboto, Roboto Medium and Roboto Condensed register
-  with CoreText at startup; NSH may log ``font family `Roboto` is not
-  available`` once before they do, and lays that text out again after.
-  Scripts Roboto lacks (Arabic, Hebrew, CJK, Thai, Devanagari, emoji)
-  come from the system's fallback fonts.
-- `nsh test <file>.test.tsx --target macos` drives the real app in the
-  background (synthetic keys and clicks, window screenshots that include
-  the video). Window full screen needs `--foreground`; while the screen
-  is locked macOS neither enters full screen nor draws OpenGL layers, so
-  pictures of the video come out empty then.
+Project rules for contributors and coding agents are in
+[AGENTS.md](AGENTS.md). Release and signing setup is in
+[docs/release.md](docs/release.md). The storage and transport security
+model is in [docs/security.md](docs/security.md).
 
-Package: `tools/package-macos.sh` builds the `.app` with
-`nsh package --target macos`, then `tools/bundle-macos.py` copies libmpv
-and the 50 or so dylibs it pulls in from Homebrew (FFmpeg, libass,
-libplacebo, ...) into `Contents/Frameworks`, points the executable and
-each other at them (`@rpath`), and signs everything again ad hoc. The
-result (about 100 MB) runs on a Mac without Homebrew:
-
-```sh
-brew install mpv                     # the libmpv the app links and bundles
-tools/package-macos.sh               # target/package/Patina.app
-```
-
-Limits of this package, and what a public one needs:
-
-- Apple silicon only (Homebrew's arm64 bottles), and the macOS those
-  bottles were built for or newer (the bundler raises
-  `LSMinimumSystemVersion` to it: 26.0 on a macOS 26 build machine). A
-  release builds libmpv and FFmpeg itself for an older deployment target
-  (`MACOSX_DEPLOYMENT_TARGET`) and both architectures.
-- Licences: Homebrew's FFmpeg and mpv include GPL parts (x264, x265, ...),
-  so a package carrying them is GPL; a release that must not be uses an
-  LGPL build of both.
-- Notarization (not done): a Developer ID Application certificate; every
-  dylib, then the app, signed with it, the hardened runtime and a secure
-  timestamp (`codesign --force --options runtime --timestamp --sign
-  "Developer ID Application: …"`; mpv's scripts are off, so no JIT
-  entitlement should be needed, to be confirmed under the hardened
-  runtime); then `ditto -c -k --keepParent Patina.app Patina.zip`,
-  `xcrun notarytool submit Patina.zip --keychain-profile <profile>
-  --wait` and `xcrun stapler staple Patina.app`.
-
-### iPad
-
-The iPad app runs through NSH's UIKit backend, in landscape, full screen
-(`nsh.json` `"ios"`). Video plays through the same libmpv player as the
-desktops, from MPVKit's LGPL static build, drawing with mpv's render API
-(OpenGL ES 3) into a `CAEAGLLayer` under the UI (`src/mpv/ios.rs`). The
-guide keeps its full sizes, as on an Android tablet.
-
-```sh
-tools/fetch-mpvkit.sh                # MPVKit 1.0.0's xcframeworks into target/mpvkit (checksums pinned)
-cd crates/iptv-app
-nsh package . --target ios-simulator -o ../../target/ios-sim   # Patina.app for the simulator
-nsh package . --target ios -o ../../target/ios \
-  --sign <signing identity SHA-1> --profile <app.mobileprovision>
-xcrun devicectl list devices
-xcrun devicectl device install app --device <id> ../../target/ios/Patina.app
-xcrun devicectl device process launch --device <id> com.hantekllc.iptvrs
-```
-
-- Signing: Xcode's automatic signing with a personal team gives a
-  development certificate and a profile for the bundle id once a project
-  with that id is built for the connected iPad. The iPad needs Developer
-  Mode on (Settings → Privacy & Security, then a restart) and, on the
-  first launch, the developer trusted (Settings → General → VPN & Device
-  Management). If `codesign` fails with `errSecInternalComponent` from a
-  terminal, `security set-key-partition-list -S
-  apple-tool:,apple:,codesign: -s ~/Library/Keychains/login.keychain-db`
-  lets it use the key.
-- Touch: a tap previews, a second watches full screen; the timeline pans
-  and flings (Now returns). A round ‹ top left, over the video (the
-  full-screen picture or the guide's preview), walks back the way a
-  remote's Back and Left do: full-screen video → the guide (or
-  multiview's grid) → the groups → the menu with Search, Live TV,
-  Playlists and Settings named; a swipe in from the left edge is Back
-  too. The header's ☰ also opens the groups;
-  a tap beside them, or on the video beside the channel list, closes
-  them. Settings has a Close button and the wizard a ‹ Back button; the
-  remote's key hints show only after a hardware keyboard's key. These
-  touch controls are the iPad's only: Android tablets keep their back
-  button's model.
-- Leaving the app stops the streams, as on Android, and coming back opens
-  them again.
-- Data lives in the app's `Library/Application Support/iptv-rs`.
-- Development: `IPTV_RS_DEV_PLAYLIST=<url>` while building adds that
-  playlist on the first start (a mock server on the Mac's LAN address for
-  a device); `nsh test <file>.test.tsx --target ios` drives the app in a
-  simulator. The simulator plays without sound (`ao=null`: its audio
-  output stalls mpv's clock or aborts on a reopen). mpv runs with
-  `profile=fast` on iOS: its default scalers took 117 ms a full-screen
-  frame on the simulator's OpenGL ES, `fast` 44 ms.
-- Size: the signed device app is about 69 MB (the executable 72 MB,
-  59 MB stripped), the IPA about 26 MB.
-
-## Tests
-
-`tools/check.sh` runs every host-side check (formatting, the crates'
-tests, the wasm builds, the app's build and tests); run it before
-committing.
-
-Every test binary is a link of its own, and the app's link NSH, GTK and
-libmpv, so each crate's integration tests are one binary: `tests/it/`
-(`tests/app/` in `iptv-app`), a module per topic, `main.rs` listing them.
-A test that needs process-wide state of its own stays a separate file in
-`tests/` (`iptv-store-sqlite`'s `epg_memory` and `epg_stream_memory`
-count allocations with a global allocator).
-
-The app's scenarios (`crates/iptv-app/tests/app/`) are headless runs of
-the whole app, and the app keeps its data under `$HOME` and holds
-process-wide state, so each still runs in a process of its own: its
-`#[test]` starts with
-
-```rust
-let Some(home) = isolated!() else { return };
-```
-
-which, under `cargo test`, runs the test binary again for just that test
-with a fresh, empty `$HOME`, forwards its output (shown when it fails, or
-with `--nocapture`) and fails if it fails (`tests/app/isolated.rs`). At
-most six scenario processes run at once; `IPTV_RS_TEST_JOBS=N` changes
-that. Under cargo-nextest, which runs every test in a process of its own,
-the scenario runs directly. Every scenario's local time is noon (a
-fixed-offset `TZ` for its process; timestamps stay real), so no guide it
-builds crosses midnight whenever the suite runs;
-`IPTV_RS_TEST_LOCAL_TIME=HH:MM` picks another time, e.g. `23:50` to see
-what crosses it. To add a scenario, write
-`tests/app/<name>.rs` with such a test and add `mod <name>;` to
-`tests/app/main.rs`. `cargo test -p iptv-app guide_look` runs one
-scenario (`-- --nocapture` shows its log).
-
-Debug builds keep full debug info for our crates only; other packages
-(crates.io and the NSH checkout) keep line tables (backtraces show
-file:line, a debugger no variables there), and debug info stays in the
-object files under `target/` (`split-debuginfo = "unpacked"`), which
-keeps the app's test binary at ~175 MB instead of ~1 GB (workspace
-`Cargo.toml`).
-
-## Before any public release
-
-- [x] Replace the placeholder palette with the original Patina ink/mineral theme (`crates/iptv-app/src/theme.rs`).
-- The application id `com.hantekllc.iptvrs` is final once uploaded to
-  Play. The name (Patina), icon and TV banner are in place (`art/icon`,
-  `tools/make-icons.py`).
-- See Phase 9 of the plan.
-
-## CI and release automation
-
-Pull requests run the host test suite on Linux and macOS and build Android.
-Version tags build Android tablet/TV APK and AAB, Apple silicon macOS DMG,
-and Linux x86_64 DEB, RPM, pkg.tar.zst and AppImage, then publish to GitHub
-Releases. Manual builds can select Android, desktop, both, or all platforms
-(adding iPad IPA when Apple signing is configured).
-See [setup, signing secrets and release limitations](docs/ci-release.md).
-
-To bump the version, run `python3 tools/bump-version.py patch` (also accepts
-`minor`, `major`, or `0.2.1`; preview with `--dry-run`). See
-[CI and releases](docs/ci-release.md) for the commit and tagging workflow.
+`python3 tools/bump-version.py patch` bumps the version. A `v<version>`
+tag builds and publishes the release.
 
 ## License
 
-This project is licensed under the GNU Affero General Public License version 3
-(`AGPL-3.0-only`). See [LICENSE](LICENSE) for the full text.
-
-Third-party components retain their own licenses, including the bundled fonts
-under the [SIL Open Font License](crates/iptv-app/fonts/OFL.txt).
+[AGPL-3.0-only](LICENSE). Bundled Roboto fonts are under the
+[SIL Open Font License](crates/iptv-app/fonts/OFL.txt). Packages that
+bundle FFmpeg and mpv carry their licences too.

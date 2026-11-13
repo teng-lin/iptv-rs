@@ -198,7 +198,7 @@ const TILE: &str = "id:multiview-tile";
 const MENU: &str = "id:multiview-menu";
 /// Channel Three's row in the channel list (All channels). The list stays
 /// mounted while hidden: what it did shows in the tiles.
-const ROW_THREE: &str = "text:3  Test Channel Three";
+const ROW_THREE: &str = "id:multiview-picker >> text:3  Test Channel Three";
 const TILE_THREE: &str = "id:multiview-tile >> text:/Test Channel Three$/";
 const TILE_TWO: &str = "id:multiview-tile >> text:/Test Channel Two$/";
 

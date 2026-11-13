@@ -70,7 +70,7 @@ pub fn context(ui: &Ui) -> Context {
     if overlay {
         return Context::Menu;
     }
-    if crate::channels_view::is_open(*ui) {
+    if crate::multiview_picker::is_open(*ui) || crate::channels_view::is_open(*ui) {
         return Context::ChannelList;
     }
     if crate::search_view::is_open(*ui) {
@@ -323,6 +323,10 @@ fn apply(ui: Ui, key: RemoteKey, action: Action, repeat: bool) {
             Action::Back | Action::ShowMenu => crate::menu_view::close(ui),
             _ => {}
         }
+        return;
+    }
+    if crate::multiview_picker::is_open(ui) {
+        crate::multiview_picker::key(ui, action);
         return;
     }
     if crate::channels_view::is_open(ui) {
