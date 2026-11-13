@@ -29,6 +29,12 @@ pub struct HttpRequest {
     /// expects them; matching is case-insensitive via [`HttpRequest::header`].
     pub headers: Vec<(String, String)>,
     pub body: Option<Vec<u8>>,
+    /// Remaining end-to-end import time. Adapters enforce it across response reads.
+    pub timeout: Option<std::time::Duration>,
+    /// Content-supplied destinations require public hosts and DNS answers.
+    pub public_only: bool,
+    /// A source/guide path the user explicitly selected.
+    pub picked_file: bool,
     /// Substrings of `url` that are secrets, replaced in `Debug` output.
     redact: Vec<String>,
 }
@@ -58,6 +64,9 @@ impl HttpRequest {
             url: url.into(),
             headers: Vec::new(),
             body: None,
+            timeout: None,
+            public_only: false,
+            picked_file: false,
             redact: Vec::new(),
         }
     }
@@ -89,9 +98,17 @@ impl HttpRequest {
         self
     }
 
-    /// The URL with credentials, tokens and identity values replaced by `***`.
-    /// Safe to log.
+    /// An origin for generic URLs, whose path and query may contain arbitrary
+    /// credentials. Provider requests explicitly register their known secrets
+    /// and retain their redacted API parameters for diagnostics.
     pub fn redacted_url(&self) -> String {
+        if self.redact.is_empty() {
+            return url::Url::parse(&self.url)
+                .ok()
+                .filter(|u| matches!(u.scheme(), "http" | "https"))
+                .map(|u| u.origin().ascii_serialization())
+                .unwrap_or_else(|| "[local or invalid URL]".into());
+        }
         let mut out = self.url.clone();
         for secret in &self.redact {
             out = out.replace(secret.as_str(), "***");
@@ -240,6 +257,31 @@ mod tests {
     fn response_debug_hides_body() {
         let resp = HttpResponse::ok(r#"{"user_info":{"password":"secret-synthetic"}}"#);
         assert!(!format!("{resp:?}").contains("secret"));
+    }
+
+    #[test]
+    fn generic_urls_never_show_path_query_fragment_or_user_info() {
+        let req = HttpRequest::get(
+            "https://synthetic-user:synthetic-pass@feed.example.test:8443/path-token/list?apikey=query-token#fragment-token",
+        );
+        assert_eq!(req.redacted_url(), "https://feed.example.test:8443");
+        for secret in [
+            "synthetic-user",
+            "synthetic-pass",
+            "path-token",
+            "query-token",
+            "fragment-token",
+        ] {
+            assert!(!format!("{req:?}").contains(secret));
+        }
+        assert_eq!(
+            HttpRequest::get("file:///private/path-token").redacted_url(),
+            "[local or invalid URL]"
+        );
+        assert_eq!(
+            HttpRequest::get("invalid-path-token").redacted_url(),
+            "[local or invalid URL]"
+        );
     }
 
     #[test]

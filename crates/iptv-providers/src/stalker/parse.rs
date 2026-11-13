@@ -2,6 +2,10 @@
 
 use std::collections::HashSet;
 
+#[path = "typed.rs"]
+mod typed;
+
+use crate::typed_row::Fields;
 use serde_json::Value;
 
 use super::StalkerPortal;
@@ -80,18 +84,12 @@ pub fn classify_auth_failure(response: &HttpResponse) -> Option<AuthFailure> {
     if let Some(body) = classify_body(&text) {
         return Some(AuthFailure::Body(body));
     }
-    let value: Value = serde_json::from_str(text.trim()).ok()?;
-    match value.get("js")? {
-        Value::String(s) => classify_body(s)
+    let probe = auth_probe(response);
+    probe.message.into_iter().chain(probe.error).find_map(|s| {
+        classify_body(&s)
             .map(AuthFailure::Body)
-            .or_else(|| is_auth_phrase(s).then(|| AuthFailure::Json(s.trim().to_owned()))),
-        Value::Object(js) => ["error", "msg"]
-            .iter()
-            .filter_map(|k| js.get(*k).and_then(Value::as_str))
-            .find(|s| is_auth_phrase(s))
-            .map(|s| AuthFailure::Json(s.trim().to_owned())),
-        _ => None,
-    }
+            .or_else(|| is_auth_phrase(&s).then(|| AuthFailure::Json(s.trim().to_owned())))
+    })
 }
 
 impl AuthFailure {
@@ -250,6 +248,7 @@ pub struct Page<T> {
 /// declared total, `cap` items, or 1000 pages.
 pub struct PagedCrawl<T> {
     items: Vec<T>,
+    emitted: usize,
     seen: HashSet<String>,
     next: Option<u32>,
     total: Option<u32>,
@@ -265,6 +264,7 @@ impl<T: HasProviderId> PagedCrawl<T> {
     pub fn new(cap: usize) -> Self {
         Self {
             items: Vec::new(),
+            emitted: 0,
             seen: HashSet::new(),
             next: Some(1),
             total: None,
@@ -283,22 +283,23 @@ impl<T: HasProviderId> PagedCrawl<T> {
         let Some(current) = self.next else { return };
         self.total = self.total.or(page.total_items);
         self.skipped += page.items.skipped;
-        let before = self.items.len();
+        let before = self.emitted;
         let was_empty = page.items.items.is_empty();
         for item in page.items.items {
-            if self.items.len() >= self.cap {
+            if self.emitted >= self.cap {
                 break;
             }
             if self.seen.insert(item.provider_key()) {
                 self.items.push(item);
+                self.emitted += 1;
             }
         }
-        let added = self.items.len() - before;
-        let reached_total = self.total.is_some_and(|t| self.items.len() >= t as usize);
+        let added = self.emitted - before;
+        let reached_total = self.total.is_some_and(|t| self.emitted >= t as usize);
         self.next = if was_empty
             || added == 0
             || reached_total
-            || self.items.len() >= self.cap
+            || self.emitted >= self.cap
             || current >= MAX_PAGES
         {
             None
@@ -310,6 +311,11 @@ impl<T: HasProviderId> PagedCrawl<T> {
     /// Stops the crawl (e.g. a page failed twice); keeps what was collected.
     pub fn abort(&mut self) {
         self.next = None;
+    }
+
+    /// Move completed rows to a sink while retaining only duplicate identities.
+    pub fn take_items(&mut self) -> Vec<T> {
+        std::mem::take(&mut self.items)
     }
 
     pub fn into_items(self) -> Vec<T> {
@@ -373,7 +379,7 @@ pub fn parse_genres(
     Ok(out)
 }
 
-fn link_flags(o: Obj<'_>) -> StalkerLinkFlags {
+fn link_flags(o: impl Fields) -> StalkerLinkFlags {
     let flag = |k: &str| o.has(k).then(|| o.flag(k));
     StalkerLinkFlags {
         use_http_tmp_link: flag("use_http_tmp_link"),
@@ -381,17 +387,11 @@ fn link_flags(o: Obj<'_>) -> StalkerLinkFlags {
     }
 }
 
-fn row_cmd(o: Obj<'_>) -> Option<String> {
-    o.text("cmd").or_else(|| {
-        o.raw("cmds")
-            .and_then(list_items)?
-            .into_iter()
-            .filter_map(Obj::of)
-            .find_map(|c| c.text("url").or_else(|| c.text("cmd")))
-    })
+fn row_cmd(o: impl Fields) -> Option<String> {
+    o.text("cmd").or_else(|| o.commands())
 }
 
-fn channel_row(o: Obj<'_>) -> Result<Channel, &'static str> {
+fn channel_row(o: impl Fields) -> Result<Channel, &'static str> {
     let id = o.str("id").ok_or("channel without id")?;
     let cmd = row_cmd(o).ok_or("channel without cmd")?;
     // `tv_archive_duration` is in hours on Stalker (assumption; see crate docs).
@@ -447,29 +447,16 @@ fn rows<T>(
     Ok(out)
 }
 
-fn page<T>(
-    js: &Value,
-    map: impl Fn(Obj<'_>) -> Result<T, &'static str>,
-) -> Result<Page<T>, ProviderError> {
-    let o = Obj::of(js);
-    Ok(Page {
-        items: rows(js, map)?,
-        total_items: o.and_then(|o| o.u32("total_items")),
-        max_page_items: o.and_then(|o| o.u32("max_page_items")).filter(|m| *m > 0),
-        selected_item: o.and_then(|o| o.u32("selected_item")),
-    })
-}
-
 /// `itv/get_ordered_list` page.
 pub fn parse_channel_page(response: &HttpResponse) -> Result<Page<Channel>, ProviderError> {
-    page(&js_payload(response)?, channel_row)
+    typed::page(response, |o| channel_row(o))
 }
 
 /// `itv/get_all_channels`: every channel in one response, de-duplicated by
 /// id. An empty list usually means "not implemented"; crawl pages instead.
 /// Adult genres are often missing here; fetch those with paged requests.
 pub fn parse_all_channels(response: &HttpResponse) -> Result<Import<Channel>, ProviderError> {
-    let mut out = rows(&js_payload(response)?, channel_row)?;
+    let mut out = rows(&js_payload(response)?, |o| channel_row(o))?;
     let mut seen = HashSet::new();
     let before = out.items.len();
     out.items.retain(|c| seen.insert(c.provider_key()));
@@ -477,12 +464,10 @@ pub fn parse_all_channels(response: &HttpResponse) -> Result<Import<Channel>, Pr
     Ok(out)
 }
 
-fn vod_row(o: Obj<'_>) -> Result<VodItem, &'static str> {
+fn vod_row(o: impl Fields) -> Result<VodItem, &'static str> {
     let id = o.str("id").ok_or("movie without id")?;
     let cmd = row_cmd(o).ok_or("movie without cmd")?;
-    let is_series = o.raw("is_series").is_some_and(|v| {
-        matches!(v, Value::Bool(true)) || v.as_u64() == Some(1) || v.as_str() == Some("1")
-    });
+    let is_series = o.series_flag();
     let rating = o.f64("rating_imdb").or_else(|| o.f64("rating_kinopoisk"));
     Ok(VodItem {
         id: ContentId::from_provider(
@@ -526,7 +511,7 @@ fn vod_row(o: Obj<'_>) -> Result<VodItem, &'static str> {
 /// `vod/get_ordered_list` page. Rows flagged `is_series` (`true`, `1`, `"1"`
 /// only) get series ids and `is_series = true`.
 pub fn parse_vod_page(response: &HttpResponse) -> Result<Page<VodItem>, ProviderError> {
-    page(&js_payload(response)?, vod_row)
+    typed::page(response, |o| vod_row(o))
 }
 
 /// Strips the `<solution> ` prefix (`ffmpeg http://…` → `http://…`) when the
@@ -798,4 +783,69 @@ mod tests {
         assert_eq!(c.next_page(), None);
         assert_eq!(c.into_items().len(), 3);
     }
+}
+
+// Auth classification must not materialise a catalog just to look for js.error.
+#[derive(Default)]
+struct AuthProbe {
+    message: Option<String>,
+    error: Option<String>,
+}
+use serde::{
+    Deserialize, Deserializer,
+    de::{self, IgnoredAny, MapAccess, SeqAccess, Visitor},
+};
+impl<'de> Deserialize<'de> for AuthProbe {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = AuthProbe;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("auth metadata")
+            }
+            fn visit_str<E: de::Error>(self, s: &str) -> Result<Self::Value, E> {
+                Ok(AuthProbe {
+                    message: Some(s.into()),
+                    error: None,
+                })
+            }
+            fn visit_map<A: MapAccess<'de>>(self, mut a: A) -> Result<Self::Value, A::Error> {
+                let mut p = AuthProbe::default();
+                while let Some(k) = a.next_key::<String>()? {
+                    match k.as_str() {
+                        "msg" => p.message = a.next_value::<crate::typed_row::Scalar>()?.string(),
+                        "error" => p.error = a.next_value::<crate::typed_row::Scalar>()?.string(),
+                        _ => {
+                            a.next_value::<IgnoredAny>()?;
+                        }
+                    }
+                }
+                Ok(p)
+            }
+            fn visit_seq<A: SeqAccess<'de>>(self, mut a: A) -> Result<Self::Value, A::Error> {
+                while a.next_element::<IgnoredAny>()?.is_some() {}
+                Ok(AuthProbe::default())
+            }
+            fn visit_bool<E: de::Error>(self, _: bool) -> Result<Self::Value, E> {
+                Ok(AuthProbe::default())
+            }
+            fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+                Ok(AuthProbe::default())
+            }
+        }
+        d.deserialize_any(V)
+    }
+}
+fn auth_probe(response: &HttpResponse) -> AuthProbe {
+    #[derive(Deserialize)]
+    struct Envelope {
+        js: AuthProbe,
+    }
+    let bytes = response
+        .body
+        .strip_prefix(b"\xEF\xBB\xBF")
+        .unwrap_or(&response.body);
+    serde_json::from_slice::<Envelope>(bytes)
+        .map(|e| e.js)
+        .unwrap_or_default()
 }

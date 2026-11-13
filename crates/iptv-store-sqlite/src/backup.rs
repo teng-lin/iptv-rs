@@ -126,6 +126,17 @@ impl Store {
     /// archived root; unrelated filesystem paths cannot silently become valid.
     /// The caller copies those files separately before activating the snapshot.
     pub fn rebase_local_playlists(&mut self, old_root: &Path, new_root: &Path) -> Result<()> {
+        let mut explicit_guides = std::collections::HashMap::new();
+        for summary in self.sources()? {
+            if let Some(source) = self.source(summary.id)?
+                && let iptv_providers::model::SourceConfig::Xtream(credentials) =
+                    source.source.config
+                && let Ok(client) =
+                    iptv_providers::xtream::XtreamClient::from_credentials(&credentials)
+            {
+                explicit_guides.insert(summary.id.0, client.xmltv_url());
+            }
+        }
         let tx = self.conn.transaction()?;
         let locations = {
             let mut statement = tx.prepare(
@@ -138,10 +149,13 @@ impl Store {
                 .collect::<std::result::Result<Vec<_>, _>>()?
         };
         for (source, location) in locations {
-            if location.contains("://") {
+            let Some(local) = iptv_providers::content_url::local_path(&location)
+                .map_err(|_| invalid("invalid local playlist URL"))?
+            else {
                 continue;
-            }
-            let relative = Path::new(&location)
+            };
+            let relative = local
+                .as_path()
                 .strip_prefix(old_root)
                 .map_err(|_| invalid("local playlist is outside the backup directory"))?;
             if relative.as_os_str().is_empty()
@@ -160,6 +174,69 @@ impl Store {
                  WHERE source_id = ?2 AND name = 'location'",
                 params![rebased, source],
             )?;
+        }
+        // Guide URLs are just as capable of naming local resources as a
+        // playlist location. Every local reference must stay inside the archive.
+        for table in ["guide_sources", "epg_feeds"] {
+            let guides = {
+                let provenance = if table == "guide_sources" {
+                    "provider_index IS NOT NULL"
+                } else {
+                    "content_supplied"
+                };
+                let mut statement = tx.prepare(&format!(
+                    "SELECT source_id, feed_id, url, {provenance} FROM {table}"
+                ))?;
+                statement
+                    .query_map([], |r| {
+                        Ok((
+                            r.get::<_, i64>(0)?,
+                            r.get::<_, u32>(1)?,
+                            r.get::<_, String>(2)?,
+                            r.get::<_, bool>(3)?,
+                        ))
+                    })?
+                    .collect::<std::result::Result<Vec<_>, _>>()?
+            };
+            for (source, feed, location, content_supplied) in guides {
+                let local = iptv_providers::content_url::local_path(&location)
+                    .map_err(|_| invalid("invalid guide URL"))?;
+                if let Some(local) = local {
+                    let relative = local
+                        .strip_prefix(old_root)
+                        .map_err(|_| invalid("local guide is outside backup directory"))?;
+                    if relative.as_os_str().is_empty()
+                        || relative
+                            .components()
+                            .any(|p| !matches!(p, Component::Normal(_)))
+                    {
+                        return Err(invalid("invalid local guide location"));
+                    }
+                    let rebased = new_root.join(relative);
+                    tx.execute(
+                        &format!("UPDATE {table} SET url=?1 WHERE source_id=?2 AND feed_id=?3"),
+                        params![
+                            rebased
+                                .to_str()
+                                .ok_or_else(|| invalid("guide path is not UTF-8"))?,
+                            source,
+                            feed
+                        ],
+                    )?;
+                } else {
+                    let explicit = !content_supplied
+                        || explicit_guides
+                            .get(&source)
+                            .is_some_and(|url| url == &location);
+                    let validate = if explicit {
+                        iptv_providers::content_url::validate_picked
+                    } else {
+                        iptv_providers::content_url::validate
+                    };
+                    validate(&location)
+                        .map_err(|_| invalid("backup guide URL violates its source policy"))?;
+                }
+            }
         }
         tx.commit()?;
         Ok(())

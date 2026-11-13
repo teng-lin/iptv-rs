@@ -63,6 +63,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "library_preferences",
         sql: include_str!("../migrations/0007_library_preferences.sql"),
     },
+    Migration {
+        version: 8,
+        name: "content_url_policy",
+        sql: include_str!("../migrations/0008_content_url_policy.sql"),
+    },
 ];
 
 /// The schema version this build writes.

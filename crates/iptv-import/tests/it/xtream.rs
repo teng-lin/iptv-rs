@@ -334,3 +334,29 @@ fn cancel_while_a_list_is_loading() {
     ));
     assert_eq!(err.unwrap_err(), ImportError::Cancelled);
 }
+
+#[test]
+fn optional_category_transport_failure_keeps_live_catalog() {
+    let sim = XtreamSim::default();
+    let fetch = FakeFetch::new(move |_, req| match req.param("action") {
+        Some("get_vod_categories" | "get_series_categories") => connect_error(),
+        _ => sim.handle(req).into(),
+    });
+    let catalog = run_with(&fetch, ImportOptions::new(synth::NOW).with_vod(true, true)).unwrap();
+    assert_eq!(catalog.channels.len(), 50);
+    assert!(!catalog.vod.is_empty());
+    assert!(
+        catalog
+            .vod
+            .iter()
+            .flat_map(|v| &v.groups)
+            .all(|id| catalog.groups.iter().any(|g| &g.id == id)),
+        "missing categories are synthesized from imported rows"
+    );
+    assert!(
+        catalog
+            .warnings
+            .iter()
+            .any(|w| w.step == Step::Categories(ContentKind::Movie))
+    );
+}

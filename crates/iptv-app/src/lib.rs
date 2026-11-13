@@ -11,6 +11,7 @@ mod backup;
 mod browse_playback;
 mod channels_view;
 mod chooser;
+mod content_image;
 mod custom_groups;
 mod data;
 mod desktop;

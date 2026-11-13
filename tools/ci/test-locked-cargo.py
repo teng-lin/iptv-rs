@@ -58,3 +58,29 @@ assert channel == expected, result.stdout
 assert Path(executable).is_absolute() and Path(executable).is_file(), result.stdout
 assert executable != str(root / "tools/ci/locked-cargo.py")
 print("nested toolchain pinned and real Cargo resolved outside the repository")
+
+# Runner graphs can contain multiple versions, so bare references must not be
+# ambiguous. Exercise this without invoking another Cargo/build executable.
+import runpy
+validate = runpy.run_path(str(root / "tools/ci/check-package-lock.py"))["validate_references"]
+packages = [
+    {"name": "synthetic-app", "version": "1", "dependencies": ["base64"]},
+    {"name": "base64", "version": "0.21.0"},
+    {"name": "base64", "version": "0.22.1"},
+]
+try:
+    validate(packages)
+except SystemExit as error:
+    assert "ambiguous" in str(error)
+else:
+    raise AssertionError("ambiguous runner dependency accepted")
+packages[0]["dependencies"] = ["base64 0.22.1"]
+validate(packages)
+packages[0]["dependencies"] = ["base64 0.22.1", "base64 0.21.0"]
+try:
+    validate(packages)
+except SystemExit as error:
+    assert "unsorted" in str(error)
+else:
+    raise AssertionError("noncanonical runner dependencies accepted")
+print("runner dependency references qualified and ordered")

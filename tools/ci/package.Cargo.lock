@@ -2504,6 +2504,7 @@ checksum = "791930b43c0d5973160d90a8f3894509f2b273430f5c5c73b668636d0287c5c0"
 name = "iptv-app"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "dispatch2",
  "env_logger",
  "futures-channel",
@@ -2545,6 +2546,7 @@ name = "iptv-epg"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "iptv-core",
  "memchr",
  "quick-xml",
  "unicode-normalization",
@@ -2564,9 +2566,11 @@ name = "iptv-import"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "iptv-core",
  "iptv-epg",
  "iptv-providers",
  "iptv-settings",
+ "serde_json",
 ]
 
 [[package]]
@@ -2591,7 +2595,9 @@ dependencies = [
 name = "iptv-providers"
 version = "0.1.0"
 dependencies = [
+ "iptv-core",
  "percent-encoding",
+ "serde",
  "serde_json",
  "sha1_smol",
  "url",

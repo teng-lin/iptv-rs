@@ -279,8 +279,8 @@ fn insert_feed(conn: &Connection, source: SourceId, f: &EpgFeedMeta) -> Result<(
     conn.prepare_cached(
         "INSERT INTO epg_feeds (source_id, feed_id, url, priority, user_agent,
              assumed_offset_minutes, shift_minutes, store_descriptions, past_days_to_keep,
-             fetched_at, etag, last_modified, bytes)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+             fetched_at, etag, last_modified, bytes, content_supplied)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
     )?
     .execute(params![
         source.0,
@@ -296,6 +296,7 @@ fn insert_feed(conn: &Connection, source: SourceId, f: &EpgFeedMeta) -> Result<(
         f.etag,
         f.last_modified,
         i64::try_from(f.bytes).unwrap_or(i64::MAX),
+        c.content_supplied,
     ])?;
     Ok(())
 }
@@ -540,11 +541,12 @@ impl Store {
         let mut stmt = self.conn.prepare_cached(
             "SELECT feed_id, url, priority, user_agent, assumed_offset_minutes, shift_minutes,
                  store_descriptions, past_days_to_keep, fetched_at, etag, last_modified, bytes,
-                 channel_count, programme_count
+                 channel_count, programme_count, content_supplied
              FROM epg_feeds WHERE source_id = ?1 ORDER BY priority DESC, feed_id",
         )?;
         let rows = stmt.query_map([source.0], |r| {
             let config = EpgSourceConfig {
+                content_supplied: r.get(14)?,
                 id: iptv_epg::SourceId(r.get(0)?),
                 url: SecretUrl::new(r.get::<_, String>(1)?),
                 priority: r.get(2)?,

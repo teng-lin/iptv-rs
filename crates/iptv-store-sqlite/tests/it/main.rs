@@ -32,3 +32,5 @@ mod personalization;
 mod playlists;
 mod redaction;
 mod search;
+
+mod catalog_stage;

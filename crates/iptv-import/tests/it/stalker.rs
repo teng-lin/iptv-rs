@@ -248,7 +248,10 @@ fn channel_cap_bounds_the_crawl() {
     });
     let mut opts = ImportOptions::new(synth::NOW);
     opts.stalker_channel_cap = 20;
-    assert_eq!(run_with(&fetch, opts).unwrap().channels.len(), 20);
+    assert!(matches!(
+        run_with(&fetch, opts),
+        Err(ImportError::Limit { .. })
+    ));
 }
 
 #[test]
@@ -320,4 +323,54 @@ fn a_link_on_an_unreachable_portal_is_a_typed_failure() {
     .unwrap_err();
     assert_eq!(err.kind(), FailureKind::Network);
     assert_eq!(err.step(), Some(Step::StreamLink));
+}
+
+#[test]
+fn unsafe_optional_vod_rolls_back_active_sink_step_and_fails_import() {
+    #[derive(Default)]
+    struct Sink {
+        active: bool,
+        rolled_back: bool,
+    }
+    impl iptv_import::CatalogSink for Sink {
+        fn begin_step(&mut self) -> Result<(), iptv_import::SinkError> {
+            assert!(!self.active);
+            self.active = true;
+            Ok(())
+        }
+        fn push(&mut self, _: iptv_import::CatalogRow) -> Result<(), iptv_import::SinkError> {
+            Ok(())
+        }
+        fn end_step(&mut self, success: bool) -> Result<(), iptv_import::SinkError> {
+            self.active = false;
+            self.rolled_back |= !success;
+            Ok(())
+        }
+        fn finish(&mut self) -> Result<(), iptv_import::SinkError> {
+            Ok(())
+        }
+    }
+    let sim = StalkerSim::default();
+    let fetch = FakeFetch::new(move |_, req| {
+        if req.param("type") == Some("vod") && req.param("action") == Some("get_ordered_list") {
+            SimResponse::ok(r#"{"js":{"data":[{"id":1,"name":"Synthetic","cmd":"http://10.0.0.1/private","use_http_tmp_link":0,"use_load_balancing":0}],"total_items":1,"max_page_items":1}}"#).into()
+        } else {
+            sim.handle(req).into()
+        }
+    });
+    let mut sink = Sink::default();
+    let result = block_on(iptv_import::import_source_into(
+        &fetch,
+        &config(),
+        &ImportOptions::new(synth::NOW).with_vod(true, false),
+        &mut NoProgress,
+        &CancelToken::new(),
+        &mut sink,
+    ));
+    assert!(
+        matches!(result, Err(ImportError::InvalidConfig(_))),
+        "{result:?}"
+    );
+    assert!(!sink.active);
+    assert!(sink.rolled_back);
 }

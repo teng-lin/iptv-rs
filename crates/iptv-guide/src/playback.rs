@@ -201,6 +201,7 @@ impl StalkerLink {
         channel_headers: &[(String, String)],
     ) -> PlaySource {
         PlaySource {
+            public_only: true,
             headers: session.playback_headers(&url),
             url,
         }
@@ -243,7 +244,16 @@ fn channel_headers(channel: &Channel) -> &[(String, String)] {
 
 fn source(context: Option<&PlaybackContext>, url: String, channel: &Channel) -> PlaySource {
     let headers = context.map_or_else(Vec::new, |c| c.headers(&url));
-    PlaySource { url, headers }.with_headers(channel_headers(channel))
+    let public_only = !matches!(
+        (&channel.stream, context.map(|c| &c.inner)),
+        (StreamLocator::Xtream { .. }, Some(Inner::Xtream { .. }))
+    );
+    PlaySource {
+        url,
+        headers,
+        public_only,
+    }
+    .with_headers(channel_headers(channel))
 }
 
 fn live(context: Option<&PlaybackContext>, channel: &Channel, clock: Clock) -> Resolution {

@@ -1,0 +1,24 @@
+[package]
+name = "iptv-import-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+members = ["."]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+iptv-import = { path = "../crates/iptv-import" }
+iptv-providers = { path = "../crates/iptv-providers" }
+iptv-epg = { path = "../crates/iptv-epg" }
+
+[[bin]]
+name = "imports"
+path = "fuzz_targets/imports.rs"
+test = false
+doc = false
+bench = false

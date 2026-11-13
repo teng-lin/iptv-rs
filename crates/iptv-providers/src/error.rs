@@ -9,6 +9,7 @@ use std::fmt;
 /// Why a provider request or response could not be turned into a result.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProviderError {
+    Limit(iptv_core::import_limits::LimitExceeded),
     /// The source configuration is unusable (bad URL, blank credentials).
     InvalidConfig(String),
     /// The server answered with a non-success HTTP status.
@@ -26,6 +27,7 @@ pub enum ProviderError {
 impl fmt::Display for ProviderError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Limit(error) => error.fmt(f),
             Self::InvalidConfig(why) => write!(f, "invalid source configuration: {why}"),
             Self::HttpStatus(code) => write!(f, "HTTP status {code}"),
             Self::InvalidBody(why) => write!(f, "unexpected response: {why}"),

@@ -1,36 +1,27 @@
-//! Xtream Codes import: account probes → live categories + streams, then
-//! optional VOD and series lists.
-//!
-//! Live streams are required; live categories and the optional lists only
-//! add warnings when they fail. An account object where a list was expected
-//! is an authentication failure, never an empty catalog.
-
-use iptv_providers::model::{ContentKind, XtreamCredentials};
-use iptv_providers::xtream::{
-    AccountInfo, AccountStatus, XtreamClient, parse_account_info, parse_categories,
-    parse_live_streams, parse_series_list, parse_vod_streams,
-};
-use iptv_providers::{HttpRequest, HttpResponse, ProviderError, SecretUrl};
-
+//! Xtream lists stream through typed row parsing into a private catalog sink.
 use crate::catalog::{Catalog, ImportOptions, SourceMeta};
 use crate::ctx::Ctx;
 use crate::error::{AuthProblem, ImportError, Step};
 use crate::fetch::Fetch;
-use crate::progress::{Phase, Progress, ProgressSink};
+use crate::progress::{Phase, ProgressSink};
+use crate::{CatalogRow, CatalogSink, ImportLimits, LimitExceeded, LimitKind};
+use iptv_providers::model::{ContentKind, XtreamCredentials};
+use iptv_providers::xtream::{
+    AccountInfo, AccountStatus, ListKind, XtreamClient, XtreamListParser, parse_account_info,
+};
+use iptv_providers::{HttpRequest, SecretUrl};
 
 pub(crate) async fn import_xtream<F: Fetch, P: ProgressSink>(
     ctx: &mut Ctx<'_, F, P>,
     creds: &XtreamCredentials,
     opts: &ImportOptions,
 ) -> Result<Catalog, ImportError> {
-    let client = XtreamClient::from_credentials(creds).map_err(|e| match e {
-        ProviderError::InvalidConfig(why) => ImportError::InvalidConfig(why),
-        other => ImportError::InvalidConfig(other.to_string()),
-    })?;
+    let client = XtreamClient::from_credentials(creds)
+        .map_err(|e| ImportError::InvalidConfig(e.to_string()))?;
     ctx.phase(Phase::Account);
     let account = account(ctx, &client, opts.now).await?;
     let mut catalog = Catalog::new(SourceMeta::Xtream {
-        base_url: client.base_url().to_owned(),
+        base_url: client.base_url().into(),
         xmltv_url: SecretUrl::new(client.xmltv_url()),
         account: account.clone(),
     });
@@ -40,63 +31,85 @@ pub(crate) async fn import_xtream<F: Fetch, P: ProgressSink>(
             "the panel did not report account details",
         );
     }
-
-    let live = ContentKind::Live;
-    groups(ctx, &mut catalog, live, client.live_categories()).await?;
-    ctx.phase(Phase::Items(live));
-    let resp = list_response(ctx, Step::Items(live), client.live_streams(None)).await?;
-    let streams =
-        parse_live_streams(&resp).map_err(|e| ImportError::provider(Step::Items(live), e))?;
-    drop(resp);
-    catalog.channels = catalog.absorb(Step::Items(live), None, streams);
-    let referenced: Vec<_> = catalog
-        .channels
-        .iter()
-        .flat_map(|c| c.groups.clone())
-        .collect();
-    catalog.add_missing_groups(live, referenced.iter());
-    items_done(ctx, live, catalog.channels.len());
-
-    if opts.include_vod {
-        let kind = ContentKind::Movie;
-        let r = groups(ctx, &mut catalog, kind, client.vod_categories()).await;
-        soften(&mut catalog, r)?;
-        let r = async {
-            let resp = list_response(ctx, Step::Items(kind), client.vod_streams(None)).await?;
-            parse_vod_streams(&resp).map_err(|e| ImportError::provider(Step::Items(kind), e))
+    for (kind, enabled, categories, items, list_kind) in [
+        (
+            ContentKind::Live,
+            true,
+            client.live_categories(),
+            client.live_streams(None),
+            ListKind::Live,
+        ),
+        (
+            ContentKind::Movie,
+            opts.include_vod,
+            client.vod_categories(),
+            client.vod_streams(None),
+            ListKind::Vod,
+        ),
+        (
+            ContentKind::Series,
+            opts.include_series,
+            client.series_categories(),
+            client.series(None),
+            ListKind::Series,
+        ),
+    ] {
+        if !enabled {
+            continue;
         }
+        let groups = stream_list(
+            ctx,
+            &mut catalog,
+            Step::Categories(kind),
+            Phase::Groups(kind),
+            categories,
+            ListKind::Categories(kind),
+        )
         .await;
-        if let Some(items) = soften(&mut catalog, r)? {
-            catalog.vod = catalog.absorb(Step::Items(kind), None, items);
-            let referenced: Vec<_> = catalog.vod.iter().flat_map(|v| v.groups.clone()).collect();
-            catalog.add_missing_groups(kind, referenced.iter());
-            items_done(ctx, kind, catalog.vod.len());
+        if let Err(e) = groups {
+            if e.is_fatal()
+                || (kind == ContentKind::Live
+                    && matches!(e, ImportError::Network { .. } | ImportError::Auth { .. }))
+            {
+                return Err(e);
+            }
+            catalog.warn(Step::Categories(kind), e.to_string());
         }
-    }
-    if opts.include_series {
-        let kind = ContentKind::Series;
-        let r = groups(ctx, &mut catalog, kind, client.series_categories()).await;
-        soften(&mut catalog, r)?;
-        let r = async {
-            let resp = list_response(ctx, Step::Items(kind), client.series(None)).await?;
-            parse_series_list(&resp).map_err(|e| ImportError::provider(Step::Items(kind), e))
-        }
+        let result = stream_list(
+            ctx,
+            &mut catalog,
+            Step::Items(kind),
+            Phase::Items(kind),
+            items,
+            list_kind,
+        )
         .await;
-        if let Some(items) = soften(&mut catalog, r)? {
-            catalog.series = catalog.absorb(Step::Items(kind), None, items);
-            let referenced: Vec<_> = catalog
+        if kind == ContentKind::Live {
+            result?;
+        } else {
+            soften(&mut catalog, result)?;
+        }
+        // A staged catalog synthesizes missing groups in SQL. The in-memory
+        // compatibility API keeps its existing placeholder-group behaviour.
+        let referenced: Vec<_> = match kind {
+            ContentKind::Live => catalog
+                .channels
+                .iter()
+                .flat_map(|c| c.groups.clone())
+                .collect(),
+            ContentKind::Movie => catalog.vod.iter().flat_map(|c| c.groups.clone()).collect(),
+            ContentKind::Series => catalog
                 .series
                 .iter()
-                .flat_map(|s| s.groups.clone())
-                .collect();
-            catalog.add_missing_groups(kind, referenced.iter());
-            items_done(ctx, kind, catalog.series.len());
-        }
+                .flat_map(|c| c.groups.clone())
+                .collect(),
+            _ => Vec::new(),
+        };
+        catalog.add_missing_groups(kind, referenced.iter());
     }
-
     if catalog.is_empty() {
         return Err(ImportError::Empty {
-            step: Step::Items(live),
+            step: Step::Items(ContentKind::Live),
         });
     }
     catalog.set_transport_stats(&ctx.stats);
@@ -104,10 +117,120 @@ pub(crate) async fn import_xtream<F: Fetch, P: ProgressSink>(
     Ok(catalog)
 }
 
-fn items_done<F: Fetch, P: ProgressSink>(ctx: &mut Ctx<'_, F, P>, kind: ContentKind, n: usize) {
-    let mut p = Progress::phase(Phase::Items(kind));
-    p.items = n as u64;
-    ctx.report(p);
+pub(crate) fn accept_row(
+    catalog: &mut Catalog,
+    sink: &mut Option<&mut dyn CatalogSink>,
+    row: CatalogRow,
+    limits: ImportLimits,
+    allow_private: bool,
+) -> Result<(), ImportError> {
+    let stream = match &row {
+        CatalogRow::Channel(c) => Some(&c.stream),
+        CatalogRow::Vod(v) => Some(&v.stream),
+        _ => None,
+    };
+    if !allow_private && let Some(stream) = stream {
+        crate::validate_stream(stream)?;
+    }
+    if !matches!(row, CatalogRow::Group(_)) {
+        catalog.stats.content_items = catalog.stats.content_items.saturating_add(1);
+        LimitExceeded::check(LimitKind::Items, catalog.stats.content_items, limits.items).map_err(
+            |error| ImportError::Limit {
+                step: Step::Playlist,
+                error,
+            },
+        )?;
+    }
+    if let Some(sink) = sink {
+        sink.push(row)
+            .map_err(|e| ImportError::Storage(e.to_string()))?;
+    } else {
+        match row {
+            CatalogRow::Group(v) => catalog.groups.push(v),
+            CatalogRow::Channel(v) => catalog.channels.push(v),
+            CatalogRow::Vod(v) => catalog.vod.push(v),
+            CatalogRow::Series(v) => catalog.series.push(v),
+        }
+    }
+    Ok(())
+}
+async fn stream_list<F: Fetch, P: ProgressSink>(
+    ctx: &mut Ctx<'_, F, P>,
+    catalog: &mut Catalog,
+    step: Step,
+    phase: Phase,
+    req: HttpRequest,
+    kind: ListKind,
+) -> Result<(), ImportError> {
+    let mut sink = ctx.catalog_sink.take();
+    if let Some(s) = &mut sink {
+        s.begin_step()
+            .map_err(|e| ImportError::Storage(e.to_string()))?;
+    }
+    let before = (
+        catalog.groups.len(),
+        catalog.channels.len(),
+        catalog.vod.len(),
+        catalog.series.len(),
+        catalog.stats.content_items,
+    );
+    let limits = ctx.limits;
+    #[cfg(not(debug_assertions))]
+    let allow_private = false;
+    #[cfg(debug_assertions)]
+    let allow_private = ctx.allow_private_fixture;
+    let mut parser = XtreamListParser::new(kind, limits);
+    let mut failure = None;
+    let mut count = 0;
+    let result = ctx
+        .stream(step, phase, req, |bytes| {
+            parser
+                .feed(bytes, &mut |row| {
+                    if failure.is_none() {
+                        match accept_row(catalog, &mut sink, row, limits, allow_private) {
+                            Ok(()) => count += 1,
+                            Err(error) => failure = Some(error),
+                        }
+                    }
+                })
+                .map_err(|e| ImportError::provider(step, e))?;
+            if let Some(error) = failure.take() {
+                return Err(error);
+            }
+            Ok(count)
+        })
+        .await
+        .and_then(|_| {
+            parser
+                .finish(&mut |row| {
+                    if failure.is_none() {
+                        match accept_row(catalog, &mut sink, row, limits, allow_private) {
+                            Ok(()) => count += 1,
+                            Err(error) => failure = Some(error),
+                        }
+                    }
+                })
+                .map_err(|e| ImportError::provider(step, e))?;
+            failure.map_or(Ok(()), Err)
+        });
+    if let Some(s) = &mut sink {
+        s.end_step(result.is_ok())
+            .map_err(|e| ImportError::Storage(e.to_string()))?;
+    }
+    ctx.catalog_sink = sink;
+    if result.is_err() {
+        catalog.groups.truncate(before.0);
+        catalog.channels.truncate(before.1);
+        catalog.vod.truncate(before.2);
+        catalog.series.truncate(before.3);
+        catalog.stats.content_items = before.4;
+    }
+    let _ = catalog.absorb(step, None, parser.take_warnings());
+    result?;
+    let mut progress = crate::Progress::phase(phase);
+    progress.items = count;
+    ctx.report(progress);
+    Ok(())
 }
 
 /// The result of an optional step: non-fatal failures become catalog warnings.
@@ -122,49 +245,6 @@ pub(crate) fn soften<T>(
             let at = e.step().unwrap_or(Step::AccountInfo);
             catalog.warn(at, e.to_string());
             Ok(None)
-        }
-    }
-}
-
-/// A list response that must be a success.
-async fn list_response<F: Fetch, P: ProgressSink>(
-    ctx: &mut Ctx<'_, F, P>,
-    step: Step,
-    req: HttpRequest,
-) -> Result<HttpResponse, ImportError> {
-    let resp = ctx.send(step, req).await?;
-    if !resp.is_success() {
-        return Err(ImportError::http(step, resp.status));
-    }
-    Ok(resp)
-}
-
-/// Categories of one kind. Failures other than network, auth and
-/// cancellation are warnings: items still import (with placeholder groups).
-async fn groups<F: Fetch, P: ProgressSink>(
-    ctx: &mut Ctx<'_, F, P>,
-    catalog: &mut Catalog,
-    kind: ContentKind,
-    req: HttpRequest,
-) -> Result<(), ImportError> {
-    let step = Step::Categories(kind);
-    ctx.phase(Phase::Groups(kind));
-    let parsed = match list_response(ctx, step, req).await {
-        Ok(resp) => parse_categories(&resp, kind).map_err(|e| ImportError::provider(step, e)),
-        Err(e) => Err(e),
-    };
-    match parsed {
-        Ok(import) => {
-            let items = catalog.absorb(step, None, import);
-            catalog.groups.extend(items);
-            Ok(())
-        }
-        Err(
-            e @ (ImportError::Cancelled | ImportError::Network { .. } | ImportError::Auth { .. }),
-        ) => Err(e),
-        Err(e) => {
-            catalog.warn(step, e.to_string());
-            Ok(())
         }
     }
 }

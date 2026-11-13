@@ -4,6 +4,7 @@
 //! (capped by [`ParseOptions::max_element_bytes`]) plus one input chunk: only
 //! the unfinished tail of the input is kept between calls.
 
+use iptv_core::import_limits::{ImportLimits, LimitExceeded, LimitKind};
 use quick_xml::Reader;
 use quick_xml::events::{BytesRef, BytesStart, Event};
 
@@ -14,6 +15,7 @@ use crate::xmltv::{EpisodeNum, Rating, XmltvChannel, XmltvItem, XmltvProgramme};
 /// Parser settings, usually one per EPG source.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParseOptions {
+    pub limits: ImportLimits,
     pub time: TimePolicy,
     pub compression: Compression,
     /// Keep `<desc>` text. Off saves memory when descriptions are not stored.
@@ -25,6 +27,7 @@ pub struct ParseOptions {
 impl Default for ParseOptions {
     fn default() -> Self {
         ParseOptions {
+            limits: ImportLimits::default(),
             time: TimePolicy::UTC,
             compression: Compression::Auto,
             descriptions: true,
@@ -109,6 +112,7 @@ pub struct XmltvParser {
     buf: Vec<u8>,
     stats: ParseStats,
     done: bool,
+    record_error: Option<LimitExceeded>,
     /// Set when the last pass stopped inside unfinished markup.
     stall: Option<Stall>,
 }
@@ -129,11 +133,12 @@ const PLAIN_SLICE: usize = 64 * 1024;
 impl XmltvParser {
     pub fn new(opts: ParseOptions) -> Self {
         XmltvParser {
-            decoder: InputDecoder::new(opts.compression),
+            decoder: InputDecoder::with_limits(opts.compression, opts.limits),
             opts,
             buf: Vec::new(),
             stats: ParseStats::default(),
             done: false,
+            record_error: None,
             stall: None,
         }
     }
@@ -146,10 +151,17 @@ impl XmltvParser {
         bytes: &[u8],
         sink: &mut impl FnMut(XmltvItem),
     ) -> Result<(), DecodeError> {
+        self.check_limits()?;
         if self.done {
             return Ok(());
         }
-        self.stats.bytes_in += bytes.len() as u64;
+        self.stats.bytes_in = self.stats.bytes_in.saturating_add(bytes.len() as u64);
+        LimitExceeded::check(
+            LimitKind::InputBytes,
+            self.stats.bytes_in,
+            self.opts.limits.input_bytes,
+        )
+        .map_err(DecodeError::Limit)?;
         let mut rest = bytes;
         while !rest.is_empty() {
             // Until the stream is known to be plain, assume it may inflate.
@@ -162,6 +174,7 @@ impl XmltvParser {
             rest = tail;
             let r = self.decoder.push(piece, &mut self.buf);
             self.process(false, sink);
+            self.check_limits()?;
             if let Err(e) = r {
                 self.done = true;
                 self.sync_decoder_stats();
@@ -174,14 +187,34 @@ impl XmltvParser {
     /// Signals end of input, flushes the remaining records and returns the
     /// totals.
     pub fn finish(&mut self, sink: &mut impl FnMut(XmltvItem)) -> Result<ParseStats, DecodeError> {
+        self.check_limits()?;
         if !self.done {
             self.done = true;
             let r = self.decoder.finish(&mut self.buf);
             self.process(true, sink);
+            self.check_limits()?;
             self.sync_decoder_stats();
             r?;
         }
         Ok(self.stats)
+    }
+
+    fn check_limits(&self) -> Result<(), DecodeError> {
+        if let Some(error) = self.record_error {
+            return Err(DecodeError::Limit(error));
+        }
+        LimitExceeded::check(
+            LimitKind::Items,
+            self.stats.channels.saturating_add(self.stats.programmes),
+            self.opts.limits.items,
+        )
+        .map_err(DecodeError::Limit)?;
+        LimitExceeded::check(
+            LimitKind::RecordBytes,
+            self.buf.len() as u64,
+            self.opts.limits.record_bytes as u64,
+        )
+        .map_err(DecodeError::Limit)
     }
 
     pub fn stats(&self) -> ParseStats {
@@ -238,6 +271,16 @@ impl XmltvParser {
                 let ev_start = base + reader.buffer_position() as usize;
                 let event = reader.read_event();
                 let pos = base + reader.buffer_position() as usize;
+                if el
+                    .as_ref()
+                    .is_some_and(|e| pos.saturating_sub(e.start) > self.opts.limits.record_bytes)
+                {
+                    self.record_error = Some(LimitExceeded {
+                        kind: LimitKind::RecordBytes,
+                        maximum: self.opts.limits.record_bytes as u64,
+                    });
+                    return;
+                }
                 match event {
                     Ok(Event::Eof) => break,
                     Ok(ev) => {
@@ -250,6 +293,13 @@ impl XmltvParser {
                         };
                         if finished {
                             if let Some(e) = el.take() {
+                                if pos.saturating_sub(e.start) > self.opts.limits.record_bytes {
+                                    self.record_error = Some(LimitExceeded {
+                                        kind: LimitKind::RecordBytes,
+                                        maximum: self.opts.limits.record_bytes as u64,
+                                    });
+                                    return;
+                                }
                                 e.finish(&mut self.stats, sink);
                             }
                             committed = pos;

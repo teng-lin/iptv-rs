@@ -1,5 +1,6 @@
 //! Shared request plumbing: cancellation, counters, progress.
 
+use iptv_core::import_limits::{ImportLimits, LimitExceeded, LimitKind};
 use iptv_providers::{HttpRequest, HttpResponse};
 
 use crate::cancel::{CancelToken, check, or_cancel};
@@ -13,6 +14,11 @@ pub(crate) struct Ctx<'a, F, P> {
     pub cancel: &'a CancelToken,
     pub progress: &'a mut P,
     pub stats: ImportStats,
+    pub catalog_sink: Option<&'a mut dyn crate::CatalogSink>,
+    pub limits: ImportLimits,
+    #[cfg(debug_assertions)]
+    pub allow_private_fixture: bool,
+    started: std::time::Duration,
 }
 
 impl<'a, F: Fetch, P: ProgressSink> Ctx<'a, F, P> {
@@ -22,6 +28,11 @@ impl<'a, F: Fetch, P: ProgressSink> Ctx<'a, F, P> {
             cancel,
             progress,
             stats: ImportStats::default(),
+            catalog_sink: None,
+            limits: ImportLimits::default(),
+            #[cfg(debug_assertions)]
+            allow_private_fixture: false,
+            started: fetch.elapsed(),
         }
     }
 
@@ -34,7 +45,20 @@ impl<'a, F: Fetch, P: ProgressSink> Ctx<'a, F, P> {
     }
 
     pub fn check(&self) -> Result<(), ImportError> {
-        check(self.cancel)
+        check(self.cancel)?;
+        LimitExceeded::check(
+            LimitKind::Elapsed,
+            self.fetch
+                .elapsed()
+                .saturating_sub(self.started)
+                .as_millis()
+                .min(u64::MAX as u128) as u64,
+            self.limits.elapsed.as_millis().min(u64::MAX as u128) as u64,
+        )
+        .map_err(|error| ImportError::Limit {
+            step: Step::Playlist,
+            error,
+        })
     }
 
     /// A buffered request. Network failures carry `step`; HTTP status is
@@ -42,14 +66,51 @@ impl<'a, F: Fetch, P: ProgressSink> Ctx<'a, F, P> {
     pub async fn send(
         &mut self,
         step: Step,
-        req: HttpRequest,
+        mut req: HttpRequest,
     ) -> Result<HttpResponse, ImportError> {
-        let resp = or_cancel(self.cancel, self.fetch.fetch(req))
+        self.check()?;
+        req.timeout = Some(
+            self.limits
+                .elapsed
+                .saturating_sub(self.fetch.elapsed().saturating_sub(self.started)),
+        );
+        let resp = or_cancel(self.cancel, self.fetch.fetch_stream(req))
             .await?
             .map_err(|error| ImportError::Network { step, error })?;
         self.stats.requests += 1;
-        self.stats.bytes += resp.body.len() as u64;
-        Ok(resp)
+        let status = resp.status;
+        let mut body = resp.body;
+        let mut bytes = Vec::new();
+        loop {
+            self.check()?;
+            let Some(chunk) = or_cancel(self.cancel, body.next_chunk())
+                .await?
+                .map_err(|error| ImportError::Network { step, error })?
+            else {
+                break;
+            };
+            self.account_bytes(step, chunk.len())?;
+            // Only small probes and metadata use this path; list endpoints stream.
+            LimitExceeded::check(
+                LimitKind::RecordBytes,
+                bytes.len().saturating_add(chunk.len()) as u64,
+                self.limits.input_bytes.min(128 << 20),
+            )
+            .map_err(|error| ImportError::Limit { step, error })?;
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(HttpResponse::new(status, bytes))
+    }
+
+    fn account_bytes(&mut self, step: Step, bytes: usize) -> Result<(), ImportError> {
+        self.check()?;
+        self.stats.bytes = self.stats.bytes.saturating_add(bytes as u64);
+        LimitExceeded::check(
+            LimitKind::InputBytes,
+            self.stats.bytes,
+            self.limits.input_bytes,
+        )
+        .map_err(|error| ImportError::Limit { step, error })
     }
 
     /// A streamed request whose body goes to `sink` chunk by chunk.
@@ -58,9 +119,15 @@ impl<'a, F: Fetch, P: ProgressSink> Ctx<'a, F, P> {
         &mut self,
         step: Step,
         phase: Phase,
-        req: HttpRequest,
+        mut req: HttpRequest,
         mut sink: impl FnMut(&[u8]) -> Result<u64, ImportError>,
     ) -> Result<u64, ImportError> {
+        self.check()?;
+        req.timeout = Some(
+            self.limits
+                .elapsed
+                .saturating_sub(self.fetch.elapsed().saturating_sub(self.started)),
+        );
         let resp: StreamingResponse<F::Body> = or_cancel(self.cancel, self.fetch.fetch_stream(req))
             .await?
             .map_err(|error| ImportError::Network { step, error })?;
@@ -73,12 +140,13 @@ impl<'a, F: Fetch, P: ProgressSink> Ctx<'a, F, P> {
         progress.total_bytes = resp.content_length;
         let mut last_report = 0;
         loop {
+            self.check()?;
             let chunk = or_cancel(self.cancel, body.next_chunk())
                 .await?
                 .map_err(|error| ImportError::Network { step, error })?;
             let Some(chunk) = chunk else { break };
             progress.bytes += chunk.len() as u64;
-            self.stats.bytes += chunk.len() as u64;
+            self.account_bytes(step, chunk.len())?;
             progress.items = sink(&chunk)?;
             if progress.bytes - last_report >= REPORT_EVERY_BYTES {
                 last_report = progress.bytes;

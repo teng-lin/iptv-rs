@@ -98,7 +98,11 @@ async fn redirects_relative_cross_origin_and_cross_protocol() {
         _ => Resp::status(404),
     })
     .await;
-    let net = client();
+    let net = NetClient::new(NetConfig {
+        allow_private_fixture: true,
+        ..Default::default()
+    })
+    .unwrap();
     let resp = net
         .fetch(
             HttpRequest::get(origin.url("/rel?username=demo-user&password=synthetic-pass"))
@@ -138,6 +142,7 @@ async fn redirects_relative_cross_origin_and_cross_protocol() {
     let to = target.url("/plain");
     let secure = TestServer::https(move |_| Resp::redirect(302, &to), acceptor).await;
     let trusting = NetClient::new(NetConfig {
+        allow_private_fixture: true,
         extra_roots_der: vec![der],
         ..NetConfig::default()
     })
@@ -159,6 +164,7 @@ async fn tls_uses_webpki_roots_plus_extra_roots() {
         .unwrap_err();
     assert_eq!(err.kind, FetchErrorKind::Tls, "{err}");
     let trusting = NetClient::new(NetConfig {
+        allow_private_fixture: true,
         extra_roots_der: vec![der],
         ..NetConfig::default()
     })
@@ -272,25 +278,25 @@ async fn buffered_bodies_are_bounded() {
 
 #[tokio::test]
 async fn local_files_and_unsupported_requests() {
+    fn picked(value: impl Into<String>) -> HttpRequest {
+        let mut req = HttpRequest::get(value);
+        req.picked_file = true;
+        req
+    }
     let dir = std::env::temp_dir().join(format!("iptv-net-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("list.m3u");
     std::fs::write(&path, b"#EXTM3U\n#EXTINF:-1,Local\nhttp://127.0.0.1/1.ts\n").unwrap();
     let net = client();
     let by_url = net
-        .fetch(HttpRequest::get(format!("file://{}", path.display())))
+        .fetch(picked(format!("file://{}", path.display())))
         .await
         .unwrap();
-    let by_path = net
-        .fetch(HttpRequest::get(path.display().to_string()))
-        .await
-        .unwrap();
+    let by_path = net.fetch(picked(path.display().to_string())).await.unwrap();
     assert_eq!(by_url.body, by_path.body);
     assert!(by_url.body.starts_with(b"#EXTM3U"));
     let err = net
-        .fetch(HttpRequest::get(
-            dir.join("missing.m3u").display().to_string(),
-        ))
+        .fetch(picked(dir.join("missing.m3u").display().to_string()))
         .await
         .unwrap_err();
     assert_eq!(err.kind, FetchErrorKind::Io);
@@ -306,19 +312,19 @@ async fn local_files_and_unsupported_requests() {
     })
     .unwrap();
     let err = no_files
-        .fetch(HttpRequest::get("file:///etc/hostname"))
+        .fetch(picked("file:///etc/hostname"))
         .await
         .unwrap_err();
     assert_eq!(err.kind, FetchErrorKind::Unsupported);
     let err = net
-        .fetch(HttpRequest::get("ftp://files.example.com/x.m3u"))
+        .fetch(picked("ftp://files.example.com/x.m3u"))
         .await
         .unwrap_err();
     assert_eq!(err.kind, FetchErrorKind::Unsupported);
-    let err = net.fetch(HttpRequest::get("not a url")).await.unwrap_err();
+    let err = net.fetch(picked("not a url")).await.unwrap_err();
     assert_eq!(err.kind, FetchErrorKind::InvalidRequest);
     let err = net
-        .fetch(HttpRequest::get("http://127.0.0.1/").with_header("X-Bad", "line\nbreak"))
+        .fetch(picked("http://127.0.0.1/").with_header("X-Bad", "line\nbreak"))
         .await
         .unwrap_err();
     assert_eq!(err.kind, FetchErrorKind::InvalidRequest);
@@ -337,4 +343,96 @@ fn debug_output_is_redacted() {
     .unwrap();
     let shown = format!("{net:?}");
     assert!(!shown.contains("proxy-secret"), "{shown}");
+}
+
+#[tokio::test]
+async fn streamed_responses_have_byte_and_total_time_budgets() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = [0; 1024];
+        let _ = stream.read(&mut request).await;
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
+            .await
+            .unwrap();
+        loop {
+            if stream.write_all(b"1\r\nx\r\n").await.is_err() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    });
+    let net = NetClient::new(NetConfig {
+        request_timeout: Duration::from_millis(80),
+        read_timeout: Duration::from_secs(1),
+        ..Default::default()
+    })
+    .unwrap();
+    let mut body = net
+        .fetch_stream(HttpRequest::get(format!("http://{address}/synthetic")))
+        .await
+        .unwrap()
+        .body;
+    let error = loop {
+        match body.next_chunk().await {
+            Ok(Some(_)) => {}
+            Ok(None) => panic!("fixture must not finish"),
+            Err(error) => break error,
+        }
+    };
+    assert_eq!(error.kind, FetchErrorKind::Deadline);
+    server.abort();
+
+    let server = TestServer::http(|_| Resp::ok(vec![b'x'; 1000])).await;
+    let net = NetClient::new(NetConfig {
+        max_streamed_bytes: 16,
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(
+        net.fetch(HttpRequest::get(server.url("/synthetic")))
+            .await
+            .unwrap_err()
+            .kind,
+        FetchErrorKind::TooLarge
+    );
+}
+
+#[tokio::test]
+async fn content_requests_refuse_private_hosts_and_unpicked_files() {
+    let net = client();
+    for url in [
+        "http://localhost/private",
+        "http://127.0.0.1/private",
+        "http://[::1]/private",
+        "file:///etc/hosts",
+    ] {
+        let mut request = HttpRequest::get(url);
+        request.public_only = true;
+        assert!(matches!(
+            net.fetch(request).await.unwrap_err().kind,
+            FetchErrorKind::InvalidRequest | FetchErrorKind::Unsupported
+        ));
+    }
+    assert_eq!(
+        net.fetch(HttpRequest::get("file:///etc/hosts"))
+            .await
+            .unwrap_err()
+            .kind,
+        FetchErrorKind::Unsupported
+    );
+    let target = TestServer::http(|_| Resp::ok("must not be reached")).await;
+    let location = target.url("/private");
+    let origin = TestServer::http(move |_| Resp::redirect(302, &location)).await;
+    assert_eq!(
+        net.fetch(HttpRequest::get(origin.url("/picked-source")))
+            .await
+            .unwrap_err()
+            .kind,
+        FetchErrorKind::InvalidRequest
+    );
+    assert!(target.requests().is_empty());
 }

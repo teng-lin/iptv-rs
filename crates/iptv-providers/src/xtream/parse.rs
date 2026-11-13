@@ -9,6 +9,9 @@
 //!   malformed field becomes `None`.
 //! - Detail stand-ins (`N/A`, `-`, rating `0`) are treated as missing.
 
+use crate::json_list::JsonList;
+use crate::typed_row::{Fields, Row};
+use iptv_core::import_limits::ImportLimits;
 use serde_json::Value;
 
 use super::ServerClock;
@@ -139,19 +142,7 @@ pub fn parse_account_info(
     })
 }
 
-/// The list items of a catalog response.
-fn list(body: &Value) -> Result<Vec<&Value>, ProviderError> {
-    match body {
-        Value::Array(items) => Ok(items.iter().collect()),
-        Value::Object(map) if map.contains_key("user_info") => Err(ProviderError::AccountRejected),
-        Value::Object(map) if !map.is_empty() && map.values().all(Value::is_object) => {
-            Ok(map.values().collect())
-        }
-        _ => Err(ProviderError::InvalidBody("expected a list".into())),
-    }
-}
-
-fn group_ids(o: Obj<'_>, kind: ContentKind) -> Vec<GroupId> {
+fn group_ids(o: impl Fields, kind: ContentKind) -> Vec<GroupId> {
     let mut ids: Vec<String> = o.str("category_id").into_iter().collect();
     for extra in o.strings("category_ids") {
         if !ids.contains(&extra) {
@@ -163,7 +154,7 @@ fn group_ids(o: Obj<'_>, kind: ContentKind) -> Vec<GroupId> {
         .collect()
 }
 
-fn positive_id(o: Obj<'_>, key: &str) -> Option<u64> {
+fn positive_id(o: impl Fields, key: &str) -> Option<u64> {
     o.u64(key).filter(|id| *id > 0)
 }
 
@@ -172,89 +163,61 @@ pub fn parse_categories(
     response: &HttpResponse,
     kind: ContentKind,
 ) -> Result<Import<Group>, ProviderError> {
-    let body = json_body(response)?;
-    let mut out = Import::default();
-    for (i, item) in list(&body)?.into_iter().enumerate() {
-        let Some(o) = Obj::of(item) else {
-            out.skip(WarningLocation::Index(i), "category is not an object");
-            continue;
-        };
-        let Some(id) = o.str("category_id") else {
-            out.skip(WarningLocation::Index(i), "category without category_id");
-            continue;
-        };
-        let name = o
-            .first_text(&["category_name", "name", "title"])
-            .unwrap_or_else(|| format!("Category {id}"));
-        out.items.push(Group {
-            id: GroupId::from_provider(SourceKind::Xtream, kind, &id),
-            adult: o.flag("is_adult"),
-            provider_id: Some(id),
-            name,
-            kind,
-        });
-    }
-    Ok(out)
+    collect_rows(response, ListKind::Categories(kind), |row| match row {
+        CatalogRow::Group(v) => Some(v),
+        _ => None,
+    })
 }
 
 /// `get_live_streams`. Ids use [`ContentKind::Live`] for radio too, so a
 /// panel flipping `stream_type` does not orphan customisations.
 pub fn parse_live_streams(response: &HttpResponse) -> Result<Import<Channel>, ProviderError> {
-    let body = json_body(response)?;
-    let mut out = Import::default();
-    for (i, item) in list(&body)?.into_iter().enumerate() {
-        let Some(o) = Obj::of(item) else {
-            out.skip(WarningLocation::Index(i), "stream is not an object");
-            continue;
-        };
-        let Some(stream_id) = positive_id(o, "stream_id") else {
-            out.skip(
-                WarningLocation::Index(i),
-                "stream without a positive stream_id",
-            );
-            continue;
-        };
-        let name = o.text("name").unwrap_or_else(|| {
-            out.warn(WarningLocation::Index(i), "stream without a name");
-            format!("Channel {stream_id}")
-        });
-        let days = o.u32("tv_archive_duration").unwrap_or(0);
-        let catch_up = (o.flag("tv_archive") && days > 0).then_some(CatchUp {
-            kind: CatchUpKind::Xtream,
-            days: Some(days),
-            source: None,
-            correction_secs: 0,
-        });
-        out.items.push(Channel {
-            id: ContentId::from_provider(
-                SourceKind::Xtream,
-                ContentKind::Live,
-                &stream_id.to_string(),
-            ),
-            provider_id: Some(stream_id.to_string()),
-            name,
-            number: o.u32("num"),
-            logo: o.text("stream_icon"),
-            groups: group_ids(o, ContentKind::Live),
-            stream: StreamLocator::Xtream {
-                stream_id,
-                container_extension: None,
-            },
-            epg_id: o.text("epg_channel_id"),
-            epg_name: None,
-            epg_shift_minutes: None,
-            catch_up,
-            radio: o
-                .str("stream_type")
-                .is_some_and(|t| t.eq_ignore_ascii_case("radio_streams")),
-        });
-    }
-    Ok(out)
+    collect_rows(response, ListKind::Live, |row| match row {
+        CatalogRow::Channel(v) => Some(v),
+        _ => None,
+    })
+}
+
+fn live_row(o: impl Fields) -> Result<Channel, &'static str> {
+    let stream_id = positive_id(o, "stream_id").ok_or("stream without a positive stream_id")?;
+    let name = o
+        .text("name")
+        .unwrap_or_else(|| format!("Channel {stream_id}"));
+    let days = o.u32("tv_archive_duration").unwrap_or(0);
+    let catch_up = (o.flag("tv_archive") && days > 0).then_some(CatchUp {
+        kind: CatchUpKind::Xtream,
+        days: Some(days),
+        source: None,
+        correction_secs: 0,
+    });
+    Ok(Channel {
+        id: ContentId::from_provider(
+            SourceKind::Xtream,
+            ContentKind::Live,
+            &stream_id.to_string(),
+        ),
+        provider_id: Some(stream_id.to_string()),
+        name,
+        number: o.u32("num"),
+        logo: o.text("stream_icon"),
+        groups: group_ids(o, ContentKind::Live),
+        stream: StreamLocator::Xtream {
+            stream_id,
+            container_extension: None,
+        },
+        epg_id: o.text("epg_channel_id"),
+        epg_name: None,
+        epg_shift_minutes: None,
+        catch_up,
+        radio: o
+            .str("stream_type")
+            .is_some_and(|t| t.eq_ignore_ascii_case("radio_streams")),
+    })
 }
 
 /// An absolute HTTP(S) `direct_source`; other schemes and relative values
 /// are ignored.
-fn direct_source(o: Obj<'_>) -> Option<String> {
+fn direct_source(o: impl Fields) -> Option<String> {
     let s = o.text("direct_source")?;
     url::Url::parse(&s)
         .ok()
@@ -262,7 +225,7 @@ fn direct_source(o: Obj<'_>) -> Option<String> {
         .map(|_| s)
 }
 
-fn vod_locator(o: Obj<'_>, stream_id: u64) -> StreamLocator {
+fn vod_locator(o: impl Fields, stream_id: u64) -> StreamLocator {
     match direct_source(o) {
         Some(url) => StreamLocator::Url {
             url,
@@ -276,11 +239,11 @@ fn vod_locator(o: Obj<'_>, stream_id: u64) -> StreamLocator {
     }
 }
 
-fn rating(o: Obj<'_>) -> Option<u16> {
+fn rating(o: impl Fields) -> Option<u16> {
     rating_x10(o.f64("rating")).or_else(|| rating_x10(o.f64("rating_5based").map(|r| r * 2.0)))
 }
 
-fn year(o: Obj<'_>) -> Option<u16> {
+fn year(o: impl Fields) -> Option<u16> {
     o.u64("year")
         .and_then(|y| u16::try_from(y).ok())
         .filter(|y| (1900..=2100).contains(y))
@@ -292,7 +255,7 @@ fn year(o: Obj<'_>) -> Option<u16> {
         })
 }
 
-fn duration(o: Obj<'_>) -> Option<u32> {
+fn duration(o: impl Fields) -> Option<u32> {
     o.u32("duration_secs").filter(|d| *d > 0).or_else(|| {
         // "HH:MM:SS" fallback.
         let text = o.text("duration")?;
@@ -307,7 +270,7 @@ fn duration(o: Obj<'_>) -> Option<u32> {
     })
 }
 
-fn vod_item(o: Obj<'_>, stream_id: u64, name: String) -> VodItem {
+fn vod_item(o: impl Fields, stream_id: u64, name: String) -> VodItem {
     VodItem {
         id: ContentId::from_provider(
             SourceKind::Xtream,
@@ -330,30 +293,13 @@ fn vod_item(o: Obj<'_>, stream_id: u64, name: String) -> VodItem {
 
 /// `get_vod_streams`.
 pub fn parse_vod_streams(response: &HttpResponse) -> Result<Import<VodItem>, ProviderError> {
-    let body = json_body(response)?;
-    let mut out = Import::default();
-    for (i, item) in list(&body)?.into_iter().enumerate() {
-        let Some(o) = Obj::of(item) else {
-            out.skip(WarningLocation::Index(i), "movie is not an object");
-            continue;
-        };
-        let Some(id) = positive_id(o, "stream_id") else {
-            out.skip(
-                WarningLocation::Index(i),
-                "movie without a positive stream_id",
-            );
-            continue;
-        };
-        let name = o
-            .text("name")
-            .or_else(|| o.text("title"))
-            .unwrap_or_else(|| format!("Movie {id}"));
-        out.items.push(vod_item(o, id, name));
-    }
-    Ok(out)
+    collect_rows(response, ListKind::Vod, |row| match row {
+        CatalogRow::Vod(v) => Some(v),
+        _ => None,
+    })
 }
 
-fn series_item(o: Obj<'_>, series_id: u64) -> Series {
+fn series_item(o: impl Fields, series_id: u64) -> Series {
     Series {
         id: ContentId::from_provider(
             SourceKind::Xtream,
@@ -376,23 +322,10 @@ fn series_item(o: Obj<'_>, series_id: u64) -> Series {
 
 /// `get_series`.
 pub fn parse_series_list(response: &HttpResponse) -> Result<Import<Series>, ProviderError> {
-    let body = json_body(response)?;
-    let mut out = Import::default();
-    for (i, item) in list(&body)?.into_iter().enumerate() {
-        let Some(o) = Obj::of(item) else {
-            out.skip(WarningLocation::Index(i), "series is not an object");
-            continue;
-        };
-        let Some(id) = positive_id(o, "series_id") else {
-            out.skip(
-                WarningLocation::Index(i),
-                "series without a positive series_id",
-            );
-            continue;
-        };
-        out.items.push(series_item(o, id));
-    }
-    Ok(out)
+    collect_rows(response, ListKind::Series, |row| match row {
+        CatalogRow::Series(v) => Some(v),
+        _ => None,
+    })
 }
 
 /// `get_series_info`. `episodes` may be an object keyed by season, an array
@@ -631,4 +564,140 @@ pub fn parse_epg(
     }
     out.items.sort_by_key(|p| p.start);
     Ok(out)
+}
+
+/// One neutral record, delivered immediately instead of retained in a JSON tree.
+#[derive(Debug)]
+pub enum CatalogRow {
+    Group(Group),
+    Channel(Channel),
+    Vod(VodItem),
+    Series(Series),
+}
+#[derive(Clone, Copy)]
+pub enum ListKind {
+    Categories(ContentKind),
+    Live,
+    Vod,
+    Series,
+}
+
+pub struct XtreamListParser {
+    frames: JsonList,
+    kind: ListKind,
+    warnings: Import<()>,
+}
+impl XtreamListParser {
+    pub fn new(kind: ListKind, limits: ImportLimits) -> Self {
+        Self {
+            frames: JsonList::new(limits),
+            kind,
+            warnings: Import::default(),
+        }
+    }
+    pub fn feed(
+        &mut self,
+        bytes: &[u8],
+        emit: &mut impl FnMut(CatalogRow),
+    ) -> Result<(), ProviderError> {
+        let kind = self.kind;
+        let warnings = &mut self.warnings;
+        self.frames.feed(bytes, &mut |bytes, index| {
+            typed_row(kind, bytes, index, warnings, emit)
+        })
+    }
+    pub fn finish(&mut self, emit: &mut impl FnMut(CatalogRow)) -> Result<(), ProviderError> {
+        let kind = self.kind;
+        let warnings = &mut self.warnings;
+        self.frames
+            .finish(&mut |bytes, index| typed_row(kind, bytes, index, warnings, emit))
+    }
+    pub fn take_warnings(&mut self) -> Import<()> {
+        std::mem::take(&mut self.warnings)
+    }
+}
+fn typed_row(
+    kind: ListKind,
+    bytes: &[u8],
+    index: usize,
+    warnings: &mut Import<()>,
+    emit: &mut impl FnMut(CatalogRow),
+) {
+    if !bytes.starts_with(b"{") {
+        warnings.skip(WarningLocation::Index(index), "row is not an object");
+        return;
+    }
+    let row = match serde_json::from_slice::<Row>(bytes) {
+        Ok(row) => row,
+        Err(_) => {
+            warnings.skip(WarningLocation::Index(index), "row is not a usable object");
+            return;
+        }
+    };
+    let o = &row;
+    let result: Result<CatalogRow, &'static str> = (|| {
+        Ok(match kind {
+            ListKind::Live => {
+                if o.u64("stream_id").is_some_and(|id| id > 0) && o.text("name").is_none() {
+                    warnings.warn(WarningLocation::Index(index), "stream without a name");
+                }
+                CatalogRow::Channel(live_row(o)?)
+            }
+            ListKind::Vod => {
+                let id = positive_id(o, "stream_id").ok_or("movie without a positive stream_id")?;
+                CatalogRow::Vod(vod_item(
+                    o,
+                    id,
+                    o.first_text(&["name", "title"])
+                        .unwrap_or_else(|| format!("Movie {id}")),
+                ))
+            }
+            ListKind::Series => {
+                let id =
+                    positive_id(o, "series_id").ok_or("series without a positive series_id")?;
+                CatalogRow::Series(series_item(o, id))
+            }
+            ListKind::Categories(kind) => {
+                let id = o.str("category_id").ok_or("category without category_id")?;
+                CatalogRow::Group(Group {
+                    id: GroupId::from_provider(SourceKind::Xtream, kind, &id),
+                    name: o
+                        .first_text(&["category_name", "name", "title"])
+                        .unwrap_or_else(|| format!("Category {id}")),
+                    provider_id: Some(id),
+                    kind,
+                    adult: o.flag("is_adult"),
+                })
+            }
+        })
+    })();
+    match result {
+        Ok(row) => emit(row),
+        Err(why) => warnings.skip(WarningLocation::Index(index), why),
+    }
+}
+fn collect_rows<T>(
+    response: &HttpResponse,
+    kind: ListKind,
+    convert: impl Fn(CatalogRow) -> Option<T>,
+) -> Result<Import<T>, ProviderError> {
+    if !response.is_success() {
+        return Err(ProviderError::HttpStatus(response.status));
+    }
+    let mut parser = XtreamListParser::new(kind, ImportLimits::default());
+    let mut rows = Vec::new();
+    let mut emit = |row| {
+        if let Some(row) = convert(row) {
+            rows.push(row)
+        }
+    };
+    parser.feed(&response.body, &mut emit)?;
+    parser.finish(&mut emit)?;
+    let w = parser.take_warnings();
+    Ok(Import {
+        items: rows,
+        skipped: w.skipped,
+        warnings: w.warnings,
+        warnings_dropped: w.warnings_dropped,
+    })
 }

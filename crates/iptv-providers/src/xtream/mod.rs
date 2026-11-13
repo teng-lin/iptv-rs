@@ -28,9 +28,9 @@
 mod parse;
 
 pub use parse::{
-    AccountInfo, AccountStatus, ServerInfo, VodDetails, parse_account_info, parse_categories,
-    parse_epg, parse_live_streams, parse_series_info, parse_series_list, parse_vod_info,
-    parse_vod_streams, resolve_account_status,
+    AccountInfo, AccountStatus, CatalogRow, ListKind, ServerInfo, VodDetails, XtreamListParser,
+    parse_account_info, parse_categories, parse_epg, parse_live_streams, parse_series_info,
+    parse_series_list, parse_vod_info, parse_vod_streams, resolve_account_status,
 };
 
 use crate::error::ProviderError;

@@ -2,23 +2,24 @@
 //! settings, SQLite connection, import job or player is started. Directory
 //! renames keep the previous state recoverable across an interrupted swap.
 use std::cell::Cell;
-use std::collections::BTreeSet;
 
 mod instance;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use iptv_settings::Settings;
 use iptv_store_sqlite::Store;
-use serde_json::{Value, json};
+#[cfg(target_os = "android")]
+use serde_json::Value;
+use serde_json::json;
 
 const MAGIC: &[u8; 9] = b"PATINABK\x01";
-const MAX_MANIFEST: u64 = 4 * 1024 * 1024;
-const MAX_BYTES: u64 = 8 * 1024 * 1024 * 1024;
-const MAX_FILES: usize = 20_000;
+use iptv_import::backup_manifest::{
+    self, MAX_BYTES, MAX_FILES, MAX_MANIFEST, allowed, entry_limit,
+};
 static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static STARTED: OnceLock<std::result::Result<(), StartupError>> = OnceLock::new();
 
@@ -102,20 +103,6 @@ fn sync_dir(path: &Path) -> Result<()> {
         .map_err(|_| "Could not finish writing backup storage")
 }
 
-fn allowed(name: &str) -> bool {
-    let path = Path::new(name);
-    !name.contains('\\')
-        && !name.contains(':')
-        && path.components().all(|c| matches!(c, Component::Normal(_)))
-        && (matches!(
-            name,
-            "iptv.sqlite" | "settings.json" | "search-history.json" | "last_channel"
-        ) || (!name.contains('/')
-            && name.starts_with("last_channel-")
-            && name.len() > 13
-            && name[13..].chars().all(|c| c.is_ascii_digit()))
-            || (name.starts_with("playlists/") && path.components().count() > 1))
-}
 fn collect(root: &Path, directory: &Path, names: &mut Vec<String>) -> Result<()> {
     if !directory.exists() {
         return Ok(());
@@ -214,8 +201,10 @@ fn export(root: &Path, destination: &Path, settings: &str) -> Result<()> {
             .ok_or("Backup source is missing")?;
         if let iptv_providers::model::SourceConfig::M3u(config) = source.source.config {
             let location = config.location.expose();
-            if !location.contains("://") {
-                let relative = Path::new(location).strip_prefix(root).map_err(|_| "A local playlist is outside application storage; add it with the file picker before backing up")?;
+            if let Some(local) = iptv_providers::content_url::local_path(location)
+                .map_err(|_| "Backup contains an invalid local playlist URL")?
+            {
+                let relative = local.strip_prefix(root).map_err(|_| "A local playlist is outside application storage; add it with the file picker before backing up")?;
                 if !relative
                     .to_str()
                     .is_some_and(|name| names.iter().any(|entry| entry == name))
@@ -240,6 +229,7 @@ fn export(root: &Path, destination: &Path, settings: &str) -> Result<()> {
             .map_err(|_| "Could not read backup files")?
             .len()
         };
+        entry_limit(name, len).map_err(|_| "Backup structured entry is too large")?;
         total = total.checked_add(len).ok_or("Backup is too large")?;
         if total > MAX_BYTES {
             return Err("Backup is too large");
@@ -302,7 +292,38 @@ fn export(root: &Path, destination: &Path, settings: &str) -> Result<()> {
     result
 }
 
+fn read_small_file(path: &Path, name: &str) -> Result<String> {
+    let maximum = if name == "last_channel" {
+        64 << 10
+    } else {
+        1 << 20
+    };
+    if !fs::symlink_metadata(path)
+        .map_err(|_| "Could not read backup file size")?
+        .file_type()
+        .is_file()
+    {
+        return Err("Backup structured entry is not a regular file");
+    }
+    let file = File::open(path).map_err(|_| "Could not read backup settings")?;
+    entry_limit(
+        name,
+        file.metadata()
+            .map_err(|_| "Could not read backup file size")?
+            .len(),
+    )
+    .map_err(|_| "Backup structured entry is too large")?;
+    let mut text = String::new();
+    file.take(maximum + 1)
+        .read_to_string(&mut text)
+        .map_err(|_| "Could not read backup settings")?;
+    entry_limit(name, text.len() as u64).map_err(|_| "Backup structured entry is too large")?;
+    Ok(text)
+}
+
 fn validate_settings(text: &str) -> Result<()> {
+    entry_limit("settings.json", text.len() as u64)
+        .map_err(|_| "Backup structured entry is too large")?;
     let (_, report) = Settings::from_json(text)
         .map_err(|_| "Backup settings are invalid or from a newer version")?;
     if !report.is_clean() {
@@ -334,40 +355,11 @@ fn stage(root: &Path, input: &mut impl Read) -> Result<()> {
     input
         .read_exact(&mut bytes)
         .map_err(|_| "Backup header is incomplete")?;
-    let manifest: Value = serde_json::from_slice(&bytes).map_err(|_| "Backup header is invalid")?;
-    if manifest["format"] != "patina-whole-app" || manifest["version"] != 1 {
-        return Err("Backup format is not supported by this version");
-    }
-    let old_root = Path::new(
-        manifest["root"]
-            .as_str()
-            .ok_or("Backup storage path is missing")?,
-    );
-    if !old_root.is_absolute() {
-        return Err("Backup storage path is invalid");
-    }
-    let files = manifest["files"]
-        .as_array()
-        .ok_or("Backup file list is missing")?;
-    if files.len() > MAX_FILES {
-        return Err("Backup has too many files");
-    }
-    let mut seen = BTreeSet::new();
-    let mut total = 0u64;
-    for entry in files {
-        let name = entry["name"]
-            .as_str()
-            .ok_or("Backup file name is invalid")?;
-        if !allowed(name) || !seen.insert(name) {
-            return Err("Backup contains an unsafe or duplicate file path");
-        }
-        let len = entry["length"]
-            .as_u64()
-            .ok_or("Backup file size is invalid")?;
-        total = total.checked_add(len).ok_or("Backup is too large")?;
-        if total > MAX_BYTES {
-            return Err("Backup is too large");
-        }
+    let manifest = backup_manifest::parse(&bytes)?;
+    let old_root = Path::new(&manifest.root);
+    for entry in &manifest.files {
+        let name = &entry.name;
+        let len = entry.length;
         let path = work.0.join(name);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|_| "Could not stage backup files")?;
@@ -382,9 +374,6 @@ fn stage(root: &Path, input: &mut impl Read) -> Result<()> {
             .sync_all()
             .map_err(|_| "Could not finish staging backup files")?;
     }
-    if !seen.contains("iptv.sqlite") || !seen.contains("settings.json") {
-        return Err("Backup is missing the library or settings");
-    }
     let mut extra = [0];
     if input
         .read(&mut extra)
@@ -393,8 +382,7 @@ fn stage(root: &Path, input: &mut impl Read) -> Result<()> {
     {
         return Err("Backup has unexpected trailing data");
     }
-    let settings = fs::read_to_string(work.0.join("settings.json"))
-        .map_err(|_| "Could not read backup settings")?;
+    let settings = read_small_file(&work.0.join("settings.json"), "settings.json")?;
     validate_settings(&settings)?;
     Store::validate_snapshot(&work.0.join("iptv.sqlite"))
         .map_err(|_| "Backup library is invalid or from a newer version")?;
@@ -412,14 +400,31 @@ fn stage(root: &Path, input: &mut impl Read) -> Result<()> {
         .sources()
         .map_err(|_| "Could not check backup sources")?
     {
+        for guide in store
+            .guide_sources(source.id)
+            .map_err(|_| "Could not check backup guide sources")?
+        {
+            if let Some(local) = iptv_providers::content_url::local_path(guide.url.expose())
+                .map_err(|_| "Backup contains an invalid guide URL")?
+            {
+                let relative = local
+                    .strip_prefix(root)
+                    .map_err(|_| "Backup guide is outside application storage")?;
+                if !work.0.join(relative).is_file() {
+                    return Err("Backup is missing a local guide file");
+                }
+            }
+        }
         let source = store
             .source(source.id)
             .map_err(|_| "Could not check backup source")?
             .ok_or("Backup source is missing")?;
         if let iptv_providers::model::SourceConfig::M3u(config) = source.source.config {
             let location = config.location.expose();
-            if !location.contains("://") {
-                let relative = Path::new(location).strip_prefix(root).map_err(
+            if let Some(local) = iptv_providers::content_url::local_path(location)
+                .map_err(|_| "Backup contains an invalid local playlist URL")?
+            {
+                let relative = local.strip_prefix(root).map_err(
                     |_| "Backup references a local playlist outside application storage",
                 )?;
                 if !work.0.join(relative).is_file() {
@@ -528,12 +533,25 @@ fn activate(root: &Path) -> Result<()> {
         return Ok(());
     }
     // Revalidate persisted staging before moving the working state aside.
+    for entry in fs::read_dir(&pending).map_err(|_| "Could not read pending backup")? {
+        let entry = entry.map_err(|_| "Could not read pending backup entry")?;
+        if let Some(name) = entry.file_name().to_str() {
+            entry_limit(
+                name,
+                entry
+                    .metadata()
+                    .map_err(|_| "Could not read backup file size")?
+                    .len(),
+            )
+            .map_err(|_| "Backup structured entry is too large")?;
+        }
+    }
     Store::validate_snapshot(&pending.join("iptv.sqlite"))
         .map_err(|_| "The pending backup library is invalid; current data was kept")?;
-    validate_settings(
-        &fs::read_to_string(pending.join("settings.json"))
-            .map_err(|_| "The pending backup settings are unreadable; current data was kept")?,
-    )?;
+    validate_settings(&read_small_file(
+        &pending.join("settings.json"),
+        "settings.json",
+    )?)?;
     if root.exists() {
         fs::rename(root, &previous)
             .map_err(|_| "Could not prepare the restore; current data was kept")?;

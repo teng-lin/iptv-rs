@@ -16,8 +16,8 @@ fn channels(n: usize) -> Vec<Channel> {
     let text = synth::m3u(
         n,
         4,
-        Some("http://127.0.0.1:8089/iptv/guide.xml.gz"),
-        "http://127.0.0.1:8089",
+        Some("http://fixture.example.test:8089/iptv/guide.xml.gz"),
+        "http://fixture.example.test:8089",
     );
     import_m3u_text(text.as_bytes(), &mut NoProgress, &CancelToken::new())
         .unwrap()
@@ -27,7 +27,7 @@ fn channels(n: usize) -> Vec<Channel> {
 fn source(id: u32, path: &str) -> EpgSourceConfig {
     EpgSourceConfig::new(
         SourceId(id),
-        SecretUrl::new(format!("http://127.0.0.1:8089{path}")),
+        SecretUrl::new(format!("http://fixture.example.test:8089{path}")),
     )
 }
 
@@ -73,8 +73,8 @@ fn header_url_tvg_guide_matches_by_tvg_id() {
     let text = synth::m3u(
         200,
         4,
-        Some("http://127.0.0.1:8089/iptv/guide.xml.gz"),
-        "http://127.0.0.1:8089",
+        Some("http://fixture.example.test:8089/iptv/guide.xml.gz"),
+        "http://fixture.example.test:8089",
     );
     let catalog = import_m3u_text(text.as_bytes(), &mut NoProgress, &CancelToken::new()).unwrap();
     let sources = catalog.epg_sources(1);

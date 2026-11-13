@@ -14,7 +14,7 @@ use crate::sources::{CatalogCounts, ensure_source, record_import_success};
 use crate::{SourceId, Store, search};
 
 /// Deletes in child-first order; overlay tables are never touched here.
-const DELETE_CATALOG: &[&str] = &[
+pub(crate) const DELETE_CATALOG: &[&str] = &[
     "DELETE FROM channel_groups WHERE source_id = ?1",
     "DELETE FROM channels WHERE source_id = ?1",
     "DELETE FROM vod_groups WHERE source_id = ?1",
@@ -28,7 +28,12 @@ fn count(n: usize) -> u32 {
     u32::try_from(n).unwrap_or(u32::MAX)
 }
 
-fn insert_groups(conn: &Connection, source: SourceId, groups: &[Group]) -> Result<usize> {
+pub(crate) fn insert_groups(
+    conn: &Connection,
+    source: SourceId,
+    groups: &[Group],
+    offset: i64,
+) -> Result<usize> {
     let mut stmt = conn.prepare_cached(
         "INSERT OR IGNORE INTO groups (source_id, id, kind, position, name, provider_id, adult)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -39,7 +44,7 @@ fn insert_groups(conn: &Connection, source: SourceId, groups: &[Group]) -> Resul
             source.0,
             g.id.as_str(),
             g.kind.slug(),
-            position as i64,
+            position as i64 + offset,
             g.name,
             g.provider_id,
             g.adult
@@ -64,7 +69,12 @@ fn insert_members(
     Ok(())
 }
 
-fn insert_channels(conn: &Connection, source: SourceId, channels: &[Channel]) -> Result<usize> {
+pub(crate) fn insert_channels(
+    conn: &Connection,
+    source: SourceId,
+    channels: &[Channel],
+    offset: i64,
+) -> Result<usize> {
     let mut stmt = conn.prepare_cached(
         "INSERT OR IGNORE INTO channels (source_id, id, position, provider_id, name, number, logo,
              group_ids, stream, epg_id, epg_name, epg_shift_minutes, catch_up, radio)
@@ -72,7 +82,7 @@ fn insert_channels(conn: &Connection, source: SourceId, channels: &[Channel]) ->
     )?;
     let mut inserted = 0;
     for (position, c) in channels.iter().enumerate() {
-        let position = position as i64;
+        let position = position as i64 + offset;
         let added = stmt.execute(params![
             source.0,
             c.id.as_str(),
@@ -105,7 +115,12 @@ fn insert_channels(conn: &Connection, source: SourceId, channels: &[Channel]) ->
     Ok(inserted)
 }
 
-fn insert_vod(conn: &Connection, source: SourceId, vod: &[VodItem]) -> Result<usize> {
+pub(crate) fn insert_vod(
+    conn: &Connection,
+    source: SourceId,
+    vod: &[VodItem],
+    offset: i64,
+) -> Result<usize> {
     let mut stmt = conn.prepare_cached(
         "INSERT OR IGNORE INTO vod (source_id, id, position, provider_id, name, group_ids, poster,
              plot, year, rating_x10, added, duration_secs, stream, is_series)
@@ -113,7 +128,7 @@ fn insert_vod(conn: &Connection, source: SourceId, vod: &[VodItem]) -> Result<us
     )?;
     let mut inserted = 0;
     for (position, v) in vod.iter().enumerate() {
-        let position = position as i64;
+        let position = position as i64 + offset;
         let added = stmt.execute(params![
             source.0,
             v.id.as_str(),
@@ -146,7 +161,12 @@ fn insert_vod(conn: &Connection, source: SourceId, vod: &[VodItem]) -> Result<us
     Ok(inserted)
 }
 
-fn insert_series(conn: &Connection, source: SourceId, series: &[Series]) -> Result<usize> {
+pub(crate) fn insert_series(
+    conn: &Connection,
+    source: SourceId,
+    series: &[Series],
+    offset: i64,
+) -> Result<usize> {
     let mut stmt = conn.prepare_cached(
         "INSERT OR IGNORE INTO series (source_id, id, position, provider_id, name, group_ids,
              poster, plot, year, rating_x10, last_modified)
@@ -154,7 +174,7 @@ fn insert_series(conn: &Connection, source: SourceId, series: &[Series]) -> Resu
     )?;
     let mut inserted = 0;
     for (position, s) in series.iter().enumerate() {
-        let position = position as i64;
+        let position = position as i64 + offset;
         let added = stmt.execute(params![
             source.0,
             s.id.as_str(),
@@ -208,10 +228,10 @@ impl Store {
         for sql in DELETE_CATALOG {
             tx.execute(sql, [source.0])?;
         }
-        let groups_n = insert_groups(&tx, source, groups)?;
-        let channels_n = insert_channels(&tx, source, channels)?;
-        let vod_n = insert_vod(&tx, source, vod)?;
-        let series_n = insert_series(&tx, source, series)?;
+        let groups_n = insert_groups(&tx, source, groups, 0)?;
+        let channels_n = insert_channels(&tx, source, channels, 0)?;
+        let vod_n = insert_vod(&tx, source, vod, 0)?;
+        let series_n = insert_series(&tx, source, series, 0)?;
         search::index_source(&tx, fts, source)?;
         let total = groups.len() + channels.len() + vod.len() + series.len();
         let counts = CatalogCounts {

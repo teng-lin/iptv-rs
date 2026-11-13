@@ -23,6 +23,13 @@ use iptv_providers::{HttpRequest, HttpResponse};
 pub trait Fetch {
     type Body: BodyStream;
 
+    /// Monotonic adapter clock, for an end-to-end import deadline. Sans-IO
+    /// fakes may keep zero or advance a virtual clock. Native adapters must
+    /// also bound pending requests and body reads.
+    fn elapsed(&self) -> std::time::Duration {
+        std::time::Duration::ZERO
+    }
+
     /// Sends the request and reads the whole body.
     fn fetch(&self, request: HttpRequest)
     -> impl Future<Output = Result<HttpResponse, FetchError>>;
@@ -37,6 +44,9 @@ pub trait Fetch {
 
 impl<F: Fetch + ?Sized> Fetch for &F {
     type Body = F::Body;
+    fn elapsed(&self) -> std::time::Duration {
+        (**self).elapsed()
+    }
 
     fn fetch(
         &self,
@@ -137,6 +147,8 @@ pub enum FetchErrorKind {
     Tls,
     /// Connect or read timeout.
     Timeout,
+    /// The total response/import deadline elapsed, even if bytes kept arriving.
+    Deadline,
     /// Too many redirects or a redirect to an unusable location.
     Redirect,
     /// The connection failed while reading the body, or decompression failed.
@@ -152,7 +164,10 @@ impl FetchErrorKind {
     /// Whether every request to the same host will fail the same way (so
     /// probing further endpoints of that host is pointless).
     pub fn is_host_failure(self) -> bool {
-        matches!(self, Self::Connect | Self::Tls | Self::InvalidRequest)
+        matches!(
+            self,
+            Self::Connect | Self::Tls | Self::InvalidRequest | Self::TooLarge | Self::Deadline
+        )
     }
 }
 
@@ -180,6 +195,7 @@ impl fmt::Display for FetchError {
             FetchErrorKind::Connect => "connection failed",
             FetchErrorKind::Tls => "secure connection failed",
             FetchErrorKind::Timeout => "timed out",
+            FetchErrorKind::Deadline => "import deadline exceeded",
             FetchErrorKind::Redirect => "redirect failed",
             FetchErrorKind::Body => "download interrupted",
             FetchErrorKind::TooLarge => "response too large",

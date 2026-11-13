@@ -37,6 +37,8 @@ use crate::sink::{GuideSink, SinkError};
 /// One XMLTV source.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EpgSourceConfig {
+    /// False only for a guide/source endpoint explicitly configured by the user.
+    pub content_supplied: bool,
     pub id: SourceId,
     /// May carry credentials (Xtream `xmltv.php`).
     pub url: SecretUrl,
@@ -51,6 +53,7 @@ pub struct EpgSourceConfig {
 impl EpgSourceConfig {
     pub fn new(id: SourceId, url: SecretUrl) -> Self {
         Self {
+            content_supplied: false,
             id,
             url,
             priority: 0,
@@ -74,8 +77,11 @@ impl EpgSourceConfig {
             .iter()
             .enumerate()
             .map(|(i, url)| {
-                Self::new(SourceId(first_id + i as u32), SecretUrl::new(url.clone()))
-                    .with_priority(n - i as i32)
+                let mut config =
+                    Self::new(SourceId(first_id + i as u32), SecretUrl::new(url.clone()))
+                        .with_priority(n - i as i32);
+                config.content_supplied = true;
+                config
             })
             .collect()
     }
@@ -314,6 +320,8 @@ async fn load_source<F: Fetch, S: GuideSink, P: ProgressSink>(
         return Err(ImportError::InvalidConfig("EPG address is required".into()));
     }
     let mut req = HttpRequest::get(url);
+    req.public_only = cfg.content_supplied;
+    req.picked_file = !cfg.content_supplied;
     if let Some(ua) = cfg
         .user_agent
         .as_deref()
@@ -338,8 +346,10 @@ async fn load_source<F: Fetch, S: GuideSink, P: ProgressSink>(
         skipped: 0,
         failed: None,
     };
-    let decode =
-        |e: iptv_epg::DecodeError| ImportError::parse(step, ParseProblem::Decode(e.to_string()));
+    let decode = |e: iptv_epg::DecodeError| match e {
+        iptv_epg::DecodeError::Limit(error) => ImportError::Limit { step, error },
+        e => ImportError::parse(step, ParseProblem::Decode(e.to_string())),
+    };
     ctx.phase(Phase::Guide(cfg.id));
     let bytes = ctx
         .stream(step, Phase::Guide(cfg.id), req, |chunk| {

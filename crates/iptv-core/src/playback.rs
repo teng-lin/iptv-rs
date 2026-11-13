@@ -22,15 +22,25 @@ pub use states::{Phase, PlayerState, Retry, RetryPolicy, Waiting};
 /// What the player should open: a URL and the HTTP headers to send with it
 /// (User-Agent, Referer, provider identity). Header names keep their case;
 /// lookups are case-insensitive.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PlaySource {
+    /// Embedded content URLs require public destinations at every request hop.
+    /// False trusts only the explicitly configured original origin.
+    pub public_only: bool,
     pub url: String,
     pub headers: Vec<(String, String)>,
+}
+
+impl Default for PlaySource {
+    fn default() -> Self {
+        Self::new("")
+    }
 }
 
 impl PlaySource {
     pub fn new(url: impl Into<String>) -> Self {
         Self {
+            public_only: true,
             url: url.into(),
             headers: Vec::new(),
         }
