@@ -153,7 +153,16 @@ fn build_version() {
     }
     for path in paths {
         if let Some(path) = git(&["rev-parse", "--path-format=absolute", "--git-path", &path]) {
-            println!("cargo:rerun-if-changed={path}");
+            // Missing watched files make Cargo rebuild on every invocation.
+            // Watch the nearest existing parent until Git creates the file.
+            let mut watched = Path::new(&path);
+            while !watched.exists() {
+                let Some(parent) = watched.parent() else {
+                    break;
+                };
+                watched = parent;
+            }
+            println!("cargo:rerun-if-changed={}", watched.display());
         }
     }
     let hash = git(&["rev-parse", "--verify", "HEAD"])

@@ -49,6 +49,14 @@ class VersionTests(unittest.TestCase):
                 bump_version.bump(self.root, value)
             self.assertEqual(before, self.snapshot())
 
+    def test_stale_package_lockfile_never_writes(self):
+        path = self.root / "tools/ci/package.Cargo.lock"
+        path.write_text(path.read_text().replace('version = "1.2.3"', 'version = "1.0.0"'))
+        before = self.snapshot()
+        with self.assertRaises(ValueError):
+            bump_version.bump(self.root, "patch")
+        self.assertEqual(before, self.snapshot())
+
     def test_stale_lockfile_never_writes(self):
         path = self.root / "Cargo.lock"
         path.write_text(path.read_text().replace('version = "1.2.3"', 'version = "1.0.0"'))
@@ -85,6 +93,19 @@ class BuildHashTests(unittest.TestCase):
             self.assertIn(f"cargo:rustc-env=IPTV_GIT_HASH={first}", linked)
             self.assertIn("worktrees/worktree/HEAD", linked)
             self.assertIn("refs/heads/synthetic-branch", linked)
+            for line in linked.splitlines():
+                if line.startswith("cargo:rerun-if-changed="):
+                    watched = line.split("=", 1)[1]
+                    if watched != "build.rs":
+                        self.assertTrue(Path(watched).exists(), watched)
+            git("pack-refs", "--all", "--prune")
+            packed = output(worktree)
+            self.assertIn(f"IPTV_GIT_HASH={first}", packed)
+            for line in packed.splitlines():
+                if line.startswith("cargo:rerun-if-changed="):
+                    watched = line.split("=", 1)[1]
+                    if watched != "build.rs":
+                        self.assertTrue(Path(watched).exists(), watched)
             git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid",
                 "commit", "--allow-empty", "-m", "Next synthetic fixture")
             second = git("rev-parse", "HEAD")[:8]
