@@ -65,7 +65,7 @@ android {
 }
 
 dependencies {
-    implementation("androidx.core:core:1.15.0")
+    implementation("androidx.core:core:1.19.1")
     val media3 = "1.5.1"
     implementation("androidx.media3:media3-exoplayer:$media3")
     implementation("androidx.media3:media3-exoplayer-hls:$media3")
