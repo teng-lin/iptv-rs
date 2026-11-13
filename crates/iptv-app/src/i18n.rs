@@ -17,7 +17,14 @@ fn system_locale() -> Option<String> {
     if let Ok(locale) = std::env::var("IPTV_RS_TEST_LOCALE") {
         return Some(locale);
     }
-    sys_locale::get_locale()
+    #[cfg(test)]
+    {
+        Some("en".to_owned())
+    }
+    #[cfg(not(test))]
+    {
+        sys_locale::get_locale()
+    }
 }
 
 /// Only call for application-owned messages, never provider content.

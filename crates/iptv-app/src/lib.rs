@@ -712,7 +712,7 @@ fn ui_layers(ui: Ui, groups: ElementRef, rows: ElementRef) -> View {
                         PointerEvents::None
                     }
                 })
-                .label(tr("Video"))
+                .label(move || tr("Video"))
                 .on_press(move |e: &PressEvent| {
                     ui.touched();
                     toggle_panels(ui);

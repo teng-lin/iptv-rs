@@ -133,7 +133,7 @@ fn content(ui: Ui) -> impl IntoElement {
                 .test_id("pip-video")
                 .absolute()
                 .inset_0()
-                .label(tr("Video"))
+                .label(move || tr("Video"))
                 .window_drag(move || drags.get())
                 .on_press(move |e: &PressEvent| clicked(ui, hover, drags, e.clicks)),
         )

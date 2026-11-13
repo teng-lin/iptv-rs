@@ -11,9 +11,12 @@ fn interface_language_changes_live_persists_and_can_be_recovered() {
     initial.set("general.language", Value::text("en")).unwrap();
     let mut fixture = personalization::start(home, initial, false);
     let app = &mut fixture.app;
-    step(app.press_key("m"));
-    step(app.wait_for("text:Manage favourites…"));
-    step(app.press("text:Settings >> nth=1"));
+    // Keep the navigation rail mounted while settings are open, so a
+    // language change must update its existing labels as well.
+    step(app.press("text:/^☰  /"));
+    step(app.press_key("left"));
+    step(app.wait_for("text:Live TV"));
+    step(app.press("label:Settings"));
     step(app.wait_for("text:Play the last channel on start"));
     step(app.press_key("right"));
     for _ in 0..15 {
@@ -27,6 +30,7 @@ fn interface_language_changes_live_persists_and_can_be_recovered() {
     step(app.wait_for("text:Ajustes"));
     step(app.wait_for("text:Idioma"));
     step(app.wait_for("text:☰  Todos los canales"));
+    step(app.wait_for("text:TV en directo"));
     step(app.wait_for("text:Reproducir el último canal al iniciar"));
     // A second switch while the settings remain mounted must update every
     // bound heading; native language names always remain readable.
@@ -38,6 +42,7 @@ fn interface_language_changes_live_persists_and_can_be_recovered() {
     }
     step(app.press("text:/繁體中文/"));
     step(app.wait_for("text:語言"));
+    step(app.wait_for("text:直播電視"));
     step(app.wait_for("text:啟動時播放上次頻道"));
     let path = fixture.path.parent().unwrap().join("settings.json");
     let (stored, report) = Settings::from_json(&std::fs::read_to_string(path).unwrap()).unwrap();

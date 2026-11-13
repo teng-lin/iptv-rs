@@ -110,7 +110,7 @@ fn item_view(ui: Ui, item: RailItem) -> impl IntoElement {
         })
         // Its name even while the rail shows the icons only (VoiceOver,
         // TalkBack, tests).
-        .label(label(item))
+        .label(move || label(item))
         .on_press(move || {
             ui.touched();
             if let Some(i) = index() {
@@ -119,7 +119,7 @@ fn item_view(ui: Ui, item: RailItem) -> impl IntoElement {
         })
         .child(svg(icon(item)).size(px(ICON)).text_color(colour))
         .child(
-            text(label(item))
+            text(move || label(item))
                 .number_of_lines(1)
                 .opacity(move || if open() { 1.0_f32 } else { 0.0 })
                 .text_size(px(TEXT_SIZE))

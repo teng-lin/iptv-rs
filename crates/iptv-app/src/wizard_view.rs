@@ -370,9 +370,12 @@ fn choose_type(ui: Ui) -> impl IntoElement {
                 ui.touched();
                 send(ui, WizardEvent::Tap(target));
             })
-            .child(ui_kit::label(size, words::kind_title(kind)).text_color(move || mark().text()))
             .child(
-                ui_kit::detail(size, words::kind_detail(kind))
+                ui_kit::label(size, move || words::kind_title(kind))
+                    .text_color(move || mark().text()),
+            )
+            .child(
+                ui_kit::detail(size, move || words::kind_detail(kind))
                     .text_color(move || mark().secondary()),
             )
     };
@@ -417,7 +420,7 @@ fn field_row(ui: Ui, size: Scale, field: Field) -> impl IntoElement {
             send(ui, WizardEvent::Tap(target));
         })
         .child(
-            ui_kit::detail(size, words::label(field))
+            ui_kit::detail(size, move || words::label(field))
                 .w(move || size.px(LABEL_W))
                 .text_color(move || mark().secondary()),
         )
@@ -462,7 +465,7 @@ fn form(ui: Ui, kind: PlaylistKind) -> impl IntoElement {
     let size = Scale::new();
     card(ui, size)
         .gap(move || size.px(4.0))
-        .child(ui_kit::title(size, words::kind_title(kind)))
+        .child(ui_kit::title(size, move || words::kind_title(kind)))
         .child(
             ui_kit::caption(size, move || banner().unwrap_or(""))
                 .text_color(rgb(ERROR))
@@ -513,7 +516,7 @@ fn processing(ui: Ui) -> impl IntoElement {
     let size = Scale::new();
     card(ui, size)
         .child(ui_kit::title(size, move || tr("Adding the playlist")))
-        .child(ui_kit::body(size, words::kind_title(kind)))
+        .child(ui_kit::body(size, move || words::kind_title(kind)))
         .child(
             ui_kit::body(size, move || words::stage(progress()))
                 .text_color(rgb(LIST_TEXT))
