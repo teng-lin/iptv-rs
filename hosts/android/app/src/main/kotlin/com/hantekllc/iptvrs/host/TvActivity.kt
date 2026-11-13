@@ -42,6 +42,8 @@ class TvActivity : Activity() {
         DevActivity.edgeToEdge(this)
         nsh = NshView(this)
         mark("library loaded")
+        initializeDataDirectory(filesDir.absolutePath)
+        CredentialKey.initialize(this)
         nsh.useStandaloneLimits()
         pip = PipHost(this)
         backups = BackupHost(this)
@@ -65,6 +67,9 @@ class TvActivity : Activity() {
         nsh.runRustApp("nsh")
         mark("rust app started")
     }
+
+    /** Called after loading the Rust library, before mounting any app state. */
+    private external fun initializeDataDirectory(path: String)
 
     /** A cold-start phase mark, as the Rust side logs them (`startup.rs`). */
     private fun mark(phase: String) {
@@ -143,9 +148,10 @@ class TvActivity : Activity() {
      * remote sends; the app binds F12 to its search on Android (`input.rs`).
      */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (event.keyCode != KeyEvent.KEYCODE_SEARCH) return super.dispatchKeyEvent(event)
+        val mapped = RemoteKeys.translate(event.keyCode)
+        if (mapped == event.keyCode) return super.dispatchKeyEvent(event)
         val search = KeyEvent(
-            event.downTime, event.eventTime, event.action, SEARCH_AS, event.repeatCount,
+            event.downTime, event.eventTime, event.action, mapped, event.repeatCount,
             event.metaState, event.deviceId, event.scanCode, event.flags, event.source,
         )
         return super.dispatchKeyEvent(search)
@@ -163,8 +169,4 @@ class TvActivity : Activity() {
         super.onDestroy()
     }
 
-    private companion object {
-        /** What the remote's Search key is handed on as. */
-        const val SEARCH_AS = KeyEvent.KEYCODE_F12
-    }
 }

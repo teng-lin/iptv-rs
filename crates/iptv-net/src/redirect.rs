@@ -4,7 +4,7 @@
 //! query (Xtream credentials) and keeps non-standard secret headers such
 //! as Stalker's `SN` on another host. Here a hop that changes origin
 //! (scheme, host or port) drops every header in [`CROSS_ORIGIN_STRIP`],
-//! and no `Referer` is ever added. http↔https hops are followed.
+//! and no `Referer` is ever added. HTTPS-to-HTTP downgrades are refused.
 
 use iptv_import::{FetchError, FetchErrorKind};
 use reqwest::header::{CONTENT_LENGTH, CONTENT_TYPE, HeaderMap, LOCATION};
@@ -13,9 +13,16 @@ use reqwest::{Method, Url};
 use crate::error::from_reqwest;
 
 /// Identity headers that must not follow a redirect to another origin.
-const CROSS_ORIGIN_STRIP: &[&str] = &["authorization", "cookie", "proxy-authorization", "sn"];
+const CROSS_ORIGIN_STRIP: &[&str] = &[
+    "authorization",
+    "cookie",
+    "proxy-authorization",
+    "sn",
+    "x-user-agent",
+];
 
 /// A request that can be re-sent to a redirect target.
+#[derive(Clone)]
 pub(crate) struct Prepared {
     pub public_only: bool,
     #[cfg(debug_assertions)]
@@ -94,6 +101,11 @@ pub(crate) async fn execute(
         }
         if next.origin() != initial_origin {
             p.public_only = true;
+        }
+        if p.url.scheme() == "https" && next.scheme() == "http" {
+            return Err(redirect(
+                "HTTPS redirect would use an unencrypted connection".into(),
+            ));
         }
         if next.origin() != p.url.origin() {
             for h in CROSS_ORIGIN_STRIP {

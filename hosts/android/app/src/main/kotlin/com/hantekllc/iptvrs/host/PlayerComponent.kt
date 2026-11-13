@@ -24,7 +24,6 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.util.Util
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.HttpDataSource
-import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
@@ -43,8 +42,8 @@ import com.longbridge.nsh.NshComponentContext
  * Props:
  * - `source`: `{url, headers: {name: value}, token, live, reconnect}` or
  *   null (stops). A new url or token reopens the stream (the token forces a
- *   retry of the same url). Headers go with every request; identity headers
- *   (Cookie, Authorization, SN, X-User-Agent) only to the stream's own host.
+ *   retry of the same url). The bounded transport confines identity headers
+ *   to the exact original scheme/host/port, including redirects and segments.
  *   `live` (a live channel, not catch-up): a progressive live stream plays
  *   on across a connection the server closes ([start]). `reconnect`: the
  *   app reopens the stream that played (a retry), so the last frame stays
@@ -106,7 +105,6 @@ class PlayerComponent(
     companion object {
         const val NAME = "tv.player"
         private const val DEFAULT_UA = "iptv-rs/0.1 (Media3)"
-        private val IDENTITY = setOf("cookie", "authorization", "sn", "x-user-agent")
         /**
          * A live item that played shorter than this before the server closed
          * it gets no further spare: its end goes to the app, which backs off.
@@ -130,7 +128,6 @@ class PlayerComponent(
     private enum class Reopen { NONE, SAME, NEW }
 
     /** Headers for the current stream; read on loader threads. */
-    private class Headers(val host: String?, val all: Map<String, String>)
 
     private val surface = SurfaceView(context)
     /**
@@ -165,7 +162,9 @@ class PlayerComponent(
     /** When [quickReopen] last reopened the stream. */
     private var quickReopenAt = 0L
     private var sourceHeaders: Map<String, String> = emptyMap()
-    @Volatile private var headers = Headers(null, emptyMap())
+    private val transport = PlaybackTransport()
+    private var publicOnly = true
+    private var headers: Map<String, String> = emptyMap()
     /** Set after the one format fallback (HLS or progressive) for the current stream. */
     private var triedOtherFormat = false
     /** The type [start] gave the current stream (null: from its address). */
@@ -181,22 +180,13 @@ class PlayerComponent(
     private var audioDelayUs = 0L
     private val player: ExoPlayer
 
-    private fun headersFor(uri: Uri): Map<String, String> {
-        val h = headers
-        val own = uri.host != null && uri.host.equals(h.host, ignoreCase = true)
-        return if (own) h.all else h.all.filterKeys { it.lowercase() !in IDENTITY }
-    }
-
     private fun build(context: Context): ExoPlayer {
         // No factory User-Agent: it would override the per-stream one.
         val http = DefaultHttpDataSource.Factory()
             .setUserAgent(null)
-            .setAllowCrossProtocolRedirects(true)
+            .setAllowCrossProtocolRedirects(false)
             .setConnectTimeoutMs(8_000)
             .setReadTimeoutMs(15_000)
-        val withHeaders = ResolvingDataSource.Factory(http) { spec ->
-            spec.withAdditionalHeaders(headersFor(spec.uri))
-        }
         // The audio sink carries the audio delay (one per player).
         val renderers = object : DefaultRenderersFactory(context) {
             override fun buildAudioSink(
@@ -215,7 +205,7 @@ class PlayerComponent(
         return ExoPlayer.Builder(context, renderers)
             .setMediaSourceFactory(
                 DefaultMediaSourceFactory(context)
-                    .setDataSourceFactory(withHeaders)
+                    .setDataSourceFactory(http)
                     .setLoadErrorHandlingPolicy(LiveLoadPolicy()),
             )
             .build()
@@ -291,6 +281,7 @@ class PlayerComponent(
         }
 
         override fun onRenderedFirstFrame() {
+            transport.takeError()
             shutter.visibility = View.GONE
             rendered = true
             // Again for each stream: the app forgets the last one's.
@@ -354,12 +345,13 @@ class PlayerComponent(
                     return
                 }
             }
-            val status = httpStatus(error)
+            val transportError = transport.takeError()
+            val status = if (transportError == null) httpStatus(error) else null
             if (quickReopen(error, status)) return
             // A live stream keeps its last frame: the app reconnects it,
             // with "Reconnecting…" or its card over the frame.
             if (!live || !rendered) shutter.visibility = View.VISIBLE
-            val event = mutableMapOf<String, Any>("code" to error.errorCodeName)
+            val event = mutableMapOf<String, Any>("code" to (transportError ?: error.errorCodeName))
             status?.let { event["http"] = it }
             nsh.emit("error", event)
         }
@@ -446,13 +438,16 @@ class PlayerComponent(
         live = source?.get("live") == true
         // The same stream again (a retry): keep its last frame.
         val keepFrame = next != null && (next == url || source?.get("reconnect") == true)
+        val nextPublicOnly = source?.get("publicOnly") != false
+        val changed = next != url || nextToken != token || nextPublicOnly != publicOnly
+        if (changed) transport.close()
         sourceHeaders = (source?.get("headers") as? Map<*, *>)
             ?.entries
             ?.mapNotNull { (k, v) -> (k as? String)?.let { key -> (v as? String)?.let { key to it } } }
             ?.toMap()
             ?: emptyMap()
-        val changed = next != url || nextToken != token
         url = next
+        publicOnly = nextPublicOnly
         token = nextToken
         applyHeaders()
         if (!changed) return
@@ -515,7 +510,14 @@ class PlayerComponent(
         if (all.keys.none { it.equals("User-Agent", ignoreCase = true) }) {
             all["User-Agent"] = userAgent
         }
-        headers = Headers(url?.let { Uri.parse(it).host }, all)
+        headers = all
+        try {
+            transport.update(all)
+        } catch (_: java.io.IOException) {
+            transport.close()
+            player.stop()
+            nsh.emit("error", mapOf("code" to "ERROR_CODE_IO_UNSPECIFIED"))
+        }
     }
 
     /**
@@ -527,7 +529,14 @@ class PlayerComponent(
      * queues the next spare).
      */
     private fun start(target: String, mime: String?) {
-        val builder = MediaItem.Builder().setUri(target)
+        val local = try {
+            transport.open(target, headers, publicOnly)
+        } catch (_: java.io.IOException) {
+            player.stop()
+            nsh.emit("error", mapOf("code" to "ERROR_CODE_IO_UNSPECIFIED"))
+            return
+        }
+        val builder = MediaItem.Builder().setUri(local)
         if (mime != null) builder.setMimeType(mime)
         if (live) {
             // Behind live, never at the edge ([LIVE_MIN_OFFSET_MS]); the
@@ -555,6 +564,7 @@ class PlayerComponent(
         player.removeAnalyticsListener(formats)
         surface.keepScreenOn = false
         player.release()
+        transport.close()
         onDestroyed(this)
     }
 }

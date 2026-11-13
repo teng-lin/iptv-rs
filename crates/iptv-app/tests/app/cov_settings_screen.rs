@@ -355,8 +355,20 @@ fn settings(app: &mut Headless, home: &Path) {
     step(app.press_key("down"));
     step(app.press_key("down"));
     step(app.wait_for("text:Start playing the channel that was on when the app was last closed."));
-    // OK flips a switch, saved at once.
+    // A failed write is visible and leaves the live setting unchanged.
+    let data = if cfg!(target_os = "macos") {
+        home.join("Library/Application Support/iptv-rs")
+    } else {
+        home.join(".local/share/iptv-rs")
+    };
+    let blocked = data.join("settings.json.tmp");
+    std::fs::create_dir(&blocked).unwrap();
     row_value(app, "Play the last channel on start", "On");
+    step(app.press_key("enter"));
+    step(app.wait_for("text:/Could not save settings/"));
+    row_value(app, "Play the last channel on start", "On");
+    std::fs::remove_dir(&blocked).unwrap();
+    // Retrying persists the setting once the write failure is removed.
     step(app.press_key("enter"));
     row_value(app, "Play the last channel on start", "Off");
     saved(app, home, "general.resume_last_channel");

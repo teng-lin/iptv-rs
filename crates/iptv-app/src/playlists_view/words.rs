@@ -53,6 +53,7 @@ pub fn failure(failure: ImportFailure) -> &'static str {
         FailureKind::Parse => "the answer was not a playlist",
         FailureKind::EmptyPlaylist => "the playlist had nothing to watch in it",
         FailureKind::Unsupported => "the server is not a service of this type",
+        FailureKind::Busy => "too many playlists are updating; try again shortly",
         FailureKind::Cancelled => "it was stopped",
     }
 }

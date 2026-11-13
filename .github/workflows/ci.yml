@@ -20,3 +20,5 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup
       - run: bash tools/check.sh
+        env:
+          IPTV_REQUIRE_PLAYER_TESTS: '1'

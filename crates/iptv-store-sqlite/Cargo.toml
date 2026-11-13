@@ -14,6 +14,8 @@ iptv-import.workspace = true
 rusqlite = { workspace = true, features = ["backup"] }
 serde_json.workspace = true
 
+zeroize = "1.8"
+
 [dev-dependencies]
 tempfile.workspace = true
 iptv-guide.workspace = true
@@ -23,3 +25,7 @@ tokio = { version = "1", default-features = false, features = ["macros", "rt"] }
 
 [lints]
 workspace = true
+
+# Apple uses SQLCipher's CommonCrypto backend; avoid a second OpenSSL beside MPVKit.
+[target.'cfg(not(target_vendor = "apple"))'.dependencies]
+rusqlite = { workspace = true, features = ["bundled-sqlcipher-vendored-openssl"] }

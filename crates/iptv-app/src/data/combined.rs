@@ -16,6 +16,7 @@ thread_local! {
     static PARTS: RefCell<BTreeMap<SourceId,Rc<EpgSchedule>>> = RefCell::default();
     static LIMITS: RefCell<BTreeMap<SourceId,Option<u32>>> = RefCell::default();
     static RESUME: Cell<bool> = const { Cell::new(false) };
+    static REBUILD: Cell<u64> = const { Cell::new(0) };
     static EPOCH: Cell<i64> = const { Cell::new(0) };
     static SINGLE: RefCell<Option<SingleSchedule>> = const { RefCell::new(None) };
 }
@@ -77,8 +78,11 @@ pub(super) fn added(ui: Ui, source: SourceId, generation: u64, previous: Option<
         let Some(added) = single().filter(|s| s.source == source) else {
             return;
         };
-        if let Err(e) = super::open_store().and_then(|mut s| s.set_all_playlists(true)) {
+        if let Err(e) = crate::store_service::call(|store| store.set_all_playlists(true)).await {
             log::warn!("iptv combined: cannot save browsing mode: {e}");
+            return;
+        }
+        if super::GENERATION.with(Cell::get) != generation || active(ui) {
             return;
         }
         let Ok(playlists) = library::playlists() else {
@@ -110,7 +114,7 @@ pub(super) fn added(ui: Ui, source: SourceId, generation: u64, previous: Option<
         }
         for playlist in playlists.into_iter().filter(|p| p.policy.enabled) {
             if !PARTS.with(|p| p.borrow().contains_key(&playlist.id))
-                && let Ok(Some(stored)) = super::open_store().and_then(|s| s.source(playlist.id))
+                && let Some(stored) = library::load(playlist.id)
             {
                 library::run(ui, stored, Purpose::Combined, false);
             }
@@ -188,23 +192,29 @@ pub fn has_multiple_enabled() -> bool {
 pub fn start(ui: Ui) {
     RESUME.with(|r| r.set(true));
     // Startup precedes user edits; install the empty real guide at once.
-    switch_all_ready(ui);
+    super::spawn_in_app(async move {
+        switch_all_ready(ui).await;
+    });
 }
 pub fn switch_all(ui: Ui) {
     super::spawn_in_app(async move {
         if crate::favorites::flush().await {
-            switch_all_ready(ui);
+            switch_all_ready(ui).await;
         } else {
             crate::settings_view::notify("Recent changes could not be saved; try again");
         }
     });
 }
-fn switch_all_ready(ui: Ui) {
+async fn switch_all_ready(ui: Ui) {
+    let generation = super::GENERATION.with(Cell::get);
     if active(ui) {
         return;
     }
-    if let Err(e) = super::open_store().and_then(|mut s| s.set_all_playlists(true)) {
+    if let Err(e) = crate::store_service::call(|store| store.set_all_playlists(true)).await {
         log::warn!("iptv combined: cannot save browsing mode: {e}");
+        return;
+    }
+    if super::GENERATION.with(Cell::get) != generation || active(ui) {
         return;
     }
     super::next_generation();
@@ -218,13 +228,12 @@ fn switch_all_ready(ui: Ui) {
     let now = super::now_unix();
     EPOCH.with(|e| e.set(now - now.rem_euclid(3600)));
     rebuild(ui);
-    if let Ok(store) = super::open_store()
-        && let Ok(sources) = store.sources()
-    {
-        for source in sources {
-            if store.source_policy(source.id).is_ok_and(|p| p.enabled)
-                && let Ok(Some(source)) = store.source(source.id)
-            {
+    if let Ok(playlists) = library::playlists() {
+        for playlist in playlists
+            .into_iter()
+            .filter(|playlist| playlist.policy.enabled)
+        {
+            if let Some(source) = library::load(playlist.id) {
                 library::run(ui, source, Purpose::Combined, false);
             }
         }
@@ -236,15 +245,25 @@ pub fn leave(ui: Ui) {
     ui.library.all.set(false);
     PARTS.with(|p| p.borrow_mut().clear());
     LIMITS.with(|p| p.borrow_mut().clear());
-    if let Err(e) = super::open_store().and_then(|mut s| s.set_all_playlists(false)) {
-        log::warn!("iptv combined: cannot save browsing mode: {e}");
-    }
+    let saved = crate::store_service::call(|store| store.set_all_playlists(false));
+    super::spawn_in_app(async move {
+        if let Err(error) = saved.await {
+            log::warn!("iptv combined: cannot save browsing mode: {error}");
+        }
+    });
 }
-pub(super) fn show(ui: Ui, imported: Box<Imported>, held: Option<opening::Held>) {
+pub(super) async fn show(ui: Ui, imported: Box<Imported>, held: Option<opening::Held>) {
     if !includes(ui, imported.source) {
         return;
     }
     let source = imported.source;
+    let generation = super::GENERATION.with(Cell::get);
+    let revision = library::import_revision(source);
+    let current = || {
+        includes(ui, source)
+            && super::GENERATION.with(Cell::get) == generation
+            && library::import_revision_is_current(source, &revision)
+    };
     let can_resume = imported.resume;
     let mut schedule = EpgSchedule::from_catalog(
         &imported.groups,
@@ -252,7 +271,10 @@ pub(super) fn show(ui: Ui, imported: Box<Imported>, held: Option<opening::Held>)
         imported.guide,
         imported.now,
     );
-    organization::apply(&schedule, source);
+    organization::apply(&schedule, source).await;
+    if !current() {
+        return;
+    }
     schedule = match imported.playback {
         Streams::New(context, allowed) => {
             LIMITS.with(|l| {
@@ -267,20 +289,32 @@ pub(super) fn show(ui: Ui, imported: Box<Imported>, held: Option<opening::Held>)
             PARTS.with(|p| p.borrow().get(&source).and_then(|s| s.shared_playback())),
         ),
     };
-    if let Some(lookup) = stored::description_lookup(source) {
+    if let Some(lookup) = stored::description_lookup(ui, source) {
         schedule = schedule.with_description_lookup(lookup);
     }
     schedule = match held {
         Some(h) => schedule.held_only(h.from, h.to).held_channels(h.keys),
-        None => pages::paged(ui, schedule, source, imported.now),
+        None => pages::paged(ui, schedule, source, imported.now).await,
     };
+    if !current() {
+        return;
+    }
     PARTS.with(|p| p.borrow_mut().insert(source, Rc::new(schedule)));
-    rebuild(ui);
+    rebuild_ready(ui).await;
     if can_resume && RESUME.with(Cell::get) {
         resume(ui);
     }
 }
 pub fn rebuild(ui: Ui) {
+    super::spawn_in_app(rebuild_ready(ui));
+}
+async fn rebuild_ready(ui: Ui) {
+    let generation = super::GENERATION.with(Cell::get);
+    let revision = REBUILD.with(|r| {
+        let next = r.get().wrapping_add(1);
+        r.set(next);
+        next
+    });
     if !active(ui) {
         return;
     }
@@ -307,29 +341,50 @@ pub fn rebuild(ui: Ui) {
             })
             .collect()
     });
-    crate::favorites::set_combined();
+    let Some(install_favorites) = crate::favorites::prepare_combined().await else {
+        return;
+    };
+    if !active(ui) {
+        return;
+    }
+    let collapsed = crate::store_service::call(|store| store.collapsed_playlists())
+        .await
+        .unwrap_or_default();
+    if !active(ui)
+        || super::GENERATION.with(Cell::get) != generation
+        || REBUILD.with(Cell::get) != revision
+    {
+        return;
+    }
+    install_favorites();
     crate::set_schedule(
         &ui,
         Rc::new(
-            CombinedSchedule::new(sources, EPOCH.with(Cell::get)).with_collapsed_sources(
-                super::open_store()
-                    .and_then(|s| s.collapsed_playlists())
-                    .unwrap_or_default(),
-            ),
+            CombinedSchedule::new(sources, EPOCH.with(Cell::get)).with_collapsed_sources(collapsed),
         ),
     );
     pages::replaced();
 }
+
 pub fn connection_limit(source: SourceId) -> Option<u32> {
     LIMITS.with(|l| l.borrow().get(&source).copied().flatten())
 }
 pub fn organization_changed(ui: Ui, source: SourceId) {
-    PARTS.with(|p| {
-        if let Some(s) = p.borrow().get(&source) {
-            organization::apply(s, source);
+    let schedule = PARTS.with(|parts| parts.borrow().get(&source).cloned());
+    super::spawn_in_app(async move {
+        if let Some(schedule) = schedule {
+            organization::apply(&schedule, source).await;
+            let current = PARTS.with(|parts| {
+                parts
+                    .borrow()
+                    .get(&source)
+                    .is_some_and(|s| Rc::ptr_eq(s, &schedule))
+            });
+            if current {
+                rebuild(ui);
+            }
         }
     });
-    rebuild(ui);
 }
 pub fn resume(ui: Ui) {
     if !crate::settings::flag(iptv_settings::keys::RESUME_LAST_CHANNEL)
@@ -338,8 +393,9 @@ pub fn resume(ui: Ui) {
         RESUME.with(|r| r.set(false));
         return;
     }
-    let key = super::open_store().ok().and_then(|s| {
-        s.combined_last_channel().ok().flatten().or_else(|| {
+    let loaded = crate::store_service::call(|store| {
+        let s = store;
+        Ok(s.combined_last_channel()?.or_else(|| {
             // On first opening the combined browser, keep the previous
             // single-source startup preference, including legacy files.
             let source = s.active_source().ok().flatten()?;
@@ -348,22 +404,28 @@ pub fn resume(ui: Ui) {
             }
             let key = crate::player::resume::last_key(source)?;
             Some(iptv_guide::combined::qualified_key(source.0, &key))
-        })
+        }))
     });
-    let schedule = crate::schedule();
-    if let Some(c) = key.and_then(|k| schedule.find_channel(&k)) {
-        // Another playlist's import may call resume while the target portal is
-        // still only cached rows. Wait for that owning source's authentication.
-        if iptv_guide::combined::epg_channel(&*schedule, c)
-            .is_none_or(|(child, _)| child.playback().is_none())
-        {
+    super::spawn_in_app(async move {
+        let key = loaded.await.ok().flatten();
+        if !RESUME.with(Cell::get) || ui.playing.get_untracked().is_some() || !active(ui) {
             return;
         }
-        RESUME.with(|r| r.set(false));
-        ui.play(c, crate::Playback::Live);
-        ui.mode.set(crate::ViewMode::Fullscreen);
-        ui.show_playing();
-    }
+        let schedule = crate::schedule();
+        if let Some(c) = key.and_then(|k| schedule.find_channel(&k)) {
+            // Another playlist's import may call resume while the target portal is
+            // still only cached rows. Wait for that owning source's authentication.
+            if iptv_guide::combined::epg_channel(&*schedule, c)
+                .is_none_or(|(child, _)| child.playback().is_none())
+            {
+                return;
+            }
+            RESUME.with(|r| r.set(false));
+            ui.play(c, crate::Playback::Live);
+            ui.mode.set(crate::ViewMode::Fullscreen);
+            ui.show_playing();
+        }
+    });
 }
 
 /// Toggle a parent row without changing the channel catalogue or player surface.
@@ -378,9 +440,13 @@ pub fn toggle_playlist(ui: Ui, group: usize) -> bool {
     let Some(collapsed) = all.toggle_playlist(group) else {
         return false;
     };
-    match super::open_store().and_then(|mut s| s.set_collapsed_playlists(&collapsed)) {
-        Ok(()) => rebuild(ui),
-        Err(e) => log::warn!("iptv browser: could not save expansion: {e}"),
-    }
+    let saved = crate::store_service::call(move |store| store.set_collapsed_playlists(&collapsed));
+    ui.data_version.update(|version| *version += 1);
+    super::spawn_in_app(async move {
+        match saved.await {
+            Ok(()) => rebuild(ui),
+            Err(error) => log::warn!("iptv browser: could not save expansion: {error}"),
+        }
+    });
     true
 }

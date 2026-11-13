@@ -10,15 +10,12 @@
 //! which needs the full channel lists) the playlist's guide is downloaded
 //! right away and matched with the choice.
 
-use std::sync::mpsc::{self, TryRecvError};
-
 use iptv_epg::{ChannelKey, MatchKind};
 use iptv_providers::ContentId;
-use iptv_store_sqlite::{EpgOverride, GuideChannel, SourceId, StoreError};
-use nsh_core::prelude::timer;
+use iptv_store_sqlite::{EpgOverride, GuideChannel, SourceId, Store, StoreError};
 
 use super::stored::{self, Matching};
-use super::{GENERATION, Imported, POLL, Streams, open_store};
+use super::{GENERATION, Imported, Streams};
 use crate::Ui;
 
 /// A channel's guide.
@@ -80,17 +77,19 @@ pub struct Current {
 }
 
 /// The saved choice and the binding of channel `key` of `source`.
-pub fn current(source: SourceId, key: &str) -> Current {
-    let read = open_store().and_then(|s| {
+pub async fn current(source: SourceId, key: &str) -> Current {
+    let key = key.to_owned();
+    let read = crate::store_service::call(move |s| {
         let overlay = s
-            .channel(source, &ContentId::from_stored(key))?
+            .channel(source, &ContentId::from_stored(&key))?
             .and_then(|row| row.epg_override);
-        let bound = s.epg_binding(source, &ChannelKey::new(key))?;
+        let bound = s.epg_binding(source, &ChannelKey::new(&key))?;
         Ok(Current {
             choice: Some(Choice::of(overlay)),
             bound,
         })
-    });
+    })
+    .await;
     read.unwrap_or_else(|e: StoreError| {
         log::warn!("iptv data: a channel's guide: {e}");
         Current::default()
@@ -98,9 +97,9 @@ pub fn current(source: SourceId, key: &str) -> Current {
 }
 
 /// The channels the stored guides of `source` list.
-pub fn guide_channels(source: SourceId) -> Vec<GuideChannel> {
-    open_store()
-        .and_then(|s| s.guide_channels(source))
+pub async fn guide_channels(source: SourceId) -> Vec<GuideChannel> {
+    crate::store_service::call(move |store| store.guide_channels(source))
+        .await
         .unwrap_or_else(|e| {
             log::warn!("iptv data: guide channels: {e}");
             Vec::new()
@@ -118,25 +117,20 @@ pub fn choose(
 ) {
     super::library::revoke_import_handoff(source);
     let generation = GENERATION.with(std::cell::Cell::get);
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = tx.send(save_and_rebind(source, &key, &choice));
-    });
+    let saved =
+        crate::store_service::call(move |store| save_and_rebind(store, source, &key, &choice));
     super::spawn_in_app(async move {
-        let outcome = loop {
-            match rx.try_recv() {
-                Ok(outcome) => break outcome,
-                Err(TryRecvError::Empty) => timer(POLL).await,
-                Err(TryRecvError::Disconnected) => break Err(()),
-            }
-        };
+        let outcome = saved.await;
         let applied = match outcome {
-            Err(()) => Applied::Failed,
+            Err(error) => {
+                log::warn!("iptv data: could not save a channel's guide: {error}");
+                Applied::Failed
+            }
             Ok(Some(imported)) => {
-                super::show(ui, imported, generation, false);
+                super::show(ui, imported, generation, false).await;
                 Applied::Now
             }
-            Ok(None) if stored::update_source(ui, source, || {}) => Applied::Downloading,
+            Ok(None) if stored::update_source(ui, source, |_| {}) => Applied::Downloading,
             Ok(None) => Applied::Later,
         };
         log::info!("iptv data: a channel's guide was chosen ({applied:?})");
@@ -148,51 +142,107 @@ pub fn choose(
 /// show it, rebinds it and reads the guide back (`Some`); `None`: it needs
 /// a download.
 fn save_and_rebind(
+    store: &mut Store,
     source: SourceId,
     key: &str,
     choice: &Choice,
-) -> Result<Option<Box<Imported>>, ()> {
-    let fail = |e: StoreError| log::warn!("iptv data: could not save a channel's guide: {e}");
-    let mut store = open_store().map_err(fail)?;
-    store
-        .set_epg_override(
+) -> Result<Option<Box<Imported>>, StoreError> {
+    let content = ContentId::from_stored(key);
+    let overlay = choice.overlay();
+    store.set_epg_override(source, &content, overlay.as_ref())?;
+    let rebound = (|| -> Result<Option<Box<Imported>>, StoreError> {
+        let to = match choice {
+            Choice::Automatic => return Ok(None),
+            Choice::NoGuide => None,
+            Choice::Channel { feed, epg_channel } => Some((*feed, epg_channel.clone())),
+        };
+        let (groups, channels) = stored::catalog_in(store, source)?;
+        let overrides = store
+            .epg_overrides(source)?
+            .into_iter()
+            .map(|(id, epg)| (ChannelKey::new(id.as_str()), epg.to_override()))
+            .collect();
+        let matching = Matching {
+            channels: &channels,
+            overrides: &overrides,
+        };
+        let fingerprint = matching.fingerprint();
+        let key = ChannelKey::new(key);
+        let rebound = store.rebind_epg(
             source,
-            &ContentId::from_stored(key),
-            choice.overlay().as_ref(),
-        )
-        .map_err(fail)?;
-    let to = match choice {
-        Choice::Automatic => return Ok(None),
-        Choice::NoGuide => None,
-        Choice::Channel { feed, epg_channel } => Some((*feed, epg_channel.as_str())),
-    };
-    let (groups, channels) = stored::catalog(source).map_err(fail)?;
-    let overrides = stored::overrides(source);
-    let matching = Matching {
-        channels: &channels,
-        overrides: &overrides,
-    };
-    let rebound = store
-        .rebind_epg(source, &ChannelKey::new(key), to, matching.fingerprint())
-        .map_err(fail)?;
-    if !rebound {
-        return Ok(None);
+            &key,
+            to.as_ref().map(|(feed, channel)| (*feed, channel.as_str())),
+            fingerprint,
+        )?;
+        if !rebound {
+            return Ok(None);
+        }
+        let now = super::now_unix();
+        Ok(Some(Box::new(Imported {
+            guide: store.load_epg(
+                source,
+                &super::pages::store_window(super::pages::window(
+                    now,
+                    stored::keep_past_days(&crate::settings::get()),
+                )),
+            )?,
+            groups,
+            channels,
+            playback: Streams::Current,
+            now,
+            source,
+            resume: false,
+        })))
+    })();
+    match rebound {
+        Ok(imported) => Ok(imported),
+        Err(error) => {
+            log::warn!("iptv data: guide choice saved; cached guide could not be updated: {error}");
+            Ok(None)
+        }
     }
-    let now = super::now_unix();
-    Ok(Some(Box::new(Imported {
-        guide: stored::load_guide(source, now).unwrap_or_default(),
-        groups,
-        channels,
-        playback: Streams::Current,
-        now,
-        source,
-        resume: false,
-    })))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_choice_survives_a_cached_guide_read_failure() {
+        use iptv_providers::{
+            SecretUrl,
+            model::{M3uSourceConfig, Source, SourceConfig},
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("synthetic.sqlite");
+        let mut store = Store::open(&path).unwrap();
+        let source = store
+            .add_source(&Source {
+                name: "Synthetic guide choice".into(),
+                config: SourceConfig::M3u(M3uSourceConfig {
+                    location: SecretUrl::new("https://synthetic.invalid/list.m3u"),
+                    user_agent: None,
+                    referrer: None,
+                }),
+            })
+            .unwrap();
+        // The preference can commit even when the cached guide is unreadable.
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection.execute_batch("DROP TABLE epg_bindings").unwrap();
+        assert!(
+            save_and_rebind(&mut store, source, "synthetic-channel", &Choice::NoGuide)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .epg_overrides(source)
+                .unwrap()
+                .iter()
+                .any(|(key, value)| key.as_str() == "synthetic-channel"
+                    && *value == EpgOverride::Disabled)
+        );
+    }
 
     #[test]
     fn choices_round_trip_through_the_overlay() {

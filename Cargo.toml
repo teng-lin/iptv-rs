@@ -55,7 +55,7 @@ iptv-import = { path = "crates/iptv-import" }
 iptv-net = { path = "crates/iptv-net" }
 # iptv-store-sqlite (native adapter; bundled SQLite builds for Android via the NDK)
 iptv-store-sqlite = { path = "crates/iptv-store-sqlite" }
-rusqlite = { version = "0.41", default-features = false, features = ["bundled", "cache"] }
+rusqlite = { version = "0.42", default-features = false, features = ["bundled-sqlcipher", "cache"] }
 tempfile = "3"
 
 # Debug info is most of what a test binary links: with full debug info an

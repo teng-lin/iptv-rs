@@ -1,6 +1,6 @@
 use crate::personalization;
 use iptv_settings::Settings;
-use iptv_store_sqlite::{ChannelQuery, ChannelScope, Store};
+use iptv_store_sqlite::{ChannelQuery, ChannelScope};
 use personalization::*;
 use std::time::Duration;
 fn reorder(app: &mut nsh_testing::Headless, row: usize) {
@@ -18,7 +18,7 @@ fn the_guide_uses_independent_favorite_and_provider_group_orders() {
     reorder(app, 2);
     step(
         app.wait_until("favorites saved", Duration::from_secs(3), |_| {
-            Store::open(&f.path)
+            crate::isolated::open_database(&f.path)
                 .unwrap()
                 .load_channels(
                     f.source,
@@ -38,7 +38,7 @@ fn the_guide_uses_independent_favorite_and_provider_group_orders() {
     step(app.back());
     group(app, "News");
     reorder(app, 1);
-    let s = Store::open(&f.path).unwrap();
+    let s = crate::isolated::open_database(&f.path).unwrap();
     let group = s
         .groups(f.source, None)
         .unwrap()

@@ -55,12 +55,12 @@ impl Param {
     }
 }
 
-/// Server and portal addresses may omit the scheme; it is `http` then.
+/// Server and portal addresses may omit the scheme; it is `https` then.
 fn with_scheme(address: &str) -> String {
     if address.contains("://") {
         address.to_owned()
     } else {
-        format!("http://{address}")
+        format!("https://{address}")
     }
 }
 
@@ -224,7 +224,10 @@ mod tests {
         assert!(!form.changed());
         form.set(Param::Server, " backup.example.test:8080 ")
             .unwrap();
-        assert_eq!(form.value(Param::Server), "http://backup.example.test:8080");
+        assert_eq!(
+            form.value(Param::Server),
+            "https://backup.example.test:8080"
+        );
         assert_eq!(form.set(Param::Username, " "), Err(FieldError::Required));
         form.set(Param::Password, " new pass ").unwrap();
         assert_eq!(form.value(Param::Password), " new pass ", "kept as typed");

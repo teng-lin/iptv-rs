@@ -611,3 +611,22 @@ kept under "Buffering…" until it played in real time again.
    29.97 Hz; guide scrolling section). The render thread and text layout
    over JNI were the cost, not key handling.
 3. Cold start and zap are within budget on the emulator.
+
+## 2026-11-12, store contention (headless desktop)
+
+`cargo test -p iptv-app --features test-support --test app store_latency -- --nocapture`
+imports 10,000 generated channels and seven days of guide data. A second
+SQLCipher connection holds `BEGIN IMMEDIATE` while the UI queues a favourite
+write and navigates 24 rows after warmup. The maximum time from sending Down
+to mounting the input counter's updated text was **13.9 ms**, below the
+product plan's 50 ms budget. The favourite remains uncommitted under the lock
+and saves after it is released, including an automatic retry if SQLite's
+busy timeout expired. This measures the headless engine and mount delivery;
+it does not measure Android display presentation or GPU scanout.
+
+The app's store service owns one connection on a dedicated thread. Its FIFO
+mailbox takes ownership immediately, so closing a view cannot cancel a write. Imports share two long-lived workers and 32 waiting
+slots; queued work for the browsed source precedes background refreshes.
+Unit tests hold both workers, queue 20 synthetic sources, and verify the
+concurrency bound, queue limit, and priority order. Guide pages also use the
+shared store service rather than starting a thread for each page.

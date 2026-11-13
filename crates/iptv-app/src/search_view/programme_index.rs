@@ -4,16 +4,12 @@
 //! back as far as the store does. A guide that is not stored (none on
 //! screen) is indexed from memory.
 
-use std::sync::mpsc::{self, TryRecvError};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use iptv_core::guide::Schedule;
 use iptv_epg::{ChannelKey, DAY, UnixTime};
 use iptv_guide::{EpgSchedule, combined::CombinedSchedule};
 use iptv_search::{ProgrammeIndex, ProgrammeIndexBuilder};
-use nsh_core::prelude::*;
-
-const POLL: Duration = Duration::from_millis(50);
 
 /// Builds the index of `epg`'s channels (by row) and hands it to `done` on
 /// the UI thread (not at all when the store cannot be read).
@@ -50,45 +46,31 @@ pub fn build(schedule: &dyn Schedule, rows: usize, done: impl FnOnce(ProgrammeIn
     let keep = crate::data::stored::keep_past_days(&crate::settings::get());
     let from: UnixTime =
         crate::time::wall_unix().saturating_sub(i64::from(keep).saturating_mul(DAY));
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let started = Instant::now();
-        let mut b = ProgrammeIndexBuilder::new(rows);
-        let read = crate::data::open_store().and_then(|s| {
-            for (source, keys, offset) in sources {
-                s.for_each_epg_title(
-                    source,
-                    &keys,
-                    from,
-                    UnixTime::MAX,
-                    |c, start, stop, title| b.push(c + offset, start, stop, title),
-                )?;
-            }
-            Ok(())
-        });
-        let index = match read {
-            Ok(_) => Some(b.finish()),
-            Err(e) => {
-                log::warn!("iptv search: guide titles: {e}");
-                None
-            }
-        };
-        let _ = tx.send((index, started.elapsed()));
+    let started = Instant::now();
+    let read = crate::store_service::call(move |store| {
+        let mut builder = ProgrammeIndexBuilder::new(rows);
+        for (source, keys, offset) in sources {
+            store.for_each_epg_title(
+                source,
+                &keys,
+                from,
+                UnixTime::MAX,
+                |channel, start, stop, title| builder.push(channel + offset, start, stop, title),
+            )?;
+        }
+        Ok(builder.finish())
     });
     crate::data::spawn_in_app(async move {
-        loop {
-            match rx.try_recv() {
-                Ok((Some(index), took)) => {
-                    log::info!(
-                        "iptv search: read {} stored programmes in {} ms",
-                        index.programme_count(),
-                        took.as_millis()
-                    );
-                    return done(index);
-                }
-                Ok((None, _)) | Err(TryRecvError::Disconnected) => return,
-                Err(TryRecvError::Empty) => timer(POLL).await,
+        match read.await {
+            Ok(index) => {
+                log::info!(
+                    "iptv search: read {} stored programmes in {} ms",
+                    index.programme_count(),
+                    started.elapsed().as_millis()
+                );
+                done(index);
             }
+            Err(error) => log::warn!("iptv search: guide titles: {error}"),
         }
     });
 }

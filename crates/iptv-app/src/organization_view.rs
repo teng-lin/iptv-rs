@@ -25,60 +25,91 @@ pub struct Open {
     kind: Kind,
     editor: Editor,
 }
-fn items(source: SourceId, kind: &Kind) -> Result<Vec<Item>, StoreError> {
-    let org = data::organization::read(source)?;
-    Ok(match kind {
-        Kind::Channels => org.channels,
-        Kind::Groups => org.groups,
-        Kind::Favorites => {
-            let names: std::collections::HashMap<_, _> = org
-                .channels
+async fn items(source: SourceId, kind: &Kind) -> Result<Vec<Item>, StoreError> {
+    let kind = kind.clone();
+    let favorites = crate::favorites::ordered_keys();
+    crate::store_service::call(move |store| {
+        let org = data::organization::read_in(store, source)?;
+        let rows = match kind {
+            Kind::Channels => org.channels,
+            Kind::Groups => org.groups,
+            Kind::Favorites => {
+                let names: std::collections::HashMap<_, _> = org
+                    .channels
+                    .into_iter()
+                    .map(|(id, name, hidden)| (id, (name, hidden)))
+                    .collect();
+                favorites
+                    .into_iter()
+                    .filter_map(|id| {
+                        names
+                            .get(&id)
+                            .map(|(name, hidden)| (id.clone(), name.clone(), *hidden))
+                    })
+                    .collect()
+            }
+            Kind::GroupChannels(group) => store
+                .load_channels(
+                    source,
+                    &ChannelQuery {
+                        scope: ChannelScope::Group(group),
+                        include_hidden: true,
+                        ..Default::default()
+                    },
+                )?
                 .into_iter()
-                .map(|(id, n, h)| (id, (n, h)))
-                .collect();
-            crate::favorites::ordered_keys()
+                .map(|r| (r.channel.id.as_str().to_owned(), r.name, r.hidden))
+                .collect(),
+            Kind::CustomChannels(group) => store
+                .load_channels(
+                    source,
+                    &ChannelQuery {
+                        scope: ChannelScope::Custom(group),
+                        include_hidden: true,
+                        ..Default::default()
+                    },
+                )?
                 .into_iter()
-                .filter_map(|id| names.get(&id).map(|(n, h)| (id.clone(), n.clone(), *h)))
-                .collect()
-        }
-        Kind::GroupChannels(g) => data::open_store()?
-            .load_channels(
-                source,
-                &ChannelQuery {
-                    scope: ChannelScope::Group(g.clone()),
-                    include_hidden: true,
-                    ..Default::default()
-                },
-            )?
+                .map(|r| (r.channel.id.as_str().to_owned(), r.name, r.hidden))
+                .collect(),
+        };
+        Ok(rows
             .into_iter()
-            .map(|r| (r.channel.id.as_str().to_owned(), r.name, r.hidden))
-            .collect(),
-        Kind::CustomChannels(g) => data::open_store()?
-            .load_channels(
-                source,
-                &ChannelQuery {
-                    scope: ChannelScope::Custom(*g),
-                    include_hidden: true,
-                    ..Default::default()
-                },
-            )?
-            .into_iter()
-            .map(|r| (r.channel.id.as_str().to_owned(), r.name, r.hidden))
-            .collect(),
-    }
-    .into_iter()
-    .map(|(id, name, hidden)| Item { id, name, hidden })
-    .collect())
+            .map(|(id, name, hidden)| Item { id, name, hidden })
+            .collect())
+    })
+    .await
 }
+
+thread_local! { static OPEN_GENERATION: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
+fn next_open() -> u64 {
+    OPEN_GENERATION.with(|generation| {
+        let next = generation.get().wrapping_add(1);
+        generation.set(next);
+        next
+    })
+}
+
 pub fn open(ui: Ui, source: SourceId, kind: Kind, focus: Option<String>) {
-    match items(source, &kind) {
-        Ok(items) => ui.organization.set(Some(Open {
-            source,
-            kind,
-            editor: Editor::new(items, focus),
-        })),
-        Err(e) => log::warn!("iptv organization: {e}"),
-    }
+    let generation = next_open();
+    ui.organization.set(Some(Open {
+        source,
+        kind: kind.clone(),
+        editor: Editor::new(Vec::new(), focus.clone()),
+    }));
+    data::spawn_in_app(async move {
+        let loaded = items(source, &kind).await;
+        if OPEN_GENERATION.get() != generation || !is_open(ui) {
+            return;
+        }
+        match loaded {
+            Ok(items) => update(ui, |state| state.editor = Editor::new(items, focus)),
+            Err(error) => {
+                log::warn!("iptv organization: {error}");
+                close(ui);
+            }
+        }
+    });
 }
 pub fn is_open(ui: Ui) -> bool {
     ui.organization.with(Option::is_some)
@@ -98,11 +129,13 @@ pub fn back(ui: Ui) -> bool {
     update(ui, |s| close = !s.editor.back());
     dismiss_keyboard();
     if close {
+        next_open();
         ui.organization.set(None);
     }
     true
 }
 fn close(ui: Ui) {
+    next_open();
     ui.organization.set(None);
     dismiss_keyboard();
 }
@@ -132,6 +165,7 @@ pub fn key(ui: Ui, action: Action) {
     }
 }
 fn perform(ui: Ui, edit: Edit) {
+    let generation = OPEN_GENERATION.get();
     let Some(s) = state(ui, Clone::clone) else {
         return;
     };
@@ -146,8 +180,56 @@ fn perform(ui: Ui, edit: Edit) {
         update(ui, |s| s.editor.toggle_selection());
         return;
     }
-    let result = (|| -> Result<(), StoreError> {
-        let mut store = data::open_store()?;
+    if s.kind == Kind::Favorites
+        && matches!(edit, Edit::Earlier | Edit::Later | Edit::First | Edit::Last)
+    {
+        let Some(at) = s.editor.items.iter().position(|entry| entry.id == item.id) else {
+            return;
+        };
+        let to = match edit {
+            Edit::Earlier => at.saturating_sub(1),
+            Edit::Later => (at + 1).min(s.editor.items.len().saturating_sub(1)),
+            Edit::First => 0,
+            _ => s.editor.items.len().saturating_sub(1),
+        };
+        crate::favorites::reorder(ui, &item.id, to);
+        finish(ui, &s, generation, Ok(()));
+        return;
+    }
+    if s.kind == Kind::Favorites && edit == Edit::ResetOrder {
+        let keys = crate::favorites::ordered_keys();
+        let source = s.source;
+        let ordered = crate::store_service::call(move |store| {
+            Ok(store
+                .load_channels(
+                    source,
+                    &ChannelQuery {
+                        include_hidden: true,
+                        order: iptv_store_sqlite::ChannelOrder::Provider,
+                        ..Default::default()
+                    },
+                )?
+                .into_iter()
+                .filter(|row| keys.iter().any(|key| key == row.channel.id.as_str()))
+                .map(|row| row.channel.id.as_str().to_owned())
+                .collect::<Vec<_>>())
+        });
+        data::spawn_in_app(async move {
+            let ordered = ordered.await;
+            if OPEN_GENERATION.get() != generation {
+                return;
+            }
+            let result = ordered.map(|keys| {
+                for (at, key) in keys.iter().enumerate() {
+                    crate::favorites::reorder(ui, key, at);
+                }
+            });
+            finish(ui, &s, generation, result);
+        });
+        return;
+    }
+    let finished = s.clone();
+    let result = crate::store_service::call(move |store| {
         let id = ContentId::from_stored(&item.id);
         let group = GroupId::from_stored(&item.id);
         let at = s
@@ -158,7 +240,7 @@ fn perform(ui: Ui, edit: Edit) {
             .unwrap_or(0);
         let to = match edit {
             Edit::Earlier => at.saturating_sub(1),
-            Edit::Later => at + 1,
+            Edit::Later => (at + 1).min(s.editor.items.len().saturating_sub(1)),
             Edit::First => 0,
             Edit::Last => s.editor.items.len().saturating_sub(1),
             _ => at,
@@ -182,7 +264,7 @@ fn perform(ui: Ui, edit: Edit) {
                 Kind::CustomChannels(g) => {
                     store.move_in_custom_group(*g, &id, to)?;
                 }
-                Kind::Favorites => crate::favorites::reorder(ui, &item.id, to),
+                Kind::Favorites => unreachable!("handled before queuing"),
                 Kind::Groups => store.move_group(s.source, &group, to)?,
             },
             Edit::ResetOrder => match &s.kind {
@@ -204,24 +286,7 @@ fn perform(ui: Ui, edit: Edit) {
                         store.move_in_custom_group(*g, &r.channel.id, at)?;
                     }
                 }
-                Kind::Favorites => {
-                    let keys = crate::favorites::ordered_keys();
-                    let rows = store.load_channels(
-                        s.source,
-                        &ChannelQuery {
-                            include_hidden: true,
-                            order: iptv_store_sqlite::ChannelOrder::Provider,
-                            ..Default::default()
-                        },
-                    )?;
-                    for (at, r) in rows
-                        .iter()
-                        .filter(|r| keys.iter().any(|k| k == r.channel.id.as_str()))
-                        .enumerate()
-                    {
-                        crate::favorites::reorder(ui, r.channel.id.as_str(), at);
-                    }
-                }
+                Kind::Favorites => unreachable!("handled before queuing"),
                 Kind::Groups => store.reset_group_order(s.source)?,
             },
             Edit::HideSelected | Edit::ShowSelected | Edit::HideAll | Edit::ShowAll => {
@@ -239,38 +304,62 @@ fn perform(ui: Ui, edit: Edit) {
             _ => {}
         }
         Ok(())
-    })();
-    finish(ui, &s, result);
+    });
+    data::spawn_in_app(async move {
+        finish(ui, &finished, generation, result.await);
+    });
 }
-fn finish(ui: Ui, s: &Open, result: Result<(), StoreError>) {
+fn finish(ui: Ui, s: &Open, generation: u64, result: Result<(), StoreError>) {
     if let Err(e) = result {
         log::warn!("iptv organization: change refused: {e}");
         return;
     }
-    if let Ok(items) = items(s.source, &s.kind) {
-        update(ui, |s| {
-            s.editor.reload(items);
-            s.editor.action = None;
-            s.editor.text = None;
-        });
-    }
-    data::organization::changed(ui, s.source);
+    let expected = s.clone();
+    data::spawn_in_app(async move {
+        if let Ok(items) = items(expected.source, &expected.kind).await
+            && OPEN_GENERATION.get() == generation
+        {
+            update(ui, |s| {
+                s.editor.reload(items);
+                if s.editor.action == expected.editor.action {
+                    s.editor.action = None;
+                }
+                if s.editor.text == expected.editor.text {
+                    s.editor.text = None;
+                }
+            });
+        }
+        data::organization::changed(ui, expected.source);
+    });
 }
+
 fn commit(ui: Ui) {
+    let generation = OPEN_GENERATION.get();
     let Some(s) = state(ui, Clone::clone) else {
         return;
     };
-    let Some((item, text)) = s.editor.focused().zip(s.editor.text.as_deref()) else {
+    let Some(item) = s.editor.focused().cloned() else {
         return;
     };
-    let text = (!text.trim().is_empty()).then_some(text.trim());
-    let result = data::open_store().and_then(|mut store| match &s.kind {
-        Kind::Groups => store.rename_group(s.source, &GroupId::from_stored(&item.id), text),
-        _ => store.rename_channel(s.source, &ContentId::from_stored(&item.id), text),
+    let Some(text) = s.editor.text.clone() else {
+        return;
+    };
+    let target = s.clone();
+    let result = crate::store_service::call(move |store| {
+        let text = (!text.trim().is_empty()).then_some(text.trim());
+        match target.kind {
+            Kind::Groups => {
+                store.rename_group(target.source, &GroupId::from_stored(&item.id), text)
+            }
+            _ => store.rename_channel(target.source, &ContentId::from_stored(&item.id), text),
+        }
     });
     dismiss_keyboard();
-    finish(ui, &s, result);
+    data::spawn_in_app(async move {
+        finish(ui, &s, generation, result.await);
+    });
 }
+
 fn text_value(ui: Ui) -> String {
     state(ui, |s| s.editor.text.clone())
         .flatten()
@@ -311,11 +400,14 @@ pub fn layer(ui: Ui) -> impl IntoElement {
     effect(move || {
         ui.library.version.get();
         if let Some(s) = untracked(|| state(ui, Clone::clone)) {
-            untracked(|| {
-                if let Ok(items) = items(s.source, &s.kind) {
+            let generation = OPEN_GENERATION.get();
+            data::spawn_in_app(async move {
+                if let Ok(items) = items(s.source, &s.kind).await
+                    && OPEN_GENERATION.get() == generation
+                {
                     update(ui, |s| s.editor.reload(items));
                 }
-            })
+            });
         }
     });
     when(

@@ -56,12 +56,12 @@ pub fn source_from_draft(draft: &PlaylistDraft) -> (Source, Option<SecretUrl>) {
     (Source { name, config }, epg)
 }
 
-/// Server and portal addresses may omit the scheme; it is `http` then.
+/// Server and portal addresses may omit the scheme; it is `https` then.
 fn with_scheme(address: &str) -> String {
     if address.contains("://") {
         address.to_owned()
     } else {
-        format!("http://{address}")
+        format!("https://{address}")
     }
 }
 
@@ -223,7 +223,7 @@ mod tests {
         let SourceConfig::Xtream(c) = &s.config else {
             panic!("{s:?}")
         };
-        assert_eq!(c.server_url, "http://panel.example.test:8080");
+        assert_eq!(c.server_url, "https://panel.example.test:8080");
         assert_eq!(c.username.expose(), "synthetic-user");
         assert_eq!(c.password.expose(), " pass with spaces ");
         assert_eq!(c.user_agent, None);
@@ -248,7 +248,7 @@ mod tests {
         let SourceConfig::Stalker(c) = &s.config else {
             panic!("{s:?}")
         };
-        assert_eq!(c.portal_url, "http://portal.example.test/c/");
+        assert_eq!(c.portal_url, "https://portal.example.test/c/");
         assert_eq!(c.mac.expose(), "00:1A:79:00:00:01");
         assert_eq!((c.serial.clone(), c.login.clone()), (None, None));
     }

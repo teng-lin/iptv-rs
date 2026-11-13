@@ -8,7 +8,7 @@ publish.workspace = true
 license.workspace = true
 
 [features]
-# Explicit synthetic fixture transport; release builds ignore this switch.
+# Synthetic fixture transport and key injection; never enabled in packages.
 test-support = []
 
 [dependencies]
@@ -30,13 +30,20 @@ nsh-base.workspace = true
 env_logger.workspace = true
 log.workspace = true
 serde_json.workspace = true
+zeroize = "1.8"
+getrandom = "0.3"
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
 
 [target.'cfg(unix)'.dependencies]
 # localtime_r for the device's UTC offset (time.rs).
 libc = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
+dbus-secret-service = { version = "4.1", features = ["crypto-rust"] }
 nsh-platform-linux.workspace = true
+keyring = { version = "3.6.3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
 
 # The macOS desktop: NSH's AppKit backend, and `tv.player` on libmpv drawing
 # into a CAOpenGLLayer (`src/mpv/mac.rs`).
@@ -78,6 +85,9 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
   "NSGeometry",
   "NSObject",
   "NSString",
+  "NSURL",
+  "NSValue",
+  "NSError",
   "objc2-core-foundation",
 ] }
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFCGTypes"] }
@@ -92,6 +102,7 @@ objc2-ui-kit = { version = "0.3.2", default-features = false, features = [
 ] }
 
 [dev-dependencies]
+rusqlite.workspace = true
 # Headless runs of the app: what a press reaches (tests/app/pointer.rs).
 nsh-engine.workspace = true
 nsh-testing.workspace = true
@@ -99,3 +110,12 @@ tempfile.workspace = true
 
 [lints]
 workspace = true
+
+[[test]]
+name = "app"
+path = "tests/app/main.rs"
+required-features = ["test-support"]
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+keyring = { version = "3.6.3", default-features = false, features = ["apple-native"] }
+

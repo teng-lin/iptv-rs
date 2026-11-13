@@ -129,7 +129,7 @@ async fn redirects_relative_cross_origin_and_cross_protocol() {
     assert_eq!(landed.header("referer"), None);
     assert_eq!(same.header("referer"), None);
     assert_eq!(landed.header("user-agent"), Some("SyntheticPlayer/1.0"));
-    assert_eq!(landed.header("x-user-agent"), Some("Model: Synthetic"));
+    assert_eq!(landed.header("x-user-agent"), None);
 
     let err = net
         .fetch(HttpRequest::get(origin.url("/loop")))
@@ -137,7 +137,7 @@ async fn redirects_relative_cross_origin_and_cross_protocol() {
         .unwrap_err();
     assert_eq!(err.kind, FetchErrorKind::Redirect, "{err}");
 
-    // https → http.
+    // https → http is refused before contacting the insecure target.
     let (acceptor, der) = self_signed();
     let to = target.url("/plain");
     let secure = TestServer::https(move |_| Resp::redirect(302, &to), acceptor).await;
@@ -147,11 +147,13 @@ async fn redirects_relative_cross_origin_and_cross_protocol() {
         ..NetConfig::default()
     })
     .unwrap();
-    let resp = trusting
+    let before = target.requests().len();
+    let error = trusting
         .fetch(HttpRequest::get(secure.url("/start")))
         .await
-        .unwrap();
-    assert_eq!(resp.body, b"landed /plain");
+        .unwrap_err();
+    assert_eq!(error.kind, FetchErrorKind::Redirect);
+    assert_eq!(target.requests().len(), before);
 }
 
 #[tokio::test]

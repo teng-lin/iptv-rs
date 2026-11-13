@@ -133,11 +133,14 @@ fn perform(ui: Ui, effect: WizardEffect) {
         }),
         WizardEffect::PickFile => data::spawn_in_app(async move {
             let files = pick_files(FilePickRequest::new(false, 1)).await;
-            let path = files.first().and_then(|f| {
-                data::keep_picked_file(&f.name, f.data.bytes())
+            let path = if let Some(file) = files.first() {
+                data::keep_picked_file(&file.name, file.data.bytes())
+                    .await
                     .inspect_err(|e| log::warn!("iptv wizard: keeping the file failed: {e}"))
                     .ok()
-            });
+            } else {
+                None
+            };
             send(ui, WizardEvent::FilePicked(path));
         }),
         WizardEffect::StartImport { id, draft } => {
@@ -458,6 +461,29 @@ fn form(ui: Ui, kind: PlaylistKind) -> impl IntoElement {
                 .h(move || size.px(if banner().is_some() { 22.0 } else { 0.0 })),
         )
         .children(kind.fields().iter().map(|f| field_row(ui, size, *f)))
+        .child(when(
+            move || {
+                read(ui, |w| {
+                    kind.fields().iter().any(|field| {
+                        matches!(
+                            field,
+                            Field::PlaylistUrl | Field::Server | Field::PortalUrl | Field::EpgUrl
+                        ) && w
+                            .value(*field)
+                            .trim()
+                            .to_ascii_lowercase()
+                            .starts_with("http://")
+                    })
+                })
+                .unwrap_or(false)
+            },
+            move || {
+                ui_kit::caption(
+                    size,
+                    "Not encrypted: HTTP can expose your login and viewing activity.",
+                )
+            },
+        ))
         .child(button(ui, size, "Add playlist", Target::Submit))
         .child(hint_or_back(
             ui,

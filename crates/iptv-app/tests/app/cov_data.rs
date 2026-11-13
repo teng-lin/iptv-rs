@@ -127,6 +127,20 @@ fn copy_of(data: &Path, name: &str) -> PathBuf {
         .unwrap_or_else(|| panic!("no copy of {name}"))
 }
 
+/// Replace synthetic picked-document content through its encrypted storage API.
+fn replace_copy(
+    data: &Path,
+    path: impl AsRef<Path>,
+    bytes: impl AsRef<[u8]>,
+) -> std::io::Result<()> {
+    let path = path.as_ref();
+    let temporary = path.with_extension("replacement");
+    store(data)
+        .write_private_file(&temporary, &mut bytes.as_ref())
+        .map_err(|_| std::io::Error::other("synthetic document write failed"))?;
+    std::fs::rename(temporary, path)
+}
+
 fn start() -> Headless {
     let size = Size::new(px(1280.0), px(720.0));
     let mut config = EngineConfig {
@@ -207,7 +221,7 @@ fn until(app: &mut Headless, what: &str, limit: Duration, done: impl Fn(&Headles
 }
 
 fn store(data: &Path) -> Store {
-    Store::open(data.join("iptv.sqlite")).unwrap()
+    crate::isolated::open_database(data.join("iptv.sqlite")).unwrap()
 }
 
 /// Whether the store notes `source`'s last guide download as failed.
@@ -330,7 +344,8 @@ fn stored_playlists_switch_refresh_and_go() {
     // The second refreshes in the background: four channels in the store,
     // the guide on screen as it was.
     // (The one on screen: its action only goes back to the guide.)
-    std::fs::write(
+    replace_copy(
+        &data,
         copy_of(&data, "second.m3u"),
         beta(&[
             ("b1", "Beta One"),
@@ -356,7 +371,8 @@ fn stored_playlists_switch_refresh_and_go() {
     step(app.press("text:/^(★ )?Alpha Two$/"));
     assert!(iptv_app::player_has_source(0));
     let first_copy = copy_of(&data, "first.m3u");
-    std::fs::write(
+    replace_copy(
+        &data,
         &first_copy,
         alpha(&[
             ("a0", "Alpha Zero"),
@@ -375,7 +391,8 @@ fn stored_playlists_switch_refresh_and_go() {
     assert!(iptv_app::player_has_source(0), "still playing");
     // One that leaves fewer rows than its row was: found again by key, on
     // its new row, it plays on (regression: the new guide dropped it).
-    std::fs::write(
+    replace_copy(
+        &data,
         &first_copy,
         alpha(&[("a1", "Alpha One"), ("a2", "Alpha Two")]),
     )
@@ -389,7 +406,8 @@ fn stored_playlists_switch_refresh_and_go() {
     assert!(iptv_app::player_has_source(0), "Alpha Two plays on");
 
     // "Refresh all" with Alpha Two gone from the first: playback stops.
-    std::fs::write(
+    replace_copy(
+        &data,
         &first_copy,
         alpha(&[("a0", "Alpha Zero"), ("a1", "Alpha One")]),
     )
@@ -418,7 +436,7 @@ fn stored_playlists_switch_refresh_and_go() {
         agent(&data).as_deref() == Some("SyntheticAgent/1.0")
     });
     // With the file broken, another one fails its check: not saved.
-    std::fs::write(&first_copy, "not a playlist").unwrap();
+    replace_copy(&data, &first_copy, "not a playlist").unwrap();
     act(&mut app, "first", "User-Agent");
     enter_text(&mut app, "OtherAgent/2.0");
     step(app.wait_for_within("text:/^New details not saved/", IMPORT));
@@ -427,12 +445,13 @@ fn stored_playlists_switch_refresh_and_go() {
     // one of an empty playlist.
     act(&mut app, "first", "Refresh now");
     step(app.wait_for_within("text:/^Refresh failed/", IMPORT));
-    std::fs::write(&first_copy, "#EXTM3U\n").unwrap();
+    replace_copy(&data, &first_copy, "#EXTM3U\n").unwrap();
     act(&mut app, "first", "Refresh now");
     step(app.wait_for_within("text:/nothing to watch in it/", IMPORT));
     // The playlist back, its guide's file gone: the refresh keeps the
     // stored guide and notes the failure.
-    std::fs::write(
+    replace_copy(
+        &data,
         &first_copy,
         alpha(&[("a0", "Alpha Zero"), ("a1", "Alpha One")]),
     )
@@ -521,7 +540,7 @@ fn stored_playlists_switch_refresh_and_go() {
     // is not stored yet; the startup refresh brings it and it plays.
     std::fs::write(&guide_a, guide("Alpha", &["a1", "a9"])).unwrap();
     let nine = alpha(&[("a1", "Alpha One"), ("a9", "Alpha Nine")]);
-    std::fs::write(&first_copy, &nine).unwrap();
+    replace_copy(&data, &first_copy, &nine).unwrap();
     let key = iptv_providers::m3u::parse_m3u(&nine).channels.items[1]
         .id
         .as_str()
@@ -596,6 +615,7 @@ fn stored_playlists_switch_refresh_and_go() {
         "text:M3U link or file, Xtream Codes login, Stalker portal",
         IMPORT,
     ));
+    step(app.wait_for_gone("id:guide-channel-name", IMPORT));
     assert_eq!(app.screen().count("id:guide-channel-name").unwrap(), 0);
     assert!(store(&data).sources().unwrap().is_empty());
     assert!(!data.join(format!("last_channel-{}", first_id.0)).exists());

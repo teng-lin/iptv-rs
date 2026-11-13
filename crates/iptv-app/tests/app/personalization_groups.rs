@@ -1,6 +1,6 @@
 use crate::personalization;
 use iptv_settings::Settings;
-use iptv_store_sqlite::{ChannelQuery, ChannelScope, Store};
+use iptv_store_sqlite::{ChannelQuery, ChannelScope};
 use personalization::*;
 use std::time::Duration;
 #[test]
@@ -14,7 +14,7 @@ fn custom_groups_filter_select_copy_move_rename_delete_and_restore_focus() {
     step(app.press("text:New group"));
     step(app.submit("text:Enter text"));
     assert!(
-        Store::open(&f.path)
+        crate::isolated::open_database(&f.path)
             .unwrap()
             .custom_groups(f.source)
             .unwrap()
@@ -64,7 +64,7 @@ fn custom_groups_filter_select_copy_move_rename_delete_and_restore_focus() {
     step(app.press("text:Second group · 0 channels"));
     step(app.wait_for("text:2 channels moved."));
     step(app.wait_for("text:0 selected · 0 matching · 0 total"));
-    let groups = Store::open(&f.path)
+    let groups = crate::isolated::open_database(&f.path)
         .unwrap()
         .custom_groups(f.source)
         .unwrap();
@@ -81,7 +81,7 @@ fn custom_groups_filter_select_copy_move_rename_delete_and_restore_focus() {
     step(app.press("id:organization-row-1"));
     step(app.press("text:Move to first"));
     step(app.back());
-    let s = Store::open(&f.path).unwrap();
+    let s = crate::isolated::open_database(&f.path).unwrap();
     let id = s.custom_groups(f.source).unwrap()[1].id;
     let members = s
         .load_channels(
@@ -101,7 +101,7 @@ fn custom_groups_filter_select_copy_move_rename_delete_and_restore_focus() {
     step(app.press("text:Select filtered"));
     step(app.press("text:Remove selected"));
     assert_eq!(
-        Store::open(&f.path)
+        crate::isolated::open_database(&f.path)
             .unwrap()
             .load_channels(
                 f.source,
@@ -119,7 +119,7 @@ fn custom_groups_filter_select_copy_move_rename_delete_and_restore_focus() {
     step(app.press("text:Delete group"));
     step(app.press_key("enter"));
     assert_eq!(
-        Store::open(&f.path)
+        crate::isolated::open_database(&f.path)
             .unwrap()
             .custom_groups(f.source)
             .unwrap()
@@ -131,7 +131,7 @@ fn custom_groups_filter_select_copy_move_rename_delete_and_restore_focus() {
     step(app.press_key("enter"));
     step(app.wait_for("text:1 custom groups"));
     assert_eq!(
-        Store::open(&f.path)
+        crate::isolated::open_database(&f.path)
             .unwrap()
             .load_channels(f.source, &ChannelQuery::default())
             .unwrap()
@@ -147,4 +147,32 @@ fn custom_groups_filter_select_copy_move_rename_delete_and_restore_focus() {
     step(app.press("text:All channels >> nth=0"));
     step(app.press_key("right"));
     step(app.wait_for("text:★ Local A"));
+}
+
+#[test]
+fn a_group_edit_finishes_after_its_editor_is_closed_during_write_contention() {
+    let Some(home) = isolated!() else { return };
+    let mut f = start(home, Settings::new(), false);
+    let app = &mut f.app;
+    menu(app, "New group…");
+    step(app.wait_for("id:custom-groups-screen"));
+    step(app.press("text:New group"));
+    step(app.type_text("text:Enter text", "Pending synthetic group"));
+    let lock = rusqlite::Connection::open(&f.path).unwrap();
+    lock.pragma_update(None, "key", format!("x'{}'", "54".repeat(32)))
+        .unwrap();
+    lock.execute_batch("BEGIN IMMEDIATE").unwrap();
+    step(app.submit("text:Pending synthetic group"));
+    // Dismiss the text editor and the group screen while the commit is blocked.
+    step(app.back());
+    step(app.back());
+    step(app.wait_for_gone("id:custom-groups-screen", Duration::from_secs(2)));
+    lock.execute_batch("ROLLBACK").unwrap();
+    // The late completion must update the guide, without reopening its editor.
+    step(app.press("text:/^☰  /"));
+    step(app.wait_for_within(
+        "id:guide-groups >> text:Pending synthetic group",
+        Duration::from_secs(10),
+    ));
+    assert!(!app.shows("id:custom-groups-screen"));
 }

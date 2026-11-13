@@ -15,10 +15,14 @@ url.workspace = true
 # No default features: no OpenSSL, no aws-lc (C/cmake), no system proxy.
 # TLS is a preconfigured rustls config (ring provider + webpki roots), so it
 # cross-compiles for Android with only the NDK clang (for ring).
-reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "gzip", "deflate", "charset"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "gzip", "deflate", "charset", "cookies"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 webpki-roots = "1"
-tokio = { version = "1", default-features = false, features = ["fs", "io-util", "time", "net"] }
+tokio = { version = "1", default-features = false, features = ["fs", "io-util", "net", "rt", "sync", "time", "macros"] }
+
+cookie_store = { version = "0.22", default-features = false }
+getrandom = "0.4"
+quick-xml = "0.42"
 
 [dev-dependencies]
 tokio = { version = "1", default-features = false, features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }

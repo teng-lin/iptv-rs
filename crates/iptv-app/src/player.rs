@@ -223,11 +223,15 @@ pub fn start(ui: &Ui, channel: usize) {
                 if let Some((source, local)) = crate::data::combined::owner(ui, &key) {
                     save_last_channel(Some(source), &local);
                 }
-                if let Err(e) =
-                    crate::data::open_store().and_then(|mut s| s.set_combined_last_channel(&key))
-                {
-                    log::warn!("iptv combined: cannot save last channel: {e}");
-                }
+                let saved_key = key.clone();
+                let saved = crate::store_service::call(move |store| {
+                    store.set_combined_last_channel(&saved_key)
+                });
+                crate::data::spawn_in_app(async move {
+                    if let Err(e) = saved.await {
+                        log::warn!("iptv combined: cannot save last channel: {e}");
+                    }
+                });
             } else {
                 save_last_channel(ui.library.shown.get_untracked(), &key);
             }

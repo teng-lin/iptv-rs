@@ -1,0 +1,60 @@
+package com.hantekllc.iptvrs.host
+
+import android.view.KeyEvent
+import androidx.media3.common.C
+import org.junit.Assert.*
+import org.junit.Test
+import java.io.File
+import javax.xml.parsers.DocumentBuilderFactory
+
+class HostPolicyTest {
+    @Test fun transientLoadsRetryWithABoundedDelayButRefusalsDoNot() {
+        for (status in listOf(401, 403, 429, 458, 509)) {
+            assertTrue(LiveLoadPolicy.refused(status))
+            assertEquals(C.TIME_UNSET, LiveLoadPolicy.retryDelay(1, status, 0))
+        }
+        for (status in listOf(null, 404, 500, 503)) {
+            assertFalse(LiveLoadPolicy.refused(status))
+            assertEquals(1000L, LiveLoadPolicy.retryDelay(1, status, 0))
+            assertEquals(2000L, LiveLoadPolicy.retryDelay(2, status, 1000))
+            assertEquals(3000L, LiveLoadPolicy.retryDelay(100, status, 3000))
+        }
+        assertEquals(C.TIME_UNSET, LiveLoadPolicy.retryDelay(1, null, C.TIME_UNSET))
+        assertEquals(6, LiveLoadPolicy().getMinimumLoadableRetryCount(C.DATA_TYPE_MEDIA))
+    }
+
+    @Test fun searchIsMappedAndOtherKeysKeepTheirOriginalMeaning() {
+        assertEquals(KeyEvent.KEYCODE_F12, RemoteKeys.translate(KeyEvent.KEYCODE_SEARCH))
+        for (key in listOf(KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_DPAD_CENTER,
+            KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+            KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_A, KeyEvent.KEYCODE_UNKNOWN)) {
+            assertEquals(key, RemoteKeys.translate(key))
+        }
+    }
+
+    @Test fun cloudAndTransferRulesExcludeEveryCredentialStorageDomain() {
+        val manifest = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
+            .newDocumentBuilder().parse(File("src/main/AndroidManifest.xml"))
+        val app = manifest.getElementsByTagName("application").item(0) as org.w3c.dom.Element
+        val android = "http://schemas.android.com/apk/res/android"
+        assertEquals("false", app.getAttributeNS(android, "allowBackup"))
+        assertEquals("@xml/backup_rules", app.getAttributeNS(android, "fullBackupContent"))
+        assertEquals("@xml/data_extraction_rules", app.getAttributeNS(android, "dataExtractionRules"))
+        val required = setOf("root", "file", "database", "sharedpref", "external", "device_root", "device_file", "device_database", "device_sharedpref")
+        val parser = DocumentBuilderFactory.newInstance().newDocumentBuilder()
+        for ((file, sections) in listOf("backup_rules.xml" to listOf("full-backup-content"),
+            "data_extraction_rules.xml" to listOf("cloud-backup", "device-transfer"))) {
+            val document = parser.parse(File("src/main/res/xml/$file"))
+            for (section in sections) {
+                val element = document.getElementsByTagName(section).item(0) as org.w3c.dom.Element
+                val exclusions = element.getElementsByTagName("exclude")
+                val domains = (0 until exclusions.length).map {
+                    val rule = exclusions.item(it) as org.w3c.dom.Element
+                    assertEquals(".", rule.getAttribute("path"))
+                    rule.getAttribute("domain")
+                }.toSet()
+                assertEquals(required, domains)
+            }
+        }
+    }
+}

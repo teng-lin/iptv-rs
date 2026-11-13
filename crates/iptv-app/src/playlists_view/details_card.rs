@@ -83,6 +83,12 @@ pub(super) fn card(ui: Ui, size: Scale, id: SourceId) -> impl IntoElement {
         ))
         .child(view().h(move || size.px(4.0)))
         .children(params.iter().copied().map(row))
+        .child(when(
+            move || state(ui, |s| s.details().is_some_and(|f| {
+                f.params().iter().any(|p| p.is_link() && f.value(*p).trim().to_ascii_lowercase().starts_with("http://"))
+            })).unwrap_or(false),
+            move || ui_kit::caption(size, "Not encrypted: HTTP can expose your login and viewing activity."),
+        ))
         .child(ui_kit::action(ui, size, check_label, check_focused, WHITE, move || {
             update(ui, |s| s.check());
         }))

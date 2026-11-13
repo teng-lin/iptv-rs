@@ -35,6 +35,7 @@ impl Mpv {
             ("terminal", "no".to_owned()),
             ("config", "no".to_owned()),
             ("load-scripts", "no".to_owned()),
+            ("autoload-files", "no".to_owned()),
             ("input-default-bindings", "no".to_owned()),
             ("input-vo-keyboard", "no".to_owned()),
             ("osd-level", "0".to_owned()),
@@ -105,13 +106,19 @@ impl Mpv {
     }
 
     pub fn set(&self, name: &str, value: &str) {
+        let _ = self.try_set(name, value);
+    }
+
+    pub fn try_set(&self, name: &str, value: &str) -> bool {
         let (Ok(n), Ok(v)) = (CString::new(name), CString::new(value)) else {
-            return;
+            return false;
         };
         // SAFETY: a live handle and NUL-terminated strings.
-        if unsafe { ffi::mpv_set_property_string(self.0, n.as_ptr(), v.as_ptr()) } < 0 {
+        let ok = unsafe { ffi::mpv_set_property_string(self.0, n.as_ptr(), v.as_ptr()) } >= 0;
+        if !ok {
             log::warn!("iptv mpv: property {name} not set");
         }
+        ok
     }
 
     pub fn get_f64(&self, name: &CStr) -> Option<f64> {

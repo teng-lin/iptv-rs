@@ -329,13 +329,7 @@ impl Store {
         if !stage.ready {
             return Err(invalid("cannot publish an incomplete catalog stage"));
         }
-        self.conn.execute(
-            "ATTACH DATABASE ?1 AS catalog_import",
-            [stage
-                .path
-                .to_str()
-                .ok_or_else(|| invalid("stage path is not UTF-8"))?],
-        )?;
+        self.attach_staging_database(&stage.path, "catalog_import")?;
         let result: Result<CatalogCounts> = (|| {
             let now = self.now();
             let fts = self.fts_index;

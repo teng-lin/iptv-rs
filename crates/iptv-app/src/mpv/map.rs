@@ -73,12 +73,9 @@ pub struct Http {
     pub fields: Vec<String>,
 }
 
-/// mpv's HTTP options for a stream's `headers`. mpv (FFmpeg) sends the same
-/// fields with every request of the stream, including redirects and
-/// playlist segments on other hosts: it cannot keep identity headers
-/// (Cookie, Authorization, SN, X-User-Agent) to the stream's own host as the
-/// Android host does. Headers that could split a request (CR, LF, NUL) are
-/// dropped.
+/// Cleans stream headers for the origin-scoped playback transport. These
+/// fields are never installed as mpv's global HTTP headers. CR/LF/NUL values
+/// that could split a request are dropped.
 pub fn http(headers: &[(String, String)], fallback_ua: &str) -> Http {
     let clean = |s: &str| !s.contains(['\r', '\n', '\0']);
     let mut user_agent = None;
@@ -157,9 +154,7 @@ pub fn load_options(live: bool, reconnect: bool) -> Vec<(&'static str, String)> 
 /// Whether mpv may open `url`: network streams only (never local files,
 /// FFmpeg's pseudo-protocols or mpv's own `av://`, `lavfi://`...).
 pub fn playable(url: &str) -> bool {
-    const SCHEMES: &[&str] = &[
-        "http", "https", "rtmp", "rtmps", "rtsp", "rtsps", "rtp", "udp", "srt", "mms",
-    ];
+    const SCHEMES: &[&str] = &["http", "https"];
     url.split_once("://")
         .is_some_and(|(scheme, _)| SCHEMES.iter().any(|s| s.eq_ignore_ascii_case(scheme)))
 }
@@ -275,6 +270,11 @@ fn status_after(text: &str, marker: &str) -> Option<u16> {
 }
 
 impl Clues {
+    pub fn transport_error(&mut self, code: &'static str) {
+        self.http = None;
+        self.network = Some(code);
+    }
+
     /// Reads one log message.
     pub fn hear(&mut self, text: &str) {
         if let Some(status) =
@@ -450,8 +450,10 @@ mod tests {
     fn only_network_streams_open() {
         assert!(playable("http://127.0.0.1:8089/ch0/index.m3u8"));
         assert!(playable("HTTPS://example.test/live.ts"));
-        assert!(playable("udp://@239.0.0.1:1234"));
+
         for url in [
+            "udp://@239.0.0.1:1234",
+            "mms://example.test/channel",
             "file:///etc/hosts",
             "/etc/hosts",
             "av://lavfi:sine",

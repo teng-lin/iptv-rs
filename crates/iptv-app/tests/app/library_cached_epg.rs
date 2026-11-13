@@ -4,7 +4,7 @@ use iptv_providers::{
     SecretUrl,
     model::{M3uSourceConfig, Source, SourceConfig},
 };
-use iptv_store_sqlite::{GuideSource, SourcePolicy, Store};
+use iptv_store_sqlite::{GuideSource, SourcePolicy};
 use nsh_core::{Size, element::Root, prelude::*};
 use nsh_engine::EngineConfig;
 use nsh_testing::Headless;
@@ -28,7 +28,7 @@ fn cached_playlist_still_downloads_its_guide_when_epg_startup_refresh_is_enabled
         .as_secs() as i64;
     let guide = home.path().join("guide.xml");
     std::fs::write(&guide,format!("<tv><channel id=\"a.test\"><display-name>Cached A</display-name></channel><programme channel=\"a.test\" start=\"{}\" stop=\"{}\"><title>Independent guide refresh</title><desc>Synthetic test programme.</desc></programme></tv>",format_xmltv_time(now-3600),format_xmltv_time(now+3600))).unwrap();
-    let mut store = Store::open(&path).unwrap();
+    let mut store = crate::isolated::open_database(&path).unwrap();
     let source = store
         .add_source(&Source {
             name: "Synthetic cache".into(),
@@ -85,7 +85,7 @@ fn cached_playlist_still_downloads_its_guide_when_epg_startup_refresh_is_enabled
         .unwrap();
     app.wait_for_within("text:Independent guide refresh", Duration::from_secs(20))
         .unwrap();
-    let store = Store::open(&path).unwrap();
+    let store = crate::isolated::open_database(&path).unwrap();
     assert!(store.import_status(source).unwrap().last_error.is_none());
     assert_eq!(store.import_status(source).unwrap().counts.channels, 1);
     assert!(store.epg_guide(source).unwrap().unwrap().bound_channels > 0);
@@ -93,7 +93,7 @@ fn cached_playlist_still_downloads_its_guide_when_epg_startup_refresh_is_enabled
     drop(app);
     // Changing the EPG source forces a check even when its periodic interval is off.
     // An unavailable replacement feed must retain both successful caches.
-    Store::open(&path)
+    crate::isolated::open_database(&path)
         .unwrap()
         .set_guide_sources(
             source,
@@ -116,7 +116,7 @@ fn cached_playlist_still_downloads_its_guide_when_epg_startup_refresh_is_enabled
         .unwrap();
     let end = std::time::Instant::now() + Duration::from_secs(10);
     loop {
-        let store = Store::open(&path).unwrap();
+        let store = crate::isolated::open_database(&path).unwrap();
         if store
             .epg_guide(source)
             .unwrap()

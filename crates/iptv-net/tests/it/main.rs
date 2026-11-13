@@ -11,3 +11,5 @@ mod support;
 mod log_redaction;
 mod net;
 mod pipeline;
+
+mod playback;

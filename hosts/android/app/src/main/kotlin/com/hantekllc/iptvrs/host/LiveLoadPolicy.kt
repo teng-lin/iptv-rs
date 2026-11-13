@@ -29,15 +29,16 @@ internal class LiveLoadPolicy : DefaultLoadErrorHandlingPolicy(MIN_RETRIES) {
 
         /** The provider refused the request for now (see the class). */
         fun refused(status: Int?) = status != null && status in REFUSALS
+
+        internal fun retryDelay(count: Int, status: Int?, base: Long): Long {
+            if (refused(status) || base == C.TIME_UNSET) return C.TIME_UNSET
+            return (count * 1_000L).coerceAtMost(MAX_RETRY_DELAY_MS)
+        }
     }
 
     override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorInfo): Long {
         val error = loadErrorInfo.exception
-        if (error is HttpDataSource.InvalidResponseCodeException && refused(error.responseCode)) {
-            return C.TIME_UNSET
-        }
-        val base = super.getRetryDelayMsFor(loadErrorInfo)
-        if (base == C.TIME_UNSET) return base
-        return (loadErrorInfo.errorCount * 1_000L).coerceAtMost(MAX_RETRY_DELAY_MS)
+        val status = (error as? HttpDataSource.InvalidResponseCodeException)?.responseCode
+        return retryDelay(loadErrorInfo.errorCount, status, super.getRetryDelayMsFor(loadErrorInfo))
     }
 }
