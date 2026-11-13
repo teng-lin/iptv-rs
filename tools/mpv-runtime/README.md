@@ -8,7 +8,9 @@ portable app ZIP.
 `sources.lock.json` records exact source and toolchain URLs, SHA-256 hashes and
 explicit license paths. `prepare.py` verifies downloads, safely extracts them and
 checks every listed license. `Dockerfile` pins the Linux base image and host
-package snapshot. `build.sh` compiles with network access disabled and disables
+package snapshot. Its checksum-verified CA bootstrap package comes from that
+same snapshot, so bootstrap does not depend on a moving apt repository.
+`build.sh` compiles with network access disabled and disables
 automatic dependency fallbacks. Its configure options define the enabled feature
 and license choices; consult the shipped component notices rather than assuming
 the license of a different mpv distribution applies.
@@ -41,9 +43,11 @@ revalidates the prepared inputs and invokes the source bundler. To create just
 the corresponding-source archive, run:
 
 ```sh
-python3 tools/mpv-runtime/prepare.py bundle \
-  --lock tools/mpv-runtime/sources.lock.json --work target/mpv-runtime-work \
-  --output target/mpv-runtime-sources.tar.gz
+docker run --rm --network=none -v "$PWD:/repo:ro" \
+  -v "$PWD/target/mpv-runtime-work:/work" -v "$PWD/target/mpv-runtime-dist:/dist" \
+  patina-mpv-builder python3 /repo/tools/mpv-runtime/prepare.py bundle \
+  --lock /repo/tools/mpv-runtime/sources.lock.json --work /work \
+  --output /dist/mpv-runtime-sources.tar.gz
 ```
 
 The resulting runtime ZIP contains `libmpv-2.dll`, licenses, component inventory,

@@ -19,13 +19,7 @@ try {
     }
     # NSH fix carried locally until upstreamed: drag-region crossings retain hover.
     $pointerPatch = Join-Path $PSScriptRoot 'patches/nsh-windows-pointer-leave.patch'
-    & git -C ../nsh apply --reverse --check $pointerPatch 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        & git -C ../nsh apply --check $pointerPatch
-        if ($LASTEXITCODE -ne 0) { throw 'NSH pointer patch does not match this checkout.' }
-        & git -C ../nsh apply $pointerPatch
-        if ($LASTEXITCODE -ne 0) { throw 'Could not apply NSH pointer fix.' }
-    }
+    & "$PSScriptRoot/ci/apply-windows-pointer-patch.ps1" -Repository ../nsh -Patch $pointerPatch
     & "$PSScriptRoot/fetch-mpv-windows.ps1"
     $env:PATH = "$(Join-Path $root 'target/mpv');$env:PATH"
     if ($Check) {
