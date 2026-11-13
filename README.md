@@ -31,10 +31,11 @@ your IPTV provider gave you.
 ### Why "Patina"
 
 A patina is the finish that metal earns with age and handling, like the
-green of weathered copper. The name fits the app's look (dark ink surfaces
-with mineral accents, and the metal P of its icon) and the way it is meant
-to be used: a player that settles into a household's habits through its
-favourites, custom groups and history.
+green of weathered copper. Rust is iron's patina, and Patina is written in
+Rust. The name also fits the app's look (dark ink surfaces with mineral
+accents, and the metal P of its icon) and the way it is meant to be used:
+a player that settles into a household's habits through its favourites,
+custom groups and history.
 
 ## Features
 
