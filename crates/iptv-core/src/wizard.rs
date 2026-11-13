@@ -454,6 +454,8 @@ pub enum FailureKind {
     Busy,
     /// No connection, DNS, timeout, TLS, HTTP 5xx.
     Network,
+    /// Local database, staging, or credential storage failed.
+    Storage,
     /// The provider refused the account.
     Auth,
     /// The response or file is not a playlist.

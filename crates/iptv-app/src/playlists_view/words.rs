@@ -48,6 +48,7 @@ pub fn stored_failure(kind: ImportErrorKind) -> &'static str {
 /// Why this session's refresh failed.
 pub fn failure(failure: ImportFailure) -> &'static str {
     match failure.kind {
+        FailureKind::Storage => "local storage could not be opened or updated",
         FailureKind::Network => "no answer from the server",
         FailureKind::Auth => "access was refused",
         FailureKind::Parse => "the answer was not a playlist",

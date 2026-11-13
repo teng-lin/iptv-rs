@@ -75,6 +75,9 @@ pub fn failure(kind: PlaylistKind, failure: ImportFailure) -> &'static str {
         FailureKind::Network => {
             "No answer from the server. Check the address and the connection, then try again."
         }
+        FailureKind::Storage => {
+            "Local storage could not be opened or updated. Restart the app with the latest version and try again."
+        }
         FailureKind::Auth if m3u => "The server refused access to this playlist.",
         FailureKind::Auth => "The provider refused these login details. Check them and try again.",
         FailureKind::Parse if m3u => "This is not a playlist the app can read. Check the address.",
@@ -133,6 +136,7 @@ mod tests {
     fn every_failure_kind_has_its_own_message() {
         let kinds = [
             FailureKind::Network,
+            FailureKind::Storage,
             FailureKind::Auth,
             FailureKind::Parse,
             FailureKind::EmptyPlaylist,
