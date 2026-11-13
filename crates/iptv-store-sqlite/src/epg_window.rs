@@ -5,7 +5,7 @@
 //! faster). Each seeks to the last programme starting at or before the
 //! window: stored programmes do not overlap, so no older one reaches into
 //! it, and the days the store keeps before the window (`epg.keep_past`)
-//! are not walked (`docs/perf.md`).
+//! are not walked.
 
 use std::collections::{HashMap, HashSet};
 

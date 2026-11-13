@@ -5,7 +5,7 @@
 //! text layout is a `StaticLayout` made over JNI, every mounted change a
 //! view updated on the UI thread, every drawn view a render node walked
 //! each frame and every partly transparent one an offscreen layer
-//! (`docs/perf.md`, guide scrolling).
+//! (the main costs of guide scrolling on Android).
 //!
 //! The text engine draws colours from its layouts, as Android's does: a
 //! text whose colour changes is laid out again.

@@ -37,7 +37,7 @@ for format in deb rpm pacman; do
     pacman) deps=(--depends 'glibc>=2.39' --depends 'gtk4>=4.14' --depends dbus --depends mpv --depends libglvnd --depends gstreamer --depends gst-plugins-base-libs --pacman-compression zstd); extension=pkg.tar.zst;;
   esac
   fpm --force -s dir -t "$format" -n patina -v "$VERSION" --license "$license" \
-    --url https://github.com/teng-lin/iptv-rs \
+    --url https://github.com/teng-lin/patina-iptv \
     --description 'Patina IPTV player' --maintainer 'Patina maintainers' \
     "${deps[@]}" -C "$stage" -p "$out/Patina-$VERSION-linux-x86_64.$extension" .
 done

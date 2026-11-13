@@ -1,4 +1,4 @@
-# Agent rules for iptv-rs
+# Agent rules for Patina IPTV
 
 - **Synthetic data only.** Fixtures, tests, docs, screenshots and commit text
   use generated playlists/EPG and local mock servers. Never commit real
@@ -17,8 +17,9 @@
 - **NSH fork.** NSH comes from `~/src/nsh`, branch `tv-keys`. Keep
   patches small with tests; they go upstream later.
 - **Video layer.** One persistent player surface under the UI; modes change
-  layout only. Never hide, detach or re-parent the player view (see
-  `docs/research/android-video-and-input.md`). Multiview adds one
+  layout only. Never hide, detach or re-parent the player view: on Android
+  hiding or detaching it destroys its video surface.
+  Multiview adds one
   `tv.player` per further tile while it is open (`video.rs`). The
   desktops' picture-in-picture window shows surface 0's player through
   its `tv.pip` view without a second player or stream (`mpv/pip.rs`).

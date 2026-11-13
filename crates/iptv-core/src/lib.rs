@@ -1,12 +1,10 @@
 #![forbid(unsafe_code)]
 //! The UI-independent core of iptv-rs. Everything here is plain Rust: no NSH,
 //! no platform APIs, no blocking I/O, and it must build for
-//! `wasm32-unknown-unknown` (see README).
+//! `wasm32-unknown-unknown`.
 //!
 //! Today: the guide's synthetic schedule, the remote/touch focus model and
 //! its columns (rail, groups, lists), favourites, menus, panels, playback.
-//! Planned (see `.plans/`): domain, providers, epg, nav, player-ctl,
-//! settings and view models as separate crates.
 
 pub mod browse;
 pub mod browse_playback;
