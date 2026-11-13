@@ -37,7 +37,7 @@ android {
         // What a viewer installs: not debuggable, so ART compiles the host's
         // and Media3's Java instead of interpreting it (a debuggable APK runs
         // it in the slow interpreter: seconds of a cold start on a TV box;
-        // docs/perf.md). Signed with the debug key, so it installs over a
+        // measured on a TV box). Signed with the debug key, so it installs over a
         // debug build and keeps the app's data. `profileable` (manifest)
         // keeps simpleperf working on it.
         getByName("release") {

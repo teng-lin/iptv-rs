@@ -14,7 +14,7 @@
 //! (`EpgSchedule::held_only`, `held_channels`); then the whole window
 //! (`stored::load_guide`), which replaces it. On a TV box the
 //! window read takes over a second; the first screen's a fraction of it
-//! (`docs/perf.md`).
+//! (measured on a 32-bit Android TV box).
 
 use std::rc::Rc;
 use std::sync::mpsc::Sender;
