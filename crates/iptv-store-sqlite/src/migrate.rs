@@ -164,7 +164,8 @@ pub fn schema_dump(conn: &Connection) -> Result<String> {
     })?;
     let mut out = String::new();
     for row in rows {
-        out.push_str(&row?);
+        // SQLite preserves the DDL's line endings. Compare schemas across OS checkouts.
+        out.push_str(&row?.replace("\r\n", "\n"));
     }
     Ok(out)
 }
@@ -206,8 +207,8 @@ mod tests {
                 )
             });
             assert_eq!(
-                schema_at(version),
-                snapshot,
+                schema_at(version).replace("\r\n", "\n"),
+                snapshot.replace("\r\n", "\n"),
                 "schema v{version} drifted from {}",
                 path.display()
             );

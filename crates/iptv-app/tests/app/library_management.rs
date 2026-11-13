@@ -50,11 +50,7 @@ fn read_bindings(dir: &std::path::Path) -> Vec<iptv_settings::KeyBinding> {
 #[test]
 fn organization_playlist_policies_and_remote_bindings_are_editable_and_persisted() {
     let Some(home) = isolated!() else { return };
-    let dir = if cfg!(target_os = "macos") {
-        home.path().join("Library/Application Support/iptv-rs")
-    } else {
-        home.path().join(".local/share/iptv-rs")
-    };
+    let dir = crate::isolated::data_dir(home.path());
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("iptv.sqlite");
     let playlist_path = home.path().join("synthetic.m3u");

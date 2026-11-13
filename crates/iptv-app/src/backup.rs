@@ -79,7 +79,9 @@ fn scratch(root: &Path) -> Result<Scratch> {
     Ok(Scratch(path))
 }
 fn private_dir(path: &Path) -> io::Result<()> {
-    let mut builder = fs::DirBuilder::new();
+    let builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    let mut builder = builder;
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
@@ -98,10 +100,18 @@ fn private_file(path: &Path) -> io::Result<File> {
     }
     options.open(path)
 }
+#[cfg(not(windows))]
 fn sync_dir(path: &Path) -> Result<()> {
     File::open(path)
         .and_then(|f| f.sync_all())
         .map_err(|_| "Could not finish writing backup storage")
+}
+
+// Windows cannot FlushFileBuffers on a directory handle. Payload files are
+// flushed before publication; recovery still uses the pending/previous trees.
+#[cfg(windows)]
+fn sync_dir(_: &Path) -> Result<()> {
+    Ok(())
 }
 
 fn collect(root: &Path, directory: &Path, names: &mut Vec<String>) -> Result<()> {
@@ -128,7 +138,7 @@ fn collect(root: &Path, directory: &Path, names: &mut Vec<String>) -> Result<()>
                 .map_err(|_| "Invalid local playlist path")?
                 .to_str()
                 .ok_or("Invalid local playlist path")?
-                .to_owned();
+                .replace(std::path::MAIN_SEPARATOR, "/");
             if !allowed(&name) {
                 return Err("Invalid local playlist path");
             }
@@ -302,10 +312,7 @@ fn export(root: &Path, destination: &Path, settings: &str) -> Result<()> {
                 .map_err(|_| "Backup contains an invalid local playlist URL")?
             {
                 let relative = local.strip_prefix(root).map_err(|_| "A local playlist is outside application storage; add it with the file picker before backing up")?;
-                if !relative
-                    .to_str()
-                    .is_some_and(|name| names.iter().any(|entry| entry == name))
-                {
+                if !names.iter().any(|entry| Path::new(entry) == relative) {
                     return Err("A local playlist file is missing; add it again before backing up");
                 }
             }

@@ -7,7 +7,8 @@
 //! bionic resolves the device's time zone itself (the `persist.sys.timezone`
 //! setting, with the system tzdata) and notices changes; on desktop Linux
 //! glibc reads `TZ` or `/etc/localtime`, re-read each minute through
-//! `tzset`. Platforms without it (not unix) show UTC.
+//! `tzset`. Windows uses chrono's per-instant system local-time conversion.
+//! Other non-Unix targets fall back to UTC.
 
 use std::cell::Cell;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -62,7 +63,26 @@ pub fn offset_minutes(unix: i64) -> i32 {
     if ok { (tm.tm_gmtoff / 60) as i32 } else { 0 }
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+pub fn offset_minutes(unix: i64) -> i32 {
+    // Windows system time does not follow POSIX TZ. Isolated scenarios supply
+    // an explicit fixed offset; release builds never read this test override.
+    #[cfg(feature = "test-support")]
+    if let Some(offset) = std::env::var("IPTV_TEST_UTC_OFFSET_MINUTES")
+        .ok()
+        .and_then(|s| s.parse::<i32>().ok())
+        .filter(|n| (-720..=720).contains(n))
+    {
+        return offset;
+    }
+    use chrono::{Local, TimeZone};
+    Local
+        .timestamp_opt(unix, 0)
+        .single()
+        .map_or(0, |time| time.offset().local_minus_utc() / 60)
+}
+
+#[cfg(not(any(unix, windows)))]
 pub fn offset_minutes(_unix: i64) -> i32 {
     0
 }

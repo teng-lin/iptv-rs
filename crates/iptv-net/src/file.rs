@@ -20,7 +20,8 @@ pub(crate) fn local_path(url: &str) -> Option<Result<PathBuf, FetchError>> {
                 }),
         );
     }
-    url.starts_with('/').then(|| Ok(PathBuf::from(url)))
+    (url.starts_with('/') || std::path::Path::new(url).is_absolute())
+        .then(|| Ok(PathBuf::from(url)))
 }
 
 pub(crate) fn io_error(e: &std::io::Error) -> FetchError {
@@ -41,4 +42,21 @@ pub(crate) async fn open(path: &PathBuf) -> Result<(tokio::fs::File, Option<u64>
         return Err(FetchError::new(FetchErrorKind::Io, "not a regular file"));
     }
     Ok((file, Some(meta.len())))
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    #[test]
+    fn native_absolute_paths_and_file_urls_open_the_same_local_file() {
+        let expected = PathBuf::from("C:/Synthetic Data/list.m3u");
+        for input in [
+            "C:/Synthetic Data/list.m3u",
+            "file:///C:/Synthetic%20Data/list.m3u",
+        ] {
+            assert_eq!(local_path(input).unwrap().unwrap(), expected);
+        }
+        assert!(local_path("C:relative.m3u").is_none());
+        assert!(local_path("https://example.test/list.m3u").is_none());
+    }
 }

@@ -65,11 +65,18 @@ impl Home {
 
     /// The app's native data directory inside this scenario's home.
     pub fn data_dir(&self) -> PathBuf {
-        if cfg!(target_os = "macos") {
-            self.path().join("Library/Application Support/iptv-rs")
-        } else {
-            self.path().join(".local/share/iptv-rs")
-        }
+        data_dir(self.path())
+    }
+}
+
+/// Native app storage under an isolated scenario's home.
+pub fn data_dir(home: &Path) -> PathBuf {
+    if cfg!(windows) {
+        home.join("Patina")
+    } else if cfg!(target_os = "macos") {
+        home.join("Library/Application Support/iptv-rs")
+    } else {
+        home.join(".local/share/iptv-rs")
     }
 }
 
@@ -98,7 +105,13 @@ pub fn run(here: &str) -> Option<Home> {
         // anything reads the environment.
         unsafe {
             std::env::set_var("HOME", home.path());
+            #[cfg(windows)]
+            std::env::set_var("LOCALAPPDATA", home.path());
             std::env::set_var("TZ", time_zone());
+            std::env::set_var(
+                "IPTV_TEST_UTC_OFFSET_MINUTES",
+                test_offset_minutes().to_string(),
+            );
         }
         return Some(Home::Owned(home));
     }
@@ -114,7 +127,12 @@ pub fn run(here: &str) -> Option<Home> {
         .env(CHILD, name)
         .env(RAN, &ran)
         .env("HOME", &home)
+        .env("LOCALAPPDATA", &home)
         .env("TZ", time_zone())
+        .env(
+            "IPTV_TEST_UTC_OFFSET_MINUTES",
+            test_offset_minutes().to_string(),
+        )
         .output()
         .unwrap_or_else(|e| panic!("{name}: cannot run {}: {e}", exe.display()));
     // Through the test harness: shown when this test fails, or with
@@ -189,6 +207,18 @@ pub fn time_zone() -> String {
         .unwrap()
         .as_secs() as i64;
     posix_tz(wanted, now / 60 % (24 * 60))
+}
+
+// The same synthetic zone for Windows, where the OS ignores POSIX TZ.
+fn test_offset_minutes() -> i32 {
+    let zone = time_zone();
+    let (hours, minutes) = zone[4..].split_once(':').unwrap();
+    let west = hours.parse::<i32>().unwrap() * 60 + minutes.parse::<i32>().unwrap();
+    if zone.as_bytes()[3] == b'-' {
+        west
+    } else {
+        -west
+    }
 }
 
 /// The `TZ` whose local minute of the day is `wanted` when UTC's is

@@ -190,11 +190,7 @@ fn multiview_picker_expansion_preserves_the_guides_category_and_saved_expansion(
 #[test]
 fn combined_browsing_routes_duplicate_keys_favorites_search_and_playback() {
     let Some(home) = isolated!() else { return };
-    let dir = if cfg!(target_os = "macos") {
-        home.path().join("Library/Application Support/iptv-rs")
-    } else {
-        home.path().join(".local/share/iptv-rs")
-    };
+    let dir = crate::isolated::data_dir(home.path());
     std::fs::create_dir_all(&dir).unwrap();
     let mut settings = Settings::new();
     settings
@@ -321,11 +317,7 @@ fn combined_browsing_routes_duplicate_keys_favorites_search_and_playback() {
 #[test]
 fn persisted_combined_mode_recovers_disabled_and_failed_sources_and_deletion() {
     let Some(home) = isolated!() else { return };
-    let dir = if cfg!(target_os = "macos") {
-        home.path().join("Library/Application Support/iptv-rs")
-    } else {
-        home.path().join(".local/share/iptv-rs")
-    };
+    let dir = crate::isolated::data_dir(home.path());
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("iptv.sqlite");
     let mut store = crate::isolated::open_database(&path).unwrap();
@@ -404,11 +396,7 @@ fn persisted_combined_mode_recovers_disabled_and_failed_sources_and_deletion() {
 #[test]
 fn leaving_combined_mode_cancels_a_missing_startup_channel_before_manual_return() {
     let Some(home) = isolated!() else { return };
-    let dir = home.path().join(if cfg!(target_os = "macos") {
-        "Library/Application Support/iptv-rs"
-    } else {
-        ".local/share/iptv-rs"
-    });
+    let dir = home.data_dir();
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("iptv.sqlite");
     let mut store = crate::isolated::open_database(&path).unwrap();

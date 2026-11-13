@@ -98,6 +98,14 @@ pub fn local_path(value: &str) -> Result<Option<std::path::PathBuf>, ContentUrlE
         if !path.starts_with('/') || path.contains('\0') {
             return Err(ContentUrlError);
         }
+        // A drive-qualified file URL is /C:/...; the native Windows path is C:/....
+        #[cfg(windows)]
+        if path.as_bytes().get(1).is_some_and(u8::is_ascii_alphabetic)
+            && path.as_bytes().get(2) == Some(&b':')
+            && path.as_bytes().get(3) == Some(&b'/')
+        {
+            return Ok(Some(std::path::PathBuf::from(&path[1..])));
+        }
         return Ok(Some(std::path::PathBuf::from(path.as_ref())));
     }
     Ok((!value.contains("://")).then(|| std::path::PathBuf::from(value)))
@@ -106,6 +114,19 @@ pub fn local_path(value: &str) -> Result<Option<std::path::PathBuf>, ContentUrlE
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    #[test]
+    fn windows_file_urls_decode_into_native_drive_paths() {
+        assert_eq!(
+            local_path("file:///C:/Synthetic%20Data/list.m3u")
+                .unwrap()
+                .unwrap(),
+            std::path::Path::new("C:/Synthetic Data/list.m3u")
+        );
+        assert!(local_path("file://remote.example.test/share/list.m3u").is_err());
+        assert!(local_path("file:///C:/bad%00.m3u").is_err());
+    }
+
     #[test]
     fn content_cannot_name_local_paths_or_non_public_hosts() {
         for url in [

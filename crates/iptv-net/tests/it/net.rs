@@ -226,13 +226,16 @@ async fn timeouts_and_connection_failures() {
         _ => Resp::ok("").chunked(vec![b"x".to_vec(), b"y".to_vec()], Duration::from_secs(3)),
     })
     .await;
+    // The fixture listens on IPv4. Avoid localhost's IPv6 fallback delay
+    // consuming the short read timeout on Windows before HTTP even starts.
+    let fixture_url = |path: &str| server.url(path).replace("localhost", "127.0.0.1");
     let err = net
-        .fetch(HttpRequest::get(server.url("/slow-head")))
+        .fetch(HttpRequest::get(fixture_url("/slow-head")))
         .await
         .unwrap_err();
     assert_eq!(err.kind, FetchErrorKind::Timeout, "{err}");
     let resp = net
-        .fetch_stream(HttpRequest::get(server.url("/stall")))
+        .fetch_stream(HttpRequest::get(fixture_url("/stall")))
         .await
         .unwrap();
     let mut body = resp.body;
@@ -247,7 +250,8 @@ async fn timeouts_and_connection_failures() {
     let url = format!(
         "http://127.0.0.1:{port}/player_api.php?username=demo-user&password=synthetic-pass"
     );
-    let err = net.fetch(HttpRequest::get(url)).await.unwrap_err();
+    // Connection refusal can take longer than the deliberate 200 ms read timeout.
+    let err = client().fetch(HttpRequest::get(url)).await.unwrap_err();
     assert_eq!(err.kind, FetchErrorKind::Connect, "{err}");
     let shown = format!("{err} {err:?}");
     assert!(

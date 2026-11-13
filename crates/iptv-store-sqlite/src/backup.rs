@@ -1,7 +1,7 @@
 //! Complete SQLite snapshots, including committed pages still in the WAL.
 
 use std::fs::OpenOptions;
-use std::path::{Component, Path};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use rusqlite::{Connection, OpenFlags, backup::Backup, params};
@@ -10,6 +10,40 @@ use crate::{Result, SCHEMA_VERSION, Store, StoreError, migrate};
 
 fn invalid(message: &str) -> StoreError {
     StoreError::InvalidData(message.to_owned())
+}
+
+// Archive metadata may describe another OS's paths. Match whole components,
+// never string prefixes, and reject traversal before using native path rules.
+fn archived_relative(local: &Path, root: &Path) -> Result<PathBuf> {
+    fn portable(path: &Path) -> Result<String> {
+        let mut s = path
+            .to_str()
+            .ok_or_else(|| invalid("backup path is not UTF-8"))?
+            .to_owned();
+        // file:///C:/... on a Unix restore host.
+        if s.starts_with('/')
+            && s.as_bytes().get(1).is_some_and(u8::is_ascii_alphabetic)
+            && s.as_bytes().get(2) == Some(&b':')
+            && s.as_bytes().get(3) == Some(&b'/')
+        {
+            s.remove(0);
+        }
+        iptv_import::backup_manifest::portable_absolute_path(&s)
+            .ok_or_else(|| invalid("backup path is not an absolute storage path"))
+    }
+    let local = portable(local)?;
+    let root = portable(root)?;
+    let prefix = format!("{}/", root.trim_end_matches('/'));
+    let relative = local
+        .strip_prefix(&prefix)
+        .ok_or_else(|| invalid("local resource is outside the backup directory"))?;
+    if relative
+        .split('/')
+        .any(|p| p.is_empty() || p == "." || p == ".." || p.contains([':', '\0']))
+    {
+        return Err(invalid("invalid local resource location"));
+    }
+    Ok(PathBuf::from(relative))
 }
 
 impl Store {
@@ -206,17 +240,7 @@ impl Store {
             else {
                 continue;
             };
-            let relative = local
-                .as_path()
-                .strip_prefix(old_root)
-                .map_err(|_| invalid("local playlist is outside the backup directory"))?;
-            if relative.as_os_str().is_empty()
-                || relative
-                    .components()
-                    .any(|part| !matches!(part, Component::Normal(_)))
-            {
-                return Err(invalid("invalid local playlist location"));
-            }
+            let relative = archived_relative(&local, old_root)?;
             let rebased = new_root.join(relative);
             let rebased = rebased
                 .to_str()
@@ -254,16 +278,7 @@ impl Store {
                 let local = iptv_providers::content_url::local_path(&location)
                     .map_err(|_| invalid("invalid guide URL"))?;
                 if let Some(local) = local {
-                    let relative = local
-                        .strip_prefix(old_root)
-                        .map_err(|_| invalid("local guide is outside backup directory"))?;
-                    if relative.as_os_str().is_empty()
-                        || relative
-                            .components()
-                            .any(|p| !matches!(p, Component::Normal(_)))
-                    {
-                        return Err(invalid("invalid local guide location"));
-                    }
+                    let relative = archived_relative(&local, old_root)?;
                     let rebased = new_root.join(relative);
                     tx.execute(
                         &format!("UPDATE {table} SET url=?1 WHERE source_id=?2 AND feed_id=?3"),
@@ -292,5 +307,84 @@ impl Store {
         }
         tx.commit()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::*;
+    #[test]
+    fn restores_windows_paths_on_any_host_without_allowing_escape() {
+        let root = Path::new(r"C:\Users\Synthetic\Patina");
+        for path in [
+            r"C:\Users\Synthetic\Patina\playlists\a.m3u",
+            "/C:/Users/Synthetic/Patina/playlists/a.m3u",
+        ] {
+            assert_eq!(
+                archived_relative(Path::new(path), root).unwrap(),
+                Path::new("playlists/a.m3u")
+            );
+        }
+        for path in [
+            "C:/Users/Synthetic/Patina/../outside",
+            "C:/Users/Synthetic/Patina-other/a",
+            "C:/Users/Synthetic/Patina/playlists/C:/a",
+        ] {
+            assert!(archived_relative(Path::new(path), root).is_err());
+        }
+    }
+
+    #[test]
+    fn restores_unc_and_verbatim_paths_with_either_absolute_spelling() {
+        for (roots, locations) in [
+            (
+                [
+                    r"C:\Users\Synthetic\Patina",
+                    r"\\?\C:\Users\Synthetic\Patina",
+                ],
+                [
+                    r"C:\Users\Synthetic\Patina\playlists\a.m3u",
+                    r"\\?\C:\Users\Synthetic\Patina\playlists\a.m3u",
+                ],
+            ),
+            (
+                [
+                    r"\\synthetic-server\share\Patina",
+                    r"\\?\UNC\synthetic-server\share\Patina",
+                ],
+                [
+                    r"\\synthetic-server\share\Patina\playlists\a.m3u",
+                    r"\\?\UNC\synthetic-server\share\Patina\playlists\a.m3u",
+                ],
+            ),
+        ] {
+            for root in roots {
+                for location in locations {
+                    assert_eq!(
+                        archived_relative(Path::new(location), Path::new(root)).unwrap(),
+                        Path::new("playlists/a.m3u"),
+                        "{location} under {root}",
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn unc_rebasing_rejects_other_shares_devices_and_traversal() {
+        let root = Path::new(r"\\synthetic-server\share\Patina");
+        for location in [
+            r"\\synthetic-server\share-other\Patina\playlists\a.m3u",
+            r"\\other-server\share\Patina\playlists\a.m3u",
+            r"\\?\UNC\synthetic-server\share\Patina\..\outside.m3u",
+            r"\\?\UNC\synthetic-server\share\Patina\playlists\C:\outside.m3u",
+            r"\\.\UNC\synthetic-server\share\Patina\playlists\a.m3u",
+            r"\synthetic-server\share\Patina\playlists\a.m3u",
+        ] {
+            assert!(
+                archived_relative(Path::new(location), root).is_err(),
+                "{location}"
+            );
+        }
     }
 }

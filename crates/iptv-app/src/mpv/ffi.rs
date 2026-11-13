@@ -38,8 +38,11 @@ pub const MPV_ERROR_UNKNOWN_FORMAT: c_int = -17;
 
 pub const MPV_RENDER_PARAM_INVALID: c_int = 0;
 pub const MPV_RENDER_PARAM_API_TYPE: c_int = 1;
+#[cfg(not(windows))]
 pub const MPV_RENDER_PARAM_OPENGL_INIT_PARAMS: c_int = 2;
+#[cfg(not(windows))]
 pub const MPV_RENDER_PARAM_OPENGL_FBO: c_int = 3;
+#[cfg(not(windows))]
 pub const MPV_RENDER_PARAM_FLIP_Y: c_int = 4;
 pub const MPV_RENDER_PARAM_BLOCK_FOR_TARGET_TIME: c_int = 12;
 
@@ -92,15 +95,18 @@ pub struct mpv_render_param {
     pub data: *mut c_void,
 }
 
+#[cfg(not(windows))]
 pub type GetProcAddress =
     unsafe extern "C" fn(ctx: *mut c_void, name: *const c_char) -> *mut c_void;
 
+#[cfg(not(windows))]
 #[repr(C)]
 pub struct mpv_opengl_init_params {
     pub get_proc_address: Option<GetProcAddress>,
     pub get_proc_address_ctx: *mut c_void,
 }
 
+#[cfg(not(windows))]
 #[repr(C)]
 pub struct mpv_opengl_fbo {
     pub fbo: c_int,
@@ -112,7 +118,9 @@ pub struct mpv_opengl_fbo {
 pub type Callback = unsafe extern "C" fn(data: *mut c_void);
 
 // iOS links MPVKit's static `Libmpv.framework` (build.rs).
-#[cfg_attr(not(target_os = "ios"), link(name = "mpv"))]
+#[cfg_attr(not(any(target_os = "ios", windows)), link(name = "mpv"))]
+// Rust generates the MSVC import library directly from these declarations.
+#[cfg_attr(windows, link(name = "libmpv-2", kind = "raw-dylib"))]
 unsafe extern "C" {
     pub fn mpv_hook_add(
         ctx: *mut mpv_handle,

@@ -6,7 +6,7 @@ use iptv_store_sqlite::{DatabaseKey, Store, StoreError};
 #[cfg(all(target_os = "linux", not(feature = "test-support")))]
 mod linux;
 #[cfg(all(
-    any(target_os = "macos", target_os = "ios"),
+    any(target_os = "macos", target_os = "ios", windows),
     not(feature = "test-support")
 ))]
 use keyring::Entry;
@@ -49,7 +49,7 @@ fn platform_key(_: &Path) -> Result<DatabaseKey, StoreError> {
 
 #[cfg(all(
     not(feature = "test-support"),
-    any(target_os = "linux", target_os = "macos", target_os = "ios")
+    any(target_os = "linux", target_os = "macos", target_os = "ios", windows)
 ))]
 fn platform_key(path: &Path) -> Result<DatabaseKey, StoreError> {
     use std::io::Read;
@@ -144,7 +144,8 @@ fn platform_key(path: &Path) -> Result<DatabaseKey, StoreError> {
         target_os = "linux",
         target_os = "macos",
         target_os = "ios",
-        target_os = "android"
+        target_os = "android",
+        windows
     ))
 ))]
 fn platform_key(_: &Path) -> Result<DatabaseKey, StoreError> {
@@ -231,6 +232,7 @@ pub(crate) fn validate_staged_database(path: &Path) -> Result<(), StoreError> {
     validate_staged_with_key(path, &key)
 }
 
+#[cfg_attr(all(test, not(unix)), allow(dead_code))]
 fn validate_staged_with_key(path: &Path, key: &DatabaseKey) -> Result<(), StoreError> {
     use std::io::Read;
     let mut header = [0; 16];
@@ -257,6 +259,7 @@ fn validate_staged_with_key(path: &Path, key: &DatabaseKey) -> Result<(), StoreE
 #[cfg(test)]
 mod recovery_tests {
     use super::*;
+    #[cfg(unix)]
     use std::io::Read;
 
     #[test]

@@ -25,6 +25,7 @@ fn backup_export_cancel_restore_and_restart_preserve_personalized_library() {
                 .args([name, "--exact", "--nocapture", "--test-threads=1"])
                 .env("IPTV_BACKUP_PHASE", phase)
                 .env("HOME", &home)
+                .env("LOCALAPPDATA", &home)
                 .output()
                 .unwrap();
             assert!(
@@ -37,7 +38,9 @@ fn backup_export_cancel_restore_and_restart_preserve_personalized_library() {
         return;
     }
     let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap());
-    let root = home.join(if cfg!(target_os = "macos") {
+    let root = home.join(if cfg!(windows) {
+        "Patina"
+    } else if cfg!(target_os = "macos") {
         "Library/Application Support/iptv-rs"
     } else {
         ".local/share/iptv-rs"
@@ -62,7 +65,7 @@ fn backup_export_cancel_restore_and_restart_preserve_personalized_library() {
                 .name,
             "Channel Two"
         );
-        assert!(!root.with_file_name("iptv-rs.restore-pending").exists());
+        assert!(!root.with_extension("restore-pending").exists());
         return;
     }
     std::fs::create_dir_all(root.join("playlists/generated")).unwrap();
@@ -127,7 +130,7 @@ fn backup_export_cancel_restore_and_restart_preserve_personalized_library() {
     app.on_dialog(|_| DialogAnswer::Press("Schedule restore".into()));
     schedule(&mut app);
     step(app.wait_for("text:Scheduled for next launch"));
-    let pending = root.with_file_name("iptv-rs.restore-pending");
+    let pending = root.with_extension("restore-pending");
     assert!(pending.exists());
     // The running library remains editable until restart.
     crate::isolated::open_database(&path)

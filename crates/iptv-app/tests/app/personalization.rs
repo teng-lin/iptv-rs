@@ -28,11 +28,7 @@ pub fn step(r: Result<(), String>) {
 }
 /// `home`: the scenario's own (`isolated!()`).
 pub fn start(home: Home, settings: Settings, manual: bool) -> Fixture {
-    let dir = if cfg!(target_os = "macos") {
-        home.path().join("Library/Application Support/iptv-rs")
-    } else {
-        home.path().join(".local/share/iptv-rs")
-    };
+    let dir = crate::isolated::data_dir(home.path());
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("settings.json"), settings.to_json_string()).unwrap();
     let playlist = home.path().join("synthetic.m3u");

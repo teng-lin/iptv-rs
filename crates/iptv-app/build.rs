@@ -17,6 +17,13 @@ fn main() {
     println!("cargo:rerun-if-env-changed=IPTV_RS_MPVKIT");
     build_version();
     match std::env::var("CARGO_CFG_TARGET_OS").as_deref() {
+        Ok("windows") => {
+            println!("cargo:rerun-if-changed=windows.rc");
+            println!("cargo:rerun-if-changed=icon.ico");
+            embed_resource::compile_for("windows.rc", ["iptv-app"], embed_resource::NONE)
+                .manifest_required()
+                .expect("compile Windows app icon resource");
+        }
         Ok("macos") => macos(),
         Ok("ios") => ios(),
         _ => {}

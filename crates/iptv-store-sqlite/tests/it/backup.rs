@@ -142,7 +142,10 @@ fn local_playlist_paths_rebase_transactionally_and_network_sources_stay_unchange
     let SourceConfig::M3u(config) = store.source(local_id).unwrap().unwrap().source.config else {
         panic!()
     };
-    assert_eq!(config.location.expose(), "/new/home/playlists/123/list.m3u");
+    assert_eq!(
+        config.location.expose().replace('\\', "/"),
+        "/new/home/playlists/123/list.m3u"
+    );
     // The first location is valid but the second traverses out of the root:
     // neither location may be committed after that failure.
     let mut invalid = local.clone();
@@ -158,7 +161,10 @@ fn local_playlist_paths_rebase_transactionally_and_network_sources_stay_unchange
     let SourceConfig::M3u(config) = store.source(local_id).unwrap().unwrap().source.config else {
         panic!()
     };
-    assert_eq!(config.location.expose(), "/new/home/playlists/123/list.m3u");
+    assert_eq!(
+        config.location.expose().replace('\\', "/"),
+        "/new/home/playlists/123/list.m3u"
+    );
 }
 
 #[test]
@@ -226,13 +232,19 @@ fn restore_confines_file_urls_and_validates_guide_locations() {
         .rebase_local_playlists("/old".as_ref(), "/new".as_ref())
         .unwrap();
     assert_eq!(
-        store.guide_sources(id).unwrap()[0].url.expose(),
+        store.guide_sources(id).unwrap()[0]
+            .url
+            .expose()
+            .replace('\\', "/"),
         "/new/playlists/guide.xml"
     );
     let SourceConfig::M3u(config) = store.source(id).unwrap().unwrap().source.config else {
         panic!()
     };
-    assert_eq!(config.location.expose(), "/new/playlists/list.m3u");
+    assert_eq!(
+        config.location.expose().replace('\\', "/"),
+        "/new/playlists/list.m3u"
+    );
 }
 
 #[test]
@@ -270,6 +282,12 @@ fn restore_keeps_explicit_lan_guides_and_derived_xtream_guides() {
         store
             .rebase_local_playlists("/old".as_ref(), "/new".as_ref())
             .unwrap();
-        assert_eq!(store.guide_sources(id).unwrap()[0].url.expose(), url);
+        assert_eq!(
+            store.guide_sources(id).unwrap()[0]
+                .url
+                .expose()
+                .replace('\\', "/"),
+            url
+        );
     }
 }

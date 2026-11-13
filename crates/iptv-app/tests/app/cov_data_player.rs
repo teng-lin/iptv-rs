@@ -172,7 +172,7 @@ fn the_player_follows_its_host_through_waits_failures_and_replays() {
         .try_init();
     // Where the first playlist's last channel goes is taken (a directory):
     // saving it fails, which only logs.
-    let data = home.path().join(".local/share/iptv-rs");
+    let data = home.data_dir();
     std::fs::create_dir_all(data.join("last_channel-1")).unwrap();
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)

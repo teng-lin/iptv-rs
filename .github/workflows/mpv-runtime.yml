@@ -1,0 +1,109 @@
+name: Build retained Windows libmpv dependency
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: mpv-runtime-dependency
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Validate source preparation
+        run: |
+          python3 tools/mpv-runtime/test_prepare.py
+          python3 tools/mpv-runtime/test_package.py
+      - name: Build pinned host environment
+        run: docker build --tag patina-mpv-builder tools/mpv-runtime
+      - name: Download and verify pinned inputs
+        run: |
+          mkdir -p target/mpv-runtime-work target/mpv-runtime-build target/mpv-runtime-dist
+          docker run --rm -v "$PWD:/repo:ro" -v "$PWD/target/mpv-runtime-work:/work" patina-mpv-builder \
+            python3 /repo/tools/mpv-runtime/prepare.py prepare --lock /repo/tools/mpv-runtime/sources.lock.json --work /work
+      - name: Compile without network access
+        run: |
+          docker run --rm --network=none -v "$PWD:/repo:ro" \
+            -v "$PWD/target/mpv-runtime-work:/work" -v "$PWD/target/mpv-runtime-build:/output" \
+            patina-mpv-builder bash /repo/tools/mpv-runtime/build.sh /work /output
+      - name: Package runtime and corresponding sources
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          docker run --rm --network=none -v "$PWD:/repo:ro" \
+            -v "$PWD/target/mpv-runtime-work:/work" -v "$PWD/target/mpv-runtime-build:/build-output:ro" \
+            -v "$PWD/target/mpv-runtime-dist:/dist" patina-mpv-builder \
+            python3 /repo/tools/mpv-runtime/package.py --lock /repo/tools/mpv-runtime/sources.lock.json \
+            --work /work --build /build-output --output /dist --repository "$REPOSITORY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mpv-runtime-candidate
+          path: target/mpv-runtime-dist/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+      - name: Retain build diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mpv-runtime-build-logs
+          path: target/mpv-runtime-build/logs
+          retention-days: 14
+  smoke:
+    needs: build
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: mpv-runtime-candidate
+          path: target/mpv-runtime-dist
+      - name: Verify and smoke exact packaged DLL
+        shell: pwsh
+        run: |
+          $dist = 'target/mpv-runtime-dist'
+          $manifest = Get-Content "$dist/runtime.json" -Raw | ConvertFrom-Json
+          if ((Get-FileHash "$dist/mpv-runtime-windows-x86_64.zip" -Algorithm SHA256).Hash.ToLowerInvariant() -ne $manifest.sha256) { throw 'Runtime archive hash mismatch' }
+          if ((Get-FileHash "$dist/mpv-runtime-sources.tar.gz" -Algorithm SHA256).Hash.ToLowerInvariant() -ne $manifest.source_sha256) { throw 'Source archive hash mismatch' }
+          Expand-Archive "$dist/mpv-runtime-windows-x86_64.zip" "$dist/runtime"
+          Expand-Archive "$dist/test-tools.zip" "$dist/test-tools"
+          if ((Get-FileHash "$dist/runtime/libmpv-2.dll" -Algorithm SHA256).Hash.ToLowerInvariant() -ne $manifest.dll_sha256) { throw 'Runtime DLL hash mismatch' }
+          $components = Get-Content "$dist/runtime/components.json" -Raw | ConvertFrom-Json
+          if ((Get-FileHash "$dist/test-tools/ffmpeg.exe" -Algorithm SHA256).Hash.ToLowerInvariant() -ne $components.build.ffmpeg_sha256) { throw 'Synthetic media generator hash mismatch' }
+          python tools/mpv-runtime/smoke.py --dll "$dist/runtime/libmpv-2.dll" --ffmpeg "$dist/test-tools/ffmpeg.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'Synthetic TS/HLS runtime smoke failed' }
+  publish:
+    needs: [build, smoke]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: mpv-runtime-candidate
+          path: dist
+      - name: Publish retained dependency release without overwriting
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          cd dist
+          sha256sum --check SHA256SUMS
+          tag=$(python3 -c 'import json; print(json.load(open("runtime.json"))["tag"])')
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo 'Dependency release already exists; refusing to overwrite it.' >&2
+            exit 1
+          fi
+          printf 'Pinned Windows libmpv dependency. Sources, licenses and build configuration accompany the runtime. Synthetic MPEG-TS/HLS playback passed on Windows.\n' > release-notes.txt
+          gh release create "$tag" --draft --target "$COMMIT" --title "$tag" --notes-file release-notes.txt --latest=false \
+            mpv-runtime-windows-x86_64.zip mpv-runtime-sources.tar.gz runtime.json SHA256SUMS
+          gh release edit "$tag" --draft=false --latest=false

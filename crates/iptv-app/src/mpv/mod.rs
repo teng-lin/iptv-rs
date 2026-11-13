@@ -3,7 +3,8 @@
 //! in the video layer's view (`video.rs`): a `GtkGLArea` on Linux
 //! ([`gtk`]), an `NSView` backed by a `CAOpenGLLayer` on macOS ([`mac`]),
 //! a `UIView` whose layer is a `CAEAGLLayer` on iOS and iPadOS ([`ios`],
-//! OpenGL ES 3, MPVKit's libmpv).
+//! OpenGL ES 3, MPVKit's libmpv). Windows uses the software render API
+//! and composes its frames with Direct2D ([`win`]).
 //! In-process; the app's UI draws above it as above any view. Layout
 //! changes resize the view; the mpv instance lives as long as the
 //! component. Nothing is process-wide but the registry mpv's threads find
@@ -47,12 +48,18 @@
 //! player.
 
 mod ffi;
+#[cfg(not(windows))]
 mod gl;
 mod handle;
+#[cfg(not(windows))]
 mod held;
 mod map;
 mod pip;
+#[cfg(windows)]
+mod win;
 mod worker;
+#[cfg(windows)]
+use win as platform;
 
 #[cfg(all(target_os = "linux", not(test)))]
 mod gtk;
@@ -194,8 +201,10 @@ struct Inner {
     mpv: Option<Arc<Mpv>>,
     worker: Option<Worker>,
     render: Cell<*mut ffi::mpv_render_context>,
+    #[cfg(not(windows))]
     gl: Cell<Option<gl::Gl>>,
     /// The last picture, shown while mpv has none of the stream.
+    #[cfg(not(windows))]
     held: RefCell<held::Held>,
     state: RefCell<State>,
     waker: Arc<Waker>,
@@ -258,7 +267,9 @@ impl Inner {
             mpv,
             worker,
             render: Cell::new(std::ptr::null_mut()),
+            #[cfg(not(windows))]
             gl: Cell::new(None),
+            #[cfg(not(windows))]
             held: RefCell::default(),
             state: RefCell::new(State {
                 url: None,
@@ -516,6 +527,7 @@ impl Inner {
 
     /// Makes mpv's render context in the platform's GL context, which is
     /// current; then opens a source that waited for it. Whether it is there.
+    #[cfg(not(windows))]
     fn create_render(&self) -> bool {
         let Some(mpv) = &self.mpv else { return false };
         let Some(gl) = gl::Gl::load() else {
@@ -568,8 +580,11 @@ impl Inner {
             ffi::mpv_render_context_set_update_callback(render, None, std::ptr::null_mut());
             ffi::mpv_render_context_free(render);
         }
-        self.held.borrow_mut().clear();
-        self.gl.set(None);
+        #[cfg(not(windows))]
+        {
+            self.held.borrow_mut().clear();
+            self.gl.set(None);
+        }
         let mut st = self.state.borrow_mut();
         st.deferred = st.url.is_some();
     }
@@ -579,6 +594,7 @@ impl Inner {
     /// picture of the stream (a live stream dropped, a reopen of the same
     /// stream waiting for its first frame, the end), the last one
     /// ([`held`]). The platform's GL context is current.
+    #[cfg(not(windows))]
     fn draw(&self, width: i32, height: i32) {
         let Some(gl) = self.gl.get() else { return };
         let render = self.render.get();
@@ -606,6 +622,7 @@ impl Inner {
     }
 
     /// mpv draws its current frame into framebuffer `fbo`.
+    #[cfg(not(windows))]
     fn render_into(render: *mut ffi::mpv_render_context, fbo: i32, width: i32, height: i32) {
         let mut fbo = ffi::mpv_opengl_fbo {
             fbo,

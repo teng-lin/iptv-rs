@@ -1,0 +1,39 @@
+name: Windows
+on:
+  pull_request:
+  push:
+    branches: [master]
+  merge_group:
+  workflow_call:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: windows-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-windows
+      - name: Verify dependency packaging helpers
+        shell: pwsh
+        run: |
+          python tools/mpv-runtime/test_prepare.py
+          if ($LASTEXITCODE -ne 0) { throw 'Source preparation tests failed.' }
+          python tools/mpv-runtime/test_package.py
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime packaging tests failed.' }
+      - name: Test and build Windows app
+        shell: pwsh
+        run: |
+          ./tools/build-windows.ps1 -Check
+          python tools/ci/check-windows-icon.py target/debug/iptv-app.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Windows executable icon check failed.' }
+          python tools/ci/check-package-lock.py
+          if ($LASTEXITCODE -ne 0) { throw 'Generated runner lock is stale.' }
+          python tools/ci/test-package-lock.py
+          if ($LASTEXITCODE -ne 0) { throw 'Runner lock regression tests failed.' }
