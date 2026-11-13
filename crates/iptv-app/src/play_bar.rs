@@ -151,6 +151,7 @@ pub(crate) fn hover(ui: Ui, over: bool) {
 }
 
 pub fn layer(ui: Ui) -> impl IntoElement {
+    // Back belongs to the pointer chrome: keys and auto-hide hide both.
     let shown = computed(move || shows(ui));
     when(
         move || shown.get(),

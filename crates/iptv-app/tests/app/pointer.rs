@@ -413,6 +413,15 @@ fn back_navigation(home: &crate::isolated::Home, device: Idiom) {
     step(app.press("text:Test Channel One"));
     step(app.press("label:Video"));
     step(app.wait_for("label:Guide"));
+    step(app.wait_for("label:Mute"));
+    step(app.press_key("space"));
+    step(app.wait_for_gone("label:Mute", Duration::from_secs(2)));
+    step(app.wait_for_gone("label:Guide", Duration::from_secs(2)));
+    // A separate tap, outside the desktop's double-click interval.
+    step(app.wait(Duration::from_millis(600)));
+    step(app.press("label:Video"));
+    step(app.wait_for("label:Mute"));
+    step(app.wait_for("label:Guide"));
     step(app.press("label:Guide"));
     step(app.wait_for("label:Groups"));
 }
