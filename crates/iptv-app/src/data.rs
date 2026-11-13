@@ -905,7 +905,7 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
         Ok(stage) => stage,
         Err(error) => {
             log::warn!("iptv data: catalog staging failed: {error}");
-            return fail(ImportFailure::new(FailureKind::Network));
+            return fail(ImportFailure::new(FailureKind::Storage));
         }
     };
     let mut catalog = match import_source_into(
@@ -957,7 +957,7 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
         }
         Err(error) => {
             log::warn!("iptv data: staged catalog read failed: {error}");
-            return fail(ImportFailure::new(FailureKind::Network));
+            return fail(ImportFailure::new(FailureKind::Storage));
         }
     }
     // The guide sources: the stored source's as the user arranged them (a
@@ -1008,7 +1008,7 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
         Ok(saved) => saved,
         Err(e) => {
             log::warn!("iptv data: store: {e}");
-            return fail(ImportFailure::new(FailureKind::Network));
+            return fail(ImportFailure::new(FailureKind::Storage));
         }
     };
     let matching = stored::Matching {
