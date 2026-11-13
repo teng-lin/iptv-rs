@@ -159,8 +159,25 @@ fn screen(ui: Ui) -> impl IntoElement {
         ui.data_version.get();
         state(ui, |p| p.entry(&*crate::schedule())).unwrap_or(0)
     });
+    // A touch scroll does not move selection. Changing the group or query must
+    // reveal it again even when the selected channel still occupies the same
+    // row (or a query keeps the exact same results).
+    let scroll_target = computed(move || {
+        ui.data_version.get();
+        let catalog = crate::schedule();
+        state(ui, |p| {
+            let row = p.row()?;
+            Some((
+                ListId::of(p.entry(&*catalog), &*catalog),
+                p.channels().get(row)?.key.clone(),
+                p.query().to_owned(),
+                row,
+            ))
+        })
+        .flatten()
+    });
     effect(move || {
-        if let Some(row) = row.get() {
+        if let Some((_, _, _, row)) = scroll_target.get() {
             rows.scroll_to_index(row as u32, percentage(0.5), px(0.0), false);
         }
     });
@@ -214,7 +231,7 @@ fn screen(ui: Ui) -> impl IntoElement {
                             virtual_list(
                                 move || state(ui, |p| p.channels().len()).unwrap_or(0),
                                 move |at| channel_row(ui, at, size, row),
-                            ).element_ref(&rows).estimated_item_size(list_rows::pitch(size, ROW_TWO)).flex_1(),
+                            ).test_id("multiview-picker-channels").element_ref(&rows).estimated_item_size(list_rows::pitch(size, ROW_TWO)).flex_1(),
                         ),
                 ),
         )

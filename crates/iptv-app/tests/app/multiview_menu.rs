@@ -90,6 +90,100 @@ fn colour(app: &Headless, label: &str) -> nsh_core::Color {
         .color
 }
 
+/// A recycled row can still be mounted above the viewport. Check the visible
+/// text bounds inside the picker, rather than matching its label alone.
+fn picker_channel_visible(app: &Headless, label: &str) -> bool {
+    let nodes = app.screen().layout_nodes();
+    let list = nodes
+        .iter()
+        .find(|n| n.test_id.as_deref() == Some("multiview-picker-channels"))
+        .expect("the picker's channel list");
+    let parents: HashMap<_, _> = nodes.iter().map(|n| (n.id, n.parent)).collect();
+    nodes.iter().any(|node| {
+        if !node.text.as_ref().is_some_and(|t| t.text.text == label) {
+            return false;
+        }
+        let mut id = node.id;
+        while let Some(&parent) = parents.get(&id) {
+            if parent == list.id {
+                let top = node.bounds.origin.y.0;
+                let bottom = top + node.bounds.size.height.0;
+                let list_top = list.bounds.origin.y.0;
+                return top >= list_top && bottom <= list_top + list.bounds.size.height.0;
+            }
+            id = parent;
+        }
+        false
+    })
+}
+
+#[test]
+fn changing_picker_group_or_query_reveals_selection_after_touch_scrolling() {
+    let Some(_home) = isolated!() else { return };
+    let mut playlist = String::from("#EXTM3U\n");
+    for group in ["Alpha", "Beta"] {
+        for channel in 0..60 {
+            playlist.push_str(&format!(
+                "#EXTINF:-1 tvg-id=\"{group}-{channel}\" group-title=\"{group}\",Shared {group} {channel:03}\nhttp://stream.example.test/{group}/{channel}.m3u8\n"
+            ));
+        }
+    }
+    let mut app = Headless::start(EngineConfig {
+        viewport: Size::new(px(1280.0), px(720.0)),
+        ..EngineConfig::new(Root::of::<iptv_app::App>())
+    })
+    .unwrap();
+    app.on_pick(move |_| {
+        vec![PickedFile::new(
+            "synthetic.m3u",
+            "audio/x-mpegurl",
+            ImageData::new(playlist.as_bytes().to_vec()),
+        )]
+    });
+    let step = |r: Result<(), String>| r.unwrap_or_else(|e| panic!("{e}"));
+    step(app.wait_for("text:No playlists yet"));
+    step(app.press("text:Add playlist"));
+    step(app.press("text:Playlist file"));
+    step(app.press("text:Choose a file…"));
+    step(app.wait_for("text:synthetic.m3u"));
+    step(app.press("text:Add playlist"));
+    step(app.wait_for_within("text:Playlist added", IMPORT));
+    step(app.press("text:Watch"));
+    step(app.wait_for("text:Shared Alpha 000"));
+    step(app.press("text:Shared Alpha 000"));
+    step(app.wait_for("text:▶"));
+    step(app.press("text:Shared Alpha 000"));
+    step(app.press("label:Video"));
+    step(app.press("label:Multiview"));
+
+    let picker = "id:multiview-picker";
+    let channels = "id:multiview-picker-channels";
+    step(app.wait_for(channels));
+    step(app.press(&format!("{picker} >> text:Alpha")));
+    assert!(picker_channel_visible(&app, "1  Shared Alpha 000"));
+    step(app.scroll(channels, px(800.0)));
+    assert!(!picker_channel_visible(&app, "1  Shared Alpha 000"));
+
+    // Both groups have 60 rows and resolve selection to row zero. A different
+    // group must reveal its selected channel even though that index is equal.
+    step(app.press(&format!("{picker} >> text:Beta")));
+    assert!(
+        picker_channel_visible(&app, "1  Shared Beta 000"),
+        "changing group must reveal its selected channel"
+    );
+
+    // This query keeps the same results, selected key, and selected row. A new
+    // filter still returns a touch-scrolled list to that selected result.
+    step(app.scroll(channels, px(800.0)));
+    assert!(!picker_channel_visible(&app, "1  Shared Beta 000"));
+    step(app.type_text("id:multiview-channel-search", "Shared"));
+    assert!(
+        picker_channel_visible(&app, "1  Shared Beta 000"),
+        "changing query must reveal selection even when key and row stay equal"
+    );
+    assert_eq!(tiles(&app), 1, "browsing does not open another stream");
+}
+
 #[test]
 fn the_tile_menu_is_a_side_panel_with_pause_and_search_and_add() {
     let Some(_home) = isolated!() else { return };
