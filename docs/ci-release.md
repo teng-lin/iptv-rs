@@ -1,8 +1,16 @@
 # CI and releases
 
 PRs and pushes to master run tools/check.sh on Linux and macOS, including
-the headless app scenarios and portable crates' wasm builds. An Android job
-also builds the arm64 native library and the Gradle host's debug APK/AAB,
+the headless app scenarios and portable crates' wasm builds. The separate
+Android packages workflow runs on PRs only when Android host files, Cargo
+manifests/lockfile, app build or package metadata/assets, packaging tooling, or
+its workflow/setup actions change (see `.github/workflows/android.yml`). It also
+runs on every master push and can be started manually. Ordinary Rust source
+and documentation PRs run Tests without building Android packages. Do not make
+the path-filtered Android workflow a required PR check, since skipped workflows
+can remain pending; keep Tests required instead.
+
+Android packages builds the arm64 native library and the Gradle host's debug APK/AAB,
 verifies the APK signature, and uploads both as the android-debug artifact.
 It uses a generated debug key and does not receive release secrets.
 NSH is checked

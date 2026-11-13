@@ -43,8 +43,6 @@ jobs:
           PY
   tests:
     uses: ./.github/workflows/ci.yml
-    with:
-      skip_android: true
   package:
     needs: plan
     environment: release

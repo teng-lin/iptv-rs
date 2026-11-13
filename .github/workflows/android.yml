@@ -1,0 +1,50 @@
+name: Android packages
+on:
+  pull_request:
+    # Rust behavior is covered by Tests on every PR. Package validation is
+    # needed when the Android host, build inputs, or packaging tooling changes.
+    paths:
+      - '.github/workflows/android.yml'
+      - '.github/actions/android/**'
+      - '.github/actions/setup/**'
+      - 'hosts/android/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/**/Cargo.toml'
+      - 'crates/iptv-app/build.rs'
+      - 'crates/iptv-app/nsh.json'
+      - 'crates/iptv-app/icon.png'
+      - 'crates/iptv-app/fonts/**'
+      - 'tools/sync-host.sh'
+  push:
+    branches: [master]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - uses: ./.github/actions/android
+      - name: Build Android native library
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+        run: ABIS=arm64-v8a bash tools/sync-host.sh
+      - name: Build Android APK and bundle
+        working-directory: hosts/android
+        run: ./gradlew --no-daemon assembleDebug bundleDebug
+      - name: Verify APK signature
+        run: |
+          "$ANDROID_HOME/build-tools/35.0.1/apksigner" verify hosts/android/app/build/outputs/apk/debug/app-debug.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-debug
+          path: |
+            hosts/android/app/build/outputs/apk/debug/*.apk
+            hosts/android/app/build/outputs/bundle/debug/*.aab
+          if-no-files-found: error
