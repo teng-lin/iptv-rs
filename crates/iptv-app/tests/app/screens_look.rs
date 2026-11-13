@@ -96,7 +96,8 @@ fn secondary_screens_use_the_shared_type() {
     // A button in a row reads on the row's light pill: the wizard's link
     // form by keys (the focus shows), its link row focused: that row's
     // Paste in the pill's text colour, another row's in the list's.
-    step(app.press_key("escape"));
+    step(app.press("text:Close"));
+    step(app.wait_for_gone("id:settings-screen", Duration::from_secs(2)));
     step(app.press("text:+ Add playlist"));
     step(app.wait_for("text:Playlist link"));
     step(app.press_key("down"));

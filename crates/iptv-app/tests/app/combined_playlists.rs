@@ -1054,6 +1054,7 @@ fn exercise_previous_guide_handoff(home: &super::isolated::Home, action: Previou
     step(app.press("text:+ Add playlist"));
     step(app.press("text:Playlist file"));
     step(app.press("text:Choose a file…"));
+    step(app.wait_for("text:Second.m3u"));
     step(app.press("text:Add playlist"));
     step(app.wait_for_within("text:Playlist added", Duration::from_secs(20)));
     step(app.press("text:Watch"));

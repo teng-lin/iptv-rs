@@ -68,8 +68,7 @@ pub use video::has_source as player_has_source;
 #[doc(hidden)]
 pub use video::opens as player_opens;
 
-/// iOS (an iPad): its touch ways back ([`Ui::touch_controls`], a tap
-/// beside the open columns or list closing them).
+/// iOS (an iPad): a tap beside the open columns or list closes them.
 pub(crate) const IOS: bool = cfg!(target_os = "ios");
 
 use std::time::{Duration, Instant};
@@ -309,12 +308,13 @@ impl Ui {
         self.input.get() == Input::Keys
     }
 
-    /// Whether the buttons that stand in for a remote's Back show (the
-    /// full-screen player's ‹, a wizard's Back, Settings' Close): on an
-    /// iPad being touched, which has no Back key. Android's back button,
-    /// TVs' and desktops' keys keep their own ways.
-    pub fn touch_controls(&self) -> bool {
-        IOS && !self.keys_shown()
+    /// Visible ways back for pointer and touch users, including after a
+    /// keyboard is used. TVs and terminals keep their key navigation.
+    pub fn back_controls(&self) -> bool {
+        !matches!(
+            idiom(),
+            nsh_core::platform::Idiom::Tv | nsh_core::platform::Idiom::Terminal
+        )
     }
 
     /// A foreground UI surface colour. In guide mode the opaque colours are

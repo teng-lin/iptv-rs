@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[test]
+#[ignore = "tools/check.sh runs this wall-clock budget separately from other app scenarios"]
 fn guide_input_stays_under_budget_while_the_database_writer_is_locked() {
     let Some(home) = isolated!() else { return };
     let now = SystemTime::now()

@@ -334,3 +334,94 @@ fn menu_bounds(app: &Headless) -> (f32, f32, f32, f32) {
         .bounds;
     (b.origin.x.0, b.origin.y.0, b.size.width.0, b.size.height.0)
 }
+
+/// Left mouse clicks and taps follow the same back-navigation chain.
+#[test]
+fn desktop_back_controls() {
+    let Some(home) = isolated!() else { return };
+    back_navigation(&home, Idiom::Desktop);
+}
+
+#[test]
+fn tablet_back_controls() {
+    let Some(home) = isolated!() else { return };
+    back_navigation(&home, Idiom::Pad);
+}
+
+#[test]
+fn tv_keeps_remote_navigation() {
+    let Some(home) = isolated!() else { return };
+    back_navigation(&home, Idiom::Tv);
+}
+
+fn back_navigation(home: &crate::isolated::Home, device: Idiom) {
+    crate::browse_fixture::two_step_preview(home.path());
+    let mut config = EngineConfig {
+        viewport: Size::new(px(1280.0), px(720.0)),
+        ..EngineConfig::new(Root::of::<iptv_app::App>())
+    };
+    config.environment.idiom = device;
+    config.environment.os = if device == Idiom::Desktop {
+        nsh_core::platform::Os::Linux
+    } else {
+        nsh_core::platform::Os::Android
+    };
+    let mut app = Headless::start(config).unwrap();
+    app.on_pick(|_| {
+        vec![PickedFile::new(
+            "synthetic.m3u",
+            "audio/x-mpegurl",
+            ImageData::new(PLAYLIST.as_bytes().to_vec()),
+        )]
+    });
+    let step = |r: Result<(), String>| r.unwrap_or_else(|e| panic!("{e}"));
+    step(app.wait_for("text:No playlists yet"));
+    step(app.press("text:Add playlist"));
+    step(app.wait_for("text:Playlist file"));
+    step(app.press("text:Playlist file"));
+    if device == Idiom::Tv {
+        step(app.wait_for("text:Choose a file…"));
+        assert!(!app.shows("text:‹ Back"));
+    } else {
+        step(app.wait_for("text:‹ Back"));
+    }
+    step(app.press("text:Choose a file…"));
+    step(app.wait_for("text:synthetic.m3u"));
+    step(app.press("text:Add playlist"));
+    step(app.wait_for_within("text:Playlist added", IMPORT));
+    step(app.press("text:Watch"));
+    step(app.wait_for("text:Test Channel One"));
+    // A key must not remove the visible route back on desktop or tablet.
+    step(app.press_key("down"));
+    if device == Idiom::Tv {
+        assert!(!app.shows("label:Groups") && !app.shows("label:Menu"));
+        return;
+    }
+    step(app.wait_for("label:Groups"));
+    step(app.press("label:Groups"));
+    step(app.wait_for("label:Menu"));
+    step(app.press("label:Menu"));
+    step(app.wait_for_gone("label:Groups", Duration::from_secs(2)));
+    step(app.wait_for_gone("label:Menu", Duration::from_secs(2)));
+    step(app.press_key("right"));
+    step(app.press_key("right"));
+    step(app.wait_for("label:Groups"));
+
+    // The full-screen chevron returns directly to the guide.
+    step(app.press("text:Test Channel One"));
+    step(app.wait_for("text:▶"));
+    step(app.press("text:Test Channel One"));
+    step(app.press("label:Video"));
+    step(app.wait_for("label:Guide"));
+    step(app.wait_for("label:Mute"));
+    step(app.press_key("space"));
+    step(app.wait_for_gone("label:Mute", Duration::from_secs(2)));
+    step(app.wait_for_gone("label:Guide", Duration::from_secs(2)));
+    // A separate tap, outside the desktop's double-click interval.
+    step(app.wait(Duration::from_millis(600)));
+    step(app.press("label:Video"));
+    step(app.wait_for("label:Mute"));
+    step(app.wait_for("label:Guide"));
+    step(app.press("label:Guide"));
+    step(app.wait_for("label:Groups"));
+}
