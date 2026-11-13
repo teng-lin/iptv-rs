@@ -16,8 +16,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, macos-15]
-    # Avoid arm64 host capacity cancellations while retaining macOS 15 checks.
-    runs-on: ${{ matrix.os == 'macos-15' && 'macos-15-intel' || matrix.os }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
