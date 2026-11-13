@@ -521,9 +521,13 @@ fn other_pages(app: &mut Headless) {
     step(app.press("text:Parental control >> nth=0"));
     step(app.wait_for("text:In a later version"));
     step(app.wait_for("text:/ settings here, none available yet$/"));
-    // About: the version.
+    // About: the compiled version and source commit.
     step(app.press("text:About >> nth=0"));
-    step(app.wait_for("text:/^Version \\d/"));
+    step(app.wait_for(&format!(
+        "text:v{}({})",
+        env!("CARGO_PKG_VERSION"),
+        env!("IPTV_GIT_HASH")
+    )));
     // Playlists: its screen over the settings; a rename there types in
     // the wizard's text sheet.
     step(app.press("text:Playlists >> nth=0"));

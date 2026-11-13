@@ -1,0 +1,89 @@
+name: Android packages
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      package: ${{ steps.paths.outputs.package }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: github.event_name == 'pull_request'
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: paths
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 - <<'PYCODE'
+          import fnmatch
+          import os
+          import subprocess
+          patterns = (
+              ".github/workflows/android.yml", ".github/actions/android/**",
+              ".github/actions/setup/**", "hosts/android/**", "Cargo.toml",
+              "Cargo.lock", "crates/**/Cargo.toml", "crates/iptv-app/build.rs",
+              "crates/iptv-app/nsh.json", "crates/iptv-app/icon.png",
+              "crates/iptv-app/fonts/**", "tools/sync-host.sh", "tools/ci/**",
+              "rust-toolchain.toml", "about.toml",
+          )
+          package = True
+          if os.environ["EVENT"] == "pull_request":
+              paths = subprocess.check_output([
+                  "git", "diff", "--name-only", "-z",
+                  os.environ["BASE_SHA"] + "..." + os.environ["HEAD_SHA"],
+              ]).decode().split("\0")
+              package = any(fnmatch.fnmatchcase(path, pattern)
+                            for path in paths for pattern in patterns)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"package={str(package).lower()}\n")
+          PYCODE
+  android:
+    needs: changes
+    # Keep the required android check present even when packaging is skipped.
+    # A detection failure must fail this check, not silently skip it.
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.package == 'true') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Require successful change detection
+        if: needs.changes.result != 'success'
+        run: exit 1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - uses: ./.github/actions/android
+      - name: Build Android native library
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+        run: ABIS=arm64-v8a bash tools/sync-host.sh
+      - name: Generate and stage Android notices
+        run: |
+          cargo install cargo-about --version 0.9.3 --features cli --locked
+          bash tools/ci/notices.sh
+          (cd hosts/android && ./gradlew --no-daemon :app:generateLicenseReport)
+          mkdir -p hosts/android/app/build/nsh/assets/notices
+          cp -R target/notices/. hosts/android/app/build/nsh/assets/notices/
+          cp -R hosts/android/app/build/reports/dependency-license hosts/android/app/build/nsh/assets/notices/gradle
+      - name: Build Android APK and bundle
+        working-directory: hosts/android
+        run: ./gradlew --no-daemon lintDebug assembleDebug bundleDebug
+      - name: Verify APK signature
+        run: |
+          "$ANDROID_HOME/build-tools/35.0.1/apksigner" verify hosts/android/app/build/outputs/apk/debug/app-debug.apk
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-debug
+          path: |
+            hosts/android/app/build/outputs/apk/debug/*.apk
+            hosts/android/app/build/outputs/bundle/debug/*.aab
+          if-no-files-found: error

@@ -1,8 +1,21 @@
 # CI and releases
 
 PRs and pushes to master run tools/check.sh on Linux and macOS, including
-the headless app scenarios and portable crates' wasm builds. An Android job
-also builds the arm64 native library and the Gradle host's debug APK/AAB,
+the headless app scenarios and portable crates' wasm builds. The separate
+Android packaging job runs on PRs only when Android host files, Cargo
+manifests/lockfile, app build or package metadata/assets, packaging tooling, or
+its workflow/setup actions change (see `.github/workflows/android.yml`). It also
+runs on every master push and can be started manually. A lightweight change
+check runs on every PR so the required `android` check can report skipped for
+ordinary Rust source and documentation changes. Change-detection failures fail
+the required check. Desktop packaging is path-filtered at the workflow level
+and must not be required, since skipped workflows can remain pending.
+
+Desktop Package checks likewise run only for package/build inputs on PRs and
+support manual dispatch. Signed release packaging still runs on tags or manual
+requests.
+
+Android packages builds the arm64 native library and the Gradle host's debug APK/AAB,
 verifies the APK signature, and uploads both as the android-debug artifact.
 It uses a generated debug key and does not receive release secrets.
 NSH is checked
@@ -45,8 +58,16 @@ For the optional all-platform run, also set:
 
 The Android version code is the release workflow run number. Preserve its
 monotonicity when migrating workflows or publishing to Play.
-Set the workspace version in Cargo.toml and update Cargo.lock before tagging
-v<version>. Tag/version mismatch fails. workflow_dispatch builds artifacts
+Run `python3 tools/bump-version.py patch` (or `minor`, `major`, or an explicit
+version such as `0.2.1`) from the repository root using Python 3.11 or newer.
+Add `--dry-run` to preview. The script also accepts an absolute path when
+invoked from another directory.
+The command updates `Cargo.toml`, every inherited workspace package version in
+`Cargo.lock` and `tools/ci/package.Cargo.lock`, and the NSH packaging version in `crates/iptv-app/nsh.json` without
+updating dependencies. It accepts increasing MAJOR.MINOR.PATCH versions.
+Review and commit those changes, then tag that commit `v<version>` when ready.
+The command does not commit, tag, or publish. Tag/version mismatch fails.
+workflow_dispatch builds artifacts
 without publishing; use platforms=desktop to validate desktop packages alone.
 A tag publishes Android and desktop artifacts and SHA256SUMS to GitHub Releases only
 after every job succeeds. Publication stages a draft before
@@ -65,3 +86,10 @@ packages on their native distributions, the AppImage and DMG on clean desktops,
 and signed iPad installation when enabling iOS. Android releases need tablet/TV smoke
 tests on tab36 and tv36 with synthetic playlists. CI build and headless tests
 do not replace those device checks.
+
+The About row displays the compiled workspace version and the first eight hex
+characters of the source commit, for example `v0.2.1(a3d4123f)`. Cargo tracks
+Git HEAD and branch refs, including linked worktrees and detached CI builds.
+Uncommitted edits retain the HEAD hash; builds from source archives without Git
+show `v0.2.1(unknown)`. Package metadata keeps the plain numeric version required
+by platform installers.

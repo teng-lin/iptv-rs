@@ -3,6 +3,7 @@
 # crates, and the app build. Run before committing.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tools -p test_version.py
 # Only our packages: `--all` would also format path dependencies (the NSH checkout).
 cargo fmt -p iptv-core -p iptv-nav -p iptv-settings -p iptv-epg -p iptv-providers -p iptv-guide -p iptv-import -p iptv-net -p iptv-store-sqlite -p iptv-search -p iptv-app --check
 cargo clippy --locked --workspace --all-targets -- -D warnings

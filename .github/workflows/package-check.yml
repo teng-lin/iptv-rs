@@ -1,6 +1,21 @@
 name: Package checks
 on:
   pull_request:
+    paths:
+      - '.github/workflows/package-check.yml'
+      - '.github/actions/setup/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/**/Cargo.toml'
+      - 'crates/iptv-app/build.rs'
+      - 'crates/iptv-app/nsh.json'
+      - 'crates/iptv-app/icon.png'
+      - 'crates/iptv-app/fonts/**'
+      - 'rust-toolchain.toml'
+      - 'about.toml'
+      - 'tools/ci/**'
+      - 'tools/package-macos.sh'
+      - 'tools/bundle-macos.py'
   workflow_dispatch:
 permissions:
   contents: read

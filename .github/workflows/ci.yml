@@ -4,11 +4,6 @@ on:
   push:
     branches: [master]
   workflow_call:
-    inputs:
-      skip_android:
-        description: Release packaging builds and signs Android itself
-        type: boolean
-        default: false
 permissions:
   contents: read
 jobs:
@@ -25,38 +20,3 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup
       - run: bash tools/check.sh
-  android:
-    if: ${{ !inputs.skip_android }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup
-      - uses: ./.github/actions/android
-      - name: Build Android native library
-        env:
-          CARGO_TARGET_DIR: ${{ github.workspace }}/target
-        run: ABIS=arm64-v8a bash tools/sync-host.sh
-      - name: Generate and stage Android notices
-        run: |
-          cargo install cargo-about --version 0.9.3 --features cli --locked
-          bash tools/ci/notices.sh
-          (cd hosts/android && ./gradlew --no-daemon :app:generateLicenseReport)
-          mkdir -p hosts/android/app/build/nsh/assets/notices
-          cp -R target/notices/. hosts/android/app/build/nsh/assets/notices/
-          cp -R hosts/android/app/build/reports/dependency-license hosts/android/app/build/nsh/assets/notices/gradle
-      - name: Build Android APK and bundle
-        working-directory: hosts/android
-        run: ./gradlew --no-daemon lintDebug assembleDebug bundleDebug
-      - name: Verify APK signature
-        run: |
-          "$ANDROID_HOME/build-tools/35.0.1/apksigner" verify hosts/android/app/build/outputs/apk/debug/app-debug.apk
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: android-debug
-          path: |
-            hosts/android/app/build/outputs/apk/debug/*.apk
-            hosts/android/app/build/outputs/bundle/debug/*.aab
-          if-no-files-found: error

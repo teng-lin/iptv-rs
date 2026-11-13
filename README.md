@@ -374,6 +374,10 @@ Releases. Manual builds can select Android, desktop, both, or all platforms
 (adding iPad IPA when Apple signing is configured).
 See [setup, signing secrets and release limitations](docs/ci-release.md).
 
+To bump the version, run `python3 tools/bump-version.py patch` (also accepts
+`minor`, `major`, or `0.2.1`; preview with `--dry-run`). See
+[CI and releases](docs/ci-release.md) for the commit and tagging workflow.
+
 ## License
 
 This project is licensed under the GNU Affero General Public License version 3
