@@ -5,7 +5,7 @@ use iptv_providers::{
     model::{M3uSourceConfig, Source, SourceConfig},
 };
 use iptv_settings::Settings;
-use iptv_store_sqlite::{ChannelQuery, OrderScope, SourcePolicy, Store};
+use iptv_store_sqlite::{ChannelQuery, OrderScope, SourcePolicy};
 use nsh_core::{Size, element::Root, prelude::*};
 use nsh_engine::EngineConfig;
 use nsh_testing::{DialogAnswer, Headless};
@@ -13,6 +13,7 @@ use std::time::Duration;
 
 #[test]
 fn backup_export_cancel_restore_and_restart_preserve_personalized_library() {
+    crate::isolated::initialize_key();
     let phase = std::env::var("IPTV_BACKUP_PHASE").ok();
     if phase.is_none() {
         let directory = tempfile::tempdir().unwrap();
@@ -44,7 +45,7 @@ fn backup_export_cancel_restore_and_restart_preserve_personalized_library() {
     if phase.as_deref() == Some("verify") {
         let mut app = start_app();
         step(app.wait_for_within("text:★ Channel Two", Duration::from_secs(20)));
-        let store = Store::open(root.join("iptv.sqlite")).unwrap();
+        let store = crate::isolated::open_database(root.join("iptv.sqlite")).unwrap();
         let source = store.sources().unwrap()[0].id;
         assert_eq!(
             store.source(source).unwrap().unwrap().source.name,
@@ -70,7 +71,7 @@ fn backup_export_cancel_restore_and_restart_preserve_personalized_library() {
     std::fs::write(&playlist, text).unwrap();
     std::fs::write(root.join("settings.json"), Settings::new().to_json_string()).unwrap();
     let path = root.join("iptv.sqlite");
-    let mut store = Store::open(&path).unwrap();
+    let mut store = crate::isolated::open_database(&path).unwrap();
     let source = store
         .add_source(&Source {
             name: "Generated backup source".into(),
@@ -129,7 +130,7 @@ fn backup_export_cancel_restore_and_restart_preserve_personalized_library() {
     let pending = root.with_file_name("iptv-rs.restore-pending");
     assert!(pending.exists());
     // The running library remains editable until restart.
-    Store::open(&path)
+    crate::isolated::open_database(&path)
         .unwrap()
         .rename_source(source, "Generated changed after backup")
         .unwrap();
@@ -143,7 +144,7 @@ fn backup_export_cancel_restore_and_restart_preserve_personalized_library() {
     app.on_dialog(|_| DialogAnswer::Press("Schedule restore".into()));
     schedule(&mut app);
     assert_eq!(
-        Store::open(&path)
+        crate::isolated::open_database(&path)
             .unwrap()
             .source(source)
             .unwrap()
@@ -159,7 +160,7 @@ fn backup_export_cancel_restore_and_restart_preserve_personalized_library() {
     step(app.wait_for_within("text:★ Channel Two", Duration::from_secs(20)));
     assert!(pending.exists());
     assert_eq!(
-        Store::open(&path)
+        crate::isolated::open_database(&path)
             .unwrap()
             .source(source)
             .unwrap()

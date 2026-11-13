@@ -15,7 +15,7 @@
 use iptv_core::playback::PlaySource;
 use iptv_guide::playback::{Resolution, resolve};
 use iptv_providers::id::ContentId;
-use iptv_store_sqlite::{Store, StoredSource};
+use iptv_store_sqlite::StoredSource;
 
 use crate::{Playback, Ui, ViewMode};
 
@@ -30,7 +30,8 @@ pub struct Early {
 /// Startup, with the store open: starts `stored`'s last channel full
 /// screen when it may resume and resolves from the store alone. False
 /// when it does not start (the guide's arrival resumes it, if anything).
-pub fn early(ui: Ui, store: &Store, stored: &StoredSource) -> bool {
+pub async fn early(ui: Ui, stored: &StoredSource) -> bool {
+    let generation = crate::data::generation();
     if !crate::settings::flag(iptv_settings::keys::RESUME_LAST_CHANNEL)
         || ui.wizard.with_untracked(Option::is_some)
         || ui.playing.get_untracked().is_some()
@@ -43,7 +44,9 @@ pub fn early(ui: Ui, store: &Store, stored: &StoredSource) -> bool {
     let Some(key) = super::load_last_channel(Some(stored.id)) else {
         return false;
     };
-    let row = match store.channel(stored.id, &ContentId::from_stored(key.clone())) {
+    let id = stored.id;
+    let content = ContentId::from_stored(key.clone());
+    let row = match crate::store_service::call(move |store| store.channel(id, &content)).await {
         Ok(Some(row)) if !row.blocked => row,
         Ok(_) => return false,
         Err(e) => {
@@ -51,6 +54,12 @@ pub fn early(ui: Ui, store: &Store, stored: &StoredSource) -> bool {
             return false;
         }
     };
+    if crate::data::generation() != generation
+        || ui.wizard.with_untracked(Option::is_some)
+        || ui.playing.get_untracked().is_some()
+    {
+        return false;
+    }
     let source = match resolve(Some(&context), &row.channel, None, super::clock(None)) {
         Resolution::Play(source) => source,
         Resolution::StalkerLink(_) | Resolution::Unavailable(_) => return false,

@@ -57,3 +57,5 @@ mod tablet_rows;
 mod tv_player;
 mod tv_replay;
 mod type_drift;
+
+mod store_latency;

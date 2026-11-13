@@ -234,28 +234,96 @@ fn read_file(path: &Path) -> Settings {
 }
 
 /// Writes `settings` to `path` through a temporary file.
-fn write_file(path: &Path, settings: &Settings) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, settings.to_json_string())?;
-    std::fs::rename(&tmp, path)
+fn write_file(path: &Path, settings: &Settings) -> Result<(), SaveError> {
+    write_file_with_sync(path, settings, |dir| {
+        #[cfg(unix)]
+        std::fs::File::open(dir)?.sync_all()?;
+        #[cfg(not(unix))]
+        let _ = dir;
+        Ok(())
+    })
 }
 
-/// Stores `value` for `key` (globally), saves, and tells the views.
-pub fn set(ui: Ui, key: &str, value: Value) -> Result<(), SettingsError> {
-    let mut next = (*get()).clone();
-    let changes = next.set(key, value)?;
-    if let Err(e) = write_file(&path(), &next) {
-        log::warn!("iptv settings: could not save ({})", e.kind());
-    }
-    replace(next);
-    if !changes.is_empty() {
-        log::info!("iptv settings: {key} changed");
-        ui.settings.update(|v| *v += 1);
+fn write_file_with_sync(
+    path: &Path,
+    settings: &Settings,
+    sync_directory: impl FnOnce(&Path) -> std::io::Result<()>,
+) -> Result<(), SaveError> {
+    let publish = || -> std::io::Result<()> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let tmp = path.with_extension("json.tmp");
+        use std::io::Write;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&tmp)?;
+        file.write_all(settings.to_json_string().as_bytes())?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&tmp, path)
+    };
+    publish().map_err(SaveError::Storage)?;
+    // The rename has published the new file. Failure here means uncertain
+    // crash durability, not that the previous settings remain on disk.
+    if let Some(dir) = path.parent() {
+        sync_directory(dir).map_err(SaveError::Durability)?;
     }
     Ok(())
+}
+
+fn apply_published(result: Result<(), SaveError>, apply: impl FnOnce()) -> Result<(), SaveError> {
+    if result.is_ok() || matches!(&result, Err(SaveError::Durability(_))) {
+        apply();
+    }
+    result
+}
+
+/// Validation and persistence are distinct: a failed save is never success.
+#[derive(Debug)]
+pub enum SaveError {
+    Invalid(SettingsError),
+    Storage(std::io::Error),
+    /// Published to disk, but directory synchronization failed.
+    Durability(std::io::Error),
+}
+
+impl std::fmt::Display for SaveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Invalid(error) => error.fmt(f),
+            Self::Storage(error) => write!(f, "Could not save settings ({})", error.kind()),
+            Self::Durability(error) => write!(
+                f,
+                "Settings updated, but saving safely could not be confirmed ({})",
+                error.kind()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for SaveError {}
+
+/// Stores `value` for `key` (globally), saves, and tells the views.
+pub fn set(ui: Ui, key: &str, value: Value) -> Result<(), SaveError> {
+    let mut next = (*get()).clone();
+    let changes = next.set(key, value).map_err(SaveError::Invalid)?;
+    let result = apply_published(write_file(&path(), &next), || {
+        replace(next);
+        if !changes.is_empty() {
+            log::info!("iptv settings: {key} changed");
+            ui.settings.update(|v| *v += 1);
+        }
+    });
+    if let Err(error) = &result {
+        crate::settings_view::notify(&error.to_string());
+    }
+    result
 }
 
 pub fn flag(key: BoolKey) -> bool {
@@ -505,6 +573,46 @@ mod tests {
             "not settings"
         );
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn directory_sync_failure_keeps_live_settings_aligned_with_published_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE);
+        let mut live = Settings::new();
+        write_file(&path, &live).unwrap();
+        let mut next = live.clone();
+        next.set("catchup.forward_step", Value::secs(90)).unwrap();
+        let result = write_file_with_sync(&path, &next, |_| {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "synthetic directory sync failure",
+            ))
+        });
+        let result = apply_published(result, || live = next.clone());
+        assert!(matches!(result, Err(SaveError::Durability(_))));
+        assert_eq!(live, next);
+        assert_eq!(read_file(&path), live, "restart must read the live setting");
+        assert!(!path.with_extension("json.tmp").exists());
+    }
+
+    #[test]
+    fn failed_write_keeps_the_previous_settings_after_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE);
+        let mut saved = Settings::new();
+        saved.set("catchup.forward_step", Value::secs(60)).unwrap();
+        write_file(&path, &saved).unwrap();
+        std::fs::create_dir(path.with_extension("json.tmp")).unwrap();
+        let mut changed = saved.clone();
+        changed
+            .set("catchup.forward_step", Value::secs(90))
+            .unwrap();
+        assert!(write_file(&path, &changed).is_err());
+        assert_eq!(read_file(&path), saved);
+        std::fs::remove_dir(path.with_extension("json.tmp")).unwrap();
+        write_file(&path, &changed).unwrap();
+        assert_eq!(read_file(&path), changed);
     }
 
     #[test]

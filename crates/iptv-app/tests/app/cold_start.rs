@@ -9,7 +9,7 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use iptv_epg::format_xmltv_time;
-use iptv_store_sqlite::{ChannelQuery, Store};
+use iptv_store_sqlite::ChannelQuery;
 use nsh_core::picker::PickedFile;
 use nsh_core::{ImageData, Size, element::Root, prelude::*};
 use nsh_engine::EngineConfig;
@@ -93,7 +93,7 @@ fn the_last_channel_opens_once_before_the_guide() {
 
     // Channel two played last.
     let data = home.data_dir();
-    let store = Store::open(data.join("iptv.sqlite")).unwrap();
+    let store = crate::isolated::open_database(data.join("iptv.sqlite")).unwrap();
     let source = store.sources().unwrap()[0].id;
     let two = store
         .load_channels(source, &ChannelQuery::default())

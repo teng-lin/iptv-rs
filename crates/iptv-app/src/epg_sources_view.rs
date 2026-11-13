@@ -131,13 +131,17 @@ fn perform(ui: Ui, playlist: SourceId, effect: Effect) {
     match effect {
         Effect::Edit(edit) => {
             log::info!("iptv guide sources of {}: {}", playlist.0, edit_name(&edit));
-            if let Err(e) = crate::data::edit_guides(ui, playlist, &edit) {
-                log::warn!("iptv guide sources: the store refused it: {e}");
-            }
+            crate::data::spawn_in_app(async move {
+                if let Err(e) = crate::data::edit_guides(ui, playlist, &edit).await {
+                    log::warn!("iptv guide sources: the store refused it: {e}");
+                }
+            });
         }
         Effect::Update => {
-            let started = stored::update_source(ui, playlist, move || {
-                crate::settings_view::notify("Guide updated");
+            let started = stored::update_source(ui, playlist, move |completed| {
+                if completed {
+                    crate::settings_view::notify("Guide updated");
+                }
             });
             if started {
                 // Shows "Updating…".
@@ -184,6 +188,7 @@ pub fn layer(ui: Ui) -> impl IntoElement {
     // What is stored changed (an edit, an update, a guide download): reload.
     effect(move || {
         ui.library.version.get();
+        ui.settings.get();
         ui.data_version.get();
         let playlist = ui
             .guide_sources
@@ -281,7 +286,7 @@ fn update_status(playlist: SourceId) -> (String, bool) {
     if stored::updating(playlist) {
         return ("Updating…".to_owned(), false);
     }
-    let state = stored::guide_state(playlist);
+    let state = stored::cached_guide_state(playlist);
     match stored::status_of(state.as_ref()) {
         GuideStatus::Updated { at, channels } => (
             format!(

@@ -7,7 +7,7 @@
 //! nothing made up flashes and nothing is laid out twice), and the last
 //! channel starts from its stored row (`player/resume.rs`).
 //!
-//! On the import thread ([`send_stored`]): the channels with the first
+//! Through the store worker ([`send_stored`]): the channels with the first
 //! screen's programmes ([`first_rows`] around the channel the guide opens
 //! on, [`first_screen`]: the hour before now to [`FIRST_SCREEN_HOURS`] on),
 //! shown with every other channel and time loading
@@ -23,7 +23,7 @@ use std::time::Instant;
 use iptv_epg::{ChannelKey, GuideStore, UnixTime};
 use iptv_guide::EpgSchedule;
 use iptv_providers::model::Channel;
-use iptv_store_sqlite::{EpgWindow, SourceId, Store, StoredSource};
+use iptv_store_sqlite::{EpgWindow, SourceId, StoredSource};
 
 use super::{Imported, Job, Msg, Streams, stored};
 use crate::Ui;
@@ -66,26 +66,27 @@ pub fn first_rows(channels: &[Channel], focus: Option<&str>) -> Vec<ChannelKey> 
 
 /// Cold start with stored source `stored` (the store open): the guide's
 /// empty shell, and the last channel when it can start at once.
-pub fn begin(ui: Ui, store: &Store, stored: &StoredSource) {
+pub async fn begin(ui: Ui, stored: &StoredSource) {
     let shell = EpgSchedule::new(Vec::new(), GuideStore::default(), super::now_unix());
     crate::set_schedule(&ui, Rc::new(shell));
-    crate::player::resume::early(ui, store, stored);
+    crate::player::resume::early(ui, stored).await;
 }
 
 /// Sends `id`'s stored channels with the first screen's programmes, then
 /// with the whole guide window. Nothing when it has no channels.
-pub(super) fn send_stored(job: &Job, id: SourceId, now: UnixTime, tx: &Sender<Msg>) {
+pub(super) async fn send_stored(job: &Job, id: SourceId, now: UnixTime, tx: &Sender<Msg>) -> bool {
     let started = Instant::now();
     let ms = |t: Instant| t.elapsed().as_millis();
-    let (groups, channels) = match super::open_store().and_then(|s| stored::catalog_in(&s, id)) {
-        Ok(catalog) => catalog,
-        Err(e) => {
-            log::warn!("iptv data: stored catalog: {e}");
-            return;
-        }
-    };
+    let (groups, channels) =
+        match crate::store_service::call(move |store| stored::catalog_in(store, id)).await {
+            Ok(catalog) => catalog,
+            Err(e) => {
+                log::warn!("iptv data: stored catalog: {e}");
+                return false;
+            }
+        };
     if channels.is_empty() {
-        return;
+        return false;
     }
     let n = channels.len();
     log::info!("iptv data: showing {n} stored channels before the refresh");
@@ -105,15 +106,30 @@ pub(super) fn send_stored(job: &Job, id: SourceId, now: UnixTime, tx: &Sender<Ms
     let started = Instant::now();
     let (from, to) = first_screen(now);
     let resumes = crate::settings::flag(iptv_settings::keys::RESUME_LAST_CHANNEL);
-    let focus = crate::player::resume::last_key(id).filter(|_| resumes);
-    let keys = first_rows(&channels, focus.as_deref());
-    let window = EpgWindow {
-        from,
-        to,
-        keys: Some(&keys),
-        ..EpgWindow::from(now, 0)
+    let focus = if resumes {
+        crate::store_service::call(move |_| Ok(crate::player::resume::last_key(id)))
+            .await
+            .ok()
+            .flatten()
+    } else {
+        None
     };
-    if let Some(guide) = stored::read_guide(id, &window) {
+    let keys = first_rows(&channels, focus.as_deref());
+    let query_keys = keys.clone();
+    if let Ok(guide) = crate::store_service::call(move |store| {
+        store.load_epg(
+            id,
+            &EpgWindow {
+                from,
+                to,
+                keys: Some(&query_keys),
+                ..EpgWindow::from(now, 0)
+            },
+        )
+    })
+    .await
+        && guide.bound_count() > 0
+    {
         let kib = guide.heap_bytes() / 1024;
         crate::startup::mark_with(
             "first screen read",
@@ -124,13 +140,96 @@ pub(super) fn send_stored(job: &Job, id: SourceId, now: UnixTime, tx: &Sender<Ms
         let _ = tx.send(Msg::FirstScreen(first, held));
     }
     let started = Instant::now();
-    let guide = stored::load_guide(id, now).unwrap_or_default();
+    let window = super::pages::window(now, stored::keep_past_days(&crate::settings::get()));
+    let guide = crate::store_service::call(move |store| {
+        store.load_epg(id, &super::pages::store_window(window))
+    })
+    .await
+    .unwrap_or_default();
     let (bound, kib) = (guide.bound_count(), guide.heap_bytes() / 1024);
     crate::startup::mark_with(
         "guide window read",
         format_args!("{bound} channels, {kib} KiB in {} ms", ms(started)),
     );
+    // A cached-only opening must complete without claiming a network slot.
+    let metadata = crate::store_service::call(move |store| {
+        Ok((
+            store.source_policy(id)?,
+            store.import_status(id)?,
+            store.epg_guide(id)?,
+            store.guide_sources(id)?,
+            store.epg_overrides(id)?,
+        ))
+    })
+    .await;
+    if let Ok((policy, status, state, sources, overrides)) = metadata {
+        let playlist_due = status.last_success_at.is_none()
+            || policy.due(
+                now,
+                status.last_attempt_at,
+                matches!(
+                    job.purpose,
+                    super::Purpose::Startup | super::Purpose::Combined
+                ),
+            );
+        if !playlist_due {
+            let configs =
+                stored::configs_from_sources(&sources, state.as_ref(), Some(&job.source.config));
+            let overrides = overrides
+                .into_iter()
+                .map(|(id, epg)| (ChannelKey::new(id.as_str()), epg.to_override()))
+                .collect();
+            let matching = stored::Matching {
+                channels: &channels,
+                overrides: &overrides,
+            };
+            let decision = stored::plan(
+                job.purpose.trigger(),
+                &configs,
+                matching,
+                state.as_ref(),
+                now,
+            );
+            if !matches!(decision, super::Decision::Refresh(_)) {
+                let guide = if matches!(decision, super::Decision::Discard) {
+                    if crate::store_service::call(move |store| store.delete_epg(id))
+                        .await
+                        .is_err()
+                    {
+                        let _ = tx.send(Msg::Guide(imported(groups, channels, guide)));
+                        return false;
+                    }
+                    GuideStore::default()
+                } else {
+                    guide
+                };
+                let state = if matches!(decision, super::Decision::Discard) {
+                    None
+                } else {
+                    state.as_ref()
+                };
+                if let Some(at) = stored::check_at(
+                    stored::plan(super::Trigger::Timer, &configs, matching, state, now),
+                    now,
+                ) {
+                    let _ = tx.send(Msg::NextCheck { source: id, at });
+                }
+                let counts = super::ImportCounts {
+                    channels: channels.len() as u32,
+                    groups: groups.len() as u32,
+                    movies: 0,
+                    series: 0,
+                };
+                let _ = tx.send(Msg::Playlist(Ok((
+                    counts,
+                    imported(groups, channels, guide),
+                ))));
+                return true;
+            }
+        }
+    }
     let _ = tx.send(Msg::Guide(imported(groups, channels, guide)));
+    false
 }
 
 #[cfg(test)]

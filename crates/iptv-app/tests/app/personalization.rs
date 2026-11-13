@@ -5,7 +5,7 @@ use iptv_providers::{
     model::{M3uSourceConfig, Source, SourceConfig},
 };
 use iptv_settings::Settings;
-use iptv_store_sqlite::{SourceId, SourcePolicy, Store};
+use iptv_store_sqlite::{SourceId, SourcePolicy};
 use nsh_core::{Size, element::Root, prelude::*};
 use nsh_engine::EngineConfig;
 use nsh_testing::Headless;
@@ -38,7 +38,7 @@ pub fn start(home: Home, settings: Settings, manual: bool) -> Fixture {
     let playlist = home.path().join("synthetic.m3u");
     std::fs::write(&playlist, M3U).unwrap();
     let path = dir.join("iptv.sqlite");
-    let mut store = Store::open(&path).unwrap();
+    let mut store = crate::isolated::open_database(&path).unwrap();
     let source = store
         .add_source(&Source {
             name: "Synthetic personalization".into(),

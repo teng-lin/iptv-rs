@@ -28,10 +28,19 @@ use crate::ui_kit;
 use crate::{Ui, tint};
 
 const PANEL_W: f32 = 680.0;
+thread_local! { static REQUEST: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
+fn next_request() -> u64 {
+    REQUEST.with(|request| {
+        let next = request.get().wrapping_add(1);
+        request.set(next);
+        next
+    })
+}
 
 /// Opens the chooser for catalog channel `channel` of the playlist on
 /// screen; a notice when there is none or it has no guide at all.
 pub fn open(ui: Ui, channel: usize) {
+    let request = next_request();
     let schedule = crate::schedule();
     let Some((playlist, key)) = schedule
         .channel_key(channel)
@@ -40,34 +49,56 @@ pub fn open(ui: Ui, channel: usize) {
         crate::settings_view::notify("No playlist on screen");
         return;
     };
-    let mut channels = assign::guide_channels(playlist);
-    if channels.is_empty() {
-        crate::settings_view::notify("No guide data is stored yet: update the guide first");
-        return;
-    }
-    let feeds: Vec<_> = crate::data::stored::guide_sources(playlist)
-        .iter()
-        .map(|s| (s.feed, crate::epg_sources_view::source_title(s)))
-        .collect();
-    // The sources in the user's order (the first one wins), each by name.
-    channels.sort_by_key(|c| {
-        feeds
-            .iter()
-            .position(|(f, _)| *f == c.feed)
-            .unwrap_or(usize::MAX)
-    });
-    let subject = Subject {
+    ui.guide_assign.set(Some(Picker::new(Subject {
         playlist,
-        current: assign::current(playlist, &key),
+        current: assign::Current::default(),
         name: schedule.channel_name(channel),
-        key,
-        channels,
-        feeds,
-    };
-    ui.guide_assign.set(Some(Picker::new(subject)));
+        key: key.clone(),
+        channels: Vec::new(),
+        feeds: Vec::new(),
+    })));
+    crate::data::spawn_in_app(async move {
+        let mut channels = assign::guide_channels(playlist).await;
+        if REQUEST.with(|current| current.get()) != request {
+            return;
+        }
+        if channels.is_empty() {
+            close(ui);
+            crate::settings_view::notify("No guide data is stored yet: update the guide first");
+            return;
+        }
+        let feeds: Vec<_> = crate::data::stored::source_lines(playlist)
+            .iter()
+            .map(|line| {
+                (
+                    line.source.feed,
+                    crate::epg_sources_view::source_title(&line.source),
+                )
+            })
+            .collect();
+        // The sources in the user's order (the first one wins), each by name.
+        channels.sort_by_key(|c| {
+            feeds
+                .iter()
+                .position(|(f, _)| *f == c.feed)
+                .unwrap_or(usize::MAX)
+        });
+        let subject = Subject {
+            playlist,
+            current: assign::current(playlist, &key).await,
+            name: schedule.channel_name(channel),
+            key,
+            channels,
+            feeds,
+        };
+        if REQUEST.with(|current| current.get()) == request && is_open(ui) {
+            ui.guide_assign.set(Some(Picker::new(subject)));
+        }
+    });
 }
 
 pub fn close(ui: Ui) {
+    next_request();
     if ui.guide_assign.with_untracked(Option::is_some) {
         ui.guide_assign.set(None);
         dismiss_keyboard();

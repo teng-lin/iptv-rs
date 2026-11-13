@@ -14,6 +14,7 @@ mod browse_playback;
 mod channels_view;
 mod chooser;
 mod content_image;
+mod credential_key;
 mod custom_groups;
 mod data;
 mod desktop;
@@ -43,6 +44,7 @@ mod player;
 mod player_keys;
 mod player_panels;
 mod playlists_view;
+mod private_files;
 mod rail;
 mod remote_editor;
 mod scale;
@@ -51,6 +53,7 @@ mod seek;
 mod settings;
 mod settings_view;
 pub mod startup;
+mod store_service;
 pub mod time;
 mod transport;
 mod ui_kit;
@@ -449,21 +452,61 @@ pub fn App() -> impl IntoElement {
             .justify_center()
             .child(text(message));
     }
-    if let Err(error) = backup::startup() {
-        let message = error.message;
-        log::warn!("iptv backup: {message}");
-        if error.fatal {
-            // Never create a replacement empty database over an unrecovered
-            // directory after a filesystem failure during restore recovery.
-            return view()
+    // Restore validation can decrypt/migrate SQLite and copied documents. It
+    // must finish off the UI thread before settings or the live store open.
+    let outcome = signal(None::<Result<(), &'static str>>);
+    let (tx, rx) = futures_channel::oneshot::channel();
+    let started = std::thread::Builder::new()
+        .name("iptv-bootstrap".into())
+        .spawn(move || {
+            let result = match backup::startup() {
+                Ok(()) => Ok(()),
+                Err(error) => {
+                    log::warn!("iptv backup: {}", error.message);
+                    if error.fatal {
+                        Err(error.message)
+                    } else {
+                        Ok(())
+                    }
+                }
+            };
+            let _ = tx.send(result);
+        });
+    if started.is_err() {
+        outcome.set(Some(Err("The startup task could not be started")));
+    } else {
+        // Detach under this root owner; disposing the root cancels the reply
+        // task, while recovery itself safely completes on its worker.
+        drop(spawn(async move {
+            outcome.set(Some(rx.await.unwrap_or(Err("The startup task stopped"))));
+        }));
+    }
+    view().flex_1().child(dynamic(move || {
+        let result = outcome.get();
+        // Only the one-shot outcome controls this branch. Reads while building
+        // ReadyApp must not subscribe the branch and recreate its video surface.
+        untracked(move || match result {
+            None => view()
+                .flex_1()
+                .items_center()
+                .justify_center()
+                .child(text("Opening saved library…"))
+                .into_element(),
+            Some(Err(message)) => view()
                 .flex_1()
                 .items_center()
                 .justify_center()
                 .child(text("Saved data could not be recovered"))
                 .child(text(message))
-                .child(text("Close Patina and try opening it again."));
-        }
-    }
+                .child(text("Close Patina and try opening it again."))
+                .into_element(),
+            Some(Ok(())) => ready_app().into_element(),
+        })
+    }))
+}
+
+/// Constructed once after recovery; all player surfaces belong to this owner.
+fn ready_app() -> impl IntoElement {
     settings::load();
     startup::mark("settings loaded");
     let ui = Ui {
@@ -534,6 +577,7 @@ pub fn App() -> impl IntoElement {
             ui.panels.update(|p| p.hide());
         }
     });
+    favorites::reset();
     favorites::catalog_changed(ui, &*schedule());
     input::bind(ui);
     data::start(ui);
@@ -872,3 +916,7 @@ pub(crate) fn go_back(ui: Ui) -> bool {
         }
     })
 }
+
+/// Explicit synthetic-key injection for the headless test binary only.
+#[cfg(feature = "test-support")]
+pub use credential_key::install_test_key;

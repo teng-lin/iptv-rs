@@ -10,7 +10,7 @@ use iptv_core::membership::{Member, Membership};
 use iptv_nav::Action;
 use iptv_providers::ContentId;
 use iptv_store_sqlite::{
-    ChannelQuery, ChannelScope, CustomGroup, CustomGroupId, SourceId, StoreError,
+    ChannelQuery, ChannelScope, CustomGroup, CustomGroupId, SourceId, Store, StoreError,
 };
 use nsh_core::prelude::*;
 
@@ -92,27 +92,74 @@ fn update(ui: Ui, f: impl FnOnce(&mut Open)) {
 pub fn is_open(ui: Ui) -> bool {
     ui.custom_groups.with(Option::is_some)
 }
-pub fn open(ui: Ui, source: SourceId, browse: bool) {
-    match data::open_store().and_then(|s| s.custom_groups(source)) {
-        Ok(groups) => {
-            ui.custom_groups.set(Some(Open {
-                source,
-                groups,
-                page: Page::Groups,
-                scope: ChannelScope::All,
-                members: Membership::default(),
-                control: Some(0),
-                editing: None,
-                status: String::new(),
-            }));
-            if browse {
-                show_members(ui, ChannelScope::All);
-            }
+thread_local! { static GENERATION: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
+fn advance() {
+    GENERATION.with(|v| v.set(v.get().wrapping_add(1)));
+}
+fn request<R: Send + 'static>(
+    ui: Ui,
+    operation: impl FnOnce(&mut Store) -> Result<R, StoreError> + Send + 'static,
+    done: impl FnOnce(Ui, Result<R, StoreError>) + 'static,
+) {
+    let generation = GENERATION.get();
+    let result = crate::store_service::call(operation);
+    data::spawn_in_app(async move {
+        let result = result.await;
+        if GENERATION.get() == generation && is_open(ui) {
+            done(ui, result);
         }
-        Err(e) => log::warn!("iptv custom groups: {e}"),
-    }
+    });
+}
+fn mutate<R: Send + 'static>(
+    ui: Ui,
+    source: SourceId,
+    operation: impl FnOnce(&mut Store) -> Result<R, StoreError> + Send + 'static,
+    done: impl FnOnce(Ui, Result<R, StoreError>) + 'static,
+) {
+    let generation = GENERATION.get();
+    let result = crate::store_service::call(operation);
+    data::spawn_in_app(async move {
+        let result = result.await;
+        // A committed edit affects the guide even if its editor was closed.
+        if result.is_ok() {
+            data::organization::changed(ui, source);
+        }
+        if GENERATION.get() == generation && is_open(ui) {
+            done(ui, result);
+        }
+    });
+}
+pub fn open(ui: Ui, source: SourceId, browse: bool) {
+    advance();
+    ui.custom_groups.set(Some(Open {
+        source,
+        groups: Vec::new(),
+        page: Page::Groups,
+        scope: ChannelScope::All,
+        members: Membership::default(),
+        control: Some(0),
+        editing: None,
+        status: String::new(),
+    }));
+    request(
+        ui,
+        move |store| store.custom_groups(source),
+        move |ui, result| match result {
+            Ok(groups) => {
+                update(ui, |s| s.reload_groups(groups));
+                if browse {
+                    show_members(ui, ChannelScope::All);
+                }
+            }
+            Err(error) => {
+                log::warn!("iptv custom groups: {error}");
+                close(ui);
+            }
+        },
+    );
 }
 fn close(ui: Ui) {
+    advance();
     dismiss_keyboard();
     ui.custom_groups.set(None);
 }
@@ -123,8 +170,8 @@ fn origin(s: &Open) -> Option<CustomGroupId> {
         None
     }
 }
-fn rows(source: SourceId, scope: ChannelScope) -> Result<Vec<Member>, StoreError> {
-    Ok(data::open_store()?
+fn rows(store: &Store, source: SourceId, scope: ChannelScope) -> Result<Vec<Member>, StoreError> {
+    Ok(store
         .load_channels(
             source,
             &ChannelQuery {
@@ -140,19 +187,27 @@ fn rows(source: SourceId, scope: ChannelScope) -> Result<Vec<Member>, StoreError
         })
         .collect())
 }
+fn reload(ui: Ui) {
+    let Some((source, scope)) = read(ui, |s| (s.source, s.scope.clone())) else {
+        return;
+    };
+    request(
+        ui,
+        move |store| Ok((store.custom_groups(source)?, rows(store, source, scope)?)),
+        |ui, result| {
+            if let Ok((groups, rows)) = result {
+                update(ui, |s| {
+                    s.reload_groups(groups);
+                    s.members.reload(rows);
+                });
+            }
+        },
+    );
+}
 fn report(ui: Ui, result: Result<(), StoreError>) {
     match result {
         Ok(()) => {
-            let Some(s) = read(ui, Clone::clone) else {
-                return;
-            };
-            if let Ok(groups) = data::open_store().and_then(|store| store.custom_groups(s.source)) {
-                update(ui, |s| s.reload_groups(groups));
-            }
-            if let Ok(rows) = rows(s.source, s.scope.clone()) {
-                update(ui, |s| s.members.reload(rows));
-            }
-            data::organization::changed(ui, s.source);
+            reload(ui);
         }
         Err(_) => update(ui, |s| {
             s.status = "The change could not be saved. Reopen the list and try again.".into()
@@ -160,21 +215,28 @@ fn report(ui: Ui, result: Result<(), StoreError>) {
     }
 }
 fn show_members(ui: Ui, scope: ChannelScope) {
+    advance();
     let Some(source) = read(ui, |s| s.source) else {
         return;
     };
-    match rows(source, scope.clone()) {
-        Ok(rows) => update(ui, |s| {
-            s.scope = scope;
-            s.members = Membership::new(rows);
-            s.page = Page::Members;
-            s.control = Some(0);
-            s.status.clear();
-        }),
-        Err(e) => report(ui, Err(e)),
-    }
+    let loaded_scope = scope.clone();
+    request(
+        ui,
+        move |store| rows(store, source, loaded_scope),
+        move |ui, result| match result {
+            Ok(rows) => update(ui, |s| {
+                s.scope = scope;
+                s.members = Membership::new(rows);
+                s.page = Page::Members;
+                s.control = Some(0);
+                s.status.clear();
+            }),
+            Err(error) => report(ui, Err(error)),
+        },
+    );
 }
 pub fn back(ui: Ui) -> bool {
+    advance();
     let Some(s) = read(ui, Clone::clone) else {
         return false;
     };
@@ -258,17 +320,25 @@ fn commit_text(ui: Ui) {
         update(ui, |s| s.status = "Enter a group name.".into());
         return;
     }
-    let result = data::open_store().and_then(|mut store| match kind {
-        Text::Create => store.create_custom_group(s.source, name).map(|_| ()),
-        Text::Rename(g) => store.rename_custom_group(g, name),
-        Text::Filter => unreachable!(),
-    });
-    if result.is_ok() {
-        cancel_text(ui);
-        update(ui, |s| s.status = "Group saved.".into());
-    }
-    report(ui, result);
+    let name = name.to_owned();
+    mutate(
+        ui,
+        s.source,
+        move |store| match kind {
+            Text::Create => store.create_custom_group(s.source, &name).map(|_| ()),
+            Text::Rename(group) => store.rename_custom_group(group, &name),
+            Text::Filter => unreachable!(),
+        },
+        |ui, result| {
+            if result.is_ok() {
+                cancel_text(ui);
+                update(ui, |s| s.status = "Group saved.".into());
+            }
+            report(ui, result);
+        },
+    );
 }
+
 fn labels(s: &Open) -> Vec<String> {
     match s.page {
         Page::Groups => ["New group".into(), "Browse all channels".into()]
@@ -367,9 +437,13 @@ fn act(ui: Ui, index: usize) {
                     .into_iter()
                     .map(ContentId::from_stored)
                     .collect();
-                let result = data::open_store()
-                    .and_then(|mut store| store.remove_custom_members(origin(&s).unwrap(), &ids));
-                report(ui, result);
+                let origin = origin(&s).unwrap();
+                mutate(
+                    ui,
+                    s.source,
+                    move |store| store.remove_custom_members(origin, &ids),
+                    report,
+                );
             }
             _ => {}
         },
@@ -392,38 +466,48 @@ fn act(ui: Ui, index: usize) {
                 .into_iter()
                 .map(ContentId::from_stored)
                 .collect();
-            let result = data::open_store().and_then(|mut store| {
-                store.transfer_custom_members(s.source, origin(&s), target.id, &ids, moving)
-            });
-            match result {
-                Ok(count) => {
-                    update(ui, |s| {
-                        s.members.selected.clear();
-                        s.page = Page::Members;
-                        s.control = Some(3);
-                        s.status = format!(
-                            "{count} channels {}.",
-                            if moving { "moved" } else { "copied" }
-                        );
-                    });
-                    report(ui, Ok(()));
-                }
-                Err(e) => report(ui, Err(e)),
-            }
+            let target = target.id;
+            mutate(
+                ui,
+                s.source,
+                move |store| {
+                    store.transfer_custom_members(s.source, origin(&s), target, &ids, moving)
+                },
+                move |ui, result| match result {
+                    Ok(count) => {
+                        update(ui, |s| {
+                            s.members.selected.clear();
+                            s.page = Page::Members;
+                            s.control = Some(3);
+                            s.status = format!(
+                                "{count} channels {}.",
+                                if moving { "moved" } else { "copied" }
+                            );
+                        });
+                        report(ui, Ok(()));
+                    }
+                    Err(e) => report(ui, Err(e)),
+                },
+            );
         }
         Page::Delete(g) => {
             if index == 0 {
                 back(ui);
             } else {
-                let result = data::open_store()
-                    .and_then(|mut store| store.delete_custom_group(g).map(|_| ()));
-                if result.is_ok() {
-                    update(ui, |s| {
-                        s.page = Page::Groups;
-                        s.control = Some(0);
-                    });
-                }
-                report(ui, result);
+                mutate(
+                    ui,
+                    s.source,
+                    move |store| store.delete_custom_group(g).map(|_| ()),
+                    |ui, result| {
+                        if result.is_ok() {
+                            update(ui, |s| {
+                                s.page = Page::Groups;
+                                s.control = Some(0);
+                            });
+                        }
+                        report(ui, result);
+                    },
+                );
             }
         }
     }
@@ -511,17 +595,7 @@ fn entry_sheet(ui: Ui) -> impl IntoElement {
 pub fn layer(ui: Ui) -> impl IntoElement {
     effect(move || {
         ui.library.version.get();
-        untracked(|| {
-            let Some((source, scope)) = read(ui, |s| (s.source, s.scope.clone())) else {
-                return;
-            };
-            if let Ok(groups) = data::open_store().and_then(|store| store.custom_groups(source)) {
-                update(ui, |s| s.reload_groups(groups));
-            }
-            if let Ok(rows) = rows(source, scope) {
-                update(ui, |s| s.members.reload(rows));
-            }
-        });
+        untracked(|| reload(ui));
     });
     let size = Scale::new();
     when(

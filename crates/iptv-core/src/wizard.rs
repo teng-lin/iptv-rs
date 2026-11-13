@@ -450,6 +450,8 @@ impl ImportCounts {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FailureKind {
+    /// The bounded import queue is full; retry after another import finishes.
+    Busy,
     /// No connection, DNS, timeout, TLS, HTTP 5xx.
     Network,
     /// The provider refused the account.

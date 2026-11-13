@@ -1,11 +1,14 @@
 //! Apply user organization to the guide without replacing playback channels.
-use super::open_store;
 use crate::Ui;
 use iptv_guide::{EpgSchedule, Organization};
-use iptv_store_sqlite::{ChannelQuery, SourceId, StoreError};
+use iptv_store_sqlite::{ChannelQuery, SourceId, Store, StoreError};
 
-pub fn read(source: SourceId) -> Result<Organization, StoreError> {
-    let store = open_store()?;
+thread_local! { static REVISION: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
+pub fn revision() -> u64 {
+    REVISION.get()
+}
+
+pub fn read_in(store: &Store, source: SourceId) -> Result<Organization, StoreError> {
     let channels = store
         .load_channels(
             source,
@@ -25,19 +28,31 @@ pub fn read(source: SourceId) -> Result<Organization, StoreError> {
         .collect();
     Ok(Organization { channels, groups })
 }
-pub fn apply(schedule: &EpgSchedule, source: SourceId) {
-    match read(source) {
-        Ok(org) => {
-            schedule.set_organization(org);
-            match group_lists(source) {
-                Ok(lists) => schedule.set_group_lists(lists),
-                Err(e) => log::warn!("iptv organization: cannot read lists: {e}"),
-            }
-        }
-        Err(e) => log::warn!("iptv organization: store unavailable: {e}"),
+struct Snapshot {
+    organization: Organization,
+    lists: Vec<(String, String, Vec<String>)>,
+}
+async fn load(source: SourceId) -> Result<Snapshot, StoreError> {
+    crate::store_service::call(move |store| {
+        Ok(Snapshot {
+            organization: read_in(store, source)?,
+            lists: group_lists_in(store, source)?,
+        })
+    })
+    .await
+}
+fn install(schedule: &EpgSchedule, snapshot: Snapshot) {
+    schedule.set_organization(snapshot.organization);
+    schedule.set_group_lists(snapshot.lists);
+}
+pub async fn apply(schedule: &EpgSchedule, source: SourceId) {
+    match load(source).await {
+        Ok(snapshot) => install(schedule, snapshot),
+        Err(error) => log::warn!("iptv organization: store unavailable: {error}"),
     }
 }
 pub fn changed(ui: Ui, source: SourceId) {
+    REVISION.set(REVISION.get().wrapping_add(1));
     ui.library.version.update(|v| *v += 1);
     if super::combined::active(ui) {
         super::combined::organization_changed(ui, source);
@@ -46,22 +61,31 @@ pub fn changed(ui: Ui, source: SourceId) {
     if ui.library.shown.get_untracked() != Some(source) {
         return;
     }
-    let kept = crate::lists::keep(ui);
     let schedule = crate::schedule();
-    if let Some(epg) = schedule
-        .as_any()
-        .and_then(|s| s.downcast_ref::<EpgSchedule>())
-    {
-        apply(epg, source);
-        crate::lists::restore(ui, kept);
-        ui.data_version.update(|v| *v += 1);
-    }
+    super::spawn_in_app(async move {
+        if let Some(epg) = schedule
+            .as_any()
+            .and_then(|s| s.downcast_ref::<EpgSchedule>())
+        {
+            let Ok(snapshot) = load(source).await else {
+                return;
+            };
+            if std::rc::Rc::ptr_eq(&schedule, &crate::schedule()) {
+                let kept = crate::lists::keep(ui);
+                install(epg, snapshot);
+                crate::lists::restore(ui, kept);
+                ui.data_version.update(|v| *v += 1);
+            }
+        }
+    });
 }
 
 /// Includes empty custom groups so their membership can be populated later.
-pub fn group_lists(source: SourceId) -> Result<Vec<(String, String, Vec<String>)>, StoreError> {
+fn group_lists_in(
+    store: &Store,
+    source: SourceId,
+) -> Result<Vec<(String, String, Vec<String>)>, StoreError> {
     use iptv_store_sqlite::ChannelScope;
-    let store = open_store()?;
     let mut lists = Vec::new();
     for g in store
         .library_groups(source)?

@@ -339,3 +339,63 @@ fn structured_entry_budgets_preserve_current_and_pending_data() {
         "Synthetic retained"
     );
 }
+
+#[test]
+fn pending_restore_seals_library_and_documents_before_publication() {
+    let dir = tempfile::tempdir().unwrap();
+    let live = dir.path().join("live.sqlite");
+    let key = iptv_store_sqlite::DatabaseKey::from_bytes([0x51; 32]);
+    let store = Store::open_encrypted(&live, &key).unwrap();
+    let pending = dir.path().join("pending");
+    seed(&pending, "Synthetic pending");
+    let document = pending.join("playlists/generated/list.m3u");
+    let original = fs::read(&document).unwrap();
+    seal_restore_with_store(&store, &pending).unwrap();
+    Store::validate_encrypted_snapshot(&pending.join("iptv.sqlite"), &key).unwrap();
+    assert!(Store::validate_snapshot(&pending.join("iptv.sqlite")).is_err());
+    let encrypted = fs::read(&document).unwrap();
+    assert!(
+        !encrypted
+            .windows(b"http://example.test".len())
+            .any(|w| w == b"http://example.test")
+    );
+    assert!(!encrypted.starts_with(b"#EXTM3U"));
+    let mut reader = store.read_private_file(&document).unwrap();
+    assert_eq!(reader.len(), original.len() as u64);
+    let mut decoded = Vec::new();
+    reader.read_to_end(&mut decoded).unwrap();
+    assert_eq!(
+        decoded, original,
+        "portable export streams the original plaintext bytes"
+    );
+}
+
+#[test]
+fn startup_removes_abandoned_plaintext_backup_work_only_for_this_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("synthetic");
+    fs::create_dir(&root).unwrap();
+    let stale = sibling(&root, "backup-work-123-0");
+    fs::create_dir(&stale).unwrap();
+    fs::write(stale.join("iptv.sqlite"), b"synthetic plaintext snapshot").unwrap();
+    let unrelated = dir.path().join("other.backup-work-123-0");
+    fs::create_dir(&unrelated).unwrap();
+    activate(&root).unwrap();
+    assert!(!stale.exists());
+    assert!(unrelated.exists());
+    assert!(root.exists());
+}
+
+#[test]
+fn backup_collection_skips_interrupted_atomic_document_writes() {
+    let directory = tempfile::tempdir().unwrap();
+    let documents = directory.path().join("playlists");
+    fs::create_dir(&documents).unwrap();
+    for name in [".iptv-sealing-new", ".iptv-sealing-new-journal"] {
+        fs::write(documents.join(name), b"interrupted encrypted write").unwrap();
+    }
+    fs::write(documents.join("valid.m3u"), b"#EXTM3U\n").unwrap();
+    let mut names = Vec::new();
+    collect(directory.path(), &documents, &mut names).unwrap();
+    assert_eq!(names, ["playlists/valid.m3u"]);
+}

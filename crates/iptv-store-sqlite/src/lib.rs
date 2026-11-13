@@ -6,11 +6,11 @@
 //!   Readers on other connections see the old catalog or the new one, never
 //!   a mix (WAL).
 //! - **Sources** keep non-secret settings in `sources.config` and secrets
-//!   in `source_credentials`. Secrets are stored as plain text for now;
-//!   encrypting them with the Android Keystore is a later step (see the
-//!   README). Stream URLs and headers in the catalog are provider data and
-//!   may embed credentials too (Xtream-shaped M3U), so the whole file is
-//!   sensitive: never log rows, and `Debug` of the row types redacts them.
+//!   in `source_credentials`. Production uses [`Store::open_encrypted`] with
+//!   a platform-keystore key. SQLCipher encrypts every page, including WAL,
+//!   stream URLs, headers and indexes. Explicit plaintext opens are reserved
+//!   for synthetic tests and user-requested portable backup files. Never log
+//!   rows; `Debug` of the row types redacts credential-bearing values.
 //!   What the user chose per source: its guide sources in
 //!   `guide_sources` ([`Store::guide_sources`]), channels' manual guide
 //!   choices in `channel_overlays`; the source the app shows in
@@ -29,6 +29,8 @@
 //!   `src/epg.rs` and the README.
 
 mod backup;
+mod encryption;
+pub use encryption::DatabaseKey;
 mod catalog;
 mod catalog_stage;
 pub use catalog_stage::CatalogStage;
@@ -111,6 +113,7 @@ pub struct Store {
     /// Searches query the FTS index (else `LIKE`).
     fts: bool,
     clock: fn() -> i64,
+    key: Option<DatabaseKey>,
 }
 
 impl std::fmt::Debug for Store {
@@ -164,6 +167,7 @@ impl Store {
             fts_index,
             fts: options.prefer_fts && fts_index,
             clock: system_now,
+            key: None,
         })
     }
 
@@ -195,3 +199,6 @@ impl Store {
         }
     }
 }
+
+mod private_file;
+pub use private_file::PrivateFileReader;

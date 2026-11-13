@@ -36,6 +36,7 @@ struct State {
 /// A store write, in the order made.
 enum Write {
     Barrier(futures_channel::oneshot::Sender<bool>),
+    Shutdown(mpsc::Sender<bool>),
     MoveFavourite {
         source: SourceId,
         key: String,
@@ -58,125 +59,142 @@ thread_local! {
     static WRITER: RefCell<Option<Sender<Write>>> = const { RefCell::new(None) };
 }
 
+/// A new app root must reload persisted favourites, including an applied restore.
+pub(crate) fn reset() {
+    // Never reuse a previous root's epoch-bound writer when restoring a library.
+    WRITER.with(|writer| writer.borrow_mut().take());
+    STATE.with(|state| *state.borrow_mut() = State::default());
+}
+
 /// The source whose catalog is about to be shown (`data.rs`, before
 /// `set_schedule`): its saved favourites and recent channels. The same
 /// source keeps its in-memory lists (writes may still be on their way).
-pub fn set_source(source: Option<SourceId>) {
-    let Some(id) = source else {
-        return; // the synthetic guide: memory only
-    };
-    let same = STATE.with(|s| s.borrow().source == source);
-    let store = match crate::data::open_store() {
-        Ok(store) => store,
-        Err(e) => {
-            log::warn!("iptv favourites: store unavailable ({e})");
-            return;
-        }
-    };
-    let has_vod = store
-        .import_status(id)
-        .is_ok_and(|s| s.counts.vod + s.counts.series > 0);
-    if same {
-        STATE.with(|s| s.borrow_mut().has_vod = has_vod);
-        return;
+pub async fn prepare_source(source: Option<SourceId>) -> Option<impl FnOnce()> {
+    let generation = crate::data::generation();
+    let id = source?;
+    let loaded = crate::store_service::call(move |store| {
+        let has_vod = store
+            .import_status(id)
+            .is_ok_and(|s| s.counts.vod + s.counts.series > 0);
+        let rows = store.load_channels(
+            id,
+            &ChannelQuery {
+                favourites_only: true,
+                include_hidden: true,
+                order: ChannelOrder::Effective,
+                ..ChannelQuery::default()
+            },
+        )?;
+        let recent = store.recent(Some(id), Some(ContentKind::Live), RECENT_LIMIT as u32)?;
+        Ok((has_vod, rows, recent))
+    })
+    .await;
+    if crate::data::generation() != generation {
+        return None;
     }
-    let query = ChannelQuery {
-        favourites_only: true,
-        include_hidden: true,
-        order: ChannelOrder::Effective,
-        ..ChannelQuery::default()
-    };
-    let favorites = match store.load_channels(id, &query) {
-        Ok(rows) => {
-            Favorites::from_keys(rows.into_iter().map(|r| r.channel.id.as_str().to_owned()))
-        }
-        Err(e) => {
-            log::warn!("iptv favourites: could not read them ({e})");
-            Favorites::default()
+    let (has_vod, rows, recent) = match loaded {
+        Ok(loaded) => loaded,
+        Err(error) => {
+            log::warn!("iptv favourites: store unavailable ({error})");
+            return None;
         }
     };
-    let recent = match store.recent(Some(id), Some(ContentKind::Live), RECENT_LIMIT as u32) {
-        Ok(entries) => {
-            Recent::from_keys(entries.into_iter().map(|e| e.item_id.as_str().to_owned()))
-        }
-        Err(e) => {
-            log::warn!("iptv favourites: could not read the history ({e})");
-            Recent::default()
-        }
-    };
-    log::info!(
-        "iptv favourites: source {} has {} favourite(s), {} recent",
-        id.0,
-        favorites.keys().len(),
-        recent.keys().len()
-    );
-    STATE.with(|s| {
-        let mut s = s.borrow_mut();
-        s.source = source;
-        s.combined_sources.clear();
-        s.favorites = favorites;
-        s.recent = recent;
-        s.has_vod = has_vod;
-    });
+    Some(move || {
+        STATE.with(|state| {
+            let mut state = state.borrow_mut();
+            state.has_vod = has_vod;
+            if state.source == source {
+                return;
+            }
+            state.source = source;
+            state.combined_sources.clear();
+            state.favorites = Favorites::from_keys(
+                rows.into_iter()
+                    .map(|row| row.channel.id.as_str().to_owned()),
+            );
+            state.recent = Recent::from_keys(
+                recent
+                    .into_iter()
+                    .map(|row| row.item_id.as_str().to_owned()),
+            );
+        })
+    })
 }
 
-/// Load enabled-source favourites into qualified UI identities. Keep already
-/// loaded in-memory keys so a guide refresh cannot overtake queued edits.
-pub fn set_combined() {
+/// Load enabled-source favourites while preserving edits already held in memory.
+pub async fn prepare_combined() -> Option<impl FnOnce()> {
+    let generation = crate::data::generation();
     use iptv_guide::combined::{qualified_key, split_key};
-    let Ok(store) = crate::data::open_store() else {
-        return;
-    };
-    let Ok(sources) = store.sources() else { return };
-    let ids: Vec<_> = sources
-        .into_iter()
-        .filter(|s| store.source_policy(s.id).is_ok_and(|p| p.enabled))
-        .map(|s| s.id)
-        .collect();
-    STATE.with(|state| {
-        let mut state = state.borrow_mut();
-        let previous = state.combined_sources.clone();
-        let mut keys: Vec<_> = state
-            .favorites
-            .keys()
-            .iter()
-            .filter(|k| {
-                split_key(k).is_some_and(|(s, _)| {
-                    previous.contains(&SourceId(s)) && ids.contains(&SourceId(s))
-                })
-            })
-            .cloned()
-            .collect();
-        for id in ids.iter().filter(|id| !previous.contains(id)) {
-            if let Ok(rows) = store.load_channels(
-                *id,
-                &ChannelQuery {
-                    favourites_only: true,
-                    include_hidden: true,
-                    ..Default::default()
-                },
-            ) {
-                keys.extend(
-                    rows.iter()
-                        .map(|r| qualified_key(id.0, r.channel.id.as_str())),
+    let loaded = crate::store_service::call(|store| {
+        let mut ids = Vec::new();
+        let mut favorites = Vec::new();
+        for source in store.sources()? {
+            if store.source_policy(source.id)?.enabled {
+                ids.push(source.id);
+                let rows = store.load_channels(
+                    source.id,
+                    &ChannelQuery {
+                        favourites_only: true,
+                        include_hidden: true,
+                        ..Default::default()
+                    },
+                )?;
+                favorites.extend(
+                    rows.into_iter()
+                        .map(|row| (source.id, row.channel.id.as_str().to_owned())),
                 );
             }
         }
-        state.source = None;
-        state.combined_sources = ids.clone();
-        state.favorites = Favorites::from_keys(keys);
-        if previous != ids
-            && let Ok(rows) = store.recent(None, Some(ContentKind::Live), RECENT_LIMIT as u32)
-        {
-            state.recent = Recent::from_keys(
-                rows.into_iter()
-                    .filter(|r| ids.contains(&r.source_id))
-                    .map(|r| qualified_key(r.source_id.0, r.item_id.as_str())),
+        Ok((
+            ids,
+            favorites,
+            store.recent(None, Some(ContentKind::Live), RECENT_LIMIT as u32)?,
+        ))
+    })
+    .await;
+    if crate::data::generation() != generation {
+        return None;
+    }
+    let Ok((ids, favorites, recent)) = loaded else {
+        return None;
+    };
+    Some(move || {
+        STATE.with(|state| {
+            let mut state = state.borrow_mut();
+            let previous = state.combined_sources.clone();
+            let mut keys: Vec<_> = state
+                .favorites
+                .keys()
+                .iter()
+                .filter(|key| {
+                    split_key(key).is_some_and(|(source, _)| {
+                        previous.contains(&SourceId(source)) && ids.contains(&SourceId(source))
+                    })
+                })
+                .cloned()
+                .collect();
+            keys.extend(
+                favorites
+                    .into_iter()
+                    .filter(|(source, _)| !previous.contains(source))
+                    .map(|(source, key)| qualified_key(source.0, &key)),
             );
-        }
-        state.has_vod = false;
-    });
+            state.source = None;
+            state.combined_sources = ids.clone();
+            state.favorites = Favorites::from_keys(keys);
+            if previous != ids {
+                state.recent = Recent::from_keys(
+                    recent
+                        .into_iter()
+                        .filter(|row| ids.contains(&row.source_id))
+                        .map(|row| qualified_key(row.source_id.0, row.item_id.as_str())),
+                );
+            }
+            state.has_vod = false;
+        })
+    })
 }
+
 fn write_owner(state: &State, key: &str) -> Option<(SourceId, String)> {
     if let Some(source) = state.source {
         Some((source, key.to_owned()))
@@ -300,7 +318,7 @@ fn send(write: Write) {
         let mut w = w.borrow_mut();
         let tx = w.get_or_insert_with(|| {
             let (tx, rx) = mpsc::channel();
-            std::thread::spawn(move || write_all(rx));
+            std::thread::spawn(crate::store_service::scoped(move || write_all(rx)));
             tx
         });
         if tx.send(write).is_err() {
@@ -316,33 +334,65 @@ pub(crate) async fn flush() -> bool {
     rx.await.unwrap_or(false)
 }
 
-fn write_all(rx: Receiver<Write>) {
-    let mut store = None;
-    write_all_with(rx, |write| {
-        if store.is_none() {
-            store = crate::data::open_store()
-                .map_err(|e| log::warn!("iptv favourites: store unavailable ({e})"))
-                .ok();
-        }
-        let Some(store) = store.as_mut() else {
+/// Root teardown only: queued edits outlive their UI owner and drain first.
+pub(crate) fn flush_on_shutdown() -> bool {
+    let writer = WRITER.with(|writer| writer.borrow_mut().take());
+    let Some(writer) = writer else { return true };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let (tx, rx) = mpsc::channel();
+        if writer.send(Write::Shutdown(tx)).is_err() {
             return false;
+        }
+        match rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now())) {
+            Ok(true) => return true,
+            Ok(false) if std::time::Instant::now() < deadline => {
+                // A busy database retains the head edit. Keep the engine alive
+                // for bounded retries instead of treating a failed attempt as
+                // a completed shutdown barrier.
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            _ => return false,
+        }
+    }
+}
+
+fn write_all(rx: Receiver<Write>) {
+    write_all_with(rx, |write| {
+        let operation = match write {
+            Write::Barrier(_) | Write::Shutdown(_) => unreachable!(),
+            Write::MoveFavourite { source, key, index } => Write::MoveFavourite {
+                source: *source,
+                key: key.clone(),
+                index: *index,
+            },
+            Write::Favourite { source, key, on } => Write::Favourite {
+                source: *source,
+                key: key.clone(),
+                on: *on,
+            },
+            Write::Watched { source, key, at } => Write::Watched {
+                source: *source,
+                key: key.clone(),
+                at: *at,
+            },
         };
-        let result = match write {
-            Write::Barrier(_) => unreachable!(),
+        let result = crate::store_service::blocking(move |store| match operation {
+            Write::Barrier(_) | Write::Shutdown(_) => unreachable!(),
             Write::MoveFavourite { source, key, index } => store
-                .move_favourite(*source, &ContentId::from_stored(key.clone()), *index)
+                .move_favourite(source, &ContentId::from_stored(key), index)
                 .map(|_| ()),
             Write::Favourite { source, key, on } => {
-                store.set_favourite(*source, &ContentId::from_stored(key.clone()), *on)
+                store.set_favourite(source, &ContentId::from_stored(key), on)
             }
             Write::Watched { source, key, at } => store.record_watch(
-                *source,
-                &ContentId::from_stored(key.clone()),
+                source,
+                &ContentId::from_stored(key),
                 ContentKind::Live,
-                *at,
+                at,
                 None,
             ),
-        };
+        });
         // Deleting a playlist also deletes its customization/history. A queued
         // change whose owner was explicitly removed must not block other sources.
         if matches!(
@@ -360,16 +410,30 @@ fn write_all(rx: Receiver<Write>) {
 }
 
 /// A failed operation stays at the head of the queue. Neither later writes nor
-/// barriers may skip it; every barrier retries all pending changes in order.
+/// barriers may skip it; barriers and an idle retry timer retry changes in order.
 fn write_all_with(rx: Receiver<Write>, mut persist: impl FnMut(&Write) -> bool) {
     let mut pending = VecDeque::new();
-    for write in rx {
-        let barrier = match write {
-            Write::Barrier(done) => Some(done),
-            write => {
-                pending.push_back(write);
-                None
-            }
+    loop {
+        let received = if pending.is_empty() {
+            rx.recv().map_err(|_| mpsc::RecvTimeoutError::Disconnected)
+        } else {
+            rx.recv_timeout(std::time::Duration::from_millis(250))
+        };
+        let barrier: Option<Box<dyn FnOnce(bool)>> = match received {
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(mpsc::RecvTimeoutError::Timeout) => None,
+            Ok(write) => match write {
+                Write::Barrier(done) => Some(Box::new(move |saved| {
+                    let _ = done.send(saved);
+                })),
+                Write::Shutdown(done) => Some(Box::new(move |saved| {
+                    let _ = done.send(saved);
+                })),
+                write => {
+                    pending.push_back(write);
+                    None
+                }
+            },
         };
         while let Some(write) = pending.front() {
             if !persist(write) {
@@ -378,7 +442,7 @@ fn write_all_with(rx: Receiver<Write>, mut persist: impl FnMut(&Write) -> bool) 
             pending.pop_front();
         }
         if let Some(done) = barrier {
-            let _ = done.send(pending.is_empty());
+            done(pending.is_empty());
         }
     }
     if !pending.is_empty() {
