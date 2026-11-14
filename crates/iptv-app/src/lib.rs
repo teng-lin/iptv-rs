@@ -40,6 +40,7 @@ mod multiview_picker;
 mod multiview_view;
 mod numbers;
 mod organization_view;
+mod overlays;
 mod panels;
 mod pip;
 mod platform_data;
@@ -754,7 +755,9 @@ fn ui_layers(ui: Ui, groups: ElementRef, rows: ElementRef) -> View {
 /// else the card and its buttons; beside multiview's tiles, its pointer
 /// chrome (the tiles take their own taps).
 fn toggle_panels(ui: Ui) {
-    if untracked(|| organization_view::is_open(ui) || remote_editor::is_open(ui)) {
+    // A screen of its own covers the video: a tap that fell through its
+    // background is not one on the picture.
+    if untracked(|| ui.overlay_open(overlays::Overlay::covers_video)) {
         return;
     }
     // An iPad's tap on the video beside the channel list closes it.
@@ -788,20 +791,7 @@ fn toggle_panels(ui: Ui) {
 /// panels, it shows the play bar (multiview's pointer chrome over its
 /// grid) and keeps it while it moves.
 fn pointer_moved(ui: Ui, e: &MouseEvent) {
-    let open = ui.menu.with_untracked(Option::is_some)
-        || ui.chooser.with_untracked(Option::is_some)
-        || ui.editor.with_untracked(Option::is_some)
-        || ui.wizard.with_untracked(Option::is_some)
-        || untracked(|| {
-            search_view::is_open(ui)
-                || multiview_picker::is_open(ui)
-                || organization_view::is_open(ui)
-                || remote_editor::is_open(ui)
-                || playlists_view::is_open(ui)
-                || settings_view::is_open(ui)
-                || epg_sources_view::is_open(ui)
-                || guide_assign_view::is_open(ui)
-        });
+    let open = untracked(|| ui.overlay_open(overlays::Overlay::keeps_pointer_from_play_bar));
     let (x, y) = (e.page_position.x.0, e.page_position.y.0);
     if ui.mode.get_untracked() != ViewMode::Fullscreen
         || open
@@ -837,19 +827,7 @@ fn bind_back(ui: Ui) {
     });
     effect(move || {
         let leaves = matches!(back_target.get(), (ViewMode::Guide, Pane::Rail, false))
-            && !ui.wizard.with(Option::is_some)
-            && !ui.editor.with(Option::is_some)
-            && !ui.chooser.with(Option::is_some)
-            && !ui.menu.with(Option::is_some)
-            && !ui.description.with(Option::is_some)
-            && !search_view::is_open(ui)
-            && !epg_sources_view::is_open(ui)
-            && !guide_assign_view::is_open(ui)
-            && !playlists_view::is_open(ui)
-            && !custom_groups::is_open(ui)
-            && !organization_view::is_open(ui)
-            && !remote_editor::is_open(ui)
-            && !settings_view::is_open(ui)
+            && !ui.any_overlay_open()
             && !desktop::fullscreen()
             && !ui.back_guard.with(iptv_nav::BackGuard::armed);
         let confirm = settings::read(ui).bool(
