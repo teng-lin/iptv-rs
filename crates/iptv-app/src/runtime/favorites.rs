@@ -61,11 +61,16 @@ fn unsaved() -> std::sync::Arc<AtomicUsize> {
 
 /// Reads saved favourites. The store's reader does not wait for a long
 /// publish, but it cannot see a write still queued: while any of ours is,
-/// the read goes to the writer's queue behind it.
+/// a favourites-inbox barrier must finish before queuing the read.
 async fn load<R: Send + 'static>(
     read: impl FnOnce(&Store) -> Result<R, StoreError> + Send + 'static,
 ) -> Result<R, StoreError> {
     if unsaved().load(Ordering::Acquire) > 0 {
+        if !flush().await {
+            return Err(StoreError::Unavailable(
+                "recent favourite edits are not saved",
+            ));
+        }
         super::store_service::call(move |store| read(store)).await
     } else {
         super::store_service::read(read).await
@@ -559,6 +564,34 @@ mod reorder_tests {
             Write::MoveFavourite { source, key, index } => Some((source, key, index)),
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn a_load_waits_for_the_inbox_barrier_and_rejects_failed_edits() {
+        use std::future::Future;
+        use std::task::{Context, Poll, Waker};
+        let runtime = std::rc::Rc::new(super::super::Runtime::default());
+        let (writer, inbox) = mpsc::channel();
+        *runtime.favorite_writer.borrow_mut() = Some(writer);
+        runtime.favorite_unsaved.store(1, Ordering::Release);
+        let task = crate::with_runtime(runtime, || {
+            crate::in_runtime(async {
+                let result =
+                    load::<()>(|_| panic!("failed edits must not produce a stale read")).await;
+                assert!(matches!(result, Err(StoreError::Unavailable(_))));
+            })
+        });
+        let mut task = std::pin::pin!(task);
+        let mut context = Context::from_waker(Waker::noop());
+        assert_eq!(task.as_mut().poll(&mut context), Poll::Pending);
+        let Write::Barrier(reply) = inbox
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap()
+        else {
+            panic!("the read must wait behind earlier inbox edits")
+        };
+        reply.send(false).unwrap();
+        assert_eq!(task.as_mut().poll(&mut context), Poll::Ready(()));
     }
 
     #[test]

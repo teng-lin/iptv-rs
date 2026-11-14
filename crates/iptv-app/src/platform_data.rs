@@ -100,7 +100,7 @@ fn home_directory(home: Option<std::ffi::OsString>) -> io::Result<PathBuf> {
 }
 
 /// Correct old installations too. Never follow a link out of private storage.
-fn protect_directory(path: &Path) -> io::Result<()> {
+pub(crate) fn protect_directory(path: &Path) -> io::Result<()> {
     let mut builder = fs::DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]

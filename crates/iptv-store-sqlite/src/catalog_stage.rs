@@ -333,6 +333,28 @@ impl Store {
         source: SourceId,
         stage: CatalogStage,
     ) -> Result<CatalogCounts> {
+        self.publish_stage(source, stage, None, None)
+    }
+
+    /// Publish edited source details, guide sources and catalog in one commit.
+    /// A failed publication preserves all three, including saved credentials.
+    pub fn publish_catalog_stage(
+        &mut self,
+        source: SourceId,
+        stage: CatalogStage,
+        details: Option<&iptv_providers::model::Source>,
+        guides: &[crate::GuideSource],
+    ) -> Result<CatalogCounts> {
+        self.publish_stage(source, stage, details, Some(guides))
+    }
+
+    fn publish_stage(
+        &mut self,
+        source: SourceId,
+        stage: CatalogStage,
+        details: Option<&iptv_providers::model::Source>,
+        guides: Option<&[crate::GuideSource]>,
+    ) -> Result<CatalogCounts> {
         if !stage.ready {
             return Err(invalid("cannot publish an incomplete catalog stage"));
         }
@@ -344,6 +366,12 @@ impl Store {
                 .conn
                 .transaction_with_behavior(TransactionBehavior::Immediate)?;
             sources::ensure_source(&tx, source)?;
+            if let Some(details) = details {
+                sources::update_source_in(&tx, source, details, now)?;
+            }
+            if let Some(guides) = guides {
+                crate::guide_sources::set_guide_sources_in(&tx, source, guides, now)?;
+            }
             search::forget_source(&tx, fts, source)?;
             for sql in catalog::DELETE_CATALOG {
                 tx.execute(sql, [source.0])?;

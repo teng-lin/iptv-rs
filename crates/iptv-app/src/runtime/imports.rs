@@ -661,18 +661,13 @@ pub(crate) fn save_in(
         Some(id) => (id, false),
         None => (store.add_source(&job.source)?, true),
     };
-    if let (Some(id), true) = (job.stored, job.edit) {
-        store.update_source(id, &job.source)?;
-        log::info!("iptv data: saved the new details of source {}", id.0);
-    }
     let sources = if added {
         planned
     } else {
         guides::sync_provider(&store.guide_sources(id)?, &guide_urls)
     };
-    let written = store
-        .set_guide_sources(id, &sources)
-        .and_then(|()| store.replace_catalog_stage(id, stage));
+    let details = job.edit.then_some(&job.source);
+    let written = store.publish_catalog_stage(id, stage, details, &sources);
     if written.is_err() && added {
         let _ = store.delete_source(id);
     }

@@ -668,12 +668,18 @@ fn activate(root: &Path) -> Result<()> {
     }
     let pending = sibling(root, "restore-pending");
     let previous = sibling(root, "restore-previous");
-    if previous.exists() && !root.exists() {
-        fs::rename(&previous, root).context("Could not recover application storage")?;
-    }
-    if previous.exists() && root.exists() {
-        // The new directory already became active before interruption.
-        fs::remove_dir_all(&previous).context("Could not finish the previous restore")?;
+    if previous.exists() {
+        if root.join("iptv.sqlite").is_file() {
+            // The validated tree was renamed into place before interruption.
+            fs::remove_dir_all(&previous).context("Could not finish the previous restore")?;
+        } else {
+            // Platform initialization may recreate the missing directory before
+            // recovery runs. Its existence is not an activation commit marker.
+            if root.exists() {
+                fs::remove_dir_all(root).context("Could not recover application storage")?;
+            }
+            fs::rename(&previous, root).context("Could not recover application storage")?;
+        }
     }
     if !pending.exists() {
         if !root.exists() && previous.exists() {

@@ -62,6 +62,10 @@ pub fn load() {
 fn read_file(path: &Path) -> Settings {
     let text = match super::file_writer::read(path).map(String::from_utf8) {
         Some(Ok(text)) => text,
+        Some(Err(_)) => {
+            log::warn!("iptv settings: invalid UTF-8; keeping the file aside");
+            return preserve_unreadable(path);
+        }
         None if !path.exists() => return Settings::new(),
         _ => {
             log::warn!("iptv settings: cannot read the settings; using defaults");
@@ -82,12 +86,16 @@ fn read_file(path: &Path) -> Settings {
         }
         Err(e) => {
             log::warn!("iptv settings: {e}; using defaults and keeping the file aside");
-            if let Some(dir) = path.parent() {
-                let _ = std::fs::rename(path, dir.join(UNREADABLE));
-            }
-            Settings::new()
+            preserve_unreadable(path)
         }
     }
+}
+
+fn preserve_unreadable(path: &Path) -> Settings {
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::rename(path, dir.join(UNREADABLE));
+    }
+    Settings::new()
 }
 
 /// What a finished save means for the live settings.
@@ -263,6 +271,25 @@ mod persistence_tests {
             "not settings"
         );
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn invalid_utf8_is_preserved_before_a_later_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE);
+        let original = b"synthetic settings \xff\xfe";
+        std::fs::write(&path, original).unwrap();
+        let mut settings = read_file(&path);
+        assert_eq!(settings, Settings::new());
+        settings
+            .set("catchup.forward_step", Value::secs(90))
+            .unwrap();
+        write_file(&path, &settings).unwrap();
+        assert_eq!(read_file(&path), settings);
+        assert_eq!(
+            std::fs::read(dir.path().join(UNREADABLE)).unwrap(),
+            original
+        );
     }
 
     #[test]
