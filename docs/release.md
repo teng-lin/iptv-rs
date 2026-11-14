@@ -84,8 +84,25 @@ The command does not commit, tag, or publish. Tag/version mismatch fails.
 workflow_dispatch builds artifacts
 without publishing; use platforms=desktop to validate desktop packages alone.
 A tag publishes Android and desktop artifacts and SHA256SUMS to GitHub Releases only
-after every job succeeds. Publication stages a draft before
-making it public; if interrupted, delete that draft before rerunning publish.
+after every job succeeds.
+
+## Published releases are immutable
+
+`tools/ci/publish-release.py` does the publishing, and it only ever writes to a
+release that does not exist yet or is still a draft:
+
+1. It reads the release's state. If the release for the tag is already public,
+   the job fails before changing anything.
+2. It writes `SHA256SUMS` for the files to release.
+3. It creates a draft (or reuses the draft an interrupted run left), uploads
+   every file to it, checks that it is still a draft, and makes it public once.
+
+So a failed or cancelled publish job can simply be rerun: the draft is completed
+and published. Nothing can be re-uploaded to a public release, because users may
+have downloaded its files and the checksums name those bytes. To fix a
+published release, bump the version and tag again; do not delete and recreate
+the release or move the tag. An error while reading the release state also
+fails the job rather than being read as "no release yet".
 
 This does not submit to Play or App Store Connect. An IPA's distribution
 profile determines where it can be installed; an App Store profile does not

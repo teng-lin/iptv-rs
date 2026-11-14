@@ -250,20 +250,21 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: packages-*
           merge-multiple: true
           path: dist
-      - name: Publish GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
-        run: |
-          cd dist
-          sha256sum ./* > SHA256SUMS
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --verify-tag --draft --generate-notes
-          gh release upload "$TAG" ./* --clobber
-          gh release edit "$TAG" --draft=false
+      # A public release is never written to again (tools/ci/publish-release.py).
+      - name: Refuse to replace a public release, then write SHA256SUMS
+        run: python3 tools/ci/publish-release.py checksums dist "$TAG"
+      - name: Upload to a draft and publish it once
+        run: python3 tools/ci/publish-release.py publish dist "$TAG"
