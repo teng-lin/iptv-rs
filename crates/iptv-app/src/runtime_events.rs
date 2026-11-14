@@ -3,6 +3,15 @@ use crate::{Ui, runtime::RuntimeEvent};
 
 pub(crate) fn apply(ui: Ui, event: RuntimeEvent) {
     match event {
+        RuntimeEvent::BackupProgress(phase) => {
+            log::debug!("iptv backup: {phase:?}");
+            ui.settings.update(|version| *version += 1);
+        }
+        RuntimeEvent::FavoritesChanged { channels, has_vod } => {
+            ui.favorites.set(channels);
+            ui.has_vod.set(has_vod);
+        }
+        RuntimeEvent::FavoriteOrderChanged => crate::lists::favorites_changed(ui),
         RuntimeEvent::RefreshProgress(source, activity) => {
             ui.library.activity.update(|activities| {
                 if let Some(activity) = activity {

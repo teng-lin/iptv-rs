@@ -32,6 +32,14 @@ type EventSink = Rc<dyn Fn(RuntimeEvent)>;
 type PageWaiters = RefCell<Vec<Box<dyn FnOnce()>>>;
 
 pub(crate) struct Runtime {
+    pub(crate) backup_busy: Cell<bool>,
+    pub(crate) backup_progress: Cell<backup::Progress>,
+    pub(crate) search_indexes: Slot<RefCell<search::Indexes>>,
+    pub(crate) saved_search: Slot<RefCell<Option<Vec<String>>>>,
+    pub(crate) pending_search: Slot<Cell<u64>>,
+    pub(crate) favorites: Slot<RefCell<favorites::State>>,
+    pub(crate) favorite_writer: Slot<RefCell<Option<std::sync::mpsc::Sender<favorites::Write>>>>,
+    pub(crate) favorite_unsaved: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     pub(crate) activity: RefCell<BTreeMap<SourceId, library::Activity>>,
     pub(crate) all: Cell<bool>,
     pub(crate) generation: Slot<Cell<u64>>,
@@ -59,6 +67,14 @@ pub(crate) struct Runtime {
 impl Default for Runtime {
     fn default() -> Self {
         Self {
+            backup_busy: Cell::new(false),
+            backup_progress: Cell::new(backup::Progress::Idle),
+            search_indexes: Slot::default(),
+            saved_search: Slot::default(),
+            pending_search: Slot::default(),
+            favorites: Slot::default(),
+            favorite_writer: Slot::default(),
+            favorite_unsaved: Default::default(),
             activity: RefCell::default(),
             all: Cell::new(false),
             generation: Slot::default(),
@@ -186,3 +202,9 @@ pub(crate) mod wizard_map;
 pub(crate) mod private_files;
 
 pub(crate) mod library;
+
+pub(crate) mod favorites;
+
+pub(crate) mod search;
+
+pub(crate) mod backup;

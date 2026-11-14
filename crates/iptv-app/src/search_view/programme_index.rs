@@ -9,7 +9,7 @@ use std::time::Instant;
 use iptv_core::guide::Schedule;
 use iptv_epg::{ChannelKey, DAY, UnixTime};
 use iptv_guide::{EpgSchedule, combined::CombinedSchedule};
-use iptv_search::{ProgrammeIndex, ProgrammeIndexBuilder};
+use iptv_search::ProgrammeIndex;
 
 /// Builds the index of `epg`'s channels (by row) and hands it to `done` on
 /// the UI thread (not at all when the store cannot be read).
@@ -47,19 +47,7 @@ pub fn build(schedule: &dyn Schedule, rows: usize, done: impl FnOnce(ProgrammeIn
     let from: UnixTime =
         crate::time::wall_unix().saturating_sub(i64::from(keep).saturating_mul(DAY));
     let started = Instant::now();
-    let read = crate::store_service::read(move |store| {
-        let mut builder = ProgrammeIndexBuilder::new(rows);
-        for (source, keys, offset) in sources {
-            store.for_each_epg_title(
-                source,
-                &keys,
-                from,
-                UnixTime::MAX,
-                |channel, start, stop, title| builder.push(channel + offset, start, stop, title),
-            )?;
-        }
-        Ok(builder.finish())
-    });
+    let read = crate::runtime::search::programmes(sources, rows, from);
     crate::data::spawn_in_app(async move {
         match read.await {
             Ok(index) => {

@@ -4,6 +4,12 @@ use iptv_library::SourceId;
 use std::rc::Rc;
 
 pub(crate) enum RuntimeEvent {
+    BackupProgress(super::backup::Progress),
+    FavoritesChanged {
+        channels: std::collections::BTreeSet<usize>,
+        has_vod: bool,
+    },
+    FavoriteOrderChanged,
     RefreshProgress(SourceId, Option<super::library::Activity>),
     BrowsingAll(bool),
     ShownSource(Option<SourceId>),
