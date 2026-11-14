@@ -24,7 +24,14 @@ python3 "$root/tools/mpv-runtime-unix/runtime.py" fetch "${fetch[@]}"
 export PKG_CONFIG_PATH="$runtime/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 test "$(cd "$(pkg-config --variable=libdir mpv)" && pwd -P)" = "$(cd "$runtime/lib" && pwd -P)"
 rm -rf "$out/Patina.app"
+# The runtime's libmpv is @rpath/libmpv.2.dylib. NSH builds and runs a helper
+# that links it while packaging, and that helper has no rpath; let dyld find
+# the runtime there. (Set here, not inherited: macOS drops DYLD_* variables
+# when it starts a protected program such as bash. The bundled app gets its
+# own rpath, @executable_path/../Frameworks, from tools/bundle-macos.py.)
+export DYLD_FALLBACK_LIBRARY_PATH="$runtime/lib${DYLD_FALLBACK_LIBRARY_PATH:+:$DYLD_FALLBACK_LIBRARY_PATH}"
 (cd "$root/crates/iptv-app" && "$nsh" package --target macos -o "$out" .)
+unset DYLD_FALLBACK_LIBRARY_PATH
 bash "$root/tools/ci/notices.sh"
 cp "$root/LICENSE" "$out/Patina.app/Contents/Resources/LICENSE"
 cp "$root/crates/iptv-app/fonts/OFL.txt" "$out/Patina.app/Contents/Resources/OFL.txt"
