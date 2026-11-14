@@ -82,6 +82,8 @@ linuxdeploy --appdir "$appdir" --executable "$appdir/usr/bin/$exe" "${libraries[
 for ((i=1; i<${#libraries[@]}; i+=2)); do
   test -f "$appdir/usr/lib/$(basename "${libraries[i]}")"
 done
-python3 tools/ci/linux-native-notices.py "$appdir"
+# Licence texts, the inventory, and the source package of every bundled library.
+python3 tools/ci/linux-native-notices.py "$appdir" "$VERSION"
 python3 tools/ci/check-notices.py "$appdir" native/components.json
+python3 tools/ci/check-notices.py "$appdir" native/sources.json
 linuxdeploy --appdir "$appdir" --output appimage

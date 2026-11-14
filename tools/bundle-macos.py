@@ -16,11 +16,16 @@ bottles for the macOS it runs on: the app's LSMinimumSystemVersion is raised
 to the newest minimum of what it bundles, so an older Mac says the app needs
 a newer macOS rather than failing at launch (a release builds libmpv for an
 older deployment target instead).
+
+Beside each library's licence texts it records where its source comes from
+(notices/native/sources.json, SOURCE.txt and the installed formulae), and
+fails when a bundled Homebrew keg does not name a checksummed source.
 """
 
 import os
 import json
 import hashlib
+import importlib.util
 import re
 import tarfile
 import tempfile
@@ -32,6 +37,11 @@ import subprocess
 import sys
 
 SYSTEM = ("/usr/lib/", "/System/")
+
+# Shared with the release job that downloads what this script records.
+_spec = importlib.util.spec_from_file_location("native_sources", Path(__file__).parent / "ci/native-sources.py")
+native_sources = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(native_sources)
 
 
 def run(*args):
@@ -146,6 +156,25 @@ def glib_source_notices(prefix, destination):
     (destination / "source.json").write_text(json.dumps({"url": expected, "sha256": sha_match[1]}, indent=2) + "\n")
 
 
+def record_sources(prefixes, notices, version):
+    """What each bundled keg was built from, and where a user finds that source.
+
+    Written before signing: the notices are sealed by the app's signature.
+    The release job downloads exactly this list (tools/ci/native-sources.py).
+    """
+    components = []
+    for prefix in sorted(prefixes):
+        component, formula = native_sources.homebrew_component(prefix)
+        destination = notices / component["recipe"]
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(formula)
+        components.append(component)
+    description = native_sources.manifest("macos", version, components)
+    (notices / "sources.json").write_text(json.dumps(description, indent=2) + "\n")
+    (notices / "SOURCE.txt").write_text(native_sources.source_note("macos", version))
+    return description
+
+
 def main():
     if len(sys.argv) != 2 or not sys.argv[1].rstrip("/").endswith(".app"):
         sys.exit(__doc__)
@@ -212,6 +241,10 @@ def main():
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(text, target)
     (notices / "components.json").write_text(json.dumps(inventory, indent=2) + "\n")
+    try:
+        record_sources(prefixes, notices, info["CFBundleShortVersionString"])
+    except (OSError, ValueError) as error:
+        sys.exit(f"cannot record the source of a bundled library: {error}")
 
     os.makedirs(frameworks, exist_ok=True)
     copies = {}

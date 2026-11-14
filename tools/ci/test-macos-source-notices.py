@@ -3,6 +3,7 @@
 import hashlib
 import importlib.util
 import io
+import json
 from pathlib import Path
 import tarfile
 import tempfile
@@ -51,6 +52,49 @@ class SourceNotices(unittest.TestCase):
     def test_mismatched_version_refused(self):
         with self.assertRaisesRegex(ValueError, "matching source URL"):
             self.run_source(wrong_version=True)
+
+
+class BundledSources(unittest.TestCase):
+    """What the bundler seals into the app for every Homebrew keg it copies from."""
+
+    FORMULA = ('class Synthetic < Formula\n  url "https://example.test/synthetic-1.2.3.tar.xz"\n'
+               f'  sha256 "{"a" * 64}"\nend\n')
+
+    def keg(self, root, name, version, formula):
+        prefix = root / "Cellar" / name / version
+        (prefix / ".brew").mkdir(parents=True)
+        if formula:
+            (prefix / f".brew/{name}.rb").write_text(formula)
+        return prefix
+
+    def test_manifest_note_and_formula_are_written(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            notices = root / "notices/native"
+            notices.mkdir(parents=True)
+            prefixes = {self.keg(root, "synthetic", "1.2.3_1", self.FORMULA),
+                        self.keg(root, "another", "0.5", self.FORMULA.replace("synthetic-1.2.3", "another-0.5"))}
+            bundle.record_sources(prefixes, notices, "9.8.7")
+            description = json.loads((notices / "sources.json").read_text())
+            self.assertEqual((description["platform"], description["release"], description["archive"]),
+                             ("macos", "9.8.7", "Patina-9.8.7-macos-native-sources.tar"))
+            self.assertEqual([(c["name"], c["version"], c["sources"][0]["url"]) for c in description["components"]], [
+                ("another", "0.5", "https://example.test/another-0.5.tar.xz"),
+                ("synthetic", "1.2.3_1", "https://example.test/synthetic-1.2.3.tar.xz")])
+            self.assertEqual((notices / "synthetic-1.2.3_1/formula.rb").read_text(), self.FORMULA)
+            self.assertIn("Patina-9.8.7-macos-native-sources.tar", (notices / "SOURCE.txt").read_text())
+
+    def test_keg_without_a_checksummed_source_fails_the_bundle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            notices = root / "notices/native"
+            notices.mkdir(parents=True)
+            for formula in (None, 'class Synthetic < Formula\n  url "https://example.test/x.tar.xz"\nend\n'):
+                with self.subTest(formula=formula):
+                    with self.assertRaises(ValueError):
+                        bundle.record_sources({self.keg(root / str(bool(formula)), "synthetic", "1", formula)},
+                                              notices, "9.8.7")
+                    self.assertFalse((notices / "sources.json").exists())
 
 
 if __name__ == "__main__":

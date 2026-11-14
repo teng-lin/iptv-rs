@@ -37,4 +37,5 @@ python3 tools/ci/test-pins.py
 python3 tools/ci/test-android-changes.py
 python3 tools/ci/test-publish-release.py
 python3 tools/ci/test-sbom.py
+python3 tools/ci/test-native-sources.py
 echo "all checks passed"

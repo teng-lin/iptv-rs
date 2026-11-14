@@ -282,4 +282,8 @@ tag builds and publishes the release.
 
 [AGPL-3.0-only](LICENSE). Bundled Roboto fonts are under the
 [SIL Open Font License](crates/iptv-app/fonts/OFL.txt). Packages that
-bundle FFmpeg and mpv carry their licences too.
+bundle FFmpeg and mpv carry their licences too, and each release publishes
+the [source of those bundled libraries](docs/release.md#corresponding-source-for-bundled-media-libraries):
+`Patina-<version>-macos-native-sources.tar` and
+`Patina-<version>-linux-native-sources.tar` beside the packages, and the
+retained source archive of the Windows libmpv build.

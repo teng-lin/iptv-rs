@@ -145,6 +145,68 @@ file from which commit. It does not replace platform code signing: the macOS
 and Windows packages are still not trusted by Gatekeeper or SmartScreen (see
 below).
 
+## Corresponding source for bundled media libraries
+
+Three packages bundle libmpv, FFmpeg and the libraries they use, which are
+LGPL or GPL software. Each release publishes the source those exact binaries
+were built from:
+
+| Package | Bundled binaries come from | Source published as |
+| --- | --- | --- |
+| Windows installer | Patina's own pinned build (`tools/mpv-runtime`) | the retained `mpv-runtime-sources.tar.gz` of the dependency release; see [Windows installer](#windows-installer-experimental) |
+| macOS disk image | Homebrew bottles on the build runner | `Patina-<version>-macos-native-sources.tar` in the same release |
+| Linux AppImage | Ubuntu 24.04 packages on the build runner | `Patina-<version>-linux-native-sources.tar` in the same release |
+
+The `.deb`, `.rpm` and pacman packages bundle no media libraries; they depend
+on the distribution's.
+
+How the macOS and Linux archives are produced:
+
+1. **Packaging records what was bundled.** `tools/bundle-macos.py` writes, into
+   `Contents/Resources/notices/native/`, the inventory (`components.json`), each
+   Homebrew keg's installed formula, and `sources.json`: for every formula the
+   upstream archive, patches and resources with their SHA-256 checksums, or the
+   Git commit. It reads the formula Homebrew keeps inside the installed keg, so
+   the list describes the installed version even when the tap has moved on.
+   `tools/ci/linux-native-notices.py` writes the same files into
+   `usr/bin/notices/native/` of the AppImage, naming the Ubuntu source package
+   and exact version behind every bundled library (`dpkg-query`). Both also
+   write `SOURCE.txt`, which tells a user where the source archive is.
+   Packaging fails when a bundled library has no checksummed source.
+2. **The release job downloads exactly that list** with
+   `tools/ci/native-sources.py`, reading the manifest back out of the finished
+   package. On macOS it downloads each address (mirrors are tried too) and
+   compares the SHA-256; Git sources are archived at the pinned commit. On
+   Linux it runs `apt-get source --download-only <source>=<version>` after
+   `tools/ci/enable-deb-src.sh` and checks every file against the checksums of
+   the signed archive index. A version that has left the index (a newer update
+   was published after the runner image was built) is fetched from Launchpad,
+   which keeps every published version, and checked against its `.dsc`.
+3. **The archive and a `.json` manifest are released** next to the packages and
+   listed in `SHA256SUMS`. The manifest names every file with its address and
+   SHA-256; the archive contains the same manifest, `SOURCE.txt` and, on macOS,
+   the formulae.
+
+A source that cannot be fetched, or whose checksum differs, fails the packaging
+job, so no release is published without it. The Package checks workflow runs
+the same collection on pull requests that change packaging and uploads only the
+manifest.
+
+Limits of this interim step, until the libraries are built from pinned sources
+as on Windows:
+
+- It covers the libraries that are copied into the package. Code that Homebrew
+  or Ubuntu linked statically into those libraries from build-only dependencies
+  is not traced.
+- On macOS, formula sources that are computed while installing cannot be read
+  from the formula text; packaging fails rather than guess. Sample data that a
+  formula downloads only for its own test is left out.
+- Never delete these release assets. Every distributed DMG and AppImage points
+  at the archive of its own release.
+- Whether these builds enable GPL-only FFmpeg components was not determined.
+  Publishing complete source satisfies the source requirement of both licences,
+  but a legal review of the distribution terms is still worthwhile.
+
 This does not submit to Play or App Store Connect. An IPA's distribution
 profile determines where it can be installed; an App Store profile does not
 make a GitHub download sideloadable. macOS uses the existing ad hoc signing
