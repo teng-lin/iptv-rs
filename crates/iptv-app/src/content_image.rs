@@ -5,7 +5,7 @@ use futures_channel::oneshot;
 use nsh_core::prelude::*;
 use std::{
     collections::VecDeque,
-    sync::{Arc, Mutex, OnceLock, mpsc},
+    sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, mpsc},
     time::Duration,
 };
 
@@ -25,7 +25,16 @@ impl Cache {
             .find(|(key, _)| key == url)
             .map(|(_, value)| value.clone())
     }
+    /// Stores `value` for `url` as the newest entry. An address already
+    /// held is replaced, not stored twice (two views asking for the same
+    /// logo both miss, then both insert): a duplicate would be counted
+    /// against the cache's bytes while `get` only ever finds the first.
     fn insert(&mut self, url: String, value: String) {
+        if let Some(at) = self.entries.iter().position(|(key, _)| *key == url)
+            && let Some((key, old)) = self.entries.remove(at)
+        {
+            self.bytes -= key.len() + old.len();
+        }
         let size = url.len() + value.len();
         while self.bytes + size > CACHE_BYTES || self.entries.len() >= 64 {
             let Some((key, value)) = self.entries.pop_front() else {
@@ -37,9 +46,18 @@ impl Cache {
         self.entries.push_back((url, value));
     }
 }
-fn cache() -> &'static Mutex<Cache> {
+fn cache() -> MutexGuard<'static, Cache> {
     static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(Cache::default()))
+    // A poisoned lock is taken all the same: the UI thread reads this
+    // cache while rendering and must not panic because a download thread
+    // did. Nothing can panic between `Cache`'s own updates of `entries`
+    // and `bytes` (queue operations and integer arithmetic on what the
+    // queue holds), so a panic elsewhere under the lock leaves them
+    // consistent.
+    locked(CACHE.get_or_init(|| Mutex::new(Cache::default())))
+}
+fn locked(cache: &Mutex<Cache>) -> MutexGuard<'_, Cache> {
+    cache.lock().unwrap_or_else(PoisonError::into_inner)
 }
 fn sender() -> &'static mpsc::SyncSender<Request> {
     static SENDER: OnceLock<mpsc::SyncSender<Request>> = OnceLock::new();
@@ -68,22 +86,22 @@ fn sender() -> &'static mpsc::SyncSender<Request> {
                 let net = runtime.block_on(async { iptv_net::NetClient::new(config) });
                 let Ok(net) = net else { return };
                 loop {
-                    let Ok(request) = rx.lock().expect("image request lock").recv() else {
+                    // The lock only shares the receiver between the workers:
+                    // one that panicked left nothing half-done in it.
+                    let request = rx.lock().unwrap_or_else(PoisonError::into_inner).recv();
+                    let Ok(request) = request else {
                         break;
                     };
                     let (url, reply) = request;
                     if reply.is_canceled() {
                         continue;
                     }
-                    let cached = cache().lock().expect("image cache lock").get(&url);
+                    let cached = cache().get(&url);
                     let value = cached.unwrap_or_else(|| {
                         let value = runtime
                             .block_on(download(&net, &url))
                             .unwrap_or_else(crate::grid::no_logo);
-                        cache()
-                            .lock()
-                            .expect("image cache lock")
-                            .insert(url, value.clone());
+                        cache().insert(url, value.clone());
                         value
                     });
                     let _ = reply.send(value);
@@ -116,7 +134,7 @@ pub(crate) fn source(url: impl Fn() -> String + 'static) -> impl Fn() -> String 
         let url = url();
         let current = generation.get_untracked().wrapping_add(1);
         generation.set(current);
-        let cached = cache().lock().expect("image cache lock").get(&url);
+        let cached = cache().get(&url);
         if let Some(value) = cached {
             shown.set(value);
             return;
@@ -163,6 +181,45 @@ mod tests {
         assert!(c.entries.len() <= 64);
         assert!(c.get("99").is_some());
         assert!(c.get("0").is_none());
+    }
+    #[test]
+    fn an_address_is_held_once_and_a_repeat_makes_it_the_newest() {
+        let mut c = Cache::default();
+        c.insert("a".into(), "first".into());
+        c.insert("b".into(), "other".into());
+        c.insert("a".into(), "second, longer".into());
+        assert_eq!(c.entries.len(), 2);
+        assert_eq!(c.get("a").as_deref(), Some("second, longer"));
+        assert_eq!(
+            c.bytes,
+            "a".len() + "second, longer".len() + "b".len() + "other".len()
+        );
+        // "a" was refreshed, so "b" is now the oldest and goes first.
+        for n in 0..62 {
+            c.insert(format!("more-{n}"), "x".into());
+        }
+        assert_eq!(c.entries.len(), 64);
+        c.insert("one-more".into(), "x".into());
+        assert!(c.get("b").is_none());
+        assert!(c.get("a").is_some());
+        let held: usize = c.entries.iter().map(|(k, v)| k.len() + v.len()).sum();
+        assert_eq!(c.bytes, held);
+    }
+    #[test]
+    fn a_poisoned_cache_lock_still_serves() {
+        let cache = Arc::new(Mutex::new(Cache::default()));
+        locked(&cache).insert("logo".into(), "kept".into());
+        let held = cache.clone();
+        let poisoner = std::thread::spawn(move || {
+            let _guard = locked(&held);
+            // Unwinds like a panic, without printing one.
+            std::panic::resume_unwind(Box::new("synthetic"));
+        });
+        assert!(poisoner.join().is_err());
+        assert!(cache.is_poisoned());
+        assert_eq!(locked(&cache).get("logo").as_deref(), Some("kept"));
+        locked(&cache).insert("next".into(), "stored".into());
+        assert_eq!(locked(&cache).entries.len(), 2);
     }
     #[test]
     fn private_and_file_images_are_refused_before_connection() {

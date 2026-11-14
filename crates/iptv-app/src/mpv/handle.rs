@@ -36,19 +36,41 @@ unsafe impl Send for Mpv {}
 // SAFETY: libmpv serializes concurrent client API access to a live handle.
 unsafe impl Sync for Mpv {}
 
+/// mpv refuses to start under a locale whose numbers are not C's, and GTK
+/// set the user's when it started. Done once, before the first instance:
+/// the locale is the process's, the app sets none itself, and the toolkit
+/// sets its own only at startup.
+#[cfg(unix)]
+fn use_c_numbers() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        // SAFETY: `setlocale` gets a valid category and a NUL-terminated
+        // name with static lifetime. It changes process-wide state that
+        // other threads may be reading, which C does not make safe in
+        // general; here it runs once, before the first mpv instance
+        // exists (so before any of mpv's threads), and only number
+        // formatting changes, to the form Rust's own formatting already
+        // uses. `Once` also keeps two first players (multiview) from
+        // calling it at the same time.
+        unsafe { libc::setlocale(libc::LC_NUMERIC, c"C".as_ptr()) };
+    });
+}
+
+#[cfg(not(unix))]
+fn use_c_numbers() {}
+
 impl Mpv {
+    /// A created handle that is not initialized yet.
+    fn create() -> Option<Mpv> {
+        use_c_numbers();
+        // SAFETY: no preconditions; null when mpv cannot start.
+        let h = unsafe { ffi::mpv_create() };
+        (!h.is_null()).then(|| Mpv(h))
+    }
+
     pub fn new() -> Option<Mpv> {
-        // SAFETY: mpv refuses to start under a locale whose numbers are not
-        // C's (GTK set the user's); only number formatting changes.
-        let h = unsafe {
-            #[cfg(unix)]
-            libc::setlocale(libc::LC_NUMERIC, c"C".as_ptr());
-            ffi::mpv_create()
-        };
-        if h.is_null() {
-            return None;
-        }
-        let mpv = Mpv(h);
+        let mpv = Mpv::create()?;
+        let h = mpv.0;
         let env = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
         let hwdec = env("IPTV_RS_HWDEC").unwrap_or_else(|| "auto-copy-safe".to_owned());
         let mut options = vec![
@@ -301,9 +323,7 @@ mod tests {
     /// gives no player, and the handle is destroyed uninitialized.
     #[test]
     fn a_refused_restriction_fails_the_configuration() {
-        // SAFETY: creates a handle; the wrapper destroys it once.
-        let mpv = Mpv(unsafe { ffi::mpv_create() });
-        assert!(!mpv.0.is_null(), "libmpv");
+        let mpv = Mpv::create().expect("libmpv");
         assert!(mpv.configure(&[("config", "no".to_owned())]));
         // mpv refuses a value the flag cannot take.
         assert!(!mpv.configure(&[("autoload-files", "perhaps".to_owned())]));
