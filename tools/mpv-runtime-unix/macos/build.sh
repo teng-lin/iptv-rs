@@ -131,6 +131,7 @@ mkdir -p "$build/ffmpeg"
     "$sources/ffmpeg/configure" \
         --prefix="$prefix" --libdir="$prefix/lib" \
         --cc="$CC" --cxx="$CXX" --ar="$AR" --ranlib="$RANLIB" --nm="$NM" --strip="$STRIP" \
+        --host-cc="$CC" --host-cflags="$flags" --host-ldflags="$flags" \
         --arch=arm64 --target-os=darwin \
         --pkg-config="$PKG_CONFIG" --pkg-config-flags=--static \
         --extra-cflags="$flags -I$prefix/include" --extra-ldflags="$flags -L$prefix/lib" \
