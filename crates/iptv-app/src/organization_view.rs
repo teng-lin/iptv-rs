@@ -28,7 +28,8 @@ pub struct Open {
 async fn items(source: SourceId, kind: &Kind) -> Result<Vec<Item>, StoreError> {
     let kind = kind.clone();
     let favorites = crate::favorites::ordered_keys();
-    crate::store_service::call(move |store| {
+    // Edits reload their rows only after the edit's reply: the reader sees it.
+    crate::store_service::read(move |store| {
         let org = data::organization::read_in(store, source)?;
         let rows = match kind {
             Kind::Channels => org.channels,
@@ -272,20 +273,7 @@ fn perform(ui: Ui, edit: Edit) {
                 Kind::GroupChannels(g) => {
                     store.reset_manual_order(s.source, &OrderScope::Group(g.clone()))?
                 }
-                Kind::CustomChannels(g) => {
-                    let rows = store.load_channels(
-                        s.source,
-                        &ChannelQuery {
-                            scope: ChannelScope::Custom(*g),
-                            include_hidden: true,
-                            order: iptv_store_sqlite::ChannelOrder::Provider,
-                            ..Default::default()
-                        },
-                    )?;
-                    for (at, r) in rows.iter().enumerate() {
-                        store.move_in_custom_group(*g, &r.channel.id, at)?;
-                    }
-                }
+                Kind::CustomChannels(g) => store.reset_custom_group_order(*g)?,
                 Kind::Favorites => unreachable!("handled before queuing"),
                 Kind::Groups => store.reset_group_order(s.source)?,
             },

@@ -17,8 +17,11 @@ fn the_guide_uses_independent_favorite_and_provider_group_orders() {
     let app = &mut f.app;
     group(app, "Favourites");
     reorder(app, 2);
-    step(
-        app.wait_until("favorites saved", Duration::from_secs(3), |_| {
+    step(crate::isolated::wait_outside(
+        app,
+        "favorites saved",
+        Duration::from_secs(3),
+        || {
             crate::isolated::open_database(&f.path)
                 .unwrap()
                 .load_channels(
@@ -31,8 +34,8 @@ fn the_guide_uses_independent_favorite_and_provider_group_orders() {
                 .unwrap()[0]
                 .name
                 == "Local C"
-        }),
-    );
+        },
+    ));
     // Reopening uses the just changed in-memory order, without restarting.
     menu(app, "Reorder channels");
     step(app.wait_for("id:organization-row-0 >> text:Local C"));

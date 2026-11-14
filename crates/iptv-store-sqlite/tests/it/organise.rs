@@ -305,3 +305,67 @@ fn history_is_pruned_per_source() {
     // Pruning is per source.
     assert_eq!(s.recent(Some(other), None, 10).unwrap().len(), 1);
 }
+
+/// Resetting a custom group's order writes provider order in one call, and
+/// leaves a member whose channel is gone where the old per-channel moves
+/// left it (it shows there again when its channel returns).
+#[test]
+fn a_custom_group_order_resets_in_one_transaction() {
+    let build = || {
+        let (mut s, src, cat) = setup(8, 2);
+        let group = s.create_custom_group(src, "Mixed").unwrap();
+        for i in [6, 2, 7, 0, 4, 1] {
+            s.add_to_custom_group(group, &cat.channels[i].id).unwrap();
+        }
+        s.set_hidden(src, &cat.channels[2].id, true).unwrap();
+        let mut without = catalog(8, 2, XT_PASSWORD);
+        without.channels.remove(7);
+        replace(&mut s, src, &without);
+        (s, src, cat, group)
+    };
+    let present_in_provider_order = |s: &Store, src, group| {
+        s.load_channels(
+            src,
+            &ChannelQuery {
+                scope: ChannelScope::Custom(group),
+                include_hidden: true,
+                order: ChannelOrder::Provider,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    };
+
+    let (mut one, src, cat, group) = build();
+    one.reset_custom_group_order(group).unwrap();
+    assert_eq!(
+        ids(&one
+            .load_channels(src, &query(ChannelScope::Custom(group)))
+            .unwrap()),
+        of(&cat, &[0, 1, 2, 4, 6])
+    );
+
+    // The previous app code: one move (and transaction) per channel.
+    let (mut each, _, _, _) = build();
+    for (at, row) in present_in_provider_order(&each, src, group)
+        .iter()
+        .enumerate()
+    {
+        each.move_in_custom_group(group, &row.channel.id, at)
+            .unwrap();
+    }
+    replace(&mut one, src, &cat);
+    replace(&mut each, src, &cat);
+    let order = |s: &Store| {
+        ids(&s
+            .load_channels(src, &query(ChannelScope::Custom(group)))
+            .unwrap())
+    };
+    assert_eq!(order(&one), order(&each));
+    assert_eq!(order(&one).len(), 6, "the returned member is listed again");
+
+    assert!(matches!(
+        one.reset_custom_group_order(iptv_store_sqlite::CustomGroupId(999)),
+        Err(StoreError::CustomGroupNotFound(999))
+    ));
+}

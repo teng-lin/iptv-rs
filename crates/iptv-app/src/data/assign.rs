@@ -60,7 +60,7 @@ pub use iptv_library::Current;
 /// The saved choice and the binding of channel `key` of `source`.
 pub async fn current(source: SourceId, key: &str) -> Current {
     let key = key.to_owned();
-    let read = crate::store_service::call(move |s| {
+    let read = crate::store_service::read(move |s| {
         let overlay = s
             .channel(source, &ContentId::from_stored(&key))?
             .and_then(|row| row.epg_override);
@@ -79,7 +79,7 @@ pub async fn current(source: SourceId, key: &str) -> Current {
 
 /// The channels the stored guides of `source` list.
 pub async fn guide_channels(source: SourceId) -> Vec<GuideChannel> {
-    crate::store_service::call(move |store| store.guide_channels(source))
+    crate::store_service::read(move |store| store.guide_channels(source))
         .await
         .unwrap_or_else(|e| {
             log::warn!("iptv data: guide channels: {e}");

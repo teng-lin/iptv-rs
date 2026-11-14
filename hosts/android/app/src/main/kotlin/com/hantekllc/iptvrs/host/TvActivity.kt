@@ -71,6 +71,9 @@ class TvActivity : Activity() {
     /** Called after loading the Rust library, before mounting any app state. */
     private external fun initializeDataDirectory(path: String)
 
+    /** Waits, at most a second, for the small files the Rust app queued. */
+    private external fun flushPendingWrites()
+
     /** A cold-start phase mark, as the Rust side logs them (`startup.rs`). */
     private fun mark(phase: String) {
         val ms = SystemClock.uptimeMillis() - Process.getStartUptimeMillis()
@@ -86,6 +89,9 @@ class TvActivity : Activity() {
     override fun onStop() {
         started = false
         for (p in players.toList()) p.background()
+        // The process may end in the background without a teardown: the
+        // last channel or a setting changed a moment ago must be on disk.
+        flushPendingWrites()
         super.onStop()
     }
 

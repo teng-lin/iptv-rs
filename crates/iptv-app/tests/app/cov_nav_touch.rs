@@ -336,9 +336,19 @@ fn search_by_touch(app: &mut Headless, data: &std::path::Path) {
     step(app.wait_for("text:Close"));
     step(app.press("text:Close"));
     gone(app, FIELD);
-    // The new query went on top of the saved ones.
-    let saved = std::fs::read_to_string(data.join("search-history.json")).unwrap();
-    assert_eq!(saved, r#"["Zebra","weather"]"#);
+    // The new query went on top of the saved ones, which an older build's
+    // file had held: they are in the store now, and the file is gone.
+    assert!(!data.join("search-history.json").exists());
+    let store = crate::isolated::open_database(data.join("iptv.sqlite")).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let saved = store.search_history().unwrap();
+        if saved == ["Zebra", "weather"] {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "saved: {saved:?}");
+        step(app.wait(Duration::from_millis(50)));
+    }
 
     // A programme later (a channel matches too: the programmes' tab
     // tapped): its details over the screen; Back closes them.

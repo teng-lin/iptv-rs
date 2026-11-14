@@ -33,8 +33,9 @@ use std::collections::BTreeSet;
 use std::future::Future;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::mpsc::{self, Sender, TryRecvError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::sync::mpsc::error::TryRecvError;
+use tokio::sync::mpsc::{UnboundedSender as Sender, unbounded_channel};
 
 use crate::private_files::Client as NetClient;
 use iptv_core::wizard::{
@@ -69,8 +70,10 @@ use crate::Ui;
 /// it, as in every release build, the link field starts empty.
 pub const DEV_PLAYLIST: Option<&str> = option_env!("IPTV_RS_DEV_PLAYLIST");
 
-/// How often the UI picks up the import thread's reports.
-const POLL: Duration = Duration::from_millis(100);
+/// The shortest time between two progress reports shown while an import
+/// runs. Reports wake the UI themselves (an awaited channel, no polling);
+/// a fast local import would otherwise repaint for each.
+const PROGRESS_FRAME: Duration = Duration::from_millis(100);
 /// Guide checks wait at most this long at a time (a sleeping device can
 /// delay timers; an early check finds nothing due and waits again)...
 const MAX_WAIT: Duration = Duration::from_secs(6 * 3600);
@@ -221,6 +224,9 @@ pub fn start(ui: Ui) {
     struct Drain;
     impl Drop for Drain {
         fn drop(&mut self) {
+            if !crate::file_writer::flush(Duration::from_secs(5)) {
+                log::error!("iptv persistence: queued file writes did not finish at shutdown");
+            }
             if !crate::favorites::flush_on_shutdown() {
                 log::error!(
                     "iptv persistence: queued favourite changes could not be saved at shutdown"
@@ -233,10 +239,22 @@ pub fn start(ui: Ui) {
     }
     let drain = Drain;
     nsh_core::prelude::cleanup(move || drop(drain));
+    // In the background the system may end the process without a teardown:
+    // a zap or a settings change made just before must already be on disk.
+    // Usually nothing is queued and this returns at once. The Android host
+    // also waits for them in `onStop` (`TvActivity.flushPendingWrites`).
+    effect(|| {
+        if lifecycle() == nsh_core::platform::Lifecycle::Background
+            && !crate::file_writer::flush(Duration::from_secs(2))
+        {
+            log::warn!("iptv persistence: queued file writes did not finish in the background");
+        }
+    });
     APP_OWNER.with(|o| o.set(Some(Owner::current())));
     combined::reset_single();
     library::reset_imports();
     stored::bind(ui);
+    crate::search_view::load_saved_history(ui);
     let started = std::time::Instant::now();
     let startup = crate::store_service::call(|store| {
         EpgStage::remove_stale(data_dir());
@@ -294,11 +312,11 @@ fn next_generation() -> u64 {
     })
 }
 
-/// Imports `job` on its own thread. `on_update` hears progress (coalesced
-/// per poll) and then one [`Update::Done`]; on success (unless the job is
-/// a [`Purpose::Background`] refresh) the guide switches to the source at
-/// once and again when its guide data arrives. Cancel with the returned
-/// token.
+/// Imports `job` on its own thread. `on_update` hears progress (coalesced,
+/// at most one per [`PROGRESS_FRAME`]) and then one [`Update::Done`]; on
+/// success (unless the job is a [`Purpose::Background`] refresh) the guide
+/// switches to the source at once and again when its guide data arrives.
+/// Cancel with the returned token.
 pub fn start_import(ui: Ui, job: Job, on_update: impl Fn(Update) + 'static) -> CancelToken {
     let cancel = CancelToken::new();
     start_import_with(ui, job, cancel.clone(), on_update);
@@ -326,7 +344,7 @@ fn start_import_with(ui: Ui, job: Job, cancel: CancelToken, on_update: impl Fn(U
     };
     // Only the startup refresh may start the last channel.
     let resume = purpose == Purpose::Startup;
-    let (tx, rx) = mpsc::channel();
+    let (tx, mut rx) = unbounded_channel();
     {
         let cancel = cancel.clone();
         let visible = job
@@ -376,8 +394,10 @@ fn start_import_with(ui: Ui, job: Job, cancel: CancelToken, on_update: impl Fn(U
         loop {
             let mut progress = None;
             let mut open = true;
+            // Sleeps until the import sends: its send wakes this task.
+            let mut next = rx.recv().await.ok_or(TryRecvError::Disconnected);
             loop {
-                match rx.try_recv() {
+                match next {
                     Ok(Msg::Progress(p)) => progress = Some(p),
                     Ok(Msg::Playlist(result)) => {
                         completion.playlist_done();
@@ -427,7 +447,10 @@ fn start_import_with(ui: Ui, job: Job, cancel: CancelToken, on_update: impl Fn(U
                         break;
                     }
                 }
+                // What else came meanwhile, in one go (progress coalesces).
+                next = rx.try_recv();
             }
+            let reported = progress.is_some();
             if let Some(p) = progress.filter(|_| !finished) {
                 on_update(Update::Progress(p));
             }
@@ -438,7 +461,11 @@ fn start_import_with(ui: Ui, job: Job, cancel: CancelToken, on_update: impl Fn(U
                 }
                 break;
             }
-            timer(POLL).await;
+            if reported {
+                // Progress comes as fast as a local file reads: repaint it
+                // at most this often. No wait while nothing comes.
+                timer(PROGRESS_FRAME).await;
+            }
         }
         completion.finish();
     });
@@ -474,19 +501,22 @@ async fn show_part(
     stored::note_shown(Some(imported.source));
     let channels = imported.channels.len();
     let started = std::time::Instant::now();
-    let schedule = EpgSchedule::from_catalog(
-        &imported.groups,
-        &imported.channels,
-        imported.guide,
-        imported.now,
-    );
+    let Imported {
+        groups,
+        channels: catalog,
+        playback,
+        guide,
+        now,
+        source,
+        resume: resumes,
+    } = *imported;
     let mut organization_revision = organization::revision();
-    organization::apply(&schedule, imported.source).await;
+    let schedule = organization::build(source, groups, catalog, guide, now).await;
     if GENERATION.with(Cell::get) != generation || combined::active(ui) {
         return;
     }
     let built = started.elapsed();
-    let mut schedule = match imported.playback {
+    let mut schedule = match playback {
         Streams::New(context, allowed) => {
             crate::multiview::set_account_streams(allowed);
             schedule.with_playback(context)
@@ -500,7 +530,7 @@ async fn show_part(
             schedule.with_shared_playback(shared)
         }
     };
-    if let Some(lookup) = stored::description_lookup(ui, imported.source) {
+    if let Some(lookup) = stored::description_lookup(ui, source) {
         schedule = schedule.with_description_lookup(lookup);
     }
     // Its guide is the stored one's recent part (`stored::load_guide`), or
@@ -509,20 +539,19 @@ async fn show_part(
         Some(held) => schedule
             .held_only(held.from, held.to)
             .held_channels(held.keys),
-        None => pages::paged(ui, schedule, imported.source, imported.now).await,
+        None => pages::paged(ui, schedule, source, now).await,
     };
     if GENERATION.with(Cell::get) != generation || combined::active(ui) {
         return;
     }
     let wrapped = started.elapsed();
     log::info!("iptv data: guide switched to {channels} imported channels");
-    let Some(install_favorites) = crate::favorites::prepare_source(Some(imported.source)).await
-    else {
+    let Some(install_favorites) = crate::favorites::prepare_source(Some(source)).await else {
         return;
     };
     while organization::revision() != organization_revision {
         organization_revision = organization::revision();
-        organization::apply(&schedule, imported.source).await;
+        organization::apply(&schedule, source).await;
     }
     if GENERATION.with(Cell::get) != generation || combined::active(ui) {
         return;
@@ -530,7 +559,7 @@ async fn show_part(
     let favorites = started.elapsed();
     install_favorites();
     let schedule = Rc::new(schedule);
-    combined::remember_single(imported.source, schedule.clone());
+    combined::remember_single(source, schedule.clone());
     crate::set_schedule(&ui, schedule);
     pages::replaced();
     crate::startup::shown(&[
@@ -539,7 +568,7 @@ async fn show_part(
         ("favourites", favorites),
         ("swapped", started.elapsed()),
     ]);
-    crate::player::source_ready(ui, resume && imported.resume);
+    crate::player::source_ready(ui, resume && resumes);
 }
 
 /// Another stored source (or none) is about to be shown: what played and
@@ -635,7 +664,7 @@ async fn read_guide(
     read: GuideRead,
     handoff: Option<library::ImportCompletion>,
 ) {
-    let (tx, rx) = mpsc::channel();
+    let (tx, mut rx) = unbounded_channel();
     if !workers::submit(source_is_visible(ui, source), move || {
         with_runtime(|| guide_pipeline(source, &tx, read));
     }) {
@@ -649,12 +678,11 @@ async fn read_guide(
         {
             return;
         }
-        match rx.try_recv() {
-            Ok(Msg::Guide(imported)) => show(ui, imported, generation, false).await,
-            Ok(Msg::NextCheck { source, at }) => schedule_check(ui, source, at, generation),
-            Ok(_) => {}
-            Err(TryRecvError::Empty) => timer(POLL).await,
-            Err(TryRecvError::Disconnected) => break,
+        match rx.recv().await {
+            Some(Msg::Guide(imported)) => show(ui, imported, generation, false).await,
+            Some(Msg::NextCheck { source, at }) => schedule_check(ui, source, at, generation),
+            Some(_) => {}
+            None => break,
         }
     }
 }

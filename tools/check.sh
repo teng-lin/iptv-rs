@@ -24,6 +24,10 @@ cargo test --locked -p iptv-app --features test-support --quiet
 cargo test --locked -p iptv-app --features test-support --quiet --test app \
   store_latency::guide_input_stays_under_budget_while_the_database_writer_is_locked \
   -- --ignored --exact
+# A UI read must not queue behind a busy store writer (the read-only connection).
+cargo test --locked -p iptv-app --features test-support --quiet --test app \
+  store_latency::a_store_read_does_not_wait_for_a_busy_writer \
+  -- --ignored --exact
 IPTV_REAL_CARGO="$(command -v cargo)" python3 tools/ci/test-locked-cargo.py
 python3 tools/ci/test-mpvkit-notices.py
 python3 tools/ci/test-macos-source-notices.py

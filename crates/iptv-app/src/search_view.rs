@@ -47,7 +47,8 @@ use crate::{Playback, Ui, ViewMode, channel_name, clock};
 /// Typing pause before a search runs.
 const DEBOUNCE: Duration = Duration::from_millis(200);
 const LIMIT: usize = 200;
-const HISTORY_FILE: &str = "search-history.json";
+/// Where builds before the store kept the recent searches, as plaintext.
+const LEGACY_HISTORY_FILE: &str = "search-history.json";
 
 /// Whether programme search can run on the current guide data.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -83,6 +84,9 @@ struct Indexes {
 
 thread_local! {
     static INDEXES: RefCell<Indexes> = RefCell::default();
+    /// The recent searches the store holds (or is about to: a save is
+    /// queued at once), read once per app start ([`load_saved_history`]).
+    static SAVED: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
     /// Bumped per search request: a debounced search runs only if no newer one came.
     static PENDING: Cell<u64> = const { Cell::new(0) };
 }
@@ -228,12 +232,71 @@ fn guide_epoch() -> UnixTime {
 }
 
 fn load_history() -> SearchHistory {
-    let path = crate::data::data_dir().join(HISTORY_FILE);
-    let list: Vec<String> = std::fs::read(path)
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default();
+    let list = SAVED.with(|saved| saved.borrow().clone().unwrap_or_default());
     SearchHistory::from_list(list, SearchHistory::DEFAULT_CAPACITY)
+}
+
+/// App start: reads the recent searches from the store, after moving those
+/// an older build kept in a plaintext file into it (once; the file is
+/// then deleted). A screen opened before the answer started empty and is
+/// given them unless a search was made meanwhile.
+pub(crate) fn load_saved_history(ui: Ui) {
+    SAVED.with(|saved| *saved.borrow_mut() = None);
+    let legacy = crate::data::data_dir().join(LEGACY_HISTORY_FILE);
+    let loaded = crate::store_service::call(move |store| {
+        import_legacy_history(store, &legacy)?;
+        store.search_history()
+    });
+    crate::data::spawn_in_app(async move {
+        let list = match loaded.await {
+            Ok(list) => list,
+            Err(error) => {
+                log::warn!("iptv search: cannot read the recent searches: {error}");
+                return;
+            }
+        };
+        if options(&crate::settings::get()).show_history {
+            ui.search.update(|screen| {
+                if let Some(screen) = screen
+                    && screen.state.history().is_empty()
+                {
+                    *screen.state.history_mut() =
+                        SearchHistory::from_list(&list, SearchHistory::DEFAULT_CAPACITY);
+                }
+            });
+        }
+        SAVED.with(|saved| *saved.borrow_mut() = Some(list));
+    });
+}
+
+/// Moves the recent searches of a legacy file into an empty store table,
+/// then deletes the file. An unreadable file is deleted too: it held only
+/// recent searches, and plaintext must not stay behind.
+fn import_legacy_history(
+    store: &mut iptv_store_sqlite::Store,
+    path: &std::path::Path,
+) -> Result<(), iptv_store_sqlite::StoreError> {
+    let Ok(bytes) = std::fs::read(path) else {
+        return Ok(());
+    };
+    let list: Vec<String> = serde_json::from_slice(&bytes).unwrap_or_default();
+    if !list.is_empty() && store.search_history()?.is_empty() {
+        let list = SearchHistory::from_list(list, SearchHistory::DEFAULT_CAPACITY).to_list();
+        store.set_search_history(&list)?;
+        log::info!(
+            "iptv search: moved {} recent searches into the store",
+            list.len()
+        );
+    }
+    if let Err(error) = std::fs::remove_file(path)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        log::warn!(
+            "iptv search: could not delete the old recent searches file ({})",
+            error.kind()
+        );
+    }
+    Ok(())
 }
 
 fn save_history(ui: Ui) {
@@ -245,13 +308,16 @@ fn save_history(ui: Ui) {
     };
     let shown = options(&crate::settings::get()).show_history;
     let list = to_save(shown, load_history(), &session);
-    let dir = crate::data::data_dir();
-    let _ = std::fs::create_dir_all(&dir);
-    if let Ok(json) = serde_json::to_vec(&list)
-        && std::fs::write(dir.join(HISTORY_FILE), json).is_err()
-    {
-        log::warn!("iptv search: could not save the search history");
+    if SAVED.with(|saved| saved.borrow().as_ref() == Some(&list)) {
+        return;
     }
+    SAVED.with(|saved| *saved.borrow_mut() = Some(list.clone()));
+    let saved = crate::store_service::call(move |store| store.set_search_history(&list));
+    crate::data::spawn_in_app(async move {
+        if let Err(error) = saved.await {
+            log::warn!("iptv search: could not save the recent searches: {error}");
+        }
+    });
 }
 
 fn set_programmes(ui: Ui, status: Programmes) {

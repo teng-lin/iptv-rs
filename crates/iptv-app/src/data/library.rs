@@ -70,6 +70,8 @@ pub(super) struct ImportWork {
     finished: Cell<bool>,
     catalog_done: Cell<bool>,
     cancel: CancelToken,
+    /// Tasks waiting for [`Self::finish`].
+    waiting: RefCell<Vec<futures_channel::oneshot::Sender<()>>>,
 }
 impl ImportWork {
     pub(super) fn finished(&self) -> bool {
@@ -77,6 +79,22 @@ impl ImportWork {
     }
     pub(super) fn finish(&self) {
         self.finished.set(true);
+        for waiting in self.waiting.take() {
+            let _ = waiting.send(());
+        }
+    }
+    /// Resolves when the work has finished (at once if it has).
+    pub(super) fn until_finished(&self) -> impl std::future::Future<Output = ()> + 'static {
+        let wait = (!self.finished.get()).then(|| {
+            let (sender, receiver) = futures_channel::oneshot::channel();
+            self.waiting.borrow_mut().push(sender);
+            receiver
+        });
+        async move {
+            if let Some(wait) = wait {
+                let _ = wait.await;
+            }
+        }
     }
     pub(super) fn playlist_done(&self) {
         self.catalog_done.set(true);
@@ -92,6 +110,7 @@ pub(super) fn import_completion(cancel: CancelToken) -> ImportCompletion {
         finished: Cell::new(false),
         catalog_done: Cell::new(false),
         cancel,
+        waiting: RefCell::default(),
     })
 }
 pub(super) fn track_import(source: SourceId, completion: &ImportCompletion) {
