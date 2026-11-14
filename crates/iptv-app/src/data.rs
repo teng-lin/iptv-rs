@@ -501,19 +501,22 @@ async fn show_part(
     stored::note_shown(Some(imported.source));
     let channels = imported.channels.len();
     let started = std::time::Instant::now();
-    let schedule = EpgSchedule::from_catalog(
-        &imported.groups,
-        &imported.channels,
-        imported.guide,
-        imported.now,
-    );
+    let Imported {
+        groups,
+        channels: catalog,
+        playback,
+        guide,
+        now,
+        source,
+        resume: resumes,
+    } = *imported;
     let mut organization_revision = organization::revision();
-    organization::apply(&schedule, imported.source).await;
+    let schedule = organization::build(source, groups, catalog, guide, now).await;
     if GENERATION.with(Cell::get) != generation || combined::active(ui) {
         return;
     }
     let built = started.elapsed();
-    let mut schedule = match imported.playback {
+    let mut schedule = match playback {
         Streams::New(context, allowed) => {
             crate::multiview::set_account_streams(allowed);
             schedule.with_playback(context)
@@ -527,7 +530,7 @@ async fn show_part(
             schedule.with_shared_playback(shared)
         }
     };
-    if let Some(lookup) = stored::description_lookup(ui, imported.source) {
+    if let Some(lookup) = stored::description_lookup(ui, source) {
         schedule = schedule.with_description_lookup(lookup);
     }
     // Its guide is the stored one's recent part (`stored::load_guide`), or
@@ -536,20 +539,19 @@ async fn show_part(
         Some(held) => schedule
             .held_only(held.from, held.to)
             .held_channels(held.keys),
-        None => pages::paged(ui, schedule, imported.source, imported.now).await,
+        None => pages::paged(ui, schedule, source, now).await,
     };
     if GENERATION.with(Cell::get) != generation || combined::active(ui) {
         return;
     }
     let wrapped = started.elapsed();
     log::info!("iptv data: guide switched to {channels} imported channels");
-    let Some(install_favorites) = crate::favorites::prepare_source(Some(imported.source)).await
-    else {
+    let Some(install_favorites) = crate::favorites::prepare_source(Some(source)).await else {
         return;
     };
     while organization::revision() != organization_revision {
         organization_revision = organization::revision();
-        organization::apply(&schedule, imported.source).await;
+        organization::apply(&schedule, source).await;
     }
     if GENERATION.with(Cell::get) != generation || combined::active(ui) {
         return;
@@ -557,7 +559,7 @@ async fn show_part(
     let favorites = started.elapsed();
     install_favorites();
     let schedule = Rc::new(schedule);
-    combined::remember_single(imported.source, schedule.clone());
+    combined::remember_single(source, schedule.clone());
     crate::set_schedule(&ui, schedule);
     pages::replaced();
     crate::startup::shown(&[
@@ -566,7 +568,7 @@ async fn show_part(
         ("favourites", favorites),
         ("swapped", started.elapsed()),
     ]);
-    crate::player::source_ready(ui, resume && imported.resume);
+    crate::player::source_ready(ui, resume && resumes);
 }
 
 /// Another stored source (or none) is about to be shown: what played and

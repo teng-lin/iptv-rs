@@ -1,5 +1,6 @@
 //! The app's one runtime for network work that is not an import: Stalker
-//! link resolves and artwork downloads. It is made once, on first use, and
+//! link resolves and artwork downloads; its blocking threads also build
+//! large schedules off the UI thread. It is made once, on first use, and
 //! lives as long as the process.
 //!
 //! Multi-threaded, with two workers. Its tasks are network waits with
@@ -40,4 +41,12 @@ where
     F::Output: Send + 'static,
 {
     runtime().spawn(future)
+}
+
+/// Runs CPU-bound `work` on the runtime's blocking threads (building a
+/// large schedule); await the handle for its output.
+pub(crate) fn spawn_blocking<R: Send + 'static>(
+    work: impl FnOnce() -> R + Send + 'static,
+) -> JoinHandle<R> {
+    runtime().spawn_blocking(work)
 }
