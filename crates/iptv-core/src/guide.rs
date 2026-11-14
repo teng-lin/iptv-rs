@@ -181,9 +181,18 @@ pub trait Schedule {
     fn channel_key(&self, _channel: usize) -> Option<String> {
         None
     }
-    /// The channel with `key`, if this schedule has it.
+    /// The channel with `key`, if this schedule has it. The default looks
+    /// at every channel; a schedule with many keeps an index.
     fn find_channel(&self, key: &str) -> Option<usize> {
         (0..self.channel_count()).find(|&c| self.channel_key(c).as_deref() == Some(key))
+    }
+    /// The group holding `channel`, a category before a playlist parent
+    /// (which holds the same channel); `channel` is in range and there are
+    /// groups ([`crate::lists::group_of`] checks). The default asks every
+    /// group for its channels ([`crate::lists::scan_group_of`]); a schedule
+    /// with many keeps an index.
+    fn channel_group(&self, channel: usize) -> Option<usize> {
+        crate::lists::scan_group_of(self, channel)
     }
     /// The guide minutes that can be browsed at `now`, `[first, end)`: by
     /// default [`HISTORY`] back and [`HORIZON`] ahead; a stored guide from

@@ -39,6 +39,8 @@ pub const PAST_END: i32 = 60;
 pub const NO_INFORMATION: &str = "No information";
 /// Title of a slot whose day is still being read from the store.
 pub const LOADING: &str = "Loading…";
+/// A channel in no group (`EpgSchedule::group_index`).
+const NO_GROUP: u32 = u32::MAX;
 
 /// A channel as the guide needs it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -68,6 +70,12 @@ struct OrganizationState {
 }
 pub struct EpgSchedule {
     organization: std::cell::RefCell<Option<OrganizationState>>,
+    /// Each channel by key, made on the first lookup: channels never change.
+    key_index: std::cell::OnceCell<std::collections::HashMap<String, usize>>,
+    /// Each channel's group (`NO_GROUP` for none), made on the first lookup
+    /// after the groups last changed ([`Self::set_organization`],
+    /// [`Self::set_group_lists`]).
+    group_index: std::cell::RefCell<Option<Vec<u32>>>,
     group_keys: Vec<String>,
     channels: Vec<GuideChannel>,
     /// The imported channel behind each guide channel (stream and catch-up).
@@ -125,6 +133,7 @@ impl EpgSchedule {
     /// Provider groups can have independent order; custom groups share the
     /// same channels, guide data and player streams without duplication.
     pub fn set_group_lists(&self, lists: Vec<(String, String, Vec<String>)>) {
+        self.group_index.take();
         let index: std::collections::HashMap<_, _> = self
             .channels
             .iter()
@@ -186,6 +195,8 @@ impl EpgSchedule {
             sources: vec![None; channels.len()],
             group_keys,
             organization: Default::default(),
+            key_index: Default::default(),
+            group_index: Default::default(),
             channels,
             group_names,
             group_starts,
@@ -327,6 +338,7 @@ impl EpgSchedule {
 
     pub fn set_organization(&self, organization: Organization) {
         use std::collections::HashMap;
+        self.group_index.take();
         let channel_prefs: HashMap<_, _> = organization
             .channels
             .iter()
@@ -388,6 +400,42 @@ impl EpgSchedule {
             })
             .collect();
         *self.organization.borrow_mut() = Some(state);
+    }
+
+    /// Each channel's group as [`Schedule::group_channels`] lists them:
+    /// the first group (in display order) a channel is a member of.
+    fn group_index(&self) -> Vec<u32> {
+        let mut index = vec![NO_GROUP; self.channels.len()];
+        let mut place = |channel: usize, group: usize| {
+            if let Some(slot) = index.get_mut(channel)
+                && *slot == NO_GROUP
+            {
+                *slot = u32::try_from(group).unwrap_or(NO_GROUP);
+            }
+        };
+        let organization = self.organization.borrow();
+        if let Some(lists) = organization.as_ref().and_then(|s| s.lists.as_ref()) {
+            for (group, (_, _, members)) in lists.iter().enumerate() {
+                for &channel in members {
+                    place(channel, group);
+                }
+            }
+        } else {
+            drop(organization);
+            // Channels are stored grouped: a group's members are its range.
+            for (group, &stored) in self.visible_groups().iter().enumerate() {
+                let start = self.group_starts[stored];
+                let end = self
+                    .group_starts
+                    .get(stored + 1)
+                    .copied()
+                    .unwrap_or(self.channels.len());
+                for channel in start..end {
+                    place(channel, group);
+                }
+            }
+        }
+        index
     }
 
     fn visible_groups(&self) -> Vec<usize> {
@@ -770,6 +818,29 @@ impl Schedule for EpgSchedule {
             .map(|c| c.key.as_str().to_owned())
     }
 
+    fn find_channel(&self, key: &str) -> Option<usize> {
+        self.key_index
+            .get_or_init(|| {
+                let mut index = std::collections::HashMap::with_capacity(self.channels.len());
+                for (at, channel) in self.channels.iter().enumerate() {
+                    // The first channel with a key wins, as a scan finds it.
+                    index.entry(channel.key.as_str().to_owned()).or_insert(at);
+                }
+                index
+            })
+            .get(key)
+            .copied()
+    }
+
+    fn channel_group(&self, channel: usize) -> Option<usize> {
+        if self.group_index.borrow().is_none() {
+            let index = self.group_index();
+            *self.group_index.borrow_mut() = Some(index);
+        }
+        let group = self.group_index.borrow().as_ref()?.get(channel).copied()?;
+        (group != NO_GROUP).then_some(group as usize)
+    }
+
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
     }
@@ -794,6 +865,8 @@ impl Schedule for EpgSchedule {
 
 #[cfg(test)]
 mod held_tests;
+#[cfg(test)]
+mod index_tests;
 #[cfg(test)]
 mod pages_tests;
 #[cfg(test)]
