@@ -39,6 +39,8 @@ pub const PAST_END: i32 = 60;
 pub const NO_INFORMATION: &str = "No information";
 /// Title of a slot whose day is still being read from the store.
 pub const LOADING: &str = "Loading…";
+/// A channel in no group (`EpgSchedule::group_index`).
+const NO_GROUP: u32 = u32::MAX;
 
 /// A channel as the guide needs it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -68,6 +70,12 @@ struct OrganizationState {
 }
 pub struct EpgSchedule {
     organization: std::cell::RefCell<Option<OrganizationState>>,
+    /// Each channel by key, made on the first lookup: channels never change.
+    key_index: std::cell::OnceCell<std::collections::HashMap<String, usize>>,
+    /// Each channel's group (`NO_GROUP` for none), made on the first lookup
+    /// after the groups last changed ([`Self::set_organization`],
+    /// [`Self::set_group_lists`]).
+    group_index: std::cell::RefCell<Option<Vec<u32>>>,
     group_keys: Vec<String>,
     channels: Vec<GuideChannel>,
     /// The imported channel behind each guide channel (stream and catch-up).
@@ -125,27 +133,9 @@ impl EpgSchedule {
     /// Provider groups can have independent order; custom groups share the
     /// same channels, guide data and player streams without duplication.
     pub fn set_group_lists(&self, lists: Vec<(String, String, Vec<String>)>) {
-        let index: std::collections::HashMap<_, _> = self
-            .channels
-            .iter()
-            .enumerate()
-            .map(|(i, c)| (c.key.as_str(), i))
-            .collect();
+        self.group_index.take();
         if let Some(s) = self.organization.borrow_mut().as_mut() {
-            s.lists = Some(
-                lists
-                    .into_iter()
-                    .map(|(key, name, members)| {
-                        let mut seen = std::collections::HashSet::new();
-                        let members = members
-                            .iter()
-                            .filter_map(|id| index.get(id.as_str()).copied())
-                            .filter(|c| seen.insert(*c))
-                            .collect();
-                        (key, name, members)
-                    })
-                    .collect(),
-            );
+            s.lists = Some(self.shape().lists(lists));
         }
     }
     /// `groups`: names with their channels, in display order. The epoch is
@@ -154,49 +144,54 @@ impl EpgSchedule {
         let keyed = groups
             .into_iter()
             .map(|(name, members)| (name.clone(), name, members));
-        Self::keyed(keyed, store, now)
+        Self::from_parts(Catalog::keyed(keyed, store, now))
     }
 
-    /// `groups`: each group's stable key, its name and its channels, in
-    /// display order. Groups without channels are left out. A group's key,
-    /// name and first channel are recorded together here and nowhere
-    /// else, so the three lists always have one entry per group
-    /// ([`Self::set_organization`] indexes one by another's positions).
-    fn keyed(
-        groups: impl IntoIterator<Item = (String, String, Vec<GuideChannel>)>,
-        store: GuideStore,
-        now: UnixTime,
-    ) -> Self {
-        let mut channels = Vec::new();
-        let mut group_keys = Vec::new();
-        let mut group_names = Vec::new();
-        let mut group_starts = Vec::new();
-        for (key, name, members) in groups {
-            if members.is_empty() {
-                continue;
-            }
-            group_keys.push(key);
-            group_names.push(name);
-            group_starts.push(channels.len());
-            channels.extend(members);
-        }
-        EpgSchedule {
-            data_start: store.first_start(),
-            data_end: store.last_stop(),
-            sources: vec![None; channels.len()],
+    /// A schedule of `catalog`, with nothing that cannot cross threads
+    /// added yet (playback, pages, descriptions).
+    fn from_parts(catalog: Catalog) -> Self {
+        let Catalog {
+            organization,
             group_keys,
-            organization: Default::default(),
             channels,
+            sources,
             group_names,
             group_starts,
-            playlist_order: Vec::new(),
+            playlist_order,
             store,
-            epoch: now - now.rem_euclid(SLOT),
+            epoch,
+            data_start,
+            data_end,
+        } = catalog;
+        EpgSchedule {
+            organization: std::cell::RefCell::new(organization),
+            key_index: Default::default(),
+            group_index: Default::default(),
+            group_keys,
+            channels,
+            sources,
+            group_names,
+            group_starts,
+            playlist_order,
+            store,
+            epoch,
             describe: None,
             pages: Pages::default(),
+            data_start,
+            data_end,
             held: None,
             held_keys: None,
             playback: None,
+        }
+    }
+
+    fn shape(&self) -> Shape<'_> {
+        Shape {
+            channels: &self.channels,
+            sources: &self.sources,
+            playlist_order: &self.playlist_order,
+            group_keys: &self.group_keys,
+            group_names: &self.group_names,
         }
     }
 
@@ -283,111 +278,74 @@ impl EpgSchedule {
         store: GuideStore,
         now: UnixTime,
     ) -> Self {
-        // With their playlist positions (1-based), for channels without a
-        // provider number.
-        let mut buckets: Vec<Vec<(u32, &Channel)>> = vec![Vec::new(); groups.len() + 1];
-        for (slot, i) in group_slots(groups, channels) {
-            buckets[slot].push((i as u32 + 1, &channels[i]));
+        Self::from_parts(Catalog::from_catalog(groups, channels, store, now))
+    }
+
+    /// [`Self::from_catalog`] with `organization` (and its group lists)
+    /// applied, as data that can cross threads: for a large playlist this
+    /// is the costly part of showing it, so it is made off the UI thread
+    /// and turned into the schedule there with [`Self::from_prepared`].
+    pub fn prepare(
+        groups: &[Group],
+        channels: &[Channel],
+        store: GuideStore,
+        now: UnixTime,
+        organization: Option<(Organization, Vec<GroupList>)>,
+    ) -> Prepared {
+        let mut catalog = Catalog::from_catalog(groups, channels, store, now);
+        if let Some((organization, lists)) = organization {
+            let mut state = catalog.shape().organization(organization);
+            state.lists = Some(catalog.shape().lists(lists));
+            catalog.organization = Some(state);
         }
-        // One key and name per bucket: the catalog's groups, then "Other".
-        let labels = groups
-            .iter()
-            .map(|g| (g.id.as_str().to_owned(), g.name.clone()))
-            .chain([("__other__".to_owned(), "Other".to_owned())]);
-        // Where each playlist position lands once grouped.
-        let mut stored_at = vec![0; channels.len()];
-        for (at, &(position, _)) in buckets.iter().flatten().enumerate() {
-            stored_at[position as usize - 1] = at;
-        }
-        let mut ordered = Vec::new();
-        let grouped: Vec<_> = labels
-            .zip(buckets)
-            .map(|((key, name), members)| {
-                let guide = members
-                    .iter()
-                    .map(|&(position, c)| GuideChannel {
-                        key: ChannelKey::new(c.id.as_str()),
-                        name: c.name.clone(),
-                        number: c.number.unwrap_or(position),
-                        catchup_days: c.catch_up.as_ref().map_or(0, |cu| {
-                            cu.window_days(iptv_providers::m3u::DEFAULT_CATCHUP_WINDOW_DAYS)
-                                .min(u32::from(u8::MAX)) as u8
-                        }),
-                    })
-                    .collect::<Vec<_>>();
-                ordered.extend(members.into_iter().map(|(_, c)| c.clone()));
-                (key, name, guide)
-            })
-            .collect();
-        let mut schedule = EpgSchedule::keyed(grouped, store, now);
-        schedule.sources = ordered.into_iter().map(Some).collect();
-        schedule.playlist_order = stored_at;
-        schedule
+        Prepared(catalog)
+    }
+
+    /// The schedule [`Self::prepare`] made; cheap (it moves the data).
+    pub fn from_prepared(prepared: Prepared) -> Self {
+        Self::from_parts(prepared.0)
     }
 
     pub fn set_organization(&self, organization: Organization) {
-        use std::collections::HashMap;
-        let channel_prefs: HashMap<_, _> = organization
-            .channels
-            .iter()
-            .enumerate()
-            .map(|(i, (id, name, hidden))| (id.as_str(), (i, name, *hidden)))
-            .collect();
-        let group_prefs: HashMap<_, _> = organization
-            .groups
-            .iter()
-            .enumerate()
-            .map(|(i, (id, name, hidden))| (id.as_str(), (i, name, *hidden)))
-            .collect();
-        let mut state = OrganizationState::default();
-        for (i, c) in self.channels.iter().enumerate() {
-            let pref = channel_prefs.get(c.key.as_str());
-            state
-                .names
-                .push(pref.map_or_else(|| c.name.clone(), |(_, name, _)| (*name).clone()));
-            let group_hidden = self
-                .source_channel(i)
-                .and_then(|c| c.groups.first())
-                .and_then(|g| group_prefs.get(g.as_str()))
-                .is_some_and(|(_, _, hidden)| *hidden);
-            state
-                .hidden
-                .push(pref.is_some_and(|(_, _, hidden)| *hidden) || group_hidden);
-        }
-        state.order = self.playlist_order.clone();
-        if state.order.len() != self.channels.len() {
-            state.order = (0..self.channels.len()).collect();
-        }
-        state.order.sort_by_key(|&c| {
-            channel_prefs
-                .get(self.channels[c].key.as_str())
-                .map_or(usize::MAX, |(i, _, _)| *i)
-        });
-        let mut groups: Vec<_> = (0..self.group_keys.len())
-            .filter(|&g| {
-                !group_prefs
-                    .get(self.group_keys[g].as_str())
-                    .is_some_and(|(_, _, hidden)| *hidden)
-            })
-            .collect();
-        groups.sort_by_key(|&g| {
-            group_prefs
-                .get(self.group_keys[g].as_str())
-                .map_or(usize::MAX, |(i, _, _)| *i)
-        });
-        state.groups = groups
-            .into_iter()
-            .map(|g| {
-                (
-                    g,
-                    group_prefs.get(self.group_keys[g].as_str()).map_or_else(
-                        || self.group_names[g].clone(),
-                        |(_, name, _)| (*name).clone(),
-                    ),
-                )
-            })
-            .collect();
+        self.group_index.take();
+        let state = self.shape().organization(organization);
         *self.organization.borrow_mut() = Some(state);
+    }
+
+    /// Each channel's group as [`Schedule::group_channels`] lists them:
+    /// the first group (in display order) a channel is a member of.
+    fn group_index(&self) -> Vec<u32> {
+        let mut index = vec![NO_GROUP; self.channels.len()];
+        let mut place = |channel: usize, group: usize| {
+            if let Some(slot) = index.get_mut(channel)
+                && *slot == NO_GROUP
+            {
+                *slot = u32::try_from(group).unwrap_or(NO_GROUP);
+            }
+        };
+        let organization = self.organization.borrow();
+        if let Some(lists) = organization.as_ref().and_then(|s| s.lists.as_ref()) {
+            for (group, (_, _, members)) in lists.iter().enumerate() {
+                for &channel in members {
+                    place(channel, group);
+                }
+            }
+        } else {
+            drop(organization);
+            // Channels are stored grouped: a group's members are its range.
+            for (group, &stored) in self.visible_groups().iter().enumerate() {
+                let start = self.group_starts[stored];
+                let end = self
+                    .group_starts
+                    .get(stored + 1)
+                    .copied()
+                    .unwrap_or(self.channels.len());
+                for channel in start..end {
+                    place(channel, group);
+                }
+            }
+        }
+        index
     }
 
     fn visible_groups(&self) -> Vec<usize> {
@@ -546,6 +504,234 @@ impl EpgSchedule {
             }
         }
         (start, end)
+    }
+}
+
+/// A schedule's plain data: no closures and no `Rc`, so it can be made on
+/// another thread ([`EpgSchedule::prepare`]).
+struct Catalog {
+    organization: Option<OrganizationState>,
+    group_keys: Vec<String>,
+    channels: Vec<GuideChannel>,
+    sources: Vec<Option<Channel>>,
+    group_names: Vec<String>,
+    group_starts: Vec<usize>,
+    playlist_order: Vec<usize>,
+    store: GuideStore,
+    epoch: UnixTime,
+    data_start: Option<UnixTime>,
+    data_end: Option<UnixTime>,
+}
+
+/// A display list by channel key: its key, its name and its members
+/// ([`EpgSchedule::set_group_lists`]).
+pub type GroupList = (String, String, Vec<String>);
+
+/// A schedule's data with its organisation applied, made off the UI thread
+/// ([`EpgSchedule::prepare`], [`EpgSchedule::from_prepared`]).
+pub struct Prepared(Catalog);
+
+impl Catalog {
+    /// `groups`: each group's stable key, its name and its channels, in
+    /// display order. Groups without channels are left out. A group's key,
+    /// name and first channel are recorded together here and nowhere
+    /// else, so the three lists always have one entry per group
+    /// ([`Shape::organization`] indexes one by another's positions).
+    fn keyed(
+        groups: impl IntoIterator<Item = (String, String, Vec<GuideChannel>)>,
+        store: GuideStore,
+        now: UnixTime,
+    ) -> Self {
+        let mut channels = Vec::new();
+        let mut group_keys = Vec::new();
+        let mut group_names = Vec::new();
+        let mut group_starts = Vec::new();
+        for (key, name, members) in groups {
+            if members.is_empty() {
+                continue;
+            }
+            group_keys.push(key);
+            group_names.push(name);
+            group_starts.push(channels.len());
+            channels.extend(members);
+        }
+        Catalog {
+            organization: None,
+            data_start: store.first_start(),
+            data_end: store.last_stop(),
+            sources: vec![None; channels.len()],
+            group_keys,
+            channels,
+            group_names,
+            group_starts,
+            playlist_order: Vec::new(),
+            store,
+            epoch: now - now.rem_euclid(SLOT),
+        }
+    }
+
+    /// [`EpgSchedule::from_catalog`]'s data.
+    fn from_catalog(
+        groups: &[Group],
+        channels: &[Channel],
+        store: GuideStore,
+        now: UnixTime,
+    ) -> Self {
+        // With their playlist positions (1-based), for channels without a
+        // provider number.
+        let mut buckets: Vec<Vec<(u32, &Channel)>> = vec![Vec::new(); groups.len() + 1];
+        for (slot, i) in group_slots(groups, channels) {
+            buckets[slot].push((i as u32 + 1, &channels[i]));
+        }
+        // One key and name per bucket: the catalog's groups, then "Other".
+        let labels = groups
+            .iter()
+            .map(|g| (g.id.as_str().to_owned(), g.name.clone()))
+            .chain([("__other__".to_owned(), "Other".to_owned())]);
+        // Where each playlist position lands once grouped.
+        let mut stored_at = vec![0; channels.len()];
+        for (at, &(position, _)) in buckets.iter().flatten().enumerate() {
+            stored_at[position as usize - 1] = at;
+        }
+        let mut ordered = Vec::new();
+        let grouped: Vec<_> = labels
+            .zip(buckets)
+            .map(|((key, name), members)| {
+                let guide = members
+                    .iter()
+                    .map(|&(position, c)| GuideChannel {
+                        key: ChannelKey::new(c.id.as_str()),
+                        name: c.name.clone(),
+                        number: c.number.unwrap_or(position),
+                        catchup_days: c.catch_up.as_ref().map_or(0, |cu| {
+                            cu.window_days(iptv_providers::m3u::DEFAULT_CATCHUP_WINDOW_DAYS)
+                                .min(u32::from(u8::MAX)) as u8
+                        }),
+                    })
+                    .collect::<Vec<_>>();
+                ordered.extend(members.into_iter().map(|(_, c)| c.clone()));
+                (key, name, guide)
+            })
+            .collect();
+        let mut catalog = Self::keyed(grouped, store, now);
+        catalog.sources = ordered.into_iter().map(Some).collect();
+        catalog.playlist_order = stored_at;
+        catalog
+    }
+
+    fn shape(&self) -> Shape<'_> {
+        Shape {
+            channels: &self.channels,
+            sources: &self.sources,
+            playlist_order: &self.playlist_order,
+            group_keys: &self.group_keys,
+            group_names: &self.group_names,
+        }
+    }
+}
+
+/// What organising a schedule reads, from a schedule or its [`Catalog`].
+struct Shape<'a> {
+    channels: &'a [GuideChannel],
+    sources: &'a [Option<Channel>],
+    playlist_order: &'a [usize],
+    group_keys: &'a [String],
+    group_names: &'a [String],
+}
+
+impl Shape<'_> {
+    /// The user's names, hidden channels and groups, and order.
+    fn organization(&self, organization: Organization) -> OrganizationState {
+        use std::collections::HashMap;
+        let channel_prefs: HashMap<_, _> = organization
+            .channels
+            .iter()
+            .enumerate()
+            .map(|(i, (id, name, hidden))| (id.as_str(), (i, name, *hidden)))
+            .collect();
+        let group_prefs: HashMap<_, _> = organization
+            .groups
+            .iter()
+            .enumerate()
+            .map(|(i, (id, name, hidden))| (id.as_str(), (i, name, *hidden)))
+            .collect();
+        let mut state = OrganizationState::default();
+        for (i, c) in self.channels.iter().enumerate() {
+            let pref = channel_prefs.get(c.key.as_str());
+            state
+                .names
+                .push(pref.map_or_else(|| c.name.clone(), |(_, name, _)| (*name).clone()));
+            let group_hidden = self
+                .sources
+                .get(i)
+                .and_then(Option::as_ref)
+                .and_then(|c| c.groups.first())
+                .and_then(|g| group_prefs.get(g.as_str()))
+                .is_some_and(|(_, _, hidden)| *hidden);
+            state
+                .hidden
+                .push(pref.is_some_and(|(_, _, hidden)| *hidden) || group_hidden);
+        }
+        state.order = self.playlist_order.to_vec();
+        if state.order.len() != self.channels.len() {
+            state.order = (0..self.channels.len()).collect();
+        }
+        state.order.sort_by_key(|&c| {
+            channel_prefs
+                .get(self.channels[c].key.as_str())
+                .map_or(usize::MAX, |(i, _, _)| *i)
+        });
+        let mut groups: Vec<_> = (0..self.group_keys.len())
+            .filter(|&g| {
+                !group_prefs
+                    .get(self.group_keys[g].as_str())
+                    .is_some_and(|(_, _, hidden)| *hidden)
+            })
+            .collect();
+        groups.sort_by_key(|&g| {
+            group_prefs
+                .get(self.group_keys[g].as_str())
+                .map_or(usize::MAX, |(i, _, _)| *i)
+        });
+        state.groups = groups
+            .into_iter()
+            .map(|g| {
+                (
+                    g,
+                    group_prefs.get(self.group_keys[g].as_str()).map_or_else(
+                        || self.group_names[g].clone(),
+                        |(_, name, _)| (*name).clone(),
+                    ),
+                )
+            })
+            .collect();
+        state
+    }
+
+    /// Display lists by channel key, as channel positions: unknown keys
+    /// left out, a channel listed twice in a list kept once.
+    fn lists(
+        &self,
+        lists: Vec<(String, String, Vec<String>)>,
+    ) -> Vec<(String, String, Vec<usize>)> {
+        let index: std::collections::HashMap<_, _> = self
+            .channels
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (c.key.as_str(), i))
+            .collect();
+        lists
+            .into_iter()
+            .map(|(key, name, members)| {
+                let mut seen = std::collections::HashSet::new();
+                let members = members
+                    .iter()
+                    .filter_map(|id| index.get(id.as_str()).copied())
+                    .filter(|c| seen.insert(*c))
+                    .collect();
+                (key, name, members)
+            })
+            .collect()
     }
 }
 
@@ -770,6 +956,29 @@ impl Schedule for EpgSchedule {
             .map(|c| c.key.as_str().to_owned())
     }
 
+    fn find_channel(&self, key: &str) -> Option<usize> {
+        self.key_index
+            .get_or_init(|| {
+                let mut index = std::collections::HashMap::with_capacity(self.channels.len());
+                for (at, channel) in self.channels.iter().enumerate() {
+                    // The first channel with a key wins, as a scan finds it.
+                    index.entry(channel.key.as_str().to_owned()).or_insert(at);
+                }
+                index
+            })
+            .get(key)
+            .copied()
+    }
+
+    fn channel_group(&self, channel: usize) -> Option<usize> {
+        if self.group_index.borrow().is_none() {
+            let index = self.group_index();
+            *self.group_index.borrow_mut() = Some(index);
+        }
+        let group = self.group_index.borrow().as_ref()?.get(channel).copied()?;
+        (group != NO_GROUP).then_some(group as usize)
+    }
+
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
     }
@@ -794,6 +1003,8 @@ impl Schedule for EpgSchedule {
 
 #[cfg(test)]
 mod held_tests;
+#[cfg(test)]
+mod index_tests;
 #[cfg(test)]
 mod pages_tests;
 #[cfg(test)]

@@ -591,3 +591,64 @@ fn a_repeated_group_id_keeps_keys_names_and_starts_together() {
         ["Sport first", "News", "Other"]
     );
 }
+
+/// A schedule prepared on another thread is the one organised in place.
+#[test]
+fn a_prepared_schedule_crosses_threads_and_matches_one_organised_in_place() {
+    use super::Organization;
+    fn send<T: Send>(value: T) -> T {
+        value
+    }
+    let parsed = parse_m3u(
+        "#EXTM3U\n\
+         #EXTINF:-1 tvg-id=\"a\" group-title=\"News\",Alpha\nhttp://example.test/a\n\
+         #EXTINF:-1 tvg-id=\"b\" group-title=\"Sport\",Beta\nhttp://example.test/b\n\
+         #EXTINF:-1 tvg-id=\"c\" group-title=\"News\",Gamma\nhttp://example.test/c\n",
+    );
+    let (groups, channels) = (parsed.groups, parsed.channels.items);
+    let id = |n: usize| channels[n].id.as_str().to_owned();
+    let organization = Organization {
+        channels: vec![
+            (id(2), "Renamed".into(), false),
+            (id(0), "Alpha".into(), true),
+        ],
+        groups: vec![(groups[1].id.as_str().to_owned(), "Games".into(), false)],
+    };
+    let lists = vec![("mine".to_owned(), "Mine".to_owned(), vec![id(2), id(1)])];
+    let in_place = EpgSchedule::from_catalog(&groups, &channels, GuideStore::default(), NOW);
+    in_place.set_organization(organization.clone());
+    in_place.set_group_lists(lists.clone());
+    let (g, c) = (groups.clone(), channels.clone());
+    let prepared = std::thread::spawn(move || {
+        send(EpgSchedule::prepare(
+            &g,
+            &c,
+            GuideStore::default(),
+            NOW,
+            Some((organization, lists)),
+        ))
+    })
+    .join()
+    .unwrap();
+    let prepared = EpgSchedule::from_prepared(prepared);
+    let view = |s: &EpgSchedule| {
+        (
+            (0..s.channel_count())
+                .map(|c| (s.channel_name(c), s.channel_hidden(c), s.channel_key(c)))
+                .collect::<Vec<_>>(),
+            (0..s.group_count())
+                .map(|g| (s.group_key(g), s.group_name(g), s.group_channels(g)))
+                .collect::<Vec<_>>(),
+            s.playlist_order(),
+        )
+    };
+    assert_eq!(view(&prepared), view(&in_place));
+    assert_eq!(
+        prepared.channel_name(prepared.find_channel(&id(2)).unwrap()),
+        "Renamed"
+    );
+    let plain = EpgSchedule::prepare(&groups, &channels, GuideStore::default(), NOW, None);
+    let plain = EpgSchedule::from_prepared(plain);
+    let fresh = EpgSchedule::from_catalog(&groups, &channels, GuideStore::default(), NOW);
+    assert_eq!(view(&plain), view(&fresh));
+}

@@ -23,7 +23,6 @@
 use std::rc::Rc;
 use std::time::Duration;
 
-use futures_channel::oneshot;
 use iptv_core::playback::{ChannelHistory, ErrorKind, Health, PlaySource, Retry};
 use iptv_core::player_info::StreamFormat as Format;
 use iptv_core::tracks::{Choice, Tracks};
@@ -278,6 +277,7 @@ pub fn stop_surface(ui: Ui, surface: usize) {
 }
 
 fn close(ui: Ui, surface: usize) {
+    cancel_resolve(surface);
     let stream = ui.player.stream(surface);
     stream.health.update(Health::stop);
     stream.parked.set(None);
@@ -290,6 +290,8 @@ fn close(ui: Ui, surface: usize) {
 
 /// Resolves what `surface` plays and hands the stream to its player.
 fn open(ui: Ui, surface: usize, session: u64) {
+    // What the surface asked for before is no longer wanted.
+    cancel_resolve(surface);
     let Some((channel, playback)) = target(ui, surface) else {
         // A retry of the last channel started before the guide arrived.
         match resume::source(ui).filter(|_| surface == 0) {
@@ -401,8 +403,25 @@ fn load(ui: Ui, surface: usize, session: u64, mut source: PlaySource) {
     watch_stall(ui, surface);
 }
 
-/// A Stalker `create_link` on its own thread; the result comes back to the
-/// UI thread and is dropped if the viewer has moved on.
+thread_local! {
+    /// Each surface's Stalker link request in flight: its session and the
+    /// token that cancels it.
+    static RESOLVING: std::cell::RefCell<[Option<(u64, CancelToken)>; SURFACES]> =
+        std::cell::RefCell::default();
+}
+
+/// Cancels `surface`'s link request in flight, if any: the viewer zapped,
+/// the surface reopens or plays nothing.
+fn cancel_resolve(surface: usize) {
+    let running = RESOLVING.with(|r| r.borrow_mut().get_mut(surface).and_then(Option::take));
+    if let Some((_, cancel)) = running {
+        cancel.cancel();
+    }
+}
+
+/// A Stalker `create_link` on the shared network runtime (`executor.rs`);
+/// the result comes back to the UI thread. Opening anything else on the
+/// surface, or closing it, cancels the request (`cancel_resolve`).
 fn resolve_link(
     ui: Ui,
     surface: usize,
@@ -418,26 +437,34 @@ fn resolve_link(
         cmd,
         channel_headers,
     } = *link;
-    let (tx, rx) = oneshot::channel();
-    std::thread::spawn(move || {
-        let result = (|| {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|_| "runtime".to_owned())?;
-            runtime.block_on(async {
-                let net = NetClient::new(crate::settings::net_config())
-                    .map_err(|_| "network".to_owned())?;
-                iptv_import::stalker_link(&net, &mut portal, &cmd, false, &CancelToken::new())
-                    .await
-                    .map_err(|e| format!("{:?}", e.kind()))
-            })
-        })();
-        let _ = tx.send((result, portal));
+    cancel_resolve(surface);
+    let cancel = CancelToken::new();
+    RESOLVING.with(|r| {
+        if let Some(slot) = r.borrow_mut().get_mut(surface) {
+            *slot = Some((session, cancel.clone()));
+        }
+    });
+    let config = crate::settings::net_config();
+    let request = crate::executor::spawn(async move {
+        let result = match NetClient::new(config) {
+            Ok(net) => iptv_import::stalker_link(&net, &mut portal, &cmd, false, &cancel)
+                .await
+                .map_err(|e| format!("{:?}", e.kind())),
+            Err(_) => Err("network".to_owned()),
+        };
+        (result, portal)
     });
     let _task = ui.player.owner.run(|| {
         spawn(async move {
-            let Ok((result, portal)) = rx.await else {
+            let answered = request.await;
+            RESOLVING.with(|r| {
+                if let Some(slot) = r.borrow_mut().get_mut(surface)
+                    && slot.as_ref().is_some_and(|(s, _)| *s == session)
+                {
+                    *slot = None;
+                }
+            });
+            let Ok((result, portal)) = answered else {
                 return;
             };
             if ui
@@ -514,31 +541,28 @@ fn last_channel_path(source: Option<SourceId>) -> std::path::PathBuf {
     })
 }
 
+/// Queues the write: a zap never waits for the disk (`file_writer`).
 fn save_last_channel(source: Option<SourceId>, key: &str) {
-    let path = last_channel_path(source);
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    if let Err(e) = std::fs::write(&path, key) {
-        log::warn!(
-            "iptv player: could not save the last channel ({})",
-            e.kind()
-        );
-    }
+    drop(crate::file_writer::write(
+        last_channel_path(source),
+        key.as_bytes().to_vec(),
+    ));
 }
 
+/// Includes a write still queued, so a zap is remembered at once.
 fn load_last_channel(source: Option<SourceId>) -> Option<String> {
-    let read = |path| {
-        let key = std::fs::read_to_string(path).ok()?;
+    let read = |path: std::path::PathBuf| {
+        let key = String::from_utf8(crate::file_writer::read(&path)?).ok()?;
         let key = key.trim();
         (!key.is_empty()).then(|| key.to_owned())
     };
     read(last_channel_path(source)).or_else(|| read(last_channel_path(None)))
 }
 
-/// Playlist `source` was deleted: its last channel goes too.
+/// Playlist `source` was deleted: its last channel goes too (after any
+/// write still queued for it).
 pub fn forget_source(source: SourceId) {
-    let _ = std::fs::remove_file(last_channel_path(Some(source)));
+    drop(crate::file_writer::remove(last_channel_path(Some(source))));
 }
 
 /// Another playlist is about to be shown (`data.rs`): what plays and the

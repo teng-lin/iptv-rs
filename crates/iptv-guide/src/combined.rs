@@ -2,7 +2,10 @@
 //! remain local; UI identities are qualified by the owning source.
 use crate::EpgSchedule;
 use iptv_core::guide::{Program, Schedule};
-use std::{collections::BTreeSet, rc::Rc};
+use std::{
+    collections::{BTreeSet, HashMap},
+    rc::Rc,
+};
 
 pub fn qualified_key(source: i64, key: &str) -> String {
     format!("source:{source}:{key}")
@@ -27,6 +30,12 @@ pub struct CombinedSchedule {
     groups: Vec<(usize, Option<usize>)>,
     collapsed: BTreeSet<i64>,
     epoch: i64,
+    /// Each source's first channel.
+    offsets: Vec<usize>,
+    /// Each source's position, by id.
+    by_id: HashMap<i64, usize>,
+    /// Each group row's position, by its source position and child group.
+    group_rows: HashMap<(usize, Option<usize>), usize>,
 }
 impl CombinedSchedule {
     pub fn new(sources: Vec<SourceSchedule>, epoch: i64) -> Self {
@@ -43,19 +52,46 @@ impl CombinedSchedule {
                     .chain((0..p.schedule.group_count()).map(move |g| (s, Some(g))))
             })
             .collect();
-        Self {
+        let offsets = sources
+            .iter()
+            .scan(0, |next, s| {
+                let first = *next;
+                *next += s.schedule.channel_count();
+                Some(first)
+            })
+            .collect();
+        let by_id = sources
+            .iter()
+            .enumerate()
+            .map(|(at, s)| (s.id, at))
+            .collect();
+        let mut schedule = Self {
             sources,
             channels,
             groups,
             epoch,
             collapsed: BTreeSet::new(),
-        }
+            offsets,
+            by_id,
+            group_rows: HashMap::new(),
+        };
+        schedule.index_groups();
+        schedule
     }
     pub fn with_collapsed_sources(mut self, ids: impl IntoIterator<Item = i64>) -> Self {
         self.collapsed = ids.into_iter().collect();
         self.groups
             .retain(|(s, g)| g.is_none() || !self.collapsed.contains(&self.sources[*s].id));
+        self.index_groups();
         self
+    }
+    fn index_groups(&mut self) {
+        self.group_rows = self
+            .groups
+            .iter()
+            .enumerate()
+            .map(|(row, &group)| (group, row))
+            .collect();
     }
     /// An independent browser projection over the same sources and channel
     /// indices. Rebuilds all group rows so previously folded sections can open.
@@ -108,10 +144,7 @@ impl CombinedSchedule {
         }
     }
     fn channel_offset(&self, source: usize) -> usize {
-        self.sources[..source]
-            .iter()
-            .map(|s| s.schedule.channel_count())
-            .sum()
+        self.offsets[source]
     }
     pub fn description(&self, channel: usize, p: Program) -> Option<String> {
         let (s, c) = self.channel_source(channel)?;
@@ -258,6 +291,25 @@ impl Schedule for CombinedSchedule {
     fn channel_key(&self, c: usize) -> Option<String> {
         let (s, c) = self.channel_source(c)?;
         Some(qualified_key(s.id, &s.schedule.channel_key(c)?))
+    }
+    /// The owning source's own index, then its offset.
+    fn find_channel(&self, key: &str) -> Option<usize> {
+        let (id, local) = split_key(key)?;
+        let &source = self.by_id.get(&id)?;
+        let channel = self.sources[source].schedule.find_channel(local)?;
+        Some(self.offsets[source] + channel)
+    }
+    /// The owning source's category row (its group in the child), else the
+    /// source's playlist row, as a scan of the rows finds them: a source's
+    /// rows hold only its channels, and its child rows come in the child's
+    /// order.
+    fn channel_group(&self, c: usize) -> Option<usize> {
+        let &(source, local) = self.channels.get(c)?;
+        let child = &self.sources[source].schedule;
+        iptv_core::lists::group_of(&**child, local)
+            .and_then(|g| self.group_rows.get(&(source, Some(g))))
+            .or_else(|| self.group_rows.get(&(source, None)))
+            .copied()
     }
     fn title(&self, c: usize, p: Program) -> String {
         self.channel_source(c)

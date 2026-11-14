@@ -21,8 +21,10 @@ mod custom_groups;
 mod data;
 mod desktop;
 mod epg_sources_view;
+mod executor;
 mod fav_editor;
 mod favorites;
+mod file_writer;
 mod fonts;
 mod grid;
 mod guide_assign_view;
@@ -918,3 +920,7 @@ pub(crate) fn go_back(ui: Ui) -> bool {
 /// Explicit synthetic-key injection for the headless test binary only.
 #[cfg(feature = "test-support")]
 pub use credential_key::install_test_key;
+/// Keeps the store's writer busy, as a long catalog or guide publish does,
+/// for the headless tests of what must not wait for it.
+#[cfg(feature = "test-support")]
+pub use store_service::occupy_writer;

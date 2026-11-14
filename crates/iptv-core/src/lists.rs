@@ -103,11 +103,18 @@ impl ListId {
     }
 }
 
-/// The catalog group holding `channel` (channels are stored grouped).
+/// The catalog group holding `channel` (channels are stored grouped):
+/// [`Schedule::channel_group`].
 pub fn group_of(catalog: &(impl Schedule + ?Sized), channel: usize) -> Option<usize> {
     if channel >= catalog.channel_count() || catalog.group_count() == 0 {
         return None;
     }
+    catalog.channel_group(channel)
+}
+
+/// [`group_of`] by asking every group for its channels: the trait's
+/// default, and what an index must agree with.
+pub fn scan_group_of(catalog: &(impl Schedule + ?Sized), channel: usize) -> Option<usize> {
     // Prefer a category over its playlist parent, which contains the same
     // channel. A collapsed source still has its parent as a useful fallback.
     (0..catalog.group_count())

@@ -258,6 +258,11 @@ fn remove_stale_work(root: &Path) -> Result<()> {
 
 fn export(root: &Path, destination: &Path, settings: &str) -> Result<()> {
     validate_settings(settings)?;
+    // Small files written in the background (a last channel) reach the disk
+    // before they are copied.
+    if !crate::file_writer::flush(std::time::Duration::from_secs(5)) {
+        log::warn!("iptv backup: queued file writes did not finish; copying what is on disk");
+    }
     let absolute_destination = if destination.is_absolute() {
         destination.to_owned()
     } else {

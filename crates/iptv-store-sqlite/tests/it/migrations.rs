@@ -109,6 +109,20 @@ const HISTORY: &[Version] = &[
             "data_v8.sql",
         ],
     },
+    Version {
+        version: 9,
+        data: &[
+            "data_v1.sql",
+            "data_v2.sql",
+            "data_v3.sql",
+            "data_v4.sql",
+            "data_v5.sql",
+            "data_v6.sql",
+            "data_v7.sql",
+            "data_v8.sql",
+            "data_v9.sql",
+        ],
+    },
 ];
 
 fn fixture(name: &str) -> String {
@@ -342,6 +356,7 @@ fn every_historical_version_migrates_with_its_data() {
         check_guide(&store, v.version);
         check_settings(&store, v.version);
         check_feed_results(&store, v.version);
+        check_search_history(&store, v.version);
         drop(store);
 
         // Opening again (every app start) changes nothing.
@@ -356,7 +371,19 @@ fn every_historical_version_migrates_with_its_data() {
         check_guide(&again, v.version);
         check_settings(&again, v.version);
         check_feed_results(&again, v.version);
+        check_search_history(&again, v.version);
     }
+}
+
+/// Recent searches (v9 builds on). Before v9 they were a file the app
+/// imports on its own, so an upgraded store starts with none.
+fn check_search_history(store: &Store, version: u32) {
+    let expected: &[&str] = if version >= 9 {
+        &["fixture sport", "Fixture News"]
+    } else {
+        &[]
+    };
+    assert_eq!(store.search_history().unwrap(), expected);
 }
 
 /// The shown source (v5 builds on), and each source's guide sources: a v5

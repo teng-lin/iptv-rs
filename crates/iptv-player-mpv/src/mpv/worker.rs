@@ -41,6 +41,9 @@ pub enum Cmd {
     /// Queue before the first load; other players retain their usual bridge.
     #[cfg(all(test, target_os = "linux"))]
     DisableBridge,
+    /// Ends the thread as a bug in it would (a test of the app noticing).
+    #[cfg(all(test, target_os = "linux"))]
+    Panic,
     /// `loadfile <url> replace`, from the default tracks (video and audio
     /// automatic, no subtitles) with `options` set first
     /// ([`super::map::load_options`]); answered by [`Note::Loading`]. A
@@ -109,28 +112,63 @@ pub struct Worker {
     mpv: Arc<Mpv>,
     queue: Arc<Mutex<Vec<Cmd>>>,
     quit: Arc<AtomicBool>,
+    /// The `on_load` hook guards loads: added once per handle, and given
+    /// up for good when a refused address could not be replaced
+    /// ([`Bridge::guarded`]); a replacement thread inherits it.
+    guarded: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
+    /// Disconnected once the thread has ended, whatever ended it: a panic
+    /// or mpv shutting down. `notify` runs once more after that.
     pub notes: Receiver<Note>,
 }
 
 impl Worker {
-    /// Starts the thread; `notify` runs (on it) after notes were sent.
+    /// Starts the thread; `notify` runs (on it) after notes were sent, and
+    /// when it ends.
     pub fn spawn(mpv: Arc<Mpv>, notify: impl Fn() + Send + 'static) -> Worker {
         // SAFETY: a live initialized handle and static NUL-terminated hook name.
         let guarded = unsafe { ffi::mpv_hook_add(mpv.0, 0, c"on_load".as_ptr(), 0) } >= 0;
+        Self::start(mpv, Arc::new(AtomicBool::new(guarded)), notify)
+    }
+
+    /// A new thread for this worker's handle, after its own ended. The
+    /// handle keeps its hook and properties; commands queued for the old
+    /// thread are gone.
+    pub fn replacement(&self, notify: impl Fn() + Send + 'static) -> Worker {
+        Self::start(self.mpv.clone(), self.guarded.clone(), notify)
+    }
+
+    fn start(
+        mpv: Arc<Mpv>,
+        guarded: Arc<AtomicBool>,
+        notify: impl Fn() + Send + 'static,
+    ) -> Worker {
         let (tx, notes) = channel();
         let queue = Arc::new(Mutex::new(Vec::new()));
         let quit = Arc::new(AtomicBool::new(false));
         let policy = super::POLICY.get();
         let thread = {
-            let (mpv, queue, quit) = (mpv.clone(), queue.clone(), quit.clone());
+            let (mpv, queue, quit, guarded) =
+                (mpv.clone(), queue.clone(), quit.clone(), guarded.clone());
             std::thread::Builder::new()
                 .name("iptv-mpv".into())
                 .spawn(move || {
+                    /// Tells the main loop once the thread ends, after
+                    /// `tx` is gone, so its drain sees the disconnection.
+                    struct Ended<F: Fn()>(F);
+                    impl<F: Fn()> Drop for Ended<F> {
+                        fn drop(&mut self) {
+                            (self.0)();
+                        }
+                    }
+                    let ended = Ended(notify);
+                    // Dropped before `ended` (reverse order), also when
+                    // `run` unwinds.
+                    let tx = tx;
                     let mut bridge = Bridge::new();
-                    bridge.guarded = guarded;
                     bridge.policy = policy;
-                    run(&mpv, &queue, &quit, &tx, notify, bridge)
+                    bridge.guarded = guarded.load(Ordering::Acquire);
+                    run(&mpv, &queue, &quit, &tx, &ended.0, &mut bridge, &guarded);
                 })
                 .map_err(|e| log::error!("iptv mpv: no control thread ({e})"))
                 .ok()
@@ -139,6 +177,7 @@ impl Worker {
             mpv,
             queue,
             quit,
+            guarded,
             thread,
             notes,
         }
@@ -167,8 +206,9 @@ fn run(
     queue: &Mutex<Vec<Cmd>>,
     quit: &AtomicBool,
     tx: &Sender<Note>,
-    notify: impl Fn(),
-    mut bridge: Bridge,
+    notify: &impl Fn(),
+    bridge: &mut Bridge,
+    guarded: &AtomicBool,
 ) {
     loop {
         if quit.load(Ordering::Acquire) {
@@ -177,7 +217,7 @@ fn run(
         let cmds = queue.lock().map(|mut q| std::mem::take(&mut *q));
         let mut sent = false;
         for cmd in cmds.unwrap_or_default() {
-            for note in execute(mpv, cmd, &mut bridge) {
+            for note in execute(mpv, cmd, bridge) {
                 sent |= tx.send(note).is_ok();
             }
         }
@@ -210,6 +250,7 @@ fn run(
                             // substitution. Keep the hook blocked until handle
                             // teardown and refuse subsequent source loads.
                             bridge.guarded = false;
+                            guarded.store(false, Ordering::Release);
                             sent |= tx
                                 .send(Note::TransportError(
                                     "ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED",
@@ -261,6 +302,8 @@ fn execute(mpv: &Mpv, cmd: Cmd, bridge: &mut Bridge) -> Vec<Note> {
             bridge.enabled = false;
             Vec::new()
         }
+        #[cfg(all(test, target_os = "linux"))]
+        Cmd::Panic => std::panic::resume_unwind(Box::new("synthetic control thread failure")),
         Cmd::Load {
             url,
             live,

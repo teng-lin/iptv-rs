@@ -47,7 +47,7 @@ pub fn build(schedule: &dyn Schedule, rows: usize, done: impl FnOnce(ProgrammeIn
     let from: UnixTime =
         crate::time::wall_unix().saturating_sub(i64::from(keep).saturating_mul(DAY));
     let started = Instant::now();
-    let read = crate::store_service::call(move |store| {
+    let read = crate::store_service::read(move |store| {
         let mut builder = ProgrammeIndexBuilder::new(rows);
         for (source, keys, offset) in sources {
             store.for_each_epg_title(

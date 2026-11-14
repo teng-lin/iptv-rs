@@ -153,8 +153,8 @@ fn reattach_guide(
             Some(pending.clone()),
         )
         .await;
-        while current() && !pending.finished() {
-            nsh_core::prelude::timer(super::POLL).await;
+        if current() {
+            pending.until_finished().await;
         }
         if current() {
             super::read_guide(
@@ -264,18 +264,20 @@ pub(super) async fn show(ui: Ui, imported: Box<Imported>, held: Option<opening::
             && super::GENERATION.with(Cell::get) == generation
             && library::import_revision_is_current(source, &revision)
     };
-    let can_resume = imported.resume;
-    let mut schedule = EpgSchedule::from_catalog(
-        &imported.groups,
-        &imported.channels,
-        imported.guide,
-        imported.now,
-    );
-    organization::apply(&schedule, source).await;
+    let Imported {
+        groups,
+        channels,
+        playback,
+        guide,
+        now,
+        resume: can_resume,
+        ..
+    } = *imported;
+    let mut schedule = organization::build(source, groups, channels, guide, now).await;
     if !current() {
         return;
     }
-    schedule = match imported.playback {
+    schedule = match playback {
         Streams::New(context, allowed) => {
             LIMITS.with(|l| {
                 let mut l = l.borrow_mut();
@@ -294,7 +296,7 @@ pub(super) async fn show(ui: Ui, imported: Box<Imported>, held: Option<opening::
     }
     schedule = match held {
         Some(h) => schedule.held_only(h.from, h.to).held_channels(h.keys),
-        None => pages::paged(ui, schedule, source, imported.now).await,
+        None => pages::paged(ui, schedule, source, now).await,
     };
     if !current() {
         return;
