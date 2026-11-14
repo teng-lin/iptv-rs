@@ -58,6 +58,21 @@ class VersionTests(unittest.TestCase):
             bump_version.bump(self.root, "patch")
         self.assertEqual(before, self.snapshot())
 
+    def test_fuzz_lock_follows_the_crates_it_names(self):
+        (self.root / "fuzz").mkdir()
+        fuzz = self.root / "fuzz/Cargo.lock"
+        fuzz.write_text('version = 4\n\n[[package]]\nname = "synthetic-app"\nversion = "1.2.3"\n\n'
+                        '[[package]]\nname = "synthetic-fuzz"\nversion = "0.0.0"\n')
+        bump_version.bump(self.root, "patch")
+        self.assertIn('name = "synthetic-app"\nversion = "1.2.4"', fuzz.read_text())
+        self.assertIn('name = "synthetic-fuzz"\nversion = "0.0.0"', fuzz.read_text())
+        # A fuzz lock left behind by an earlier release is refused, not skipped.
+        fuzz.write_text(fuzz.read_text().replace('version = "1.2.4"', 'version = "1.0.0"'))
+        before = self.snapshot()
+        with self.assertRaisesRegex(ValueError, "fuzz/Cargo.lock version is out of sync"):
+            bump_version.bump(self.root, "patch")
+        self.assertEqual(before, self.snapshot())
+
     def test_stale_lockfile_never_writes(self):
         path = self.root / "Cargo.lock"
         path.write_text(path.read_text().replace('version = "1.2.3"', 'version = "1.0.0"'))

@@ -194,11 +194,11 @@ dependencies = [
 
 [[package]]
 name = "iptv-core"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "iptv-epg"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "flate2",
  "iptv-core",
@@ -209,7 +209,7 @@ dependencies = [
 
 [[package]]
 name = "iptv-import"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "flate2",
  "iptv-core",
@@ -231,7 +231,7 @@ dependencies = [
 
 [[package]]
 name = "iptv-providers"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "iptv-core",
  "percent-encoding",
@@ -244,7 +244,7 @@ dependencies = [
 
 [[package]]
 name = "iptv-settings"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde_json",
 ]

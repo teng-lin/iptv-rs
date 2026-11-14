@@ -23,6 +23,34 @@ itself fails. Either can therefore be a required check. Desktop packaging is
 path-filtered at the workflow level and must not be required, since skipped
 workflows can remain pending.
 
+## Coverage and fuzzing
+
+Neither of these gates a merge. Both workflows are path-filtered on PRs, so do
+not make them required checks.
+
+- **Coverage** (`.github/workflows/coverage.yml`) runs `tools/ci/coverage.sh` on
+  Linux for PRs that touch `crates/**` and on every master push. It measures the
+  library crates' tests with `cargo llvm-cov` 0.9.1 (everything except
+  `iptv-app`, whose scenario tests run the whole app), prints the per-file table
+  in the job summary, and uploads `lcov.info` and an HTML report as the
+  `coverage` artifact. The job is allowed to fail. Run it locally with
+  `rustup component add llvm-tools` and `cargo install cargo-llvm-cov --version
+  0.9.1 --locked`.
+- **Fuzzing** (`.github/workflows/fuzz.yml`) runs `tools/ci/fuzz-imports.sh` once
+  per fuzz target, in parallel. The targets are the `[[bin]]` entries of
+  `fuzz/Cargo.toml` (what `cargo fuzz list` prints), so a new target is picked up
+  without touching the workflow. PRs that change the playlist, guide or provider
+  parsers, the import pipeline, the playback manifest rewriters or the harness
+  get 60 seconds per target. The nightly Import stress workflow calls the same
+  workflow with 300 seconds per target and saves each target's corpus to the
+  Actions cache; every later run, including PR passes, starts from the newest
+  saved corpus plus the committed seeds. Crashing inputs are uploaded as the
+  `fuzz-<target>` artifact. The harness has its own `fuzz/Cargo.lock`, built
+  with `--locked`; `tools/bump-version.py` keeps its workspace crate versions in
+  step.
+
+## Desktop packages
+
 Desktop Package checks likewise run only for package/build inputs on PRs and
 support manual dispatch. Signed release packaging still runs on tags or manual
 requests.

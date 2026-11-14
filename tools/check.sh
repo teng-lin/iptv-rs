@@ -39,4 +39,5 @@ python3 tools/ci/test-publish-release.py
 python3 tools/ci/test-sbom.py
 python3 tools/ci/test-native-sources.py
 python3 tools/ci/test-check-parity.py
+python3 tools/ci/test-fuzz-targets.py
 echo "all checks passed"
