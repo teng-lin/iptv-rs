@@ -148,14 +148,30 @@ fn zapping_away_cancels_a_pending_stalker_link_request() {
     .unwrap();
     let asked = |what: fn(&Slow) -> bool| {
         let state = state.clone();
-        move |_: &nsh_testing::Screen| what(&state.0.lock().unwrap())
+        move || what(&state.0.lock().unwrap())
     };
-    app.wait_until("the slow channel's link request", WAIT, asked(|s| s.asked))
-        .unwrap();
+    let wait = crate::isolated::wait_outside;
+    wait(
+        &mut app,
+        "the slow channel's link request",
+        WAIT,
+        asked(|s| s.asked),
+    )
+    .unwrap();
     // Another channel: the slow request is no longer wanted.
     app.press_key("down").unwrap();
-    app.wait_until("the abandoned link request", WAIT, asked(|s| s.abandoned))
-        .unwrap();
-    app.wait_until("the next channel's link", WAIT, asked(|s| s.quick_asked))
-        .unwrap();
+    wait(
+        &mut app,
+        "the abandoned link request",
+        WAIT,
+        asked(|s| s.abandoned),
+    )
+    .unwrap();
+    wait(
+        &mut app,
+        "the next channel's link",
+        WAIT,
+        asked(|s| s.quick_asked),
+    )
+    .unwrap();
 }

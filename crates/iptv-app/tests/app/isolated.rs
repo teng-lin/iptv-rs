@@ -262,3 +262,28 @@ pub fn open_database(
         &iptv_store_sqlite::DatabaseKey::from_bytes([0x54; 32]),
     )
 }
+
+/// Waits until `done`, which reads state outside the screen (a database
+/// row, a mock server's requests), `timeout` at most; the app runs
+/// meanwhile. `Headless::wait_until` looks again only when the app sends a
+/// batch: when the awaited change comes after the app's last batch (an
+/// idle guide), it would wait out the whole timeout. This looks every
+/// 50 ms instead.
+pub fn wait_outside(
+    app: &mut nsh_testing::Headless,
+    what: &str,
+    timeout: std::time::Duration,
+    done: impl Fn() -> bool,
+) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + timeout;
+    while !done() {
+        if std::time::Instant::now() >= deadline {
+            return Err(format!(
+                "{what} never happened in {} ms",
+                timeout.as_millis()
+            ));
+        }
+        app.wait(std::time::Duration::from_millis(50))?;
+    }
+    Ok(())
+}
