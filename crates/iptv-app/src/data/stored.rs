@@ -27,7 +27,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
-use std::sync::mpsc::{self, Sender, TryRecvError};
+use tokio::sync::mpsc::{UnboundedSender as Sender, unbounded_channel};
 
 use crate::private_files::Client as NetClient;
 use iptv_epg::{ChannelKey, DAY, GuideStore, Overrides, UnixTime};
@@ -45,7 +45,7 @@ use iptv_store_sqlite::{
 
 use nsh_core::prelude::timer;
 
-use super::{Downloaded, GENERATION, Imported, Msg, POLL, Streams, guides};
+use super::{Downloaded, GENERATION, Imported, Msg, Streams, guides};
 use crate::Ui;
 
 thread_local! {
@@ -710,7 +710,7 @@ pub fn update_source(ui: Ui, source: SourceId, done: impl FnOnce(bool) + 'static
         let restart_checks = stored.is_none();
 
         let generation = GENERATION.with(Cell::get);
-        let (tx, rx) = mpsc::channel();
+        let (tx, mut rx) = unbounded_channel();
         let accepted = super::workers::submit(super::source_is_visible(ui, source), move || {
             super::with_runtime(|| download_now(source, guides, restart_checks, &tx, &cancel));
         });
@@ -719,24 +719,23 @@ pub fn update_source(ui: Ui, source: SourceId, done: impl FnOnce(bool) + 'static
         }
         super::spawn_in_app(async move {
             loop {
-                match rx.try_recv() {
-                    Ok(Msg::Guide(imported))
+                match rx.recv().await {
+                    Some(Msg::Guide(imported))
                         if (SHOWN.with(Cell::get) == Some(source)
                             || super::combined::includes(ui, source))
                             && super::library::import_is_current(source, &completion) =>
                     {
                         super::show(ui, imported, generation, false).await
                     }
-                    Ok(Msg::NextCheck { source, at })
+                    Some(Msg::NextCheck { source, at })
                         if (SHOWN.with(Cell::get) == Some(source)
                             || super::combined::includes(ui, source))
                             && super::library::import_is_current(source, &completion) =>
                     {
                         super::schedule_check(ui, source, at, generation);
                     }
-                    Ok(_) => {}
-                    Err(TryRecvError::Empty) => timer(POLL).await,
-                    Err(TryRecvError::Disconnected) => break,
+                    Some(_) => {}
+                    None => break,
                 }
             }
             completion.finish();

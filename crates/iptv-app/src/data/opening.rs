@@ -17,8 +17,8 @@
 //! (measured on a 32-bit Android TV box).
 
 use std::rc::Rc;
-use std::sync::mpsc::Sender;
 use std::time::Instant;
+use tokio::sync::mpsc::UnboundedSender as Sender;
 
 use iptv_epg::{ChannelKey, GuideStore, UnixTime};
 use iptv_guide::EpgSchedule;

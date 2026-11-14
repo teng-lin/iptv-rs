@@ -153,8 +153,8 @@ fn reattach_guide(
             Some(pending.clone()),
         )
         .await;
-        while current() && !pending.finished() {
-            nsh_core::prelude::timer(super::POLL).await;
+        if current() {
+            pending.until_finished().await;
         }
         if current() {
             super::read_guide(

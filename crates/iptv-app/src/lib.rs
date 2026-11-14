@@ -21,6 +21,7 @@ mod custom_groups;
 mod data;
 mod desktop;
 mod epg_sources_view;
+mod executor;
 mod fav_editor;
 mod favorites;
 mod file_writer;

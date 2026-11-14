@@ -5,14 +5,14 @@ use futures_channel::oneshot;
 use nsh_core::prelude::*;
 use std::{
     collections::VecDeque,
-    sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, mpsc},
+    sync::{Mutex, MutexGuard, OnceLock, PoisonError},
     time::Duration,
 };
+use tokio::sync::Semaphore;
 
 const IMAGE_BYTES: u64 = 4 << 20;
 const CACHE_BYTES: usize = 8 << 20;
 type Reply = oneshot::Sender<String>;
-type Request = (String, Reply);
 #[derive(Default)]
 struct Cache {
     entries: VecDeque<(String, String)>,
@@ -59,58 +59,57 @@ fn cache() -> MutexGuard<'static, Cache> {
 fn locked(cache: &Mutex<Cache>) -> MutexGuard<'_, Cache> {
     cache.lock().unwrap_or_else(PoisonError::into_inner)
 }
-fn sender() -> &'static mpsc::SyncSender<Request> {
-    static SENDER: OnceLock<mpsc::SyncSender<Request>> = OnceLock::new();
-    SENDER.get_or_init(|| {
-        let (tx, rx) = mpsc::sync_channel::<Request>(64);
-        let rx = Arc::new(Mutex::new(rx));
-        for _ in 0..4 {
-            let rx = rx.clone();
-            std::thread::spawn(move || {
-                let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                else {
-                    return;
-                };
-                let config = iptv_net::NetConfig {
-                    max_streamed_bytes: IMAGE_BYTES,
-                    max_buffered_bytes: IMAGE_BYTES as usize,
-                    request_timeout: Duration::from_secs(10),
-                    allow_files: false,
-                    #[cfg(debug_assertions)]
-                    allow_private_fixture: cfg!(feature = "test-support")
-                        || crate::data::DEV_PLAYLIST.is_some(),
-                    ..Default::default()
-                };
-                let net = runtime.block_on(async { iptv_net::NetClient::new(config) });
-                let Ok(net) = net else { return };
-                loop {
-                    // The lock only shares the receiver between the workers:
-                    // one that panicked left nothing half-done in it.
-                    let request = rx.lock().unwrap_or_else(PoisonError::into_inner).recv();
-                    let Ok(request) = request else {
-                        break;
-                    };
-                    let (url, reply) = request;
-                    if reply.is_canceled() {
-                        continue;
-                    }
-                    let cached = cache().get(&url);
-                    let value = cached.unwrap_or_else(|| {
-                        let value = runtime
-                            .block_on(download(&net, &url))
-                            .unwrap_or_else(crate::grid::no_logo);
-                        cache().insert(url, value.clone());
-                        value
-                    });
-                    let _ = reply.send(value);
-                }
-            });
-        }
-        tx
-    })
+/// Downloads at once at most; more wait their turn (cheaply: a pending
+/// future each), and one whose view moved on gives up its turn.
+const PARALLEL: usize = 4;
+
+fn permits() -> &'static Semaphore {
+    static PERMITS: Semaphore = Semaphore::const_new(PARALLEL);
+    &PERMITS
 }
+
+/// One client for every artwork download, made on the network runtime.
+fn client() -> Option<&'static iptv_net::NetClient> {
+    static CLIENT: OnceLock<Option<iptv_net::NetClient>> = OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            let config = iptv_net::NetConfig {
+                max_streamed_bytes: IMAGE_BYTES,
+                max_buffered_bytes: IMAGE_BYTES as usize,
+                request_timeout: Duration::from_secs(10),
+                allow_files: false,
+                #[cfg(debug_assertions)]
+                allow_private_fixture: cfg!(feature = "test-support")
+                    || crate::data::DEV_PLAYLIST.is_some(),
+                ..Default::default()
+            };
+            iptv_net::NetClient::new(config).ok()
+        })
+        .as_ref()
+}
+
+/// The artwork at `url` as a data URI (the no-logo image when it cannot
+/// be had), from the cache or downloaded on the shared runtime. `None`
+/// when `wanted` was dropped (its view shows something else) before its
+/// turn came.
+async fn fetch(url: String, wanted: Reply) -> Option<String> {
+    let _turn = permits().acquire().await.ok()?;
+    if wanted.is_canceled() {
+        return None;
+    }
+    if let Some(value) = cache().get(&url) {
+        return Some(value);
+    }
+    let value = match client() {
+        Some(net) => download(net, &url).await,
+        None => None,
+    }
+    .unwrap_or_else(crate::grid::no_logo);
+    cache().insert(url, value.clone());
+    let _ = wanted.send(value.clone());
+    Some(value)
+}
+
 async fn download(net: &iptv_net::NetClient, url: &str) -> Option<String> {
     let mut request = iptv_providers::HttpRequest::get(url);
     request.public_only = true;
@@ -144,21 +143,11 @@ pub(crate) fn source(url: impl Fn() -> String + 'static) -> impl Fn() -> String 
             return;
         }
         let (tx, rx) = oneshot::channel();
+        // Detached: the download fills the cache even if this view moves
+        // on meanwhile; dropping `rx` (the effect's next run ends this
+        // task) only skips a download that has not started.
+        drop(crate::executor::spawn(fetch(url, tx)));
         drop(spawn(async move {
-            let mut request = (url, tx);
-            loop {
-                if generation.get_untracked() != current {
-                    return;
-                }
-                match sender().try_send(request) {
-                    Ok(()) => break,
-                    Err(mpsc::TrySendError::Full(queued)) => {
-                        request = queued;
-                        timer(Duration::from_millis(100)).await;
-                    }
-                    Err(mpsc::TrySendError::Disconnected(_)) => return,
-                }
-            }
             if let Ok(value) = rx.await
                 && generation.get_untracked() == current
             {
@@ -207,6 +196,7 @@ mod tests {
     }
     #[test]
     fn a_poisoned_cache_lock_still_serves() {
+        use std::sync::Arc;
         let cache = Arc::new(Mutex::new(Cache::default()));
         locked(&cache).insert("logo".into(), "kept".into());
         let held = cache.clone();

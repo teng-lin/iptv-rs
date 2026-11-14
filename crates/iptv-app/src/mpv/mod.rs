@@ -91,6 +91,7 @@ use std::ffi::{c_int, c_void};
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::TryRecvError;
 
 use serde_json::{Value, json};
 
@@ -199,7 +200,11 @@ struct Inner {
     video: Video,
     ctx: ComponentContext,
     mpv: Option<Arc<Mpv>>,
-    worker: Option<Worker>,
+    /// The control thread; `None` after it ended ([`Inner::drain`]) until
+    /// the next open starts another.
+    worker: RefCell<Option<Worker>>,
+    /// A control thread that ended, kept until its replacement starts.
+    dead: RefCell<Option<Worker>>,
     render: Cell<*mut ffi::mpv_render_context>,
     #[cfg(not(windows))]
     gl: Cell<Option<gl::Gl>>,
@@ -254,18 +259,16 @@ impl Inner {
             events: AtomicBool::new(false),
             frame: AtomicBool::new(false),
         });
-        let worker = mpv.as_ref().map(|mpv| {
-            let waker = waker.clone();
-            Worker::spawn(mpv.clone(), move || {
-                wake(&waker.events, waker.id, Inner::drain)
-            })
-        });
+        let worker = mpv
+            .as_ref()
+            .map(|mpv| Worker::spawn(mpv.clone(), Self::notify(&waker)));
         let inner = Rc::new(Inner {
             id,
             video,
             ctx,
             mpv,
-            worker,
+            worker: RefCell::new(worker),
+            dead: RefCell::default(),
             render: Cell::new(std::ptr::null_mut()),
             #[cfg(not(windows))]
             gl: Cell::new(None),
@@ -392,10 +395,39 @@ impl Inner {
         }
     }
 
+    /// What the control thread runs after it sent notes, and when it ends:
+    /// [`Inner::drain`] on the main loop.
+    fn notify(waker: &Arc<Waker>) -> impl Fn() + Send + 'static {
+        let waker = waker.clone();
+        move || wake(&waker.events, waker.id, Inner::drain)
+    }
+
+    /// Queues `cmd` for the control thread. Without one (it ended), the
+    /// command is dropped: the next open starts a thread and sends what a
+    /// new stream needs.
     fn send(&self, cmd: Cmd) {
-        if let Some(w) = &self.worker {
+        if let Some(w) = self.worker.borrow().as_ref() {
             w.send(cmd);
         }
+    }
+
+    /// Starts a control thread for the handle when the last one ended.
+    fn revive(&self) {
+        let replacement = {
+            let worker = self.worker.borrow();
+            match (worker.as_ref(), &self.mpv) {
+                (Some(_), _) | (None, None) => return,
+                (None, Some(mpv)) => self.dead.take().map_or_else(
+                    || Worker::spawn(mpv.clone(), Self::notify(&self.waker)),
+                    |dead| dead.replacement(Self::notify(&self.waker)),
+                ),
+            }
+        };
+        log::info!("iptv mpv {}: started a new control thread", self.id);
+        *self.worker.borrow_mut() = Some(replacement);
+        // The new thread has the handle's properties, not the old one's
+        // HTTP options (they belong to its relay).
+        self.apply_http();
     }
 
     fn emit(&self, out: Out) {
@@ -447,6 +479,7 @@ impl Inner {
     /// unless `keep_frame` (the same stream again: its last frame stays
     /// until the new one plays).
     fn open(&self, keep_frame: bool) {
+        self.revive();
         let mut out = Out::new();
         let url = {
             let mut st = self.state.borrow_mut();
@@ -647,10 +680,27 @@ impl Inner {
     /// What the control thread reported (on the main loop).
     fn drain(&self) {
         self.waker.events.store(false, Ordering::Release);
-        let Some(worker) = &self.worker else { return };
+        let mut notes = Vec::new();
+        let ended = {
+            let worker = self.worker.borrow();
+            let Some(worker) = worker.as_ref() else {
+                return;
+            };
+            loop {
+                match worker.notes.try_recv() {
+                    Ok(note) => notes.push(note),
+                    Err(TryRecvError::Empty) => break false,
+                    Err(TryRecvError::Disconnected) => break true,
+                }
+            }
+        };
         let mut out = Out::new();
-        while let Ok(note) = worker.notes.try_recv() {
+        // Handling a note may send commands: the worker is not borrowed.
+        for note in notes {
             self.note(note, &mut out);
+        }
+        if ended {
+            self.control_thread_ended(&mut out);
         }
         let failed = self.state.borrow_mut().failed.take();
         if let Some(error) = failed {
@@ -659,6 +709,28 @@ impl Inner {
             self.video.redraw();
         }
         self.emit(out);
+    }
+
+    /// The control thread is gone (a panic in it, or mpv shut down):
+    /// nothing reaches mpv any more. What plays fails as a player error,
+    /// which the app retries like any other; that open starts a new thread
+    /// ([`Inner::revive`]).
+    fn control_thread_ended(&self, out: &mut Out) {
+        log::error!("iptv mpv {}: the control thread stopped", self.id);
+        // Its replacement inherits the handle's hook state from it.
+        if let Some(dead) = self.worker.borrow_mut().take() {
+            *self.dead.borrow_mut() = Some(dead);
+        }
+        let playing = {
+            let mut st = self.state.borrow_mut();
+            st.expected = None;
+            st.loads = 0;
+            st.url.is_some()
+        };
+        if playing {
+            fail(&self.state, out, map::UNSPECIFIED, None);
+            self.video.redraw();
+        }
     }
 
     fn note(&self, note: Note, out: &mut Out) {
@@ -860,7 +932,8 @@ impl Drop for Inner {
         pip::forget(self.id);
         // The control thread stops first, then the render context goes, then
         // the handle (its last owner); the view and its GL context last.
-        self.worker.take();
+        self.worker.get_mut().take();
+        self.dead.get_mut().take();
         self.free_render();
         self.mpv.take();
     }

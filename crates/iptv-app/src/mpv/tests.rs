@@ -738,6 +738,45 @@ fn failures_report_the_cause_then_idle() {
     );
 }
 
+/// The control thread ending (here a panic in it) is noticed: what plays
+/// fails as a player error the app retries, and the next open starts a new
+/// thread on the same handle, which plays the stream again.
+#[test]
+fn a_control_thread_that_ends_fails_the_stream_until_the_next_open() {
+    let _serial = serial();
+    let Some((dir, gpu)) = rig() else { return };
+    let Some(red_ts) = clip(dir.path(), "red", 6.0) else {
+        return;
+    };
+    let server = Server::start(vec![("/red.ts", Answer::Body(red_ts))]);
+    let mut p = Player::new();
+    assert!(p.inner.create_render());
+    p.set(
+        "source",
+        json!({ "url": server.url("/red.ts"), "token": 1 }),
+    );
+    p.wait_state(Some(&gpu), "ready");
+
+    p.clear();
+    p.inner.send(worker::Cmd::Panic);
+    p.wait(Some(&gpu), "the player error", |p| {
+        !p.events("error").is_empty()
+    });
+    assert_eq!(p.events("error"), [json!({ "code": map::UNSPECIFIED })]);
+    assert_eq!(p.states().last().map(String::as_str), Some("idle"));
+    assert!(p.inner.worker.borrow().is_none());
+
+    // The app's retry: the same stream with a new token.
+    p.clear();
+    p.set(
+        "source",
+        json!({ "url": server.url("/red.ts"), "token": 2 }),
+    );
+    assert!(p.inner.worker.borrow().is_some(), "a new control thread");
+    p.wait_state(Some(&gpu), "ready");
+    p.wait_picture(&gpu, "red", red);
+}
+
 /// A live stream the server closes after it played a while plays on with
 /// a spare connection of the same address: no end reaches the app.
 #[test]
