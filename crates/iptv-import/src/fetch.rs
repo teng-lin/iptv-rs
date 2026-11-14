@@ -30,6 +30,17 @@ pub trait Fetch {
         std::time::Duration::ZERO
     }
 
+    /// Waits `duration` on the adapter's timer, between two attempts at a
+    /// request that failed for a passing reason. The importer has no
+    /// runtime and no clock of its own, so the wait is the adapter's: a
+    /// native adapter sleeps on its runtime, a web adapter sets a timer. The
+    /// default returns at once (sans-IO fakes; they may record the request
+    /// or advance a virtual clock), which makes a retry immediate.
+    fn sleep(&self, duration: std::time::Duration) -> impl Future<Output = ()> {
+        let _ = duration;
+        std::future::ready(())
+    }
+
     /// Sends the request and reads the whole body.
     fn fetch(&self, request: HttpRequest)
     -> impl Future<Output = Result<HttpResponse, FetchError>>;
@@ -46,6 +57,10 @@ impl<F: Fetch + ?Sized> Fetch for &F {
     type Body = F::Body;
     fn elapsed(&self) -> std::time::Duration {
         (**self).elapsed()
+    }
+
+    fn sleep(&self, duration: std::time::Duration) -> impl Future<Output = ()> {
+        (**self).sleep(duration)
     }
 
     fn fetch(

@@ -16,6 +16,8 @@ pub(crate) struct Ctx<'a, F, P> {
     pub stats: ImportStats,
     pub catalog_sink: Option<&'a mut dyn crate::CatalogSink>,
     pub limits: ImportLimits,
+    /// The step named when the time budget runs out.
+    pub limit_step: Step,
     #[cfg(debug_assertions)]
     pub allow_private_fixture: bool,
     started: std::time::Duration,
@@ -30,6 +32,7 @@ impl<'a, F: Fetch, P: ProgressSink> Ctx<'a, F, P> {
             stats: ImportStats::default(),
             catalog_sink: None,
             limits: ImportLimits::default(),
+            limit_step: Step::Playlist,
             #[cfg(debug_assertions)]
             allow_private_fixture: false,
             started: fetch.elapsed(),
@@ -56,9 +59,15 @@ impl<'a, F: Fetch, P: ProgressSink> Ctx<'a, F, P> {
             self.limits.elapsed.as_millis().min(u64::MAX as u128) as u64,
         )
         .map_err(|error| ImportError::Limit {
-            step: Step::Playlist,
+            step: self.limit_step,
             error,
         })
+    }
+
+    /// Before the same download is attempted again: its bytes count from
+    /// zero (the first attempt's are discarded), its time does not.
+    pub fn restart_bytes(&mut self) {
+        self.stats.bytes = 0;
     }
 
     /// A buffered request. Network failures carry `step`; HTTP status is

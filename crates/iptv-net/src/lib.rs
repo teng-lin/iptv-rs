@@ -23,8 +23,11 @@
 //!   carries them (User-Agent, Cookie, Referer…). [`NetConfig::user_agent`]
 //!   applies only when the request has none. No cookie store: `Set-Cookie`
 //!   is ignored.
-//! - **Timeouts:** connect, idle, and total import/response deadlines; streamed
-//!   and buffered bodies both enforce byte budgets.
+//! - **Timeouts:** connect; idle ([`NetConfig::read_timeout`], which ends a
+//!   stalled download); and a total per request, the shorter of the
+//!   import's remaining budget and [`NetConfig::request_timeout`]. Streamed
+//!   and buffered bodies both enforce byte budgets. The wait before an
+//!   import's retry ([`iptv_import::Fetch::sleep`]) is a tokio sleep.
 //! - **Local files:** `file://` URLs and absolute paths are read with tokio
 //!   (picked playlists), unless [`NetConfig::allow_files`] is off.
 //! - **Redaction:** logs use `HttpRequest::redacted_url`; errors never carry

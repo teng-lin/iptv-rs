@@ -175,6 +175,24 @@ impl ImportError {
         }
     }
 
+    /// Worth sending the same request again within this import: the
+    /// connection failed, stalled or broke off, or the server answered 5xx.
+    /// Narrower than [`Self::is_transient`]: not a refusal (any 4xx; a 429
+    /// asks for a longer pause than an import waits), not a certificate or
+    /// redirect problem or content that would be the same again, and not a
+    /// size or time budget a second attempt would use up as well.
+    pub(crate) fn retry_now(&self) -> bool {
+        use crate::FetchErrorKind as Kind;
+        match self {
+            Self::Network { error, .. } => matches!(
+                error.kind,
+                Kind::Connect | Kind::Timeout | Kind::Body | Kind::Other
+            ),
+            Self::HttpStatus { status, .. } => (500..600).contains(status),
+            _ => false,
+        }
+    }
+
     pub(crate) fn http(step: Step, status: u16) -> Self {
         if matches!(status, 401 | 403) {
             Self::Auth {

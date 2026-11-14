@@ -277,6 +277,11 @@ impl BodyStream for Body {
 }
 impl Fetch for Client {
     type Body = Body;
+    // The wait before a guide download is tried again; the trait's default
+    // does not wait.
+    async fn sleep(&self, duration: std::time::Duration) {
+        self.net.sleep(duration).await;
+    }
     async fn fetch(&self, request: HttpRequest) -> Result<HttpResponse, FetchError> {
         self.fetch(request).await
     }
