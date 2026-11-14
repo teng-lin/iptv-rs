@@ -64,6 +64,16 @@ branch). That file is the only place the commit is named: both setup actions
 read it through `tools/ci/pins.py`, and `tools/check.sh` refuses a `../nsh`
 checkout at any other commit. Update `nsh.rev` when adopting fork changes.
 
+Local Android builds: `./gradlew assembleDebug` in `hosts/android` for
+development, and `assembleProfile` for measuring (`tools/perf-android.sh`): a
+non-debuggable release build that is also profileable from the shell and
+signed with the debug key. The `release` build type itself is never
+profileable and never falls back to the debug key: a release task fails unless
+`KEYSTORE_PATH` (with `STORE_PASSWORD`, `KEY_ALIAS` and `KEY_PASSWORD`) names
+the distribution key, `IPTV_UNSIGNED_RELEASE=1` asks for an unsigned build (as
+`tools/ci/prepare-android.sh` does before the separate signing job), or
+`IPTV_DEBUG_SIGNED_RELEASE=1` explicitly asks for a debug-signed one.
+
 Release runs repeat the host checks while packaging runs in parallel; the
 signed Android build takes the place of the PR's debug build. Publication
 waits for both the checks and packaging to pass.
