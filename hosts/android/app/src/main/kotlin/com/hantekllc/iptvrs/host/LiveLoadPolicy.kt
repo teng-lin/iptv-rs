@@ -38,6 +38,8 @@ internal class LiveLoadPolicy : DefaultLoadErrorHandlingPolicy(MIN_RETRIES) {
 
     override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorInfo): Long {
         val error = loadErrorInfo.exception
+        // A load outside the relay would be refused again.
+        if (error is RelayGuard.Refused) return C.TIME_UNSET
         val status = (error as? HttpDataSource.InvalidResponseCodeException)?.responseCode
         return retryDelay(loadErrorInfo.errorCount, status, super.getRetryDelayMsFor(loadErrorInfo))
     }
