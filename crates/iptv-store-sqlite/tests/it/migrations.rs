@@ -381,7 +381,7 @@ fn check_settings(store: &Store, version: u32) {
         sources,
         [
             GuideSource {
-                feed: iptv_epg::SourceId(1),
+                feed: iptv_epg::FeedId(1),
                 provider_index: None,
                 url: SecretUrl::new(typed),
                 name: None,
@@ -389,7 +389,7 @@ fn check_settings(store: &Store, version: u32) {
                 shift_minutes: 0,
             },
             GuideSource {
-                feed: iptv_epg::SourceId(2),
+                feed: iptv_epg::FeedId(2),
                 provider_index: Some(0),
                 url: SecretUrl::new("http://epg.example.com/extra.xml.gz"),
                 name: None,
@@ -403,7 +403,7 @@ fn check_settings(store: &Store, version: u32) {
         assert_eq!(
             other,
             [GuideSource {
-                feed: iptv_epg::SourceId(1001),
+                feed: iptv_epg::FeedId(1001),
                 provider_index: None,
                 url: SecretUrl::new("http://alt.example.com/guide.xml"),
                 name: Some("Fixture Alt".into()),
@@ -426,7 +426,7 @@ fn check_feed_results(store: &Store, version: u32) {
         return;
     }
     let loaded = |feed, channels, programmes, listed| FeedResult {
-        feed: iptv_epg::SourceId(feed),
+        feed: iptv_epg::FeedId(feed),
         attempted_at: 1_700_001_000,
         error: None,
         channel_count: channels,
@@ -439,7 +439,7 @@ fn check_feed_results(store: &Store, version: u32) {
         assert_eq!(
             other,
             [FeedResult {
-                feed: iptv_epg::SourceId(1001),
+                feed: iptv_epg::FeedId(1001),
                 attempted_at: 1_700_001_100,
                 error: Some(ImportErrorKind::Timeout),
                 channel_count: 0,
@@ -451,7 +451,7 @@ fn check_feed_results(store: &Store, version: u32) {
         assert_eq!(other, []);
     }
     let channel = |feed, id: &str, name: Option<&str>, assigned| GuideChannel {
-        feed: iptv_epg::SourceId(feed),
+        feed: iptv_epg::FeedId(feed),
         epg_channel: id.into(),
         name: name.map(Into::into),
         assigned,
@@ -576,7 +576,7 @@ fn check_guide(store: &Store, version: u32) {
 /// A small guide matched against the fixture channels.
 fn tiny_guide() -> (GuideStore, EpgSourceConfig) {
     let cfg = EpgSourceConfig::new(
-        iptv_epg::SourceId(1),
+        iptv_epg::FeedId(1),
         SecretUrl::new("http://epg.example.com/guide.xml"),
     );
     let mut b = SourceBuilder::new(cfg.id, 0, cfg.store, 1_700_000_000);
@@ -744,7 +744,7 @@ fn playlist_settings_after_upgrading() {
         sources.insert(
             0,
             GuideSource {
-                feed: iptv_epg::SourceId(1002),
+                feed: iptv_epg::FeedId(1002),
                 provider_index: None,
                 url: SecretUrl::new("http://epg.example.com/changed.xml"),
                 name: Some("Changed".into()),

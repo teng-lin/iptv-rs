@@ -7,7 +7,7 @@
 
 use std::collections::HashSet;
 
-use iptv_providers::{ContentId, GroupId};
+use iptv_providers::ContentId;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use crate::error::{Result, StoreError};
@@ -16,27 +16,7 @@ use crate::overlay::present_ids;
 use crate::sources::ensure_source;
 use crate::{SourceId, Store};
 
-/// A list whose order the user can set.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum OrderScope {
-    /// The all-channels list.
-    All,
-    /// One provider group.
-    Group(GroupId),
-}
-
-impl OrderScope {
-    pub(crate) fn key(&self) -> &str {
-        match self {
-            Self::All => "",
-            Self::Group(g) => g.as_str(),
-        }
-    }
-}
-
-/// Row id of a custom group.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct CustomGroupId(pub i64);
+pub use iptv_library::{CustomGroupId, OrderScope};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CustomGroup {

@@ -36,7 +36,7 @@ pub enum EpgOverride {
 impl EpgOverride {
     /// Channel `epg_channel` of the playlist source's guide feed `feed`
     /// (the feed id is the opaque key).
-    pub fn for_feed(feed: iptv_epg::SourceId, epg_channel: impl Into<String>) -> Self {
+    pub fn for_feed(feed: iptv_epg::FeedId, epg_channel: impl Into<String>) -> Self {
         Self::Xmltv {
             epg_source: feed.0.to_string(),
             epg_channel: epg_channel.into(),
@@ -44,9 +44,9 @@ impl EpgOverride {
     }
 
     /// The feed of [`EpgOverride::for_feed`]; `None` for another key.
-    pub fn feed(&self) -> Option<iptv_epg::SourceId> {
+    pub fn feed(&self) -> Option<iptv_epg::FeedId> {
         match self {
-            Self::Xmltv { epg_source, .. } => epg_source.parse().ok().map(iptv_epg::SourceId),
+            Self::Xmltv { epg_source, .. } => epg_source.parse().ok().map(iptv_epg::FeedId),
             Self::Disabled => None,
         }
     }

@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 use crate::extra::{self, Extra, Field, NO_EXTRA};
 use crate::intern::{Interner, NONE, Sym};
-use crate::matching::{ChannelKey, EpgRef, SourceId};
+use crate::matching::{ChannelKey, EpgRef, FeedId};
 use crate::settle::{ScheduleRules, Settled};
 use crate::time::{DAY, UnixTime};
 use crate::xmltv::{XmltvChannel, XmltvItem, XmltvProgramme};
@@ -149,7 +149,7 @@ impl Schedule {
 
 /// The ingested guide data of one EPG source.
 pub struct EpgSource {
-    id: SourceId,
+    id: FeedId,
     priority: i32,
     strings: Interner,
     /// Packed extras ([`extra`]).
@@ -161,7 +161,7 @@ pub struct EpgSource {
 }
 
 impl EpgSource {
-    pub fn id(&self) -> SourceId {
+    pub fn id(&self) -> FeedId {
         self.id
     }
 
@@ -212,7 +212,7 @@ impl EpgSource {
 
     /// A source from schedules built elsewhere (`crate::settled_source`).
     pub(crate) fn from_parts(
-        id: SourceId,
+        id: FeedId,
         priority: i32,
         mut strings: Interner,
         mut extras: Vec<u32>,
@@ -283,7 +283,7 @@ struct RawProgramme {
 ///
 /// ```
 /// use iptv_epg::*;
-/// let mut b = SourceBuilder::new(SourceId(1), 10, StoreOptions::default(), 0);
+/// let mut b = SourceBuilder::new(FeedId(1), 10, StoreOptions::default(), 0);
 /// b.push_programme(XmltvProgramme {
 ///     channel: "one.example".into(),
 ///     start: 1000,
@@ -296,7 +296,7 @@ struct RawProgramme {
 /// assert_eq!((p.title(), p.start(), p.stop()), ("Show", 1000, 2000));
 /// ```
 pub struct SourceBuilder {
-    id: SourceId,
+    id: FeedId,
     priority: i32,
     opts: StoreOptions,
     rules: ScheduleRules,
@@ -310,7 +310,7 @@ pub struct SourceBuilder {
 
 impl SourceBuilder {
     /// `now` is only used for retention.
-    pub fn new(id: SourceId, priority: i32, opts: StoreOptions, now: UnixTime) -> Self {
+    pub fn new(id: FeedId, priority: i32, opts: StoreOptions, now: UnixTime) -> Self {
         SourceBuilder {
             id,
             priority,
@@ -452,7 +452,7 @@ impl<'a> ProgrammeRef<'a> {
         self.src.strings.get(self.slot.title)
     }
 
-    pub fn source(&self) -> SourceId {
+    pub fn source(&self) -> FeedId {
         self.src.id
     }
 
@@ -567,7 +567,7 @@ impl<'a> ScheduleRef<'a> {
         })
     }
 
-    pub fn source(&self) -> SourceId {
+    pub fn source(&self) -> FeedId {
         self.src.id
     }
 
@@ -669,7 +669,7 @@ impl GuideStore {
         self.rebind();
     }
 
-    pub fn remove_source(&mut self, id: SourceId) {
+    pub fn remove_source(&mut self, id: FeedId) {
         self.sources.retain(|s| s.id != id);
         self.rebind();
     }
@@ -678,7 +678,7 @@ impl GuideStore {
         &self.sources
     }
 
-    pub fn source(&self, id: SourceId) -> Option<&EpgSource> {
+    pub fn source(&self, id: FeedId) -> Option<&EpgSource> {
         self.sources.iter().find(|s| s.id == id)
     }
 
@@ -700,7 +700,7 @@ impl GuideStore {
 
     fn rebind(&mut self) {
         self.bound.clear();
-        let rank: HashMap<SourceId, usize> = self
+        let rank: HashMap<FeedId, usize> = self
             .sources
             .iter()
             .enumerate()
@@ -730,7 +730,7 @@ impl GuideStore {
     }
 
     /// The source and EPG id a playlist channel's guide comes from.
-    pub fn binding(&self, key: &ChannelKey) -> Option<(SourceId, &str)> {
+    pub fn binding(&self, key: &ChannelKey) -> Option<(FeedId, &str)> {
         let &(si, _, cand) = self.bound.get(key)?;
         let c = &self.wanted.get(key)?[cand as usize];
         Some((self.sources[si as usize].id, c.epg_id.as_str()))

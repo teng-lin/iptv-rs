@@ -72,7 +72,7 @@ fn seed(store: &mut Store, home: &Path, name: &str) -> SourceId {
         .set_guide_sources(
             source,
             &[GuideSource {
-                feed: iptv_epg::SourceId(1001),
+                feed: iptv_epg::FeedId(1001),
                 provider_index: None,
                 url: SecretUrl::new(guide.to_string_lossy()),
                 name: Some(format!("{name} guide")),
@@ -1024,7 +1024,7 @@ fn exercise_previous_guide_handoff(home: &super::isolated::Home, action: Previou
         .set_guide_sources(
             source,
             &[GuideSource {
-                feed: iptv_epg::SourceId(1001),
+                feed: iptv_epg::FeedId(1001),
                 provider_index: None,
                 url: SecretUrl::new(format!("{base}/guide.xml")),
                 name: None,

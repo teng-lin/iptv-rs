@@ -7,7 +7,7 @@ use iptv_providers::model::{
     M3uSourceConfig, MacAddress, Source, SourceConfig, SourceKind, StalkerCredentials,
     XtreamCredentials,
 };
-use iptv_providers::{ProviderError, Secret, SecretUrl, StalkerErrorKind};
+use iptv_providers::{Secret, SecretUrl};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::{Value, json};
 
@@ -60,79 +60,7 @@ pub struct ImportStatus {
     pub last_error_at: Option<i64>,
 }
 
-/// Why an import failed, coarse enough to persist and show.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum ImportErrorKind {
-    /// DNS, connect, TLS or reset.
-    Network,
-    Timeout,
-    HttpStatus,
-    InvalidBody,
-    InvalidConfig,
-    /// Xtream `auth = 0`, Stalker login rejected.
-    AccountRejected,
-    /// Stalker token/session failures.
-    AuthFailed,
-    /// Stalker device blocked or bound to another device id.
-    Blocked,
-    Cancelled,
-    Other,
-}
-
-impl ImportErrorKind {
-    pub fn slug(self) -> &'static str {
-        match self {
-            Self::Network => "network",
-            Self::Timeout => "timeout",
-            Self::HttpStatus => "http_status",
-            Self::InvalidBody => "invalid_body",
-            Self::InvalidConfig => "invalid_config",
-            Self::AccountRejected => "account_rejected",
-            Self::AuthFailed => "auth_failed",
-            Self::Blocked => "blocked",
-            Self::Cancelled => "cancelled",
-            Self::Other => "other",
-        }
-    }
-
-    /// Unknown slugs (written by a newer build) read as [`Self::Other`].
-    pub fn from_slug(slug: &str) -> Self {
-        [
-            Self::Network,
-            Self::Timeout,
-            Self::HttpStatus,
-            Self::InvalidBody,
-            Self::InvalidConfig,
-            Self::AccountRejected,
-            Self::AuthFailed,
-            Self::Blocked,
-            Self::Cancelled,
-        ]
-        .into_iter()
-        .find(|k| k.slug() == slug)
-        .unwrap_or(Self::Other)
-    }
-}
-
-impl From<&ProviderError> for ImportErrorKind {
-    fn from(err: &ProviderError) -> Self {
-        match err {
-            ProviderError::InvalidConfig(_) => Self::InvalidConfig,
-            ProviderError::HttpStatus(_) => Self::HttpStatus,
-            ProviderError::InvalidBody(_) | ProviderError::Limit(_) => Self::InvalidBody,
-            ProviderError::AccountRejected => Self::AccountRejected,
-            ProviderError::Stalker(e) => match e.kind {
-                StalkerErrorKind::Blocked | StalkerErrorKind::DeviceConflict => Self::Blocked,
-                StalkerErrorKind::LoginRequired | StalkerErrorKind::LoginRejected => {
-                    Self::AccountRejected
-                }
-                StalkerErrorKind::Portal => Self::Other,
-                _ => Self::AuthFailed,
-            },
-        }
-    }
-}
+pub use iptv_library::ImportErrorKind;
 
 /// Splits a source into (non-secret config JSON, secret fields).
 fn split(config: &SourceConfig) -> (Value, Vec<(&'static str, String)>) {

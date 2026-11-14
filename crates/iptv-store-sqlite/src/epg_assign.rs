@@ -7,7 +7,7 @@
 //! is possible without a download: turning a channel's guide off, or
 //! pointing it at an EPG channel whose programmes are stored.
 
-use iptv_epg::{ChannelKey, MatchKind, UnixTime};
+use iptv_epg::{ChannelKey, MatchKind};
 use iptv_providers::ContentId;
 use rusqlite::{OptionalExtension, TransactionBehavior, params};
 
@@ -17,30 +17,7 @@ use crate::overlay::EpgOverride;
 use crate::sources::{ImportErrorKind, ensure_source};
 use crate::{SourceId, Store};
 
-/// The last download of one feed.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FeedResult {
-    pub feed: iptv_epg::SourceId,
-    pub attempted_at: UnixTime,
-    /// `None`: it loaded.
-    pub error: Option<ImportErrorKind>,
-    /// What was stored from it (bound EPG channels and their programmes).
-    pub channel_count: u64,
-    pub programme_count: u64,
-    /// The channels it lists (0 for a guide stored before schema v6).
-    pub listed_count: u64,
-}
-
-/// A channel one of the stored feeds lists.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GuideChannel {
-    pub feed: iptv_epg::SourceId,
-    pub epg_channel: String,
-    /// Its first display name, when the feed gave one.
-    pub name: Option<String>,
-    /// A playlist channel takes its guide from it.
-    pub assigned: bool,
-}
+pub use iptv_library::{FeedResult, GuideChannel};
 
 impl Store {
     /// Records how each configured feed's download went (replacing what
@@ -49,7 +26,7 @@ impl Store {
     pub fn record_epg_feed_results(
         &mut self,
         source: SourceId,
-        results: &[(iptv_epg::SourceId, Option<ImportErrorKind>)],
+        results: &[(iptv_epg::FeedId, Option<ImportErrorKind>)],
     ) -> Result<()> {
         let now = self.now();
         let tx = self
@@ -92,7 +69,7 @@ impl Store {
         )?;
         let rows = stmt.query_map([source.0], |r| {
             Ok(FeedResult {
-                feed: iptv_epg::SourceId(r.get(0)?),
+                feed: iptv_epg::FeedId(r.get(0)?),
                 attempted_at: r.get(1)?,
                 error: r
                     .get::<_, Option<String>>(2)?
@@ -122,7 +99,7 @@ impl Store {
         )?;
         let rows = stmt.query_map([source.0], |r| {
             Ok(GuideChannel {
-                feed: iptv_epg::SourceId(r.get(0)?),
+                feed: iptv_epg::FeedId(r.get(0)?),
                 epg_channel: r.get(1)?,
                 name: r.get(2)?,
                 assigned: r.get(3)?,
@@ -137,7 +114,7 @@ impl Store {
         &self,
         source: SourceId,
         key: &ChannelKey,
-    ) -> Result<Option<(iptv_epg::SourceId, String, MatchKind)>> {
+    ) -> Result<Option<(iptv_epg::FeedId, String, MatchKind)>> {
         Ok(self
             .conn
             .prepare_cached(
@@ -147,7 +124,7 @@ impl Store {
             )?
             .query_row(params![source.0, key.as_str()], |r| {
                 Ok((
-                    iptv_epg::SourceId(r.get(0)?),
+                    iptv_epg::FeedId(r.get(0)?),
                     r.get::<_, String>(1)?,
                     kind_from(&r.get::<_, String>(2)?),
                 ))
@@ -186,7 +163,7 @@ impl Store {
         &mut self,
         source: SourceId,
         key: &ChannelKey,
-        to: Option<(iptv_epg::SourceId, &str)>,
+        to: Option<(iptv_epg::FeedId, &str)>,
         match_fingerprint: u64,
     ) -> Result<bool> {
         let tx = self

@@ -1,7 +1,7 @@
 use iptv_core::guide::{Airing, Focus, Move, Program, Schedule, now_minute};
 use iptv_epg::{
-    ChannelKey, GuideStore, MatchIndex, Overrides, ParseOptions, PlaylistChannel, SourceBuilder,
-    SourceId, StoreOptions, format_xmltv_time, parse_xmltv,
+    ChannelKey, FeedId, GuideStore, MatchIndex, Overrides, ParseOptions, PlaylistChannel,
+    SourceBuilder, StoreOptions, format_xmltv_time, parse_xmltv,
 };
 use iptv_providers::m3u::parse_m3u;
 
@@ -43,7 +43,7 @@ fn store_from(
     let parsed =
         parse_xmltv(xml.as_bytes(), ParseOptions::default()).expect("synthetic xmltv parses");
     let mut builder = SourceBuilder::new(
-        SourceId(1),
+        FeedId(1),
         0,
         StoreOptions {
             store_descriptions: descriptions,
@@ -378,7 +378,7 @@ fn titles_stored_with_superscript_badges_show_them_as_words() {
     // "ᴸᶦᵛᵉ", which the guide, header, info card and play bar show as text.
     let mut parsed = parse_xmltv(xmltv().as_bytes(), ParseOptions::default()).expect("parses");
     parsed.programmes[0].title = "Alpha Newsᴸᶦᵛᵉ".to_owned();
-    let mut builder = SourceBuilder::new(SourceId(1), 0, StoreOptions::default(), NOW);
+    let mut builder = SourceBuilder::new(FeedId(1), 0, StoreOptions::default(), NOW);
     parsed
         .channels
         .into_iter()

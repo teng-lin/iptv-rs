@@ -46,7 +46,7 @@ fn the_shown_source_is_remembered_while_it_exists() {
 fn guides() -> Vec<GuideSource> {
     vec![
         GuideSource {
-            feed: iptv_epg::SourceId(1),
+            feed: iptv_epg::FeedId(1),
             provider_index: None,
             url: typed(),
             name: Some("Typed".into()),
@@ -54,7 +54,7 @@ fn guides() -> Vec<GuideSource> {
             shift_minutes: -120,
         },
         GuideSource {
-            feed: iptv_epg::SourceId(2),
+            feed: iptv_epg::FeedId(2),
             provider_index: Some(0),
             url: SecretUrl::new("http://panel.example.test/xmltv.php?password=p"),
             name: None,

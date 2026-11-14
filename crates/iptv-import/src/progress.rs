@@ -1,6 +1,6 @@
 //! Progress events for the import screen.
 
-use iptv_epg::SourceId;
+use iptv_epg::FeedId;
 use iptv_providers::model::ContentKind;
 
 /// What the importer is doing.
@@ -20,7 +20,7 @@ pub enum Phase {
     /// Channels, movies or series of one content kind.
     Items(ContentKind),
     /// Downloading and parsing one EPG source.
-    Guide(SourceId),
+    Guide(FeedId),
     /// Matching playlist channels to EPG channels.
     Matching,
     Done,

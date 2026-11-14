@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use iptv_epg::SourceId;
+use iptv_epg::FeedId;
 use iptv_providers::m3u::M3uHeader;
 use iptv_providers::model::{
     Channel, ContentKind, Group, Import, MAX_STORED_WARNINGS, Series, VodItem, WarningLocation,
@@ -154,7 +154,7 @@ impl Catalog {
         match &self.source {
             SourceMeta::M3u { header } => EpgSourceConfig::from_m3u_header(header, first_id),
             SourceMeta::Xtream { xmltv_url, .. } => {
-                vec![EpgSourceConfig::new(SourceId(first_id), xmltv_url.clone())]
+                vec![EpgSourceConfig::new(FeedId(first_id), xmltv_url.clone())]
             }
             SourceMeta::Stalker { .. } => Vec::new(),
         }

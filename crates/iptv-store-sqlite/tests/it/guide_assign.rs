@@ -16,7 +16,7 @@ use iptv_store_sqlite::{
 
 const NOW: i64 = 1_800_000_000;
 const H: i64 = 3600;
-const FEED: iptv_epg::SourceId = iptv_epg::SourceId(2);
+const FEED: iptv_epg::FeedId = iptv_epg::FeedId(2);
 
 fn store() -> (Store, SourceId) {
     let mut store = Store::open_in_memory().unwrap();
@@ -103,7 +103,7 @@ fn each_feed_keeps_how_its_last_download_went() {
     let (mut store, a) = store();
     assert_eq!(store.epg_feed_results(a).unwrap(), []);
     staged::replace_epg(&mut store, a, &guide(), &feeds(), 1).unwrap();
-    let other = iptv_epg::SourceId(1001);
+    let other = iptv_epg::FeedId(1001);
     store
         .record_epg_feed_results(a, &[(FEED, None), (other, Some(ImportErrorKind::Network))])
         .unwrap();
