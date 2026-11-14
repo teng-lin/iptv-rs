@@ -107,6 +107,7 @@ pub fn run(here: &str) -> Option<Home> {
             std::env::set_var("HOME", home.path());
             #[cfg(windows)]
             std::env::set_var("LOCALAPPDATA", home.path());
+            std::env::set_var("IPTV_RS_TEST_LOCALE", "en-US");
             std::env::set_var("TZ", time_zone());
             std::env::set_var(
                 "IPTV_TEST_UTC_OFFSET_MINUTES",
@@ -126,6 +127,7 @@ pub fn run(here: &str) -> Option<Home> {
         .arg("--include-ignored")
         .env(CHILD, name)
         .env(RAN, &ran)
+        .env("IPTV_RS_TEST_LOCALE", "en-US")
         .env("HOME", &home)
         .env("LOCALAPPDATA", &home)
         .env("TZ", time_zone())

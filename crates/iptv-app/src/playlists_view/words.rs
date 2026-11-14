@@ -1,4 +1,6 @@
-//! The playlists screen's wording (iptv-rs's own; i18n later).
+//! The playlists screen's wording (iptv-rs's own).
+
+use crate::i18n::tr;
 
 use iptv_core::wizard::{FailureKind, ImportFailure};
 use iptv_providers::model::SourceKind;
@@ -179,7 +181,7 @@ pub fn act(act: Act, kind: Option<SourceKind>, shown: bool, running: bool) -> &'
         Act::Details => kind.map_or("Provider details", details_title),
         Act::UserAgent => "User-Agent",
         Act::Guides => "Guide sources",
-        Act::Delete => "Delete",
+        Act::Delete => tr("Delete"),
     }
 }
 
@@ -202,7 +204,7 @@ pub fn refreshing(running: usize) -> String {
 /// The provider details a kind of playlist has.
 pub fn details_title(kind: SourceKind) -> &'static str {
     match kind {
-        SourceKind::M3u => "Playlist link",
+        SourceKind::M3u => tr("Playlist link"),
         SourceKind::Xtream => "Server and login",
         SourceKind::Stalker => "Portal and MAC address",
     }

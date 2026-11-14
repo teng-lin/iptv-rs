@@ -4,6 +4,8 @@
 //! command. Each says what it is about; the remote drives them through
 //! `iptv_settings::screen`, taps directly.
 
+use crate::i18n::tr;
+
 use std::rc::Rc;
 
 use iptv_settings::screen::{Editor, Effect, grid};
@@ -97,7 +99,7 @@ fn title(ui: Ui, size: Scale) -> impl IntoElement {
 }
 
 fn button(ui: Ui, size: Scale, label: &'static str, act: fn(Ui)) -> impl IntoElement {
-    ui_kit::button(ui, size, label, || false, move || act(ui))
+    ui_kit::button(ui, size, move || tr(label), || false, move || act(ui))
 }
 
 /// A focused entry's mark (the keys shown).
@@ -127,7 +129,7 @@ fn dialog(ui: Ui, size: Scale) -> View {
 fn choice(ui: Ui) -> impl IntoElement {
     let variants = move || {
         setting(ui)
-            .and_then(|s| s.ty.choices())
+            .and_then(|s| s.ty.editor_choices())
             .map_or(&[][..], |c| c.variants)
     };
     let size = Scale::new();
@@ -160,7 +162,7 @@ fn choice(ui: Ui) -> impl IntoElement {
             let (Some(s), Some(v)) = (setting(ui), variant()) else {
                 return String::new();
             };
-            let family = s.ty.choices().map_or("", |c| c.family);
+            let family = s.ty.editor_choices().map_or("", |c| c.family);
             format!(
                 "{}{}",
                 if selected() { "✓  " } else { "    " },

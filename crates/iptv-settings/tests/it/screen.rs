@@ -444,14 +444,14 @@ fn text_is_kept_only_when_valid() {
             value: Value::text("SyntheticPlayer/1.0")
         }
     );
-    screen.tap_row("general.language", &c);
-    screen.set_text("not a language");
+    screen.tap_row("general.user_agent", &c);
+    screen.set_text(&"x".repeat(513));
     assert_eq!(screen.commit(), Effect::None);
     assert!(matches!(
         screen.editor(),
         Some(Editor::Text { invalid: true, .. })
     ));
-    screen.set_text("pt-BR");
+    screen.set_text("SyntheticPlayer/2.0");
     assert!(matches!(
         screen.editor(),
         Some(Editor::Text { invalid: false, .. })
@@ -459,8 +459,8 @@ fn text_is_kept_only_when_valid() {
     assert_eq!(
         screen.commit(),
         Effect::Set {
-            key: "general.language",
-            value: Value::text("pt-BR")
+            key: "general.user_agent",
+            value: Value::text("SyntheticPlayer/2.0")
         }
     );
 }
@@ -708,5 +708,71 @@ fn tapping_a_page_leaves_any_editor() {
             screen.focus()
         ),
         ("other", Pane::Pages, None, None)
+    );
+}
+
+#[test]
+fn language_picker_keeps_text_storage_cancel_and_focus_identity() {
+    let mut settings = Settings::new();
+    settings.set("general.language", Value::text("fr")).unwrap();
+    fn ctx(settings: &Settings) -> Ctx<'_> {
+        Ctx {
+            settings,
+            offer: &everything,
+        }
+    }
+    let mut screen = Screen::new(PAGES, "general");
+    screen.tap_row("general.language", &ctx(&settings));
+    let variants = iptv_settings::catalogue::choices::LANGUAGE.variants;
+    let french = variants.iter().position(|v| *v == "fr").unwrap();
+    assert!(
+        matches!(screen.editor(), Some(Editor::Choice { focus, selected, .. }) if *focus == french && *selected == french)
+    );
+    screen.key(Key::Down, &ctx(&settings));
+    screen.key(Key::Back, &ctx(&settings));
+    assert_eq!(settings.get("general.language").unwrap(), Value::text("fr"));
+    assert_eq!(screen.focus(), Some("general.language"));
+    screen.tap_row("general.language", &ctx(&settings));
+    assert_eq!(screen.pick(usize::MAX), Effect::None);
+    let chinese = variants.iter().position(|v| *v == "zh-Hant").unwrap();
+    apply(&mut settings, screen.pick(chinese));
+    let (restored, report) = Settings::from_json(&settings.to_json_string()).unwrap();
+    assert!(report.is_clean());
+    assert_eq!(
+        restored.get("general.language").unwrap(),
+        Value::text("zh-Hant")
+    );
+    screen.tap_row("general.language", &ctx(&restored));
+    apply(&mut settings, screen.pick(0));
+    assert_eq!(
+        settings.get("general.language").unwrap(),
+        Value::text("system")
+    );
+}
+
+#[test]
+fn unlisted_locale_is_preserved_until_a_suggestion_is_chosen() {
+    let mut settings = Settings::new();
+    settings
+        .set("general.language", Value::text("es-MX"))
+        .unwrap();
+    let ctx = Ctx {
+        settings: &settings,
+        offer: &everything,
+    };
+    let mut screen = Screen::new(PAGES, "general");
+    screen.tap_row("general.language", &ctx);
+    assert!(matches!(
+        screen.editor(),
+        Some(Editor::Choice {
+            focus: 0,
+            selected: usize::MAX,
+            ..
+        })
+    ));
+    screen.key(Key::Back, &ctx);
+    assert_eq!(
+        settings.get("general.language").unwrap(),
+        Value::text("es-MX")
     );
 }

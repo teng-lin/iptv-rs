@@ -1,4 +1,6 @@
-//! The guide sources screen's wording (iptv-rs's own; i18n later).
+//! The guide sources screen's wording (iptv-rs's own).
+
+use crate::i18n::tr;
 
 use iptv_core::wizard::FieldError;
 use iptv_store_sqlite::{GuideSource, ImportErrorKind};
@@ -11,7 +13,7 @@ use crate::playlists_view::masked_link;
 pub fn title(s: &GuideSource) -> String {
     match (&s.name, s.provider_index) {
         (Some(name), _) => name.clone(),
-        (None, Some(0)) => "The provider's guide".to_owned(),
+        (None, Some(0)) => tr("The provider's guide").to_owned(),
         (None, Some(n)) => format!("The provider's guide {}", n + 1),
         (None, None) => masked_link(s.url.expose()),
     }
@@ -20,9 +22,9 @@ pub fn title(s: &GuideSource) -> String {
 /// Second line: who added it and its address (accounts hidden).
 pub fn origin(s: &GuideSource) -> String {
     let who = if s.is_provider() {
-        "From the provider"
+        tr("From the provider")
     } else {
-        "Added by you"
+        tr("Added by you")
     };
     format!("{who} · {}", masked_link(s.url.expose()))
 }
@@ -30,7 +32,7 @@ pub fn origin(s: &GuideSource) -> String {
 /// A time shift: `No time shift`, `+1 h`, `−0:30 h`.
 pub fn shift(minutes: i32) -> String {
     if minutes == 0 {
-        return "No time shift".to_owned();
+        return tr("No time shift").to_owned();
     }
     let sign = if minutes > 0 { "+" } else { "−" };
     let (h, m) = (minutes.abs() / 60, minutes.abs() % 60);
@@ -64,7 +66,7 @@ pub fn status(line: &SourceLine, when: impl Fn(i64) -> String) -> (String, bool)
     let s = &line.source;
     let state = match &line.result {
         _ if !s.enabled => return ("Switched off: not downloaded".to_owned(), false),
-        None => return ("Not downloaded yet".to_owned(), false),
+        None => return (tr("Not downloaded yet").to_owned(), false),
         Some(r) => r,
     };
     let shift = if s.shift_minutes == 0 {
@@ -103,14 +105,14 @@ pub fn status(line: &SourceLine, when: impl Fn(i64) -> String) -> (String, bool)
 
 pub fn act(act: Act, s: &GuideSource) -> String {
     match act {
-        Act::Switch if s.enabled => "Switch off".to_owned(),
-        Act::Switch => "Switch on".to_owned(),
-        Act::Up => "Move up (used first)".to_owned(),
-        Act::Down => "Move down".to_owned(),
+        Act::Switch if s.enabled => tr("Switch off").to_owned(),
+        Act::Switch => tr("Switch on").to_owned(),
+        Act::Up => tr("Move up (used first)").to_owned(),
+        Act::Down => tr("Move down").to_owned(),
         Act::Shift => shift(s.shift_minutes),
-        Act::Rename => "Name".to_owned(),
-        Act::Relink => "Change the link".to_owned(),
-        Act::Remove => "Remove".to_owned(),
+        Act::Rename => tr("Name").to_owned(),
+        Act::Relink => tr("Change the link").to_owned(),
+        Act::Remove => tr("Remove").to_owned(),
     }
 }
 
@@ -130,7 +132,7 @@ pub fn sheet(kind: &EditKind) -> (&'static str, &'static str) {
             "http://…/guide.xml or .xml.gz",
         ),
         EditKind::AddName { .. } => ("Its name (optional)", "Left empty, the link is shown"),
-        EditKind::Rename(_) => ("Name", "Left empty, where it comes from is shown"),
+        EditKind::Rename(_) => (tr("Name"), "Left empty, where it comes from is shown"),
         EditKind::Relink(_) => ("New link (XMLTV)", "Left empty, the current one stays"),
     }
 }

@@ -3,6 +3,8 @@
 //! again once retries stopped (OK retries too). Compact in the guide's
 //! preview.
 
+use crate::i18n::tr;
+
 use iptv_core::playback::Phase;
 use nsh_core::prelude::*;
 
@@ -133,7 +135,7 @@ pub fn status(ui: Ui) -> impl IntoElement {
                         if ui.keys_shown() {
                             "OK  Try again".to_owned()
                         } else {
-                            "Try again".to_owned()
+                            tr("Try again").to_owned()
                         }
                     })
                     .mt(px(6.0))

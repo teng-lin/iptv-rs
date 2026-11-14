@@ -38,6 +38,7 @@ const UNREADABLE: &str = "settings.unreadable.json";
 
 /// The settings the app acts on.
 pub const WIRED: &[&str] = &[
+    "general.language",
     "guide.autoplay",
     "guide.switch_delay",
     "guide.fullscreen_timeout",

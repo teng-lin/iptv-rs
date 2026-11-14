@@ -237,3 +237,12 @@ pub static ALL: &[&Choices] = &[
     &PLAYLIST_OPENS,
     &CARD_STYLE,
 ];
+
+/// Interface language suggestions. Locale settings remain text in storage so
+/// existing backups and future language tags continue to round-trip.
+pub static LANGUAGE: Choices = Choices {
+    family: "language",
+    variants: &[
+        "system", "en", "es", "fr", "de", "it", "pt", "ru", "zh", "zh-Hant", "ja", "ko",
+    ],
+};

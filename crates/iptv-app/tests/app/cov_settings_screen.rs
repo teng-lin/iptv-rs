@@ -370,7 +370,7 @@ fn settings(app: &mut Headless, home: &Path) {
     saved(app, home, "general.resume_last_channel");
     // Rows the app does not act on say so, and do nothing.
     step(app.wait_for("text:Not available yet"));
-    step(app.press("text:Language"));
+    step(app.press("text:On-screen keyboard"));
     step(app.wait(Duration::from_millis(100)));
     assert!(field_id(app.screen()).is_none(), "no editor for that row");
     step(app.wait_for("text:Tap a page, then a setting to change it"));

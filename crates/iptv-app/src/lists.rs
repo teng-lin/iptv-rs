@@ -20,6 +20,7 @@ use iptv_core::lists::{
 use nsh_core::prelude::*;
 
 use crate::Ui;
+use crate::i18n::tr;
 
 /// How long the hint card stays after a group was chosen.
 const HINT: Duration = Duration::from_secs(6);
@@ -52,11 +53,20 @@ pub fn rail(ui: Ui) -> Vec<RailItem> {
     rail_items(ui.has_vod.get())
 }
 
+/// Localize built-in lists by identity; provider group names are opaque.
+pub fn entry_name(entry: usize, catalog: &dyn Schedule) -> String {
+    let name = iptv_core::lists::entry_name(entry, catalog);
+    match Entry::at(entry) {
+        Entry::Group(_) => name,
+        _ => tr(&name).to_owned(),
+    }
+}
+
 /// The name of the list on screen.
 pub fn list_name(ui: Ui) -> String {
     ui.data_version.get();
     let entry = ui.list.with(|l| l.entry());
-    iptv_core::lists::entry_name(entry, &*crate::schedule())
+    entry_name(entry, &*crate::schedule())
 }
 
 /// Builds the list of the selected entry. With `keep`, the focus stays on
@@ -284,7 +294,7 @@ fn toggle_playlist(ui: Ui, entry: usize) -> bool {
 
 pub fn browser_entry_name(entry: usize) -> String {
     let schedule = crate::schedule();
-    let name = iptv_core::lists::entry_name(entry, &*schedule);
+    let name = entry_name(entry, &*schedule);
     if let Entry::Group(g) = Entry::at(entry) {
         if schedule.group_is_playlist(g) {
             return format!(

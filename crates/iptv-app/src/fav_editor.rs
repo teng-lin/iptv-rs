@@ -4,6 +4,8 @@
 //! a tap per row plus "Add all" / "Remove all" buttons. Changes are saved
 //! by channel key (`favorites.rs`) at once.
 
+use crate::i18n::tr;
+
 use iptv_core::editor::FavoritesEditor;
 use nsh_core::prelude::*;
 
@@ -74,14 +76,14 @@ pub fn layer(ui: Ui) -> impl IntoElement {
                 let starred = ui.favorites.with(|f| e.starred(f));
                 format!(
                     "Favourites · {} · {starred} of {}",
-                    iptv_core::lists::entry_name(e.group, &*crate::schedule()),
+                    crate::lists::entry_name(e.group, &*crate::schedule()),
                     e.len()
                 )
             })
         })
     };
     let button = move |label: &'static str, act: fn(Ui)| {
-        crate::ui_kit::button(ui, size, label, || false, move || act(ui))
+        crate::ui_kit::button(ui, size, move || tr(label), || false, move || act(ui))
     };
     let row = move |at: Position| {
         let channel = move || {

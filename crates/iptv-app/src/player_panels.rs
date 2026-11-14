@@ -11,6 +11,8 @@
 //! (never alpha on the video). [`status`] draws the waiting and error
 //! states of `player.rs`.
 
+use crate::i18n::tr;
+
 use iptv_core::panels::{CONTROLS, Control, QUICK_ACTIONS, Shown};
 use iptv_core::player_info::date_time;
 use iptv_core::sound::delay_label;
@@ -47,31 +49,37 @@ fn label(ui: Ui, control: Control) -> String {
     let main = ui.player.main();
     let tracks = main.tracks;
     match control {
-        Search => "Search".to_owned(),
-        ChannelList => "Channels".to_owned(),
-        Recordings => "Recordings".to_owned(),
-        Multiview if crate::multiview::detour(ui) => "Back to multiview".to_owned(),
-        Multiview => "Multiview".to_owned(),
-        PictureInPicture => "Picture in picture".to_owned(),
+        Search => tr("Search").to_owned(),
+        ChannelList => tr("Channels").to_owned(),
+        Recordings => tr("Recordings").to_owned(),
+        Multiview if crate::multiview::detour(ui) => tr("Back to multiview").to_owned(),
+        Multiview => tr("Multiview").to_owned(),
+        PictureInPicture => tr("Picture in picture").to_owned(),
         VideoTracks => {
             let playing = main.size.get().map(|(_, h)| format!("{h}p"));
             with(
-                "Video",
+                tr("Video"),
                 tracks.with(|t| t.summary(Track::Video)).or(playing),
             )
         }
         AudioTracks => {
             let ch = main.format.with(|f| f.channels);
             let layout = (ch > 0).then(|| audio_layout(ch));
-            with("Audio", tracks.with(|t| t.summary(Track::Audio)).or(layout))
+            with(
+                tr("Audio"),
+                tracks.with(|t| t.summary(Track::Audio)).or(layout),
+            )
         }
-        AudioOffset => with("Audio delay", Some(delay_label(ui.media.delay_ms.get()))),
+        AudioOffset => with(
+            tr("Audio delay"),
+            Some(delay_label(ui.media.delay_ms.get())),
+        ),
         Captions => with(
-            "Subtitles",
+            tr("Subtitles"),
             Some(
                 tracks
                     .with(|t| t.summary(Track::Text))
-                    .unwrap_or_else(|| "Off".to_owned()),
+                    .unwrap_or_else(|| tr("Off").to_owned()),
             ),
         ),
         Scaling => with(
@@ -79,17 +87,17 @@ fn label(ui: Ui, control: Control) -> String {
             Some(crate::chooser::picture_name(ui).into()),
         ),
         SleepTimer => with(
-            "Sleep timer",
+            tr("Sleep timer"),
             Some(
                 ui.sleep
                     .with(|t| t.remaining_minutes(ui.now_ms()))
-                    .map_or("Off".to_owned(), |m| format!("{m} min")),
+                    .map_or(tr("Off").to_owned(), |m| format!("{m} min")),
             ),
         ),
-        Favorite if is_favorite(ui) => "★ Favourite".to_owned(),
-        Favorite => "☆ Favourite".to_owned(),
-        ChannelOptions => "Channel options".to_owned(),
-        Settings => "Settings".to_owned(),
+        Favorite if is_favorite(ui) => tr("★ Favourite").to_owned(),
+        Favorite => tr("☆ Favourite").to_owned(),
+        ChannelOptions => tr("Channel options").to_owned(),
+        Settings => tr("Settings").to_owned(),
     }
 }
 

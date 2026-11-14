@@ -34,7 +34,7 @@ fn documented() -> Vec<(&'static str, ValueType, Scope, &'static str)> {
             GL,
             "a",
         ),
-        ("general.language", text(Locale, 35, "system"), GL, "r"),
+        ("general.language", text(Locale, 35, "system"), GL, ""),
         ("general.keyboard", choice(&c::KEYBOARD, "system"), GL, ""),
         ("general.user_agent", text(Plain, 512, ""), PL, ""),
         ("general.udp_proxy", text(HostPort, 261, ""), GL, "a"),

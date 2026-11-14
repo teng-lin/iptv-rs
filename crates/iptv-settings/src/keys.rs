@@ -19,6 +19,8 @@ pub struct ColourKey(pub &'static str);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BindingsKey(pub &'static str);
 
+pub const LANGUAGE: TextKey = TextKey("general.language");
+
 // Input (iptv-nav).
 pub const LONG_PRESS: DurationKey = DurationKey("remote.long_press");
 pub const DIGIT_TIMEOUT: DurationKey = DurationKey("remote.digit_timeout");

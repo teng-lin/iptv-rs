@@ -19,6 +19,8 @@
 //! tappable; a tap beside a sheet closes it. Links are shown with their
 //! accounts hidden. State: `state.rs`; wording: `words.rs`.
 
+use crate::i18n::tr;
+
 mod state;
 mod words;
 
@@ -302,7 +304,7 @@ fn update_status(playlist: SourceId) -> (String, bool) {
             ),
             true,
         ),
-        _ => ("Not downloaded yet".to_owned(), false),
+        _ => (tr("Not downloaded yet").to_owned(), false),
     }
 }
 
@@ -334,8 +336,8 @@ fn row(ui: Ui, size: Scale, index: usize, focused_index: Memo<Option<usize>>) ->
         _ => (String::new(), false),
     };
     let switched = move || match line() {
-        Some(l) if l.source.enabled => "On".to_owned(),
-        Some(_) => "Off".to_owned(),
+        Some(l) if l.source.enabled => tr("On").to_owned(),
+        Some(_) => tr("Off").to_owned(),
         None => String::new(),
     };
     let enabled = move || line().is_none_or(|l| l.source.enabled);
@@ -540,7 +542,7 @@ fn confirm_card(ui: Ui, size: Scale, feed: iptv_epg::SourceId) -> impl IntoEleme
         .child(ui_kit::action(
             ui,
             size,
-            "Remove",
+            tr("Remove"),
             focused(true),
             ERROR,
             move || {

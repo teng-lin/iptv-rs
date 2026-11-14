@@ -15,6 +15,8 @@
 //! own (`words`). Also the short notices of the app (`notify`), such as
 //! the second Back that leaves (`may_leave`).
 
+use crate::i18n::tr;
+
 mod editors;
 pub(crate) mod remote_keys;
 mod view;
@@ -273,8 +275,8 @@ fn note(settings: &Settings, row: &Row) -> String {
         Row::Heading { .. } => false,
     };
     match (status(settings, row), row) {
-        (Status::NotYet, _) => "Not available yet".to_owned(),
-        (Status::Later, _) => "In a later version".to_owned(),
+        (Status::NotYet, _) => tr("Not available yet").to_owned(),
+        (Status::Later, _) => tr("In a later version").to_owned(),
         (Status::Active, _) if restart => "Takes effect after a restart".to_owned(),
         _ => String::new(),
     }
@@ -335,7 +337,7 @@ fn sources_value() -> String {
         .filter(|l| l.source.enabled && l.result.as_ref().is_some_and(|r| r.error.is_some()))
         .count();
     let mut value = match (lines.len(), on) {
-        (0, _) => "None".to_owned(),
+        (0, _) => tr("None").to_owned(),
         (1, 1) => "1 source".to_owned(),
         (all, on) if on == all => format!("{all} sources"),
         (all, on) => format!("{on} of {all} on"),
@@ -383,7 +385,7 @@ pub fn may_leave() -> bool {
         LEAVE_ASKED.with(|a| a.set(None));
         return true;
     }
-    notify("Press Back again to leave");
+    notify(tr("Press Back again to leave"));
     false
 }
 
@@ -415,7 +417,7 @@ mod tests {
     fn rows_say_why_they_do_nothing() {
         let s = Settings::new();
         let language = row("general", "general.language", &s);
-        assert_eq!(note(&s, &language), "Not available yet");
+        assert_eq!(note(&s, &language), "");
         let resume = row("general", "general.resume_last_channel", &s);
         assert_eq!(note(&s, &resume), "");
         let pin = row("parental", "parental.live_enabled", &s);

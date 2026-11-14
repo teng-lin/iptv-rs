@@ -4,6 +4,8 @@
 //! programme, navigation rail and groups beside the guide grid) over one
 //! persistent video layer (`video.rs`). The guide shows one list at a time (`lists.rs`).
 
+use crate::i18n::tr;
+
 pub use iptv_core::guide;
 pub mod theme;
 
@@ -25,6 +27,7 @@ mod fonts;
 mod grid;
 mod guide_assign_view;
 mod header;
+mod i18n;
 mod input;
 mod list_rows;
 mod lists;
@@ -709,7 +712,7 @@ fn ui_layers(ui: Ui, groups: ElementRef, rows: ElementRef) -> View {
                         PointerEvents::None
                     }
                 })
-                .label("Video")
+                .label(move || tr("Video"))
                 .on_press(move |e: &PressEvent| {
                     ui.touched();
                     toggle_panels(ui);

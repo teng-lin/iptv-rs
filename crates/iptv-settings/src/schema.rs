@@ -237,6 +237,18 @@ impl ValueType {
         }
     }
 
+    /// Suggestions for the choice editor, including text-valued locales.
+    /// This does not restrict which valid language tags may be stored.
+    pub const fn editor_choices(&self) -> Option<&'static Choices> {
+        match self {
+            ValueType::Text {
+                kind: TextKind::Locale,
+                ..
+            } => Some(&crate::catalogue::choices::LANGUAGE),
+            _ => self.choices(),
+        }
+    }
+
     /// The variants of an enum or colour type.
     pub const fn choices(&self) -> Option<&'static Choices> {
         match self {

@@ -225,10 +225,11 @@ pub enum Pane {
 /// An open editor or dialog.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Editor {
-    /// An enum or colour: its variants, the focused one and the current one.
+    /// An enum, colour or locale: its suggestions and focused/current entry.
     Choice {
         setting: &'static Setting,
         focus: usize,
+        /// `usize::MAX` when a stored locale is not one of the suggestions.
         selected: usize,
     },
     /// An integer or duration being moved by whole steps (not stored yet).
@@ -454,7 +455,7 @@ impl Screen {
                 };
             }
             Value::Enum(v) | Value::Colour(v) => {
-                let variants = s.ty.choices().map_or(&[][..], |c| c.variants);
+                let variants = s.ty.editor_choices().map_or(&[][..], |c| c.variants);
                 let selected = variants.iter().position(|x| *x == v).unwrap_or(0);
                 Some(Editor::Choice {
                     setting: s,
@@ -464,6 +465,18 @@ impl Screen {
             }
             Value::Int(value) | Value::Duration(value) => {
                 Some(Editor::Number { setting: s, value })
+            }
+            Value::Text(text) if s.ty.editor_choices().is_some() => {
+                let variants = s.ty.editor_choices().map_or(&[][..], |c| c.variants);
+                let selected = variants
+                    .iter()
+                    .position(|v| v.eq_ignore_ascii_case(&text))
+                    .unwrap_or(usize::MAX);
+                Some(Editor::Choice {
+                    setting: s,
+                    focus: if selected == usize::MAX { 0 } else { selected },
+                    selected,
+                })
             }
             Value::Text(text) => Some(Editor::Text {
                 setting: s,
@@ -496,7 +509,7 @@ impl Screen {
                     return self.pick(at);
                 }
                 // Left/Right do nothing in a list (as in menus).
-                let len = setting.ty.choices().map_or(0, |c| c.variants.len());
+                let len = setting.ty.editor_choices().map_or(0, |c| c.variants.len());
                 *focus = moved(*focus, by, len);
             }
             Some(Editor::Number { .. }) => match key {
@@ -543,7 +556,7 @@ impl Screen {
         };
         let Some(variant) = setting
             .ty
-            .choices()
+            .editor_choices()
             .and_then(|c| c.variants.get(index).copied())
         else {
             return Effect::None;
@@ -551,6 +564,7 @@ impl Screen {
         self.editor = None;
         let value = match setting.ty {
             ValueType::Colour { .. } => Value::colour(variant),
+            ValueType::Text { .. } => Value::text(variant),
             _ => Value::choice(variant),
         };
         Effect::Set {

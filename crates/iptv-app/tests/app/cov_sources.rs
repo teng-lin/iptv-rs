@@ -68,6 +68,9 @@ fn playlists_and_their_guide_sources() {
     t.press("text:Add playlist");
     t.press("text:Playlist file");
     t.press("text:Choose a file…");
+    // File selection completes asynchronously; submit only after the
+    // selected file has reached the wizard's state and rendered.
+    t.wait("text:synthetic.m3u", 5);
     t.press("text:Add playlist");
     t.wait("text:Playlist added", 30);
     t.press("text:Watch");

@@ -13,6 +13,7 @@ test-support = []
 
 [dependencies]
 base64 = "0.22"
+sys-locale = "0.3.2"
 iptv-core.workspace = true
 iptv-nav.workspace = true
 iptv-guide.workspace = true

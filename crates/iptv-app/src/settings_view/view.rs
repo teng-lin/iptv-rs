@@ -4,6 +4,8 @@
 //! below, the editors over it (`editors`), and the notice line. In the
 //! lists' type and pitch with their focus pill (`ui_kit`, `list_rows`).
 
+use crate::i18n::tr;
+
 use super::*;
 use crate::fonts::{LIST_ITEM, SANS, SECTION};
 use crate::list_rows::{self, Mark, ROW, ROW_TWO};
@@ -102,7 +104,7 @@ fn header(ui: Ui, size: Scale) -> impl IntoElement {
         .flex_row()
         .items_center()
         .gap(move || size.px(16.0))
-        .child(ui_kit::title(size, "Settings"))
+        .child(ui_kit::title(size, move || tr("Settings")))
         .child(
             ui_kit::caption(size, move || hint(ui))
                 .flex_1()
@@ -110,22 +112,22 @@ fn header(ui: Ui, size: Scale) -> impl IntoElement {
         )
         .child(when(
             move || ui.back_controls(),
-            move || ui_kit::button(ui, size, "Close", || false, move || close(ui)),
+            move || ui_kit::button(ui, size, move || tr("Close"), || false, move || close(ui)),
         ))
 }
 
 fn hint(ui: Ui) -> &'static str {
     if !ui.keys_shown() {
-        return "Tap a page, then a setting to change it";
+        return tr("Tap a page, then a setting to change it");
     }
     let at = state(ui, |s| (s.pane(), s.editor().cloned())).unwrap_or((Pane::Pages, None));
     match at {
-        (_, Some(Editor::Choice { .. })) => "▲▼ choose   OK keep   Back cancel",
-        (_, Some(Editor::Number { .. })) => "◀▶ change   OK keep   Back cancel",
-        (_, Some(Editor::Text { .. })) => "Type, then OK to keep   Back cancel",
-        (_, Some(Editor::Confirm { .. })) => "OK go ahead   Back cancel",
-        (Pane::Pages, None) => "▲▼ page   ▶ OK its settings   Back close",
-        (Pane::Rows, None) => "▲▼ move   OK change   ◀ Back pages",
+        (_, Some(Editor::Choice { .. })) => tr("▲▼ choose   OK keep   Back cancel"),
+        (_, Some(Editor::Number { .. })) => tr("◀▶ change   OK keep   Back cancel"),
+        (_, Some(Editor::Text { .. })) => tr("Type, then OK to keep   Back cancel"),
+        (_, Some(Editor::Confirm { .. })) => tr("OK go ahead   Back cancel"),
+        (Pane::Pages, None) => tr("▲▼ page   ▶ OK its settings   Back close"),
+        (Pane::Rows, None) => tr("▲▼ move   OK change   ◀ Back pages"),
     }
 }
 

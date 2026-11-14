@@ -5,6 +5,8 @@
 //! focused programme is. Left from the groups lands on Search. The icons
 //! are our own simple line drawings.
 
+use crate::i18n::tr;
+
 use iptv_core::browse::RailItem;
 use iptv_core::guide::Pane;
 use nsh_core::element::ImageSrc;
@@ -33,14 +35,14 @@ pub fn width(ui: Ui) -> f32 {
 
 fn label(item: RailItem) -> &'static str {
     match item {
-        RailItem::Search => "Search",
-        RailItem::Tv => "Live TV",
-        RailItem::Movies => "Films",
-        RailItem::Shows => "Series",
-        RailItem::Recordings => "Recordings",
-        RailItem::MyList => "Watchlist",
-        RailItem::Playlists => "Playlists",
-        RailItem::Settings => "Settings",
+        RailItem::Search => tr("Search"),
+        RailItem::Tv => tr("Live TV"),
+        RailItem::Movies => tr("Films"),
+        RailItem::Shows => tr("Series"),
+        RailItem::Recordings => tr("Recordings"),
+        RailItem::MyList => tr("Watchlist"),
+        RailItem::Playlists => tr("Playlists"),
+        RailItem::Settings => tr("Settings"),
     }
 }
 
@@ -108,7 +110,7 @@ fn item_view(ui: Ui, item: RailItem) -> impl IntoElement {
         })
         // Its name even while the rail shows the icons only (VoiceOver,
         // TalkBack, tests).
-        .label(label(item))
+        .label(move || label(item))
         .on_press(move || {
             ui.touched();
             if let Some(i) = index() {
@@ -117,7 +119,7 @@ fn item_view(ui: Ui, item: RailItem) -> impl IntoElement {
         })
         .child(svg(icon(item)).size(px(ICON)).text_color(colour))
         .child(
-            text(label(item))
+            text(move || label(item))
                 .number_of_lines(1)
                 .opacity(move || if open() { 1.0_f32 } else { 0.0 })
                 .text_size(px(TEXT_SIZE))

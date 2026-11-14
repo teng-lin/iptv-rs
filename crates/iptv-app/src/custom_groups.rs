@@ -1,5 +1,7 @@
 //! Custom groups and filtered bulk membership editing. Provider membership
 //! remains imported data; moves are offered only between custom groups.
+use crate::i18n::tr;
+
 use crate::{
     Ui, data,
     scale::Scale,
@@ -354,7 +356,7 @@ fn labels(s: &Open) -> Vec<String> {
             "Rename group",
             "Reorder members",
             "Delete group",
-            "Back",
+            tr("Back"),
         ]
         .map(str::to_owned)
         .to_vec(),
@@ -385,7 +387,7 @@ fn labels(s: &Open) -> Vec<String> {
                     .map(|g| format!("{} · {} channels", g.name, g.channel_count)),
             )
             .collect(),
-        Page::Delete(_) => vec!["Cancel".into(), "Delete group and memberships".into()],
+        Page::Delete(_) => vec![tr("Cancel").into(), "Delete group and memberships".into()],
     }
 }
 fn act(ui: Ui, index: usize) {

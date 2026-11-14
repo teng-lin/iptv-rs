@@ -17,6 +17,8 @@
 //! it (Super+W, Alt+F4) closes it, as its ✕ does. Meanwhile the main
 //! window shows [`placeholder`] where the video was.
 
+use crate::i18n::tr;
+
 use std::cell::Cell;
 use std::time::Duration;
 
@@ -131,7 +133,7 @@ fn content(ui: Ui) -> impl IntoElement {
                 .test_id("pip-video")
                 .absolute()
                 .inset_0()
-                .label("Video")
+                .label(move || tr("Video"))
                 .window_drag(move || drags.get())
                 .on_press(move |e: &PressEvent| clicked(ui, hover, drags, e.clicks)),
         )
@@ -200,7 +202,7 @@ fn controls(ui: Ui) -> impl IntoElement {
         .child(
             button(
                 "pip-close",
-                || "Close",
+                || tr("Close"),
                 || Icon::Close,
                 32.0,
                 move || {
@@ -220,7 +222,9 @@ fn controls(ui: Ui) -> impl IntoElement {
                 .pointer_events(PointerEvents::BoxNone)
                 .child(button(
                     "pip-play",
-                    move || if paused() { "Play" } else { "Pause" },
+                    move || {
+                        if paused() { tr("Play") } else { tr("Pause") }
+                    },
                     move || if paused() { Icon::Play } else { Icon::Pause },
                     48.0,
                     move || ui.paused.update(|p| *p = !*p),

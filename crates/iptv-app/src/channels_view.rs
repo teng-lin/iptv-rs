@@ -9,8 +9,11 @@
 //! persistent layer: preview mode only changes its rectangle
 //! ([`preview_rect`]).
 
+use crate::i18n::tr;
+use crate::lists::entry_name;
+
 use iptv_core::channel_list::{ChannelList, ListMode, ListPane, Outcome};
-use iptv_core::lists::{ChannelList as Rows, Entry, FAVORITES, entry_count, entry_name};
+use iptv_core::lists::{ChannelList as Rows, Entry, FAVORITES, entry_count};
 use iptv_nav::Action;
 use nsh_core::prelude::*;
 
@@ -224,7 +227,7 @@ pub fn layer(ui: Ui) -> impl IntoElement {
         .pt_safe_area()
         .py(px(16.0))
         .bg(panel)
-        .child(heading(Box::new(|| "Groups".to_owned())).px(move || size.px(INSET + 8.0)))
+        .child(heading(Box::new(|| tr("Groups").to_owned())).px(move || size.px(INSET + 8.0)))
         .child(
             virtual_list(
                 move || {

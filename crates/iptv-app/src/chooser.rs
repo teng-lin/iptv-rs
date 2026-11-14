@@ -6,6 +6,8 @@
 //! (tivimate docs/09); wording is ours. Entries are taken when a chooser
 //! opens; Up/Down move, OK (or a tap) picks and closes, Back closes.
 
+use crate::i18n::tr;
+
 use std::time::Duration;
 
 use iptv_core::player_options::{Chooser, PictureSize, SLEEP_MINUTES};
@@ -65,11 +67,11 @@ pub fn picture_name(ui: Ui) -> &'static str {
 fn title(kind: Kind) -> &'static str {
     match kind {
         Kind::Picture => "Picture size",
-        Kind::Sleep => "Sleep timer",
-        Kind::Track(Track::Video) => "Video",
-        Kind::Track(Track::Audio) => "Audio",
-        Kind::Track(Track::Text) => "Subtitles",
-        Kind::AudioDelay => "Audio delay",
+        Kind::Sleep => tr("Sleep timer"),
+        Kind::Track(Track::Video) => tr("Video"),
+        Kind::Track(Track::Audio) => tr("Audio"),
+        Kind::Track(Track::Text) => tr("Subtitles"),
+        Kind::AudioDelay => tr("Audio delay"),
         Kind::History => "Recently watched",
     }
 }
@@ -89,7 +91,7 @@ fn entries(ui: Ui, kind: Kind) -> (Vec<String>, Vec<String>, usize) {
             (labels, Vec::new(), at.unwrap_or(0))
         }
         Kind::Sleep => {
-            let labels = ["Off".to_owned()]
+            let labels = [tr("Off").to_owned()]
                 .into_iter()
                 .chain(SLEEP_MINUTES.iter().map(|m| format!("{m} minutes")))
                 .collect();

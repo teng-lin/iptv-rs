@@ -1,6 +1,8 @@
 //! The player's words: waiting and failures (short, no addresses), the
 //! action cards' labels and the keys' hints over the video.
 
+use crate::i18n::tr;
+
 use iptv_core::panels::{QuickAction, Shown};
 use iptv_core::playback::{Cause, ErrorKind, Waiting};
 use iptv_nav::Profile;
@@ -8,14 +10,14 @@ use iptv_nav::Profile;
 /// An action card's label (ours); the favourite's shows its state.
 pub(crate) fn quick_label(action: QuickAction, favorite: bool, detour: bool) -> &'static str {
     match action {
-        QuickAction::Guide => "TV guide",
-        QuickAction::History => "History",
-        QuickAction::Channels => "Channels",
-        QuickAction::Favorite if favorite => "★ Favourite",
-        QuickAction::Favorite => "☆ Favourite",
-        QuickAction::Multiview if detour => "Back to multiview",
-        QuickAction::Multiview => "Multiview",
-        QuickAction::Controls => "More controls",
+        QuickAction::Guide => tr("TV guide"),
+        QuickAction::History => tr("History"),
+        QuickAction::Channels => tr("Channels"),
+        QuickAction::Favorite if favorite => tr("★ Favourite"),
+        QuickAction::Favorite => tr("☆ Favourite"),
+        QuickAction::Multiview if detour => tr("Back to multiview"),
+        QuickAction::Multiview => tr("Multiview"),
+        QuickAction::Controls => tr("More controls"),
     }
 }
 
@@ -51,18 +53,18 @@ pub(crate) fn hint(
 /// Our own wording for a failure.
 pub(crate) fn failure_message(kind: &ErrorKind, catch_up: bool) -> String {
     let fixed = match kind {
-        ErrorKind::Unavailable if catch_up => "This programme can't be replayed.",
-        ErrorKind::Unavailable => "This channel has no stream address.",
-        ErrorKind::Account => "The provider refused this account.",
-        ErrorKind::Http(404 | 410) => "The provider doesn't have this stream.",
+        ErrorKind::Unavailable if catch_up => tr("This programme can't be replayed."),
+        ErrorKind::Unavailable => tr("This channel has no stream address."),
+        ErrorKind::Account => tr("The provider refused this account."),
+        ErrorKind::Http(404 | 410) => tr("The provider doesn't have this stream."),
         _ if kind.cause() == Cause::Refused => return refused_message(),
-        ErrorKind::Http(_) => "The provider answered with an error.",
-        ErrorKind::Network => "Can't reach the provider. Check the connection.",
-        ErrorKind::Format => "This stream's format isn't supported.",
-        ErrorKind::Ended => "The stream ended.",
-        ErrorKind::Stalled => "The stream stopped sending video.",
-        ErrorKind::Resolve => "The portal didn't give a stream address.",
-        ErrorKind::Other => "Playback stopped with an error.",
+        ErrorKind::Http(_) => tr("The provider answered with an error."),
+        ErrorKind::Network => tr("Can't reach the provider. Check the connection."),
+        ErrorKind::Format => tr("This stream's format isn't supported."),
+        ErrorKind::Ended => tr("The stream ended."),
+        ErrorKind::Stalled => tr("The stream stopped sending video."),
+        ErrorKind::Resolve => tr("The portal didn't give a stream address."),
+        ErrorKind::Other => tr("Playback stopped with an error."),
     };
     fixed.to_owned()
 }
@@ -82,9 +84,9 @@ fn refused_message() -> String {
 /// The waiting pill's words.
 pub(crate) fn waiting_text(waiting: &Waiting) -> String {
     match waiting {
-        Waiting::Loading => "Loading…".into(),
-        Waiting::Buffering => "Buffering…".into(),
-        Waiting::Reconnecting { .. } => "Reconnecting…".into(),
+        Waiting::Loading => tr("Loading…").into(),
+        Waiting::Buffering => tr("Buffering…").into(),
+        Waiting::Reconnecting { .. } => tr("Reconnecting…").into(),
     }
 }
 
