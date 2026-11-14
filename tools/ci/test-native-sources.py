@@ -335,6 +335,19 @@ class Collecting(unittest.TestCase):
         output = self.root / "out" / sources.archive_name("macos", "9.8.7")
         return sources.collect("macos", package, output, fetch=fetch), output
 
+    def test_macos_app_with_only_the_pinned_runtime_needs_no_archive(self):
+        package = self.root / "Patina.app"
+        (package / sources.NOTICES["macos"]).mkdir(parents=True)
+        output = self.root / "out" / sources.archive_name("macos", "9.8.7")
+        self.assertIsNone(sources.collect("macos", package, output))
+        self.assertFalse(output.exists())
+
+    def test_linux_package_without_a_manifest_fails(self):
+        package = self.root / "Patina.AppDir"
+        (package / sources.NOTICES["linux"]).mkdir(parents=True)
+        with self.assertRaises(FileNotFoundError):
+            sources.collect("linux", package, self.root / "out" / sources.archive_name("linux", "9.8.7"))
+
     def test_macos_archive_holds_verified_sources_recipe_and_manifest(self):
         description, output = self.collect_macos(self.macos_package())
         with tarfile.open(output) as archive:

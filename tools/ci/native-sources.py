@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Corresponding source for the native libraries bundled in desktop packages.
+"""Corresponding source for the system libraries bundled in desktop packages.
 
-The macOS disk image bundles Homebrew's libmpv, FFmpeg and their dependencies;
-the Linux AppImage bundles Ubuntu's. Those are (L)GPL libraries, so each
-release also publishes the source they were built from:
+libmpv, with FFmpeg and the libraries it uses linked in, is Patina's own
+pinned build in both desktop packages (tools/mpv-runtime-unix): its exact
+sources are retained with its dependency release and named in the package's
+notices/mpv-runtime/SOURCE.txt. This script covers the other bundled
+libraries: the Linux AppImage's GTK stack and the host libraries libmpv
+uses (Ubuntu builds), and any Homebrew library the macOS app still links
+(normally none). Each release publishes the source they were built from:
 
-  Patina-<version>-macos-native-sources.tar
+  Patina-<version>-macos-native-sources.tar   (only when Homebrew libraries are bundled)
   Patina-<version>-linux-native-sources.tar
 
 Packaging writes `notices/native/sources.json` (what to fetch) and
@@ -51,9 +55,12 @@ def archive_name(platform, version):
 
 NOTE = {
     "macos": """\
-The libraries in Contents/Frameworks (libmpv, FFmpeg and the libraries they
-use) are Homebrew builds. Only their load paths and code signatures were
-changed to make the app self-contained.
+libmpv.2.dylib in Contents/Frameworks is Patina's pinned libmpv runtime, with
+FFmpeg and the libraries it uses linked in. Its notices, and the address and
+checksum of its exact source archive, are in ../mpv-runtime (SOURCE.txt).
+
+The other libraries in Contents/Frameworks are Homebrew builds. Only their
+load paths and code signatures were changed to make the app self-contained.
 
 components.json lists each library with its Homebrew formula and version.
 sources.json lists, for every formula, the upstream archive, patches and
@@ -62,8 +69,12 @@ formula itself, which is the build recipe, is in the directory named after
 it.
 """,
     "linux": """\
-The libraries in usr/lib (libmpv, FFmpeg, GTK and the libraries they use) are
-Ubuntu builds, copied from the system the AppImage was built on.
+libmpv.so.2 in usr/lib is Patina's pinned libmpv runtime, with FFmpeg and the
+libraries it uses linked in. Its notices, and the address and checksum of its
+exact source archive, are in ../mpv-runtime (SOURCE.txt).
+
+The other libraries in usr/lib (GTK, and the host libraries GTK and libmpv
+use) are Ubuntu builds, copied from the system the AppImage was built on.
 
 components.json lists each library with the Ubuntu package that installed it
 and the source package and version that package was built from. sources.json
@@ -474,6 +485,10 @@ def write_archive(stage, output):
 def collect(platform, package, output, fetch=None, scratch=None):
     package, output = Path(package), Path(output)
     notices = package / NOTICES[platform]
+    if platform == "macos" and not (notices / "sources.json").exists():
+        # Only the pinned runtime is bundled; its sources live with its release.
+        print(f"{package}: no Homebrew library is bundled; no source archive to collect")
+        return None
     description = json.loads((notices / "sources.json").read_text())
     if description.get("schema") != 1 or description.get("platform") != platform or not description.get("components"):
         raise SystemExit(f"{notices}/sources.json does not describe bundled {platform} libraries")

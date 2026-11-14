@@ -9,6 +9,18 @@ stage="$root/target/linux-root"
 appdir="$root/target/Patina.AppDir"
 rm -rf "$stage" "$appdir" target/linux
 mkdir -p "$out" target/linux
+# The AppImage's libmpv (FFmpeg and the rest linked into it) is the pinned,
+# LGPL-only runtime from tools/mpv-runtime-unix, verified by hash; never the
+# build machine's. PATINA_MPV_RUNTIME_MANIFEST and PATINA_MPV_RUNTIME_ARCHIVE
+# substitute a locally built candidate, which is verified the same way.
+runtime="$root/target/mpv-runtime-linux"
+fetch=(--platform linux --destination "$runtime")
+[ -z "${PATINA_MPV_RUNTIME_MANIFEST:-}" ] || fetch+=(--manifest "$PATINA_MPV_RUNTIME_MANIFEST")
+[ -z "${PATINA_MPV_RUNTIME_ARCHIVE:-}" ] || fetch+=(--archive "$PATINA_MPV_RUNTIME_ARCHIVE")
+python3 tools/mpv-runtime-unix/runtime.py fetch "${fetch[@]}"
+# Link against it too. The native packages built from the same executable
+# depend on the distribution's libmpv2 (same SONAME, same client API).
+export LIBRARY_PATH="$runtime/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
 (cd crates/iptv-app && "$NSH" package --target linux -o "$root/target/linux" .)
 bash "$root/tools/ci/notices.sh"
 native="$root/target/linux/Patina"
@@ -66,7 +78,7 @@ export DEPLOY_GTK_VERSION=4 OUTPUT="$out/Patina-$VERSION-linux-x86_64.AppImage"
 unset LD_LIBRARY_PATH LD_PRELOAD
 libraries=()
 for library in libharfbuzz.so.0 libfribidi.so.0 libfontconfig.so.1 libfreetype.so.6 \
-  libasound.so.2 libjack.so.0 libpipewire-0.3.so.0 libusb-1.0.so.0; do
+  libasound.so.2 libpipewire-0.3.so.0; do
   path=$(ldconfig -p | awk -v name="$library" '$1 == name { print $NF }' | head -n 1)
   test -n "$path"
   canonical=$(readlink -f "$path")
@@ -78,12 +90,26 @@ for library in libharfbuzz.so.0 libfribidi.so.0 libfontconfig.so.1 libfreetype.s
   # its destination. Passing the resolved versioned file drops the loader alias.
   libraries+=(--library "$path")
 done
+# linuxdeploy resolves dependencies with ldd: point the executable at the
+# runtime so libmpv.so.2 comes from there (linuxdeploy then rewrites the
+# RUNPATH to $ORIGIN/../lib), even when a system libmpv is installed.
+patchelf --set-rpath "$runtime/lib" "$appdir/usr/bin/$exe"
 linuxdeploy --appdir "$appdir" --executable "$appdir/usr/bin/$exe" "${libraries[@]}" --plugin gtk
 for ((i=1; i<${#libraries[@]}; i+=2)); do
   test -f "$appdir/usr/lib/$(basename "${libraries[i]}")"
 done
-# Licence texts, the inventory, and the source package of every bundled library.
-python3 tools/ci/linux-native-notices.py "$appdir" "$VERSION"
+if readelf --dynamic "$appdir/usr/bin/$exe" | grep -F "$runtime"; then
+  echo "the AppImage executable still searches the build machine's runtime" >&2
+  exit 1
+fi
+python3 tools/mpv-runtime-unix/runtime.py check-bundle --platform linux \
+  --runtime "$runtime" --libraries "$appdir/usr/lib"
+python3 tools/mpv-runtime-unix/runtime.py notices --runtime "$runtime" \
+  --output "$appdir/usr/bin/notices/mpv-runtime"
+# Licence texts, the inventory, and the source package of every other
+# bundled library (GTK and the host libraries libmpv uses: Ubuntu builds).
+python3 tools/ci/linux-native-notices.py "$appdir" "$VERSION" "$runtime"
+python3 tools/ci/check-notices.py "$appdir" mpv-runtime/components.json
 python3 tools/ci/check-notices.py "$appdir" native/components.json
 python3 tools/ci/check-notices.py "$appdir" native/sources.json
 linuxdeploy --appdir "$appdir" --output appimage
