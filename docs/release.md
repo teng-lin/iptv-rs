@@ -23,6 +23,23 @@ itself fails. Either can therefore be a required check. Desktop packaging is
 path-filtered at the workflow level and must not be required, since skipped
 workflows can remain pending.
 
+## Android smoke test
+
+`.github/workflows/android-smoke.yml` builds an x86_64 debug APK whose wizard
+starts with the mock server's playlist (`IPTV_RS_DEV_PLAYLIST`, with debug
+assertions so it may reach the emulator's host address), generates the
+synthetic fixtures, and runs `tools/ci/android-smoke.sh` on a tablet
+(`pixel_tablet`, Google APIs) and a TV (`tv_1080p`, Android TV) emulator,
+API 36. The script drives the app with remote keys and checks its log: first
+run, adding the playlist, a channel in the guide, full screen, multiview with
+a second player, background (the activity stops) and resume (both players
+reopen), and back to the guide; it fails on a crash or a player load refused
+outside its relay. Logs and a screenshot per step are uploaded as
+`android-smoke-<form>`. It runs on PRs that touch the Android host, the app or
+network crates, or its own inputs, and nightly. It is new and path-filtered:
+do not make it a required check. The script's header says how to run it on a
+local emulator.
+
 ## Coverage and fuzzing
 
 Neither of these gates a merge. Both workflows are path-filtered on PRs, so do

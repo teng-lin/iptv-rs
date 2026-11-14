@@ -1,0 +1,128 @@
+name: Android smoke
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/android-smoke.yml'
+      - '.github/actions/android/**'
+      - '.github/actions/setup/**'
+      - '.github/actions/nsh-cli/**'
+      - 'hosts/android/**'
+      - 'crates/iptv-app/**'
+      - 'crates/iptv-net/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'nsh.rev'
+      - 'rust-toolchain.toml'
+      - 'tools/sync-host.sh'
+      - 'tools/ci/android-smoke.sh'
+      - 'tools/ci/android-ndk-env.sh'
+      - 'tools/make-hls-fixtures.sh'
+      - 'tools/make-iptv-fixtures.py'
+      - 'tools/mock-server.py'
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+# Superseded PR runs need not keep occupying runners.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('android-smoke-pr-{0}', github.event.pull_request.number) || format('android-smoke-run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+permissions:
+  contents: read
+# Launches the app on a tablet and a TV emulator and drives it with remote keys
+# (tools/ci/android-smoke.sh): first run, the synthetic playlist, a channel in
+# the guide, full screen, multiview, background and resume. Path-filtered and
+# new: not a required check.
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - uses: ./.github/actions/android
+        with:
+          abi: x86_64
+      # A debug APK for x86_64 emulators whose wizard starts with the mock
+      # server's playlist; debug assertions let it reach that private address.
+      - name: Build the development APK
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+          ABIS: x86_64
+          IPTV_RS_DEV_PLAYLIST: http://10.0.2.2:8089/iptv/playlist.m3u
+          CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: 'true'
+        run: |
+          bash tools/sync-host.sh
+          (cd hosts/android && ./gradlew --no-daemon assembleDebug)
+      - name: Generate the synthetic fixtures
+        run: |
+          bash tools/make-hls-fixtures.sh
+          python3 -I tools/make-iptv-fixtures.py --channels 300
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-smoke-input
+          path: |
+            hosts/android/app/build/outputs/apk/debug/app-debug.apk
+            fixtures/hls
+          if-no-files-found: error
+          retention-days: 3
+  smoke:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - form: tablet
+            target: google_apis
+            profile: pixel_tablet
+          - form: tv
+            target: android-tv
+            profile: tv_1080p
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: android-smoke-input
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+            sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Serve the fixtures
+        run: |
+          mkdir -p target
+          nohup python3 tools/mock-server.py 8089 fixtures/hls > target/mock-server.log 2>&1 &
+          for _ in $(seq 1 20); do
+            curl -sf -o /dev/null http://127.0.0.1:8089/iptv/playlist.m3u && exit 0
+            sleep 0.5
+          done
+          exit 1
+      - name: Smoke test on the ${{ matrix.form }} emulator
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        env:
+          IPTV_SMOKE_OUT: target/android-smoke
+        with:
+          api-level: 36
+          target: ${{ matrix.target }}
+          arch: x86_64
+          profile: ${{ matrix.profile }}
+          ram-size: 4096M
+          disk-size: 4096M
+          force-avd-creation: true
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -no-audio -no-boot-anim -gpu swiftshader_indirect
+          script: bash tools/ci/android-smoke.sh "" hosts/android/app/build/outputs/apk/debug/app-debug.apk
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: android-smoke-${{ matrix.form }}
+          path: |
+            target/android-smoke
+            target/mock-server.log
+          if-no-files-found: ignore
