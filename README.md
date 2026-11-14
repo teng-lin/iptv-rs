@@ -151,8 +151,10 @@ renderer, with output capped at 1920×1080 and scaled by Direct2D. This is
 CPU intensive; high-resolution playback and multiview need performance
 validation. GPU rendering is not yet implemented on Windows.
 
-The Windows CI job and `-Check` command run native builds, encrypted-storage
-and app tests, and the portable core's WebAssembly build. A first build also
+The Windows CI job and `-Check` command run what `tools/check.sh` runs on
+Linux and macOS: lints, the tests of every library crate and of the app, and
+the WebAssembly builds of the portable crates. `-Check` also needs Python,
+to compare the NSH checkout with `nsh.rev`. A first build also
 compiles OpenSSL from source and can take several minutes. For direct Cargo
 commands, put Strawberry Perl's `perl/bin` and `c/bin` directories, plus
 `target/mpv`, on `PATH`.

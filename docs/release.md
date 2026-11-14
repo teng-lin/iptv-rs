@@ -290,7 +290,9 @@ all build and test calls in `tools/check.sh` require the lock.
 `check-package-lock.py` requires shared source-lock dependency identities and
 checksums to remain present in the runner lock, so lock-only updates cannot
 silently leave packaged versions behind. `audit-runners.sh` audits each shipped
-Rust runner with its actual target and features. The generated virtual workspace
+Rust runner with its actual target and features, and the app crate's own graph
+for `x86_64-pc-windows-msvc`: Windows has no generated runner and ships that
+executable, built from the source `Cargo.lock`. The generated virtual workspace
 also contains JavaScript, web and Windows development hosts that are not shipped
 by these package scripts; auditing that virtual root would enable their unrelated
 features. Generated notices and inventories conservatively include that superset.
@@ -302,7 +304,16 @@ only on a wrapper environment variable would not protect those nested builds.
 
 ## Windows installer (experimental)
 
-Windows PR checks build and test the app. Installer generation runs only in the
+Windows PR checks run `tools/build-windows.ps1 -Check`: the same lints, library
+crate tests, app tests and portable wasm builds as `tools/check.sh`
+(`tools/ci/test-check-parity.py` fails when the crate lists of the two scripts
+differ). The Windows setup action uses the same Rust build cache as the other
+hosts; only master saves it. Formatting and the workspace-wide `cargo deny` run
+once, on Linux and macOS: neither depends on the host, and `cargo deny` without
+a target already covers the Windows-only dependencies. `audit-runners.sh`
+additionally audits the graph the Windows executable ships, for its own target.
+
+Installer generation runs only in the
 release workflow for tags and manual desktop selections, using
 `tools/package-windows.ps1`. It produces one x64 `.exe` installer, with no portable
 ZIP. The per-user install bundles libmpv and the VC runtime, adds a Start menu
