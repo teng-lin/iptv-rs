@@ -141,6 +141,7 @@ jobs:
       - name: Prepare unsigned Android artifacts
         if: matrix.platform == 'android'
         run: bash tools/ci/prepare-android.sh
+      # libmpv is the pinned macOS runtime, fetched and verified by hash.
       - name: Build macOS app without signing credentials
         if: matrix.platform == 'macos'
         env:
@@ -148,9 +149,10 @@ jobs:
         run: |
           bash tools/package-macos.sh
           bash tools/ci/package-macos.sh
-      # The app bundles Homebrew's libmpv, FFmpeg and their dependencies:
-      # publish the sources named by the formulae of the installed versions.
-      - name: Corresponding source of the libraries bundled in the macOS app
+      # Homebrew libraries the app may still link beside the pinned runtime
+      # (normally none, and then there is no archive): publish the sources
+      # named by the formulae of the installed versions.
+      - name: Corresponding source of Homebrew libraries bundled in the macOS app
         if: matrix.platform == 'macos'
         run: |
           python3 tools/ci/native-sources.py macos target/package/Patina.app \
@@ -186,7 +188,9 @@ jobs:
         with:
           name: packages-${{ matrix.platform }}-native-sources
           path: target/native-sources/Patina-*-native-sources.*
-          if-no-files-found: error
+          # The AppImage always bundles Ubuntu libraries; the macOS app only
+          # the pinned runtime unless it links a Homebrew library.
+          if-no-files-found: ${{ matrix.platform == 'linux' && 'error' || 'ignore' }}
           # The members are compressed archives already.
           compression-level: 0
   sbom:
