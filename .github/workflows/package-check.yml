@@ -15,6 +15,7 @@ on:
       - 'crates/iptv-app/icon.png'
       - 'crates/iptv-app/fonts/**'
       - 'rust-toolchain.toml'
+      - 'nsh.rev'
       - 'about.toml'
       - 'tools/ci/**'
       - 'tools/package-macos.sh'

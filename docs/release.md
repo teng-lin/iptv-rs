@@ -19,8 +19,10 @@ Android packages builds the arm64 native library and the Gradle host's debug APK
 verifies the APK signature, and uploads both as the android-debug artifact.
 It uses a generated debug key and does not receive release secrets.
 NSH is checked
-out beside the repository at a pinned commit from tv-keys; update the SHA
-in .github/actions/setup/action.yml when adopting fork changes.
+out beside the repository at the commit in `nsh.rev` (from the fork's tv-keys
+branch). That file is the only place the commit is named: both setup actions
+read it through `tools/ci/pins.py`, and `tools/check.sh` refuses a `../nsh`
+checkout at any other commit. Update `nsh.rev` when adopting fork changes.
 
 Release runs repeat the host checks while packaging runs in parallel; the
 signed Android build takes the place of the PR's debug build. Publication

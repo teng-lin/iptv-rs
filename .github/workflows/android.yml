@@ -38,7 +38,7 @@ jobs:
               "Cargo.lock", "crates/**/Cargo.toml", "crates/iptv-app/build.rs",
               "crates/iptv-app/nsh.json", "crates/iptv-app/icon.png",
               "crates/iptv-app/fonts/**", "tools/sync-host.sh", "tools/ci/**",
-              "rust-toolchain.toml", "about.toml",
+              "rust-toolchain.toml", "nsh.rev", "about.toml",
           )
           package = True
           if os.environ["EVENT"] == "pull_request":

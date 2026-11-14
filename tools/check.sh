@@ -3,6 +3,9 @@
 # crates, and the app build. Run before committing.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# NSH is a path dependency, so Cargo.lock cannot pin it: nsh.rev does. Fail
+# before compiling against another commit (IPTV_ALLOW_NSH_DRIFT=1 allows it).
+python3 tools/ci/pins.py check-nsh
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tools -p test_version.py
 # Only our packages: `--all` would also format path dependencies (the NSH checkout).
 cargo fmt -p iptv-core -p iptv-nav -p iptv-settings -p iptv-epg -p iptv-providers -p iptv-guide -p iptv-import -p iptv-net -p iptv-store-sqlite -p iptv-search -p iptv-app --check
@@ -30,4 +33,5 @@ python3 tools/ci/test-package-lock.py
 python3 tools/ci/test-ios-entitlements.py
 python3 tools/ci/test-unpack-signing-input.py
 python3 tools/ci/test-nsh-tool-key.py
+python3 tools/ci/test-pins.py
 echo "all checks passed"

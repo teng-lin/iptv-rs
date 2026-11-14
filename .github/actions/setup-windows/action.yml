@@ -3,10 +3,18 @@ description: Pinned NSH and Rust for the Windows app
 runs:
   using: composite
   steps:
+    # nsh.rev and rust-toolchain.toml are the only places that name these pins.
+    - name: Read the pinned NSH revision and Rust toolchain
+      id: pins
+      shell: pwsh
+      run: |
+        $pins = python tools/ci/pins.py
+        if ($LASTEXITCODE -ne 0) { throw 'Could not read the NSH or Rust pin.' }
+        $pins >> $env:GITHUB_OUTPUT
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       with:
         repository: teng-lin/nsh
-        ref: 4439410f78174fadacc35f6677b8a767ff206c90
+        ref: ${{ steps.pins.outputs.nsh }}
         path: nsh-source
         persist-credentials: false
     - shell: pwsh
@@ -20,5 +28,5 @@ runs:
         'C:\Program Files\NASM' >> $env:GITHUB_PATH
     - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
       with:
-        toolchain: 1.99.1
+        toolchain: ${{ steps.pins.outputs.toolchain }}
         targets: wasm32-unknown-unknown

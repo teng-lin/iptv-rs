@@ -78,12 +78,20 @@ The AppImage bundles them.
 - Rust (the version pinned in `rust-toolchain.toml`) with the
   `wasm32-unknown-unknown` target, and for Android also
   `aarch64-linux-android` and `x86_64-linux-android`.
-- The NSH fork checked out next to this repository and its CLI built:
+- The NSH fork checked out next to this repository at the commit recorded
+  in [`nsh.rev`](nsh.rev), and its CLI built:
 
   ```sh
-  git clone -b tv-keys https://github.com/teng-lin/nsh.git ../nsh
+  git clone https://github.com/teng-lin/nsh.git ../nsh
+  git -C ../nsh checkout --detach "$(cat nsh.rev)"
   (cd ../nsh && cargo build --release -p nsh-cli)
   ```
+
+  NSH is a path dependency, so `Cargo.lock` cannot record its commit;
+  `nsh.rev` does. CI checks out the same commit, and `tools/check.sh` fails
+  when `../nsh` is at another one (`IPTV_ALLOW_NSH_DRIFT=1` allows it while
+  you develop the fork). After `nsh.rev` changes, run
+  `git -C ../nsh fetch origin && git -C ../nsh checkout --detach "$(cat nsh.rev)"`.
 
 - **Linux:** GTK 4 and libmpv 2 (`mpv` on Arch, `libmpv-dev` on
   Debian/Ubuntu).
@@ -97,8 +105,8 @@ The AppImage bundles them.
 Windows uses the NSH fork's Win32/Direct2D backend. Install Visual Studio
 2022 Build Tools with **Desktop development with C++** and a Windows SDK,
 Rust's MSVC toolchain, and Strawberry Perl on `PATH` (for bundled OpenSSL).
-Keep the `tv-keys` NSH checkout next to this repository as above; its CLI
-is not needed for the Windows build. The build script applies the small
+Keep the NSH checkout next to this repository at the `nsh.rev` commit as
+above; its CLI is not needed for the Windows build. The build script applies the small
 `tools/patches/nsh-windows-pointer-leave.patch` fix to that checkout; it keeps
 PiP controls visible when crossing from a drag region onto a button.
 
