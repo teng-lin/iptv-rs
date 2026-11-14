@@ -249,10 +249,16 @@ fn channel_headers(channel: &Channel) -> &[(String, String)] {
 
 fn source(context: Option<&PlaybackContext>, url: String, channel: &Channel) -> PlaySource {
     let headers = context.map_or_else(Vec::new, |c| c.headers(&url));
-    let public_only = !matches!(
-        (&channel.stream, context.map(|c| &c.inner)),
-        (StreamLocator::Xtream { .. }, Some(Inner::Xtream { .. }))
-    );
+    let public_only = match (&channel.stream, context.map(|c| &c.inner)) {
+        (StreamLocator::Xtream { .. }, Some(Inner::Xtream { .. })) => false,
+        // A static Stalker link follows the rule of a resolved one
+        // ([`StalkerLink::source`]): private only on a private portal's
+        // own host.
+        (StreamLocator::Stalker { .. }, Some(Inner::Stalker { session })) => {
+            session.borrow().stream_must_be_public(&url)
+        }
+        _ => true,
+    };
     PlaySource {
         url,
         headers,

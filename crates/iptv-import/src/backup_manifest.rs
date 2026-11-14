@@ -32,7 +32,10 @@ pub fn entry_limit(name: &str, bytes: u64) -> Result<(), EntryLimit> {
 /// a device name: `NUL`, `nul.txt` and `Com1.tar.gz` all open the device
 /// whatever the directory, as the part before the first dot decides. A
 /// backup is restored on any platform, so these are refused everywhere.
-fn windows_portable(component: &str) -> bool {
+/// Whether `component` is a file name every supported system can hold:
+/// none of Windows' device names (`CON`, `NUL`, `COM1`…, with or without an
+/// extension) and no trailing dot or space.
+pub fn portable_component(component: &str) -> bool {
     if component.ends_with(['.', ' ']) {
         return false;
     }
@@ -58,7 +61,7 @@ pub fn allowed(name: &str) -> bool {
     !name.contains(['\\', ':', '\0'])
         && name
             .split('/')
-            .all(|c| !c.is_empty() && c != "." && c != ".." && windows_portable(c))
+            .all(|c| !c.is_empty() && c != "." && c != ".." && portable_component(c))
         && (matches!(
             name,
             "iptv.sqlite" | "settings.json" | "search-history.json" | "last_channel"

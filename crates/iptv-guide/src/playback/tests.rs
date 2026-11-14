@@ -366,6 +366,25 @@ fn a_resolved_stalker_link_may_be_private_only_on_a_private_portals_own_host() {
 }
 
 #[test]
+fn a_static_stalker_link_follows_the_same_private_portal_rule() {
+    let lan_portal = StalkerPortal::new(
+        "http://192.168.50.10/stalker_portal/server/load.php",
+        MacAddress::parse("00:1A:79:00:00:42").unwrap(),
+        PortalMode::Simple,
+    )
+    .unwrap();
+    let lan = PlaybackContext::stalker(StalkerSession::new(lan_portal));
+    let own = stalker_channel("ffmpeg http://192.168.50.10:8888/live/1.ts", Some(false));
+    assert!(!play(resolve(Some(&lan), &own, None, CLOCK)).public_only);
+    let other = stalker_channel("ffmpeg http://192.168.50.11/live/1.ts", Some(false));
+    assert!(play(resolve(Some(&lan), &other, None, CLOCK)).public_only);
+
+    let public = PlaybackContext::stalker(StalkerSession::new(portal()));
+    let private = stalker_channel("ffmpeg http://192.168.50.10/live/1.ts", Some(false));
+    assert!(play(resolve(Some(&public), &private, None, CLOCK)).public_only);
+}
+
+#[test]
 fn the_schedule_resolves_by_guide_row_and_finds_channels_by_key() {
     let channels = vec![xtream_channel(5, Some(1)), xtream_channel(6, None)];
     let acc = account(r#""ts""#);

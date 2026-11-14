@@ -277,6 +277,11 @@ impl BodyStream for Body {
 }
 impl Fetch for Client {
     type Body = Body;
+    // The import's clock: budgets count the whole import (a guide source's
+    // retries and waits included), not each request afresh.
+    fn elapsed(&self) -> std::time::Duration {
+        self.net.elapsed()
+    }
     // The wait before a guide download is tried again; the trait's default
     // does not wait.
     async fn sleep(&self, duration: std::time::Duration) {
