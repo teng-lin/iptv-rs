@@ -14,7 +14,7 @@ use iptv_search::ProgrammeIndex;
 /// Builds the index of `epg`'s channels (by row) and hands it to `done` on
 /// the UI thread (not at all when the store cannot be read).
 pub fn build(schedule: &dyn Schedule, rows: usize, done: impl FnOnce(ProgrammeIndex) + 'static) {
-    let mut sources: Vec<(iptv_store_sqlite::SourceId, Vec<ChannelKey>, usize)> = Vec::new();
+    let mut sources: Vec<(crate::runtime::model::SourceId, Vec<ChannelKey>, usize)> = Vec::new();
     if let Some(all) = schedule
         .as_any()
         .and_then(|s| s.downcast_ref::<CombinedSchedule>())
@@ -24,7 +24,7 @@ pub fn build(schedule: &dyn Schedule, rows: usize, done: impl FnOnce(ProgrammeIn
             let keys = (0..part.schedule.channel_count())
                 .filter_map(|c| part.schedule.channel(c).map(|c| c.key.clone()))
                 .collect();
-            sources.push((iptv_store_sqlite::SourceId(part.id), keys, offset));
+            sources.push((crate::runtime::model::SourceId(part.id), keys, offset));
             offset += part.schedule.channel_count();
         }
     } else if let Some(epg) = schedule

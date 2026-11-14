@@ -19,6 +19,10 @@ use iptv_import::backup_manifest::{
     self, MAX_BYTES, MAX_FILES, MAX_MANIFEST, allowed, entry_limit,
 };
 static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+#[cfg(target_os = "android")]
+pub(crate) fn next_document_request() -> String {
+    SEQUENCE.fetch_add(1, Ordering::Relaxed).to_string()
+}
 use error::{Context, Error, Result};
 static STARTED: OnceLock<std::result::Result<(), StartupError>> = OnceLock::new();
 
@@ -72,7 +76,7 @@ impl Drop for Busy {
 }
 
 pub(crate) fn is_pending() -> bool {
-    sibling(&crate::data::data_dir(), "restore-pending").exists()
+    sibling(&super::paths::data_dir(), "restore-pending").exists()
 }
 
 struct Scratch(PathBuf);
@@ -143,7 +147,7 @@ fn collect(root: &Path, directory: &Path, names: &mut Vec<String>) -> Result<()>
     }
     for entry in fs::read_dir(directory).context("Could not read local playlist files")? {
         let entry = entry.context("Could not read local playlist files")?;
-        if crate::private_files::temporary_name(&entry.file_name()) {
+        if super::private_files::temporary_name(&entry.file_name()) {
             continue;
         }
         let kind = entry
@@ -186,11 +190,11 @@ fn snapshot_library(root: &Path, snapshot: &Path) -> Result<()> {
 }
 #[cfg(not(test))]
 fn snapshot_library(root: &Path, snapshot: &Path) -> Result<()> {
-    if root != crate::data::data_dir() {
+    if root != super::paths::data_dir() {
         return Err("Backup root does not match application storage".into());
     }
     let snapshot = snapshot.to_owned();
-    crate::store_service::blocking(move |store| store.snapshot_to(&snapshot))
+    super::store_service::blocking(move |store| store.snapshot_to(&snapshot))
         .context("Could not snapshot the library")
 }
 
@@ -207,11 +211,11 @@ fn document_reader(_: &Path, path: &Path) -> Result<(u64, Box<dyn Read>)> {
 }
 #[cfg(not(test))]
 fn document_reader(root: &Path, path: &Path) -> Result<(u64, Box<dyn Read>)> {
-    if root != crate::data::data_dir() {
+    if root != super::paths::data_dir() {
         return Err("Backup root does not match application storage".into());
     }
     let path = path.to_owned();
-    let reader = crate::store_service::blocking(move |store| store.read_private_file(&path))
+    let reader = super::store_service::blocking(move |store| store.read_private_file(&path))
         .context("Could not decrypt backup document")?;
     Ok((reader.len(), Box::new(reader)))
 }
@@ -220,7 +224,7 @@ fn seal_restore_with_store(
     store: &Store,
     directory: &Path,
 ) -> std::result::Result<(), iptv_store_sqlite::StoreError> {
-    crate::private_files::seal_tree(store, &directory.join("playlists"))?;
+    super::private_files::seal_tree(store, &directory.join("playlists"))?;
     store.seal_snapshot(&directory.join("iptv.sqlite"))
 }
 #[cfg(test)]
@@ -230,7 +234,7 @@ fn seal_restore(_: &Path) -> Result<()> {
 #[cfg(not(test))]
 fn seal_restore(directory: &Path) -> Result<()> {
     let directory = directory.to_owned();
-    crate::store_service::blocking(move |store| seal_restore_with_store(store, &directory))
+    super::store_service::blocking(move |store| seal_restore_with_store(store, &directory))
         .context("Could not encrypt the pending restore")
 }
 #[cfg(test)]
@@ -239,7 +243,7 @@ fn validate_pending(path: &Path) -> std::result::Result<(), iptv_store_sqlite::S
 }
 #[cfg(not(test))]
 fn validate_pending(path: &Path) -> std::result::Result<(), iptv_store_sqlite::StoreError> {
-    crate::credential_key::validate_staged_database(path)
+    super::credential_store::validate_staged_database(path)
 }
 
 fn remove_stale_work(root: &Path) -> Result<()> {
@@ -274,7 +278,7 @@ pub(crate) fn export(root: &Path, destination: &Path, settings: &str) -> Result<
     validate_settings(settings)?;
     // Small files written in the background (a last channel) reach the disk
     // before they are copied.
-    if !crate::file_writer::flush(std::time::Duration::from_secs(5)) {
+    if !super::file_writer::flush(std::time::Duration::from_secs(5)) {
         log::warn!("iptv backup: queued file writes did not finish; copying what is on disk");
     }
     let absolute_destination = if destination.is_absolute() {
@@ -630,7 +634,7 @@ pub(crate) fn cancel(root: &Path) -> Result<()> {
 /// Called before opening any file under `root`. If a crash happened after
 /// moving the original aside, finish the validated restore, or recover it.
 pub(crate) fn lock() -> std::result::Result<(), &'static str> {
-    instance::acquire(&crate::data::data_dir())
+    instance::acquire(&super::paths::data_dir())
         .map_err(|error| report("locking application storage", error))
 }
 
@@ -638,7 +642,7 @@ pub(crate) fn startup() -> std::result::Result<(), StartupError> {
     // Keep the first outcome, including a fatal recovery failure. Recreating
     // an engine must neither rerun activation nor bypass failed recovery.
     *STARTED.get_or_init(|| {
-        let root = crate::data::data_dir();
+        let root = super::paths::data_dir();
         activate(&root).map_err(|error| StartupError {
             error,
             fatal: !root.exists(),
@@ -724,7 +728,7 @@ pub(crate) async fn worker<T: Send + 'static>(
     let (tx, rx) = futures_channel::oneshot::channel();
     progress(Progress::Working);
     drop(super::executor::spawn_blocking(
-        crate::store_service::scoped(move || {
+        super::store_service::scoped(move || {
             let _ = tx.send(job());
         }),
     ));

@@ -6,8 +6,10 @@ use serde_json::Value;
 #[cfg(target_os = "android")]
 use serde_json::json;
 #[cfg(target_os = "android")]
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::fs::{self, File};
+#[cfg(target_os = "android")]
+use std::path::Path;
 use std::path::PathBuf;
 
 /// What a backup holds, before its file is chosen.
@@ -194,7 +196,7 @@ mod android {
         rx.await.context("The document service stopped")?
     }
     pub async fn save(root: PathBuf, settings: String) -> Result<bool> {
-        let request_id = format!("{}", SEQUENCE.fetch_add(1, Ordering::Relaxed));
+        let request_id = next_document_request();
         let path = root.join(format!("backup-export-{request_id}.patinabackup"));
         let prepared = path.clone();
         worker(move || export(&root, &prepared, &settings)).await?;
@@ -203,11 +205,11 @@ mod android {
         result
     }
     pub async fn close() {
-        let request_id = format!("{}", SEQUENCE.fetch_add(1, Ordering::Relaxed));
+        let request_id = next_document_request();
         let _ = document(request_id, &crate::data::data_dir(), "close").await;
     }
     pub async fn select(root: PathBuf) -> Result<Option<ImportFile>> {
-        let request_id = format!("{}", SEQUENCE.fetch_add(1, Ordering::Relaxed));
+        let request_id = next_document_request();
         let path = root.join(format!("backup-import-{request_id}.patinabackup"));
         let file = ImportFile {
             path,

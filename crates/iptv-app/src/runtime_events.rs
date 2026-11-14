@@ -3,6 +3,13 @@ use crate::{Ui, runtime::RuntimeEvent};
 
 pub(crate) fn apply(ui: Ui, event: RuntimeEvent) {
     match event {
+        RuntimeEvent::RefreshDue(source) => crate::data::refresh(ui, source),
+        RuntimeEvent::CatalogChanged => ui.data_version.update(|version| *version += 1),
+        RuntimeEvent::EarlyResume { source, done } => crate::data::spawn_in_app(async move {
+            crate::player::resume::early(ui, &source).await;
+            let _ = done.send(());
+        }),
+        RuntimeEvent::Message(message) => crate::settings_view::notify(&message),
         RuntimeEvent::BackupProgress(phase) => {
             log::debug!("iptv backup: {phase:?}");
             ui.settings.update(|version| *version += 1);
@@ -52,4 +59,9 @@ pub(crate) fn apply(ui: Ui, event: RuntimeEvent) {
         RuntimeEvent::LibraryChanged => ui.library.version.update(|version| *version += 1),
         RuntimeEvent::SettingsChanged => ui.settings.update(|version| *version += 1),
     }
+}
+
+/// UI context supplied to the runtime's foreground scheduling hint.
+pub(crate) fn focused_channel(ui: Ui) -> Option<usize> {
+    crate::lists::focused_channel(ui)
 }

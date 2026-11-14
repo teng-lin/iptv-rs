@@ -3,7 +3,7 @@
 //! refresh policy (`iptv_import::decide`).
 //!
 //! A guide download streams into a stage file next to the store
-//! (`super::download_guide`, `iptv_store_sqlite::EpgStage`) and replaces
+//! (`super::download_guide`, `crate::runtime::model::EpgStage`) and replaces
 //! the stored guide only once it loaded ([`replace`]); it is read back from
 //! the store without descriptions (a few MiB for thousands of channels
 //! instead of the parsed feed's hundreds); the guide's details read a
@@ -29,16 +29,14 @@ use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use tokio::sync::mpsc::unbounded_channel;
 
-use iptv_epg::{ChannelKey, GuideStore, UnixTime};
+use crate::runtime::model::{SourceId, StoredGuide};
+use iptv_epg::{ChannelKey, UnixTime};
 use iptv_import::CancelToken;
-use iptv_store_sqlite::{SourceId, StoredGuide};
 
 use nsh_core::prelude::timer;
 
-use super::{Imported, Msg, Streams};
+use super::Msg;
 use crate::Ui;
-
-use crate::runtime::state::StatusSnapshot;
 
 /// Refresh small UI metadata after imports/edits without querying SQLite in views.
 pub fn bind(ui: Ui) {
@@ -49,35 +47,7 @@ pub fn bind(ui: Ui) {
         revision.set(revision.get().wrapping_add(1));
         let expected = revision.get();
         let revision = revision.clone();
-        let loaded = crate::store_service::call(|store| {
-            let mut snapshot = StatusSnapshot {
-                library: Some(super::library::snapshot_in(store)?),
-                combined: store.all_playlists()?,
-                ..Default::default()
-            };
-            for source in store.sources()? {
-                if store.source_policy(source.id)?.enabled {
-                    snapshot.enabled.push(source.id);
-                }
-                if let Some(guide) = store.epg_guide(source.id)? {
-                    snapshot.guides.insert(source.id, guide);
-                }
-                let results = store.epg_feed_results(source.id)?;
-                let lines = store
-                    .guide_sources(source.id)?
-                    .into_iter()
-                    .map(|source| SourceLine {
-                        result: results
-                            .iter()
-                            .find(|result| result.feed == source.feed)
-                            .cloned(),
-                        source,
-                    })
-                    .collect();
-                snapshot.lines.insert(source.id, lines);
-            }
-            Ok(snapshot)
-        });
+        let loaded = crate::runtime::commands::guide_status_snapshot();
         super::spawn_in_app(async move {
             if let Ok(mut snapshot) = loaded.await
                 && revision.get() == expected
@@ -119,8 +89,7 @@ pub fn description_lookup(
         }
         cache.borrow_mut().insert(identity.clone(), None);
         let key = key.clone();
-        let read =
-            crate::store_service::read(move |store| store.epg_description(source, &key, start));
+        let read = crate::runtime::commands::description(source, key, start);
         let cache = cache.clone();
         super::spawn_in_app(async move {
             match read.await {
@@ -207,9 +176,7 @@ pub fn update_source(ui: Ui, source: SourceId, done: impl FnOnce(bool) + 'static
     if !has_guides {
         return false;
     }
-    let loaded = crate::store_service::call(move |store| {
-        Ok((store.epg_guide(source)?, store.guide_sources(source)?))
-    });
+    let loaded = crate::runtime::commands::guide_sources(source);
     crate::runtime()
         .updating
         .with(|updating| updating.borrow_mut().push(source));
@@ -335,35 +302,13 @@ pub fn clear(ui: Ui, done: impl FnOnce(bool) + 'static) -> bool {
         super::library::revoke_import_handoff(*source);
     }
     let generation = crate::runtime().generation.with(Cell::get);
-    let saved = crate::store_service::call(move |store| {
-        let mut deleted = true;
-        let mut imports = Vec::new();
-        for source in sources {
-            if let Err(e) = store.delete_epg(source) {
-                log::warn!("iptv data: could not delete stored guide: {e}");
-                deleted = false;
-                continue;
-            }
-            if let Ok((groups, channels)) = catalog_in(store, source) {
-                imports.push(Box::new(Imported {
-                    groups,
-                    channels,
-                    playback: Streams::Current,
-                    guide: GuideStore::default(),
-                    now: super::now_unix(),
-                    source,
-                    resume: false,
-                }));
-            }
-        }
-        Ok((deleted, imports))
-    });
+    let saved = crate::runtime::commands::clear_guides(sources);
     super::spawn_in_app(async move {
         let Ok((deleted, imports)) = saved.await else {
             return done(false);
         };
         for imported in imports {
-            super::show(ui, imported, generation, false).await;
+            super::show(ui, Box::new(imported), generation, false).await;
         }
         done(deleted);
     });

@@ -407,3 +407,171 @@ fn group_lists_in(
     }
     Ok(lists)
 }
+
+pub(crate) fn startup_library() -> impl std::future::Future<
+    Output = Result<
+        (
+            Option<iptv_store_sqlite::StoredSource>,
+            bool,
+            bool,
+            super::library::Snapshot,
+        ),
+        StoreError,
+    >,
+> {
+    super::store_service::call(|store| {
+        iptv_store_sqlite::EpgStage::remove_stale(super::paths::data_dir());
+        iptv_store_sqlite::CatalogStage::remove_stale(super::paths::data_dir());
+        let sources = store.sources()?;
+        let mut enabled = 0;
+        for source in &sources {
+            enabled += usize::from(store.source_policy(source.id)?.enabled);
+        }
+        Ok((
+            super::library::startup_source(store)?,
+            store.all_playlists()? || enabled > 1,
+            !sources.is_empty(),
+            super::library::snapshot_in(store)?,
+        ))
+    })
+}
+
+pub(crate) fn source_policies() -> impl std::future::Future<
+    Output = Result<
+        Vec<(iptv_store_sqlite::SourceSummary, iptv_library::SourcePolicy)>,
+        StoreError,
+    >,
+> {
+    super::store_service::call(|store| {
+        store
+            .sources()?
+            .into_iter()
+            .map(|source| {
+                let policy = store.source_policy(source.id)?;
+                Ok((source, policy))
+            })
+            .collect::<Result<Vec<_>, StoreError>>()
+    })
+}
+
+pub(crate) fn guide_status_snapshot()
+-> impl std::future::Future<Output = Result<super::state::StatusSnapshot, StoreError>> {
+    super::store_service::call(|store| {
+        let mut snapshot = super::state::StatusSnapshot {
+            library: Some(super::library::snapshot_in(store)?),
+            combined: store.all_playlists()?,
+            ..Default::default()
+        };
+        for source in store.sources()? {
+            if store.source_policy(source.id)?.enabled {
+                snapshot.enabled.push(source.id);
+            }
+            if let Some(guide) = store.epg_guide(source.id)? {
+                snapshot.guides.insert(source.id, guide);
+            }
+            let results = store.epg_feed_results(source.id)?;
+            let lines = store
+                .guide_sources(source.id)?
+                .into_iter()
+                .map(|source| iptv_library::SourceLine {
+                    result: results
+                        .iter()
+                        .find(|result| result.feed == source.feed)
+                        .cloned(),
+                    source,
+                })
+                .collect();
+            snapshot.lines.insert(source.id, lines);
+        }
+        Ok(snapshot)
+    })
+}
+
+pub(crate) fn description(
+    source: SourceId,
+    key: iptv_epg::ChannelKey,
+    start: iptv_epg::UnixTime,
+) -> impl std::future::Future<Output = Result<Option<String>, StoreError>> {
+    super::store_service::read(move |store| store.epg_description(source, &key, start))
+}
+
+pub(crate) fn guide_sources(
+    source: SourceId,
+) -> impl std::future::Future<
+    Output = Result<
+        (
+            Option<iptv_store_sqlite::StoredGuide>,
+            Vec<iptv_library::GuideSource>,
+        ),
+        StoreError,
+    >,
+> {
+    super::store_service::call(move |store| {
+        Ok((store.epg_guide(source)?, store.guide_sources(source)?))
+    })
+}
+
+pub(crate) fn clear_guides(
+    sources: Vec<SourceId>,
+) -> impl std::future::Future<Output = Result<(bool, Vec<super::imports::Imported>), StoreError>> {
+    super::store_service::call(move |store| {
+        let mut deleted = true;
+        let mut imports = Vec::new();
+        for source in sources {
+            if let Err(e) = store.delete_epg(source) {
+                log::warn!("iptv data: could not delete stored guide: {e}");
+                deleted = false;
+                continue;
+            }
+            if let Ok((groups, channels)) = super::stored::catalog_in(store, source) {
+                imports.push(super::imports::Imported {
+                    groups,
+                    channels,
+                    playback: super::imports::Streams::Current,
+                    guide: iptv_epg::GuideStore::default(),
+                    now: super::imports::now_unix(),
+                    source,
+                    resume: false,
+                });
+            }
+        }
+        Ok((deleted, imports))
+    })
+}
+
+pub(crate) fn first_programme(
+    source: SourceId,
+) -> impl std::future::Future<Output = Result<Option<iptv_epg::UnixTime>, StoreError>> {
+    super::store_service::read(move |store| store.epg_first_start(source))
+}
+
+pub(crate) fn guide_page(
+    source: SourceId,
+    request: iptv_guide::pages::PageRequest,
+) -> impl std::future::Future<Output = Result<iptv_epg::GuideStore, StoreError>> {
+    super::store_service::read(move |store| {
+        let window = iptv_store_sqlite::EpgWindow {
+            from: request.from,
+            to: request.to,
+            ..iptv_store_sqlite::EpgWindow::from(0, 0)
+        };
+        store.load_epg(source, &window)
+    })
+}
+
+pub(crate) fn combined_resume_key()
+-> impl std::future::Future<Output = Result<Option<String>, StoreError>> {
+    super::store_service::call(|store| {
+        let s = store;
+        Ok(s.combined_last_channel()?.or_else(|| {
+            // On first opening the combined browser, keep the previous
+            // single-source startup preference, including legacy files.
+            let source = s.active_source().ok().flatten()?;
+            if !s.source_policy(source).ok()?.enabled {
+                return None;
+            }
+            let key = super::playback::load_last_channel(Some(source))?;
+            Some(iptv_guide::combined::qualified_key(source.0, &key))
+        }))
+    })
+}

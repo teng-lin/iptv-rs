@@ -21,20 +21,20 @@ use std::time::Duration;
 use iptv_epg::{GuideStore, UnixTime};
 use iptv_guide::EpgSchedule;
 use iptv_guide::pages::PageRequest;
-use iptv_store_sqlite::{EpgWindow, SourceId};
+use iptv_library::SourceId;
 use nsh_core::prelude::*;
 
 use crate::guide::{Schedule, home_window};
 use crate::{Playback, Ui};
 
-pub use crate::runtime::paging::{kept_from, store_window, window};
+pub use crate::runtime::paging::{kept_from, window};
 
 /// `schedule` (source `source`'s stored guide, as [`window`] at `now`
 /// read it) with its older days paged in on demand, back to the first
 /// programme stored.
 pub async fn paged(ui: Ui, schedule: EpgSchedule, source: SourceId, now: UnixTime) -> EpgSchedule {
     let keep = super::stored::keep_past_days(&crate::settings::get());
-    let first = crate::store_service::read(move |store| store.epg_first_start(source))
+    let first = crate::runtime::commands::first_programme(source)
         .await
         .unwrap_or_else(|e| {
             log::warn!("iptv data: the stored guide's first day: {e}");
@@ -50,14 +50,7 @@ pub async fn paged(ui: Ui, schedule: EpgSchedule, source: SourceId, now: UnixTim
 fn loader(ui: Ui, source: SourceId) -> impl Fn(PageRequest) + 'static {
     move |request: PageRequest| {
         let started = std::time::Instant::now();
-        let read = crate::store_service::read(move |store| {
-            let window = EpgWindow {
-                from: request.from,
-                to: request.to,
-                ..EpgWindow::from(0, 0)
-            };
-            store.load_epg(source, &window)
-        });
+        let read = crate::runtime::commands::guide_page(source, request);
         super::spawn_in_app(async move {
             let read = read.await;
             let took = started.elapsed();
@@ -204,6 +197,7 @@ pub fn bind(ui: Ui) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::paging::store_window;
     use iptv_epg::DAY;
     use std::cell::RefCell;
 

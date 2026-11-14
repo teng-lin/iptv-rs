@@ -41,7 +41,7 @@ use iptv_core::wizard::{FailureKind, ImportFailure};
 use iptv_epg::GuideStore;
 use iptv_guide::EpgSchedule;
 use iptv_import::CancelToken;
-use iptv_store_sqlite::{CatalogStage, EpgStage, SourceId};
+use iptv_library::SourceId;
 use nsh_core::prelude::*;
 
 pub use library::{
@@ -56,7 +56,7 @@ use crate::Ui;
 /// app is built (`IPTV_RS_DEV_PLAYLIST=http://10.0.2.2:8089/iptv/playlist.m3u`
 /// for the mock server, `tools/mock-server.py`, from an emulator). Without
 /// it, as in every release build, the link field starts empty.
-pub const DEV_PLAYLIST: Option<&str> = option_env!("IPTV_RS_DEV_PLAYLIST");
+pub use crate::runtime::imports::DEV_PLAYLIST;
 
 /// The shortest time between two progress reports shown while an import
 /// runs. Reports wake the UI themselves (an awaited channel, no polling);
@@ -99,37 +99,41 @@ pub fn spawn_in_app(future: impl Future<Output = ()> + 'static) {
 /// Startup: browse enabled playlists together when there is more than one,
 /// otherwise refresh the active source or open the wizard.
 pub fn start(ui: Ui) {
+    APP_OWNER.with(|o| o.set(Some(Owner::current())));
+    crate::runtime().bind_tasks(spawn_in_app, |duration| Box::pin(timer(duration)));
     crate::runtime().bind(move |event| crate::runtime_events::apply(ui, event));
-    crate::store_service::register_ui_thread();
+    crate::runtime().start_services();
     // NSH drops cleanup callbacks without invoking them when the entire Rust
     // runtime exits. Capture an RAII guard so both owner disposal and runtime
     // destruction drain accepted writes while the engine thread still exists.
-    struct Drain;
+    struct Drain(Rc<crate::runtime::Runtime>);
     impl Drop for Drain {
         fn drop(&mut self) {
-            if !crate::file_writer::flush(Duration::from_secs(5)) {
-                log::error!("iptv persistence: queued file writes did not finish at shutdown");
-            }
-            if !crate::favorites::flush_on_shutdown() {
-                log::error!(
-                    "iptv persistence: queued favourite changes could not be saved at shutdown"
-                );
-            }
-            if !crate::store_service::drain_on_shutdown() {
-                log::error!("iptv persistence: store did not drain at shutdown");
-            }
+            crate::with_runtime(self.0.clone(), || {
+                if !crate::runtime().flush_files(Duration::from_secs(5)) {
+                    log::error!("iptv persistence: queued file writes did not finish at shutdown");
+                }
+                if !crate::favorites::flush_on_shutdown() {
+                    log::error!(
+                        "iptv persistence: queued favourite changes could not be saved at shutdown"
+                    );
+                }
+                if !crate::runtime().drain_services() {
+                    log::error!("iptv persistence: store did not drain at shutdown");
+                }
+            });
         }
     }
-    let drain = Drain;
+    let drain = Drain(crate::runtime());
     nsh_core::prelude::cleanup(move || drop(drain));
     // In the background the system may end the process without a teardown:
     // a zap or a settings change made just before must already be on disk.
     // Usually nothing is queued and this returns at once. The Android host
     // also waits for them in `onStop` (`TvActivity.flushPendingWrites`).
     effect(|| {
-        if lifecycle() == nsh_core::platform::Lifecycle::Background
-            && !crate::file_writer::flush(Duration::from_secs(2))
-        {
+        let background = lifecycle() == nsh_core::platform::Lifecycle::Background;
+        crate::runtime().foreground.set(!background);
+        if background && !crate::runtime().flush_files(Duration::from_secs(2)) {
             log::warn!("iptv persistence: queued file writes did not finish in the background");
         }
     });
@@ -139,21 +143,7 @@ pub fn start(ui: Ui) {
     stored::bind(ui);
     crate::search_view::load_saved_history(ui);
     let started = std::time::Instant::now();
-    let startup = crate::store_service::call(|store| {
-        EpgStage::remove_stale(data_dir());
-        CatalogStage::remove_stale(data_dir());
-        let sources = store.sources()?;
-        let mut enabled = 0;
-        for source in &sources {
-            enabled += usize::from(store.source_policy(source.id)?.enabled);
-        }
-        Ok((
-            library::startup_source(store)?,
-            store.all_playlists()? || enabled > 1,
-            !sources.is_empty(),
-            library::snapshot_in(store)?,
-        ))
-    });
+    let startup = crate::runtime::commands::startup_library();
     spawn_in_app(async move {
         let startup = startup.await.map(|(source, combined, any, snapshot)| {
             library::install(snapshot);
@@ -184,7 +174,7 @@ pub fn start(ui: Ui) {
                 ));
             }
         }
-        library::start_scheduler(ui);
+        crate::runtime::library::start_scheduler();
     });
 }
 
@@ -461,9 +451,10 @@ async fn show_part(
 fn source_changed(ui: Ui, source: Option<SourceId>) {
     log::info!("iptv data: showing source {:?}", source.map(|id| id.0));
     crate::runtime().emit(crate::runtime::RuntimeEvent::SourceChanged);
-    if ui.favorites.with_untracked(|f| !f.is_empty()) {
-        ui.favorites.set(BTreeSet::new());
-    }
+    crate::runtime().emit(crate::runtime::RuntimeEvent::FavoritesChanged {
+        channels: BTreeSet::new(),
+        has_vod: ui.has_vod.get_untracked(),
+    });
     crate::runtime::library::set_shown(source);
     if let Some(id) = source {
         library::remember_shown(id);
@@ -524,7 +515,7 @@ fn source_is_visible(ui: Ui, source: SourceId) -> bool {
     if !combined::active(ui) {
         return false;
     }
-    crate::lists::focused_channel(ui)
+    crate::runtime_events::focused_channel(ui)
         .and_then(|channel| crate::schedule().channel_key(channel))
         .and_then(|key| combined::owner(ui, &key))
         .is_some_and(|(owner, _)| owner == source)

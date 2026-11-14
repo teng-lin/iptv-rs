@@ -2,11 +2,11 @@
 //! refresh retains that playlist's last good schedule and cannot clear others.
 use super::{Imported, Purpose, Streams, library, opening, organization, pages, stored};
 use crate::Ui;
+use crate::runtime::model::SourceId;
 use iptv_guide::{
     EpgSchedule,
     combined::{CombinedSchedule, SourceSchedule, split_key},
 };
-use iptv_store_sqlite::SourceId;
 use std::{cell::Cell, rc::Rc};
 
 pub(super) use crate::runtime::state::SingleSchedule;
@@ -33,7 +33,7 @@ pub(super) fn remember_single(source: SourceId, schedule: Rc<EpgSchedule>) {
         *s.borrow_mut() = Some(SingleSchedule {
             source,
             schedule,
-            limit: crate::multiview::account_limit(),
+            limit: crate::runtime().account_streams.get(),
             pending: None,
             revision: library::import_revision(source),
         })
@@ -61,7 +61,7 @@ pub(super) fn added(ui: Ui, source: SourceId, generation: u64, previous: Option<
         let Some(added) = single().filter(|s| s.source == source) else {
             return;
         };
-        if let Err(e) = crate::store_service::call(|store| store.set_all_playlists(true)).await {
+        if let Err(e) = crate::runtime::library::save_all(true).await {
             log::warn!("iptv combined: cannot save browsing mode: {e}");
             return;
         }
@@ -203,7 +203,7 @@ async fn switch_all_ready(ui: Ui) {
     if active(ui) {
         return;
     }
-    if let Err(e) = crate::store_service::call(|store| store.set_all_playlists(true)).await {
+    if let Err(e) = crate::runtime::library::save_all(true).await {
         log::warn!("iptv combined: cannot save browsing mode: {e}");
         return;
     }
@@ -240,7 +240,7 @@ pub fn leave(_ui: Ui) {
     crate::runtime::library::set_all(false);
     crate::runtime().parts.with(|p| p.borrow_mut().clear());
     crate::runtime().limits.with(|p| p.borrow_mut().clear());
-    let saved = crate::store_service::call(|store| store.set_all_playlists(false));
+    let saved = crate::runtime::library::save_all(false);
     super::spawn_in_app(async move {
         if let Err(error) = saved.await {
             log::warn!("iptv combined: cannot save browsing mode: {error}");
@@ -350,7 +350,7 @@ async fn rebuild_ready(ui: Ui) {
     if !active(ui) {
         return;
     }
-    let collapsed = crate::store_service::call(|store| store.collapsed_playlists())
+    let collapsed = crate::runtime::library::collapsed()
         .await
         .unwrap_or_default();
     if !active(ui)
@@ -398,19 +398,7 @@ pub fn resume(ui: Ui) {
         crate::runtime().resume.with(|r| r.set(false));
         return;
     }
-    let loaded = crate::store_service::call(|store| {
-        let s = store;
-        Ok(s.combined_last_channel()?.or_else(|| {
-            // On first opening the combined browser, keep the previous
-            // single-source startup preference, including legacy files.
-            let source = s.active_source().ok().flatten()?;
-            if !s.source_policy(source).ok()?.enabled {
-                return None;
-            }
-            let key = crate::player::resume::last_key(source)?;
-            Some(iptv_guide::combined::qualified_key(source.0, &key))
-        }))
-    });
+    let loaded = crate::runtime::commands::combined_resume_key();
     super::spawn_in_app(async move {
         let key = loaded.await.ok().flatten();
         if !crate::runtime().resume.with(Cell::get)
@@ -447,8 +435,8 @@ pub fn toggle_playlist(ui: Ui, group: usize) -> bool {
     let Some(collapsed) = all.toggle_playlist(group) else {
         return false;
     };
-    let saved = crate::store_service::call(move |store| store.set_collapsed_playlists(&collapsed));
-    ui.data_version.update(|version| *version += 1);
+    let saved = crate::runtime::library::save_collapsed(collapsed);
+    crate::runtime().emit(crate::runtime::RuntimeEvent::CatalogChanged);
     super::spawn_in_app(async move {
         match saved.await {
             Ok(()) => rebuild(ui),

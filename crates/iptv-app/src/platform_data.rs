@@ -195,7 +195,9 @@ mod tests {
             }
             initialize().unwrap();
             let root = data_dir();
-            let _store = iptv_store_sqlite::Store::open(root.join("iptv.sqlite")).unwrap();
+            let _store =
+                crate::runtime::credential_store::plain_test_database(root.join("iptv.sqlite"))
+                    .unwrap();
             fs::write(root.join("copied.m3u"), b"#EXTM3U\n").unwrap();
             for entry in fs::read_dir(root).unwrap() {
                 let entry = entry.unwrap();

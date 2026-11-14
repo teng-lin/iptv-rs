@@ -1,7 +1,7 @@
 //! Native catalog and guide storage policy and orchestration.
 use super::guides;
 use super::imports::{Downloaded, Imported, Msg, Streams};
-use crate::private_files::Client as NetClient;
+use super::private_files::Client as NetClient;
 use iptv_epg::{ChannelKey, DAY, GuideStore, Overrides, UnixTime};
 use iptv_import::{
     CancelToken, Decision, EpgSourceConfig, ImportError, NoProgress, RefreshPolicy, Trigger,
@@ -39,7 +39,7 @@ pub(crate) fn with_storage(
 
 /// A stored source's live groups and channels, in provider order.
 pub fn catalog(source: SourceId) -> Result<(Vec<Group>, Vec<Channel>), StoreError> {
-    crate::store_service::blocking(move |store| catalog_in(store, source))
+    super::store_service::blocking(move |store| catalog_in(store, source))
 }
 
 /// [`catalog`] from an open store.
@@ -63,7 +63,7 @@ pub fn catalog_in(
 
 /// What is stored about `source`'s guide.
 pub fn guide_state(source: SourceId) -> Option<StoredGuide> {
-    match crate::store_service::blocking(move |store| store.epg_guide(source)) {
+    match super::store_service::blocking(move |store| store.epg_guide(source)) {
         Ok(guide) => guide,
         Err(e) => {
             log::warn!("iptv data: stored guide state: {e}");
@@ -76,7 +76,7 @@ pub fn guide_state(source: SourceId) -> Option<StoredGuide> {
 /// (`pages::window`: the last day on; older days are paged in), without
 /// descriptions; `None` when nothing is stored.
 pub fn load_guide(source: SourceId, now: UnixTime) -> Option<GuideStore> {
-    let window = super::paging::window(now, keep_past_days(&crate::settings::get()));
+    let window = super::paging::window(now, keep_past_days(&super::settings::get()));
     read_guide(source, &super::paging::store_window(window))
 }
 
@@ -84,7 +84,7 @@ pub fn load_guide(source: SourceId, now: UnixTime) -> Option<GuideStore> {
 pub fn read_guide(source: SourceId, window: &EpgWindow<'_>) -> Option<GuideStore> {
     let (from, to, descriptions) = (window.from, window.to, window.descriptions);
     let keys = window.keys.map(<[ChannelKey]>::to_vec);
-    match crate::store_service::blocking(move |store| {
+    match super::store_service::blocking(move |store| {
         store.load_epg(
             source,
             &EpgWindow {
@@ -106,7 +106,7 @@ pub fn read_guide(source: SourceId, window: &EpgWindow<'_>) -> Option<GuideStore
 
 /// `source`'s guide sources in the user's order (empty when unreadable).
 pub fn guide_sources(source: SourceId) -> Vec<GuideSource> {
-    crate::store_service::blocking(move |store| store.guide_sources(source)).unwrap_or_else(|e| {
+    super::store_service::blocking(move |store| store.guide_sources(source)).unwrap_or_else(|e| {
         log::warn!("iptv data: guide sources: {e}");
         Vec::new()
     })
@@ -116,7 +116,7 @@ pub fn guide_sources(source: SourceId) -> Vec<GuideSource> {
 /// settings of now (a stored config has those it was fetched with).
 pub fn configs(sources: &[GuideSource]) -> Vec<EpgSourceConfig> {
     let template = EpgSourceConfig::new(iptv_epg::FeedId(0), SecretUrl::new(""));
-    let template = with_storage(vec![template], &crate::settings::get()).remove(0);
+    let template = with_storage(vec![template], &super::settings::get()).remove(0);
     guides::configs_of(sources, &template)
 }
 
@@ -145,7 +145,7 @@ pub fn configs_for(
 /// guide.
 pub fn current_configs(source: SourceId, state: Option<&StoredGuide>) -> Vec<EpgSourceConfig> {
     let sources = guide_sources(source);
-    let source = crate::store_service::blocking(move |store| store.source(source))
+    let source = super::store_service::blocking(move |store| store.source(source))
         .ok()
         .flatten();
     configs_from_sources(&sources, state, source.as_ref().map(|s| &s.source.config))
@@ -158,7 +158,7 @@ pub(crate) fn configs_from_sources(
 ) -> Vec<EpgSourceConfig> {
     if sources.is_empty() {
         let stored = state.map(StoredGuide::configs).unwrap_or_default();
-        return with_storage(stored, &crate::settings::get());
+        return with_storage(stored, &super::settings::get());
     }
     match source {
         Some(source) => configs_for(sources, source),
@@ -168,7 +168,7 @@ pub(crate) fn configs_from_sources(
 
 /// The channels of `source` whose guide the user chose by hand.
 pub fn overrides(source: SourceId) -> Overrides {
-    match crate::store_service::blocking(move |store| store.epg_overrides(source)) {
+    match super::store_service::blocking(move |store| store.epg_overrides(source)) {
         Ok(rows) => rows
             .into_iter()
             .map(|(id, epg)| (ChannelKey::new(id.as_str()), epg.to_override()))
@@ -189,7 +189,7 @@ pub fn plan(
     now: UnixTime,
 ) -> Decision {
     plan_with(
-        &crate::settings::get(),
+        &super::settings::get(),
         trigger,
         configs,
         matching,
@@ -275,8 +275,8 @@ pub fn replace(
 ) -> Result<EpgCounts, StoreError> {
     let feeds = EpgFeedMeta::from_import(&guide.import, configs, now);
     let fingerprint = matching.fingerprint();
-    let keep = keep_past_days(&crate::settings::get());
-    crate::store_service::blocking(move |store| {
+    let keep = keep_past_days(&super::settings::get());
+    super::store_service::blocking(move |store| {
         let import = &guide.import;
 
         let counts = store.replace_epg(source, &mut guide.stage, import, &feeds, fingerprint)?;
@@ -322,7 +322,7 @@ pub fn record_client_failure(source: SourceId, configs: &[EpgSourceConfig]) {
 
 fn record_failure_kind(source: SourceId, kind: ImportErrorKind, configs: &[EpgSourceConfig]) {
     let results: Vec<_> = configs.iter().map(|c| (c.id, Some(kind))).collect();
-    let recorded = crate::store_service::blocking(move |s| {
+    let recorded = super::store_service::blocking(move |s| {
         s.record_epg_failure(source, kind)?;
         s.record_epg_feed_results(source, &results)
     });
@@ -333,7 +333,7 @@ fn record_failure_kind(source: SourceId, kind: ImportErrorKind, configs: &[EpgSo
 
 /// Deletes `source`'s stored guide (no guide is configured any more).
 pub fn discard(source: SourceId) {
-    match crate::store_service::blocking(move |store| store.delete_epg(source)) {
+    match super::store_service::blocking(move |store| store.delete_epg(source)) {
         Ok(true) => log::info!("iptv data: no guide configured; deleted the stored one"),
         Ok(false) => {}
         Err(e) => log::warn!("iptv data: could not delete the stored guide: {e}"),
@@ -360,7 +360,7 @@ pub(crate) async fn download_now(
         overrides: &overrides,
     };
     log::info!("iptv data: downloading the guide (asked for)");
-    match NetClient::new(crate::settings::net_config()) {
+    match NetClient::new(super::settings::net_config()) {
         Ok(net) => {
             let result = super::imports::download_guide(
                 &net,

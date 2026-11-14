@@ -374,17 +374,12 @@ fn load(ui: Ui, surface: usize, session: u64, mut source: PlaySource) {
     watch_stall(ui, surface);
 }
 
-thread_local! {
-    /// Each surface's Stalker link request in flight: its session and the
-    /// token that cancels it.
-    static RESOLVING: std::cell::RefCell<[Option<(u64, CancelToken)>; SURFACES]> =
-        std::cell::RefCell::default();
-}
-
 /// Cancels `surface`'s link request in flight, if any: the viewer zapped,
 /// the surface reopens or plays nothing.
 fn cancel_resolve(surface: usize) {
-    let running = RESOLVING.with(|r| r.borrow_mut().get_mut(surface).and_then(Option::take));
+    let running = crate::runtime()
+        .resolving
+        .with(|r| r.borrow_mut().get_mut(surface).and_then(Option::take));
     if let Some((_, cancel)) = running {
         cancel.cancel();
     }
@@ -410,7 +405,7 @@ fn resolve_link(
     } = *link;
     cancel_resolve(surface);
     let cancel = CancelToken::new();
-    RESOLVING.with(|r| {
+    crate::runtime().resolving.with(|r| {
         if let Some(slot) = r.borrow_mut().get_mut(surface) {
             *slot = Some((session, cancel.clone()));
         }
@@ -428,7 +423,7 @@ fn resolve_link(
     let _task = ui.player.owner.run(|| {
         spawn(async move {
             let answered = request.await;
-            RESOLVING.with(|r| {
+            crate::runtime().resolving.with(|r| {
                 if let Some(slot) = r.borrow_mut().get_mut(surface)
                     && slot.as_ref().is_some_and(|(s, _)| *s == session)
                 {

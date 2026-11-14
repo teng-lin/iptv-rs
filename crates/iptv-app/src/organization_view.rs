@@ -1,11 +1,11 @@
 //! Channel and provider-group organization, including hidden-item recovery.
 use crate::list_rows::{self, Mark, ROW};
+use crate::runtime::model::{SourceId, StoreError};
 use crate::scale::Scale;
 use crate::wizard_view::entry::{self, TextSheet};
 use crate::{Ui, data, ui_kit};
 use iptv_core::organization::{ACTIONS, Action as Edit, Editor, Item};
 use iptv_nav::Action;
-use iptv_store_sqlite::{SourceId, StoreError};
 use nsh_core::prelude::*;
 
 pub use iptv_library::OrganizationScope as Kind;

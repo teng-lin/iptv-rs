@@ -13,8 +13,8 @@
 
 use iptv_library::guide_assign as state;
 
+use crate::runtime::model::{GuideChannel, SourceId};
 use iptv_nav::Action;
-use iptv_store_sqlite::{GuideChannel, SourceId};
 use nsh_core::element::input;
 use nsh_core::prelude::*;
 

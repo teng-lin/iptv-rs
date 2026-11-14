@@ -24,7 +24,6 @@ mod epg_sources_view;
 use runtime::executor;
 mod fav_editor;
 mod favorites;
-use runtime::file_writer;
 mod fonts;
 mod grid;
 mod guide_assign_view;
@@ -53,7 +52,6 @@ mod player;
 mod player_keys;
 mod player_panels;
 mod playlists_view;
-use runtime::private_files;
 mod rail;
 mod remote_editor;
 mod scale;
@@ -62,7 +60,6 @@ mod seek;
 mod settings;
 mod settings_view;
 pub mod startup;
-use runtime::store_service;
 pub mod time;
 mod transport;
 mod ui_kit;
@@ -403,13 +400,24 @@ pub(crate) fn runtime() -> Rc<runtime::Runtime> {
     RUNTIME.with(|runtime| runtime.borrow().clone())
 }
 
+pub(crate) fn with_runtime<R>(owner: Rc<runtime::Runtime>, run: impl FnOnce() -> R) -> R {
+    struct Restore(Rc<runtime::Runtime>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            RUNTIME.set(self.0.clone());
+        }
+    }
+    let _restore = Restore(RUNTIME.replace(owner.clone()));
+    owner.with_context(run)
+}
+
 /// Poll an application task with the runtime that accepted it. A late wake
 /// from an old root must never read or change its successor's state.
 pub(crate) fn in_runtime(
     future: impl std::future::Future<Output = ()> + 'static,
 ) -> impl std::future::Future<Output = ()> {
     let runtime = runtime();
-    let mut future = Box::pin(future);
+    let mut future = Box::pin(runtime.scope_future(future));
     std::future::poll_fn(move |context| {
         struct Restore(Rc<runtime::Runtime>);
         impl Drop for Restore {
@@ -473,6 +481,7 @@ pub fn channel_name(ch: usize) -> String {
 #[component]
 pub fn App() -> impl IntoElement {
     RUNTIME.set(Rc::new(runtime::Runtime::default()));
+    runtime().activate();
     startup::mark("rust root");
     startup::log_library_base();
     fonts::register();
@@ -950,4 +959,4 @@ pub use credential_key::install_test_key;
 /// Keeps the store's writer busy, as a long catalog or guide publish does,
 /// for the headless tests of what must not wait for it.
 #[cfg(feature = "test-support")]
-pub use store_service::occupy_writer;
+pub use runtime::occupy_writer;

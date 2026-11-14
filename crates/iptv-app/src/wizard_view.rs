@@ -14,13 +14,10 @@ use crate::i18n::tr;
 pub(crate) mod entry;
 pub(crate) mod words;
 
-use std::cell::RefCell;
-
 use iptv_core::wizard::{
-    Field, ImportId, Notice, Origin, PlaylistKind, Step, Target, Wizard, WizardEffect, WizardEvent,
+    Field, Notice, Origin, PlaylistKind, Step, Target, Wizard, WizardEffect, WizardEvent,
     WizardExit,
 };
-use iptv_import::CancelToken;
 use iptv_nav::Action;
 use nsh_core::picker::FilePickRequest;
 use nsh_core::prelude::*;
@@ -45,11 +42,6 @@ pub struct Open {
     editing: Option<entry::Editing>,
     /// The example URL went into the M3U form once.
     prefilled: bool,
-}
-
-thread_local! {
-    /// The running import and its cancel token.
-    static RUNNING: RefCell<Option<(ImportId, CancelToken)>> = const { RefCell::new(None) };
 }
 
 fn open_with(ui: Ui, wizard: Wizard) {
@@ -165,9 +157,11 @@ fn perform(ui: Ui, effect: WizardEffect) {
                     },
                 )
             });
-            RUNNING.with(|r| *r.borrow_mut() = Some((id, token)));
+            crate::runtime()
+                .wizard_import
+                .with(|r| *r.borrow_mut() = Some((id, token)));
         }
-        WizardEffect::CancelImport { id } => RUNNING.with(|r| {
+        WizardEffect::CancelImport { id } => crate::runtime().wizard_import.with(|r| {
             let mut running = r.borrow_mut();
             if running.as_ref().is_some_and(|(at, _)| *at == id)
                 && let Some((_, token)) = running.take()
@@ -179,7 +173,9 @@ fn perform(ui: Ui, effect: WizardEffect) {
         WizardEffect::Close(exit) => {
             log::info!("iptv wizard: closed ({exit:?})");
             if let WizardExit::Added { .. } = exit {
-                RUNNING.with(|r| r.borrow_mut().take());
+                crate::runtime()
+                    .wizard_import
+                    .with(|r| r.borrow_mut().take());
                 // Added from the playlists screen: "Watch" goes to the guide.
                 crate::playlists_view::close(ui);
             }

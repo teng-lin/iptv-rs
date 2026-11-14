@@ -7,9 +7,9 @@
 
 use std::collections::BTreeMap;
 
+use crate::runtime::model::{SourceId, StoreError, StoredSource};
 use iptv_import::CancelToken;
 use iptv_providers::model::{Source, SourceConfig};
-use iptv_store_sqlite::{SourceId, StoreError, StoredSource};
 use nsh_core::prelude::*;
 
 use super::{Job, Purpose, Update, guides, start_import_with, stored};
@@ -71,7 +71,7 @@ pub use crate::runtime::library::{playlists, policy};
 pub async fn set_policy(
     ui: Ui,
     id: SourceId,
-    policy: iptv_store_sqlite::SourcePolicy,
+    policy: crate::runtime::model::SourcePolicy,
 ) -> Result<(), StoreError> {
     crate::runtime::library::save_policy(id, policy).await?;
     refresh_after_commit(ui, |snapshot| {
@@ -105,43 +105,6 @@ pub async fn set_policy(
     }
     Ok(())
 }
-/// UI-owned scheduler; never wakes the operating system or schedules disabled sources.
-pub fn start_scheduler(ui: Ui) {
-    super::spawn_in_app(async move {
-        let mut startup = true;
-        loop {
-            if lifecycle() == nsh_core::platform::Lifecycle::Background {
-                timer(std::time::Duration::from_secs(60)).await;
-                continue;
-            }
-            let sources = crate::store_service::call(|store| {
-                store
-                    .sources()?
-                    .into_iter()
-                    .map(|source| {
-                        let policy = store.source_policy(source.id)?;
-                        Ok((source, policy))
-                    })
-                    .collect::<Result<Vec<_>, StoreError>>()
-            })
-            .await;
-            if let Ok(sources) = sources {
-                for (source, policy) in sources {
-                    let attempted = crate::runtime()
-                        .attempts
-                        .with(|a| a.borrow().get(&source.id).copied())
-                        .or(source.import.last_attempt_at);
-                    if policy.due(super::now_unix(), attempted, startup) && !running(source.id) {
-                        refresh(ui, source.id);
-                    }
-                }
-            }
-            startup = false;
-            timer(std::time::Duration::from_secs(60)).await;
-        }
-    });
-}
-
 /// Persists the shown identity without delaying navigation.
 pub(super) fn remember_shown(id: SourceId) {
     let saved = crate::runtime::library::remember_shown(id);

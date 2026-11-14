@@ -68,7 +68,7 @@ pub(crate) async fn send_stored(job: &Job, id: SourceId, now: UnixTime, tx: &Sen
     let started = Instant::now();
     let ms = |t: Instant| t.elapsed().as_millis();
     let (groups, channels) =
-        match crate::store_service::read(move |store| stored::catalog_in(store, id)).await {
+        match super::store_service::read(move |store| stored::catalog_in(store, id)).await {
             Ok(catalog) => catalog,
             Err(e) => {
                 log::warn!("iptv data: stored catalog: {e}");
@@ -95,9 +95,9 @@ pub(crate) async fn send_stored(job: &Job, id: SourceId, now: UnixTime, tx: &Sen
     };
     let started = Instant::now();
     let (from, to) = first_screen(now);
-    let resumes = crate::settings::flag(iptv_settings::keys::RESUME_LAST_CHANNEL);
+    let resumes = super::settings::flag(iptv_settings::keys::RESUME_LAST_CHANNEL);
     let focus = if resumes {
-        crate::store_service::read(move |_| Ok(super::playback::load_last_channel(Some(id))))
+        super::store_service::read(move |_| Ok(super::playback::load_last_channel(Some(id))))
             .await
             .ok()
             .flatten()
@@ -106,7 +106,7 @@ pub(crate) async fn send_stored(job: &Job, id: SourceId, now: UnixTime, tx: &Sen
     };
     let keys = first_rows(&channels, focus.as_deref());
     let query_keys = keys.clone();
-    if let Ok(guide) = crate::store_service::read(move |store| {
+    if let Ok(guide) = super::store_service::read(move |store| {
         store.load_epg(
             id,
             &EpgWindow {
@@ -130,8 +130,8 @@ pub(crate) async fn send_stored(job: &Job, id: SourceId, now: UnixTime, tx: &Sen
         let _ = tx.send(Msg::FirstScreen(first, held));
     }
     let started = Instant::now();
-    let window = super::paging::window(now, stored::keep_past_days(&crate::settings::get()));
-    let guide = crate::store_service::read(move |store| {
+    let window = super::paging::window(now, stored::keep_past_days(&super::settings::get()));
+    let guide = super::store_service::read(move |store| {
         store.load_epg(id, &super::paging::store_window(window))
     })
     .await
@@ -142,7 +142,7 @@ pub(crate) async fn send_stored(job: &Job, id: SourceId, now: UnixTime, tx: &Sen
         format_args!("{bound} channels, {kib} KiB in {} ms", ms(started)),
     );
     // A cached-only opening must complete without claiming a network slot.
-    let metadata = crate::store_service::call(move |store| {
+    let metadata = super::store_service::call(move |store| {
         Ok((
             store.source_policy(id)?,
             store.import_status(id)?,
@@ -182,7 +182,7 @@ pub(crate) async fn send_stored(job: &Job, id: SourceId, now: UnixTime, tx: &Sen
             );
             if !matches!(decision, iptv_import::Decision::Refresh(_)) {
                 let guide = if matches!(decision, iptv_import::Decision::Discard) {
-                    if crate::store_service::call(move |store| store.delete_epg(id))
+                    if super::store_service::call(move |store| store.delete_epg(id))
                         .await
                         .is_err()
                     {

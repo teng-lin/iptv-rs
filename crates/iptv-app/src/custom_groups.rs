@@ -2,6 +2,7 @@
 //! remains imported data; moves are offered only between custom groups.
 use crate::i18n::tr;
 
+use crate::runtime::model::{ChannelScope, CustomGroup, CustomGroupId, SourceId, StoreError};
 use crate::{
     Ui, data,
     scale::Scale,
@@ -11,7 +12,6 @@ use crate::{
 use iptv_core::membership::Membership;
 use iptv_nav::Action;
 use iptv_providers::ContentId;
-use iptv_store_sqlite::{ChannelScope, CustomGroup, CustomGroupId, SourceId, StoreError};
 use nsh_core::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

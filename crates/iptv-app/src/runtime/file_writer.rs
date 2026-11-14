@@ -19,7 +19,7 @@ use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use futures_channel::oneshot;
@@ -55,6 +55,7 @@ struct Entry {
 
 #[derive(Default)]
 struct Queue {
+    closed: bool,
     entries: HashMap<PathBuf, Entry>,
     order: VecDeque<PathBuf>,
     /// The write in progress, still answered by [`read`].
@@ -69,21 +70,51 @@ struct Writer {
     idle: Condvar,
 }
 
-fn writer() -> &'static Writer {
-    static WRITER: OnceLock<Writer> = OnceLock::new();
-    static STARTED: OnceLock<()> = OnceLock::new();
-    let writer = WRITER.get_or_init(|| Writer {
-        queue: Mutex::default(),
-        ready: Condvar::new(),
-        idle: Condvar::new(),
-    });
-    STARTED.get_or_init(|| {
-        std::thread::Builder::new()
-            .name("iptv-files".into())
-            .spawn(move || run(writer))
-            .expect("start the file writer");
-    });
-    writer
+#[derive(Default)]
+pub(crate) struct Files {
+    closed: std::sync::atomic::AtomicBool,
+    writer: OnceLock<Arc<Writer>>,
+}
+impl Files {
+    fn writer(&self) -> Arc<Writer> {
+        let writer = self
+            .writer
+            .get_or_init(|| {
+                let writer = Arc::new(Writer {
+                    queue: Mutex::default(),
+                    ready: Condvar::new(),
+                    idle: Condvar::new(),
+                });
+                let work = writer.clone();
+                std::thread::Builder::new()
+                    .name("iptv-files".into())
+                    .spawn(move || run(&work))
+                    .expect("start the file writer");
+                writer
+            })
+            .clone();
+        if self.closed.load(std::sync::atomic::Ordering::Acquire) {
+            lock(&writer).closed = true;
+            writer.ready.notify_all();
+        }
+        writer
+    }
+    pub(crate) fn close(&self) {
+        self.closed
+            .store(true, std::sync::atomic::Ordering::Release);
+        if let Some(writer) = self.writer.get() {
+            lock(writer).closed = true;
+            writer.ready.notify_all();
+        }
+    }
+}
+impl Drop for Files {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+fn writer() -> Arc<Writer> {
+    super::store_service::service().files.writer()
 }
 
 fn lock(writer: &Writer) -> MutexGuard<'_, Queue> {
@@ -111,8 +142,10 @@ fn submit(path: PathBuf, content: Content) -> impl Future<Output = Result<(), Wr
     let (reply, answer) = oneshot::channel();
     let writer = writer();
     {
-        let mut queue = lock(writer);
-        if let Some(entry) = queue.entries.get_mut(&path) {
+        let mut queue = lock(&writer);
+        if queue.closed {
+            let _ = reply.send(Err(WriteError::Storage(io::ErrorKind::Interrupted)));
+        } else if let Some(entry) = queue.entries.get_mut(&path) {
             entry.content = content;
             entry.waiters.push(reply);
         } else {
@@ -138,7 +171,8 @@ fn submit(path: PathBuf, content: Content) -> impl Future<Output = Result<(), Wr
 /// `None` for no file (or one that cannot be read).
 pub(crate) fn read(path: &Path) -> Option<Vec<u8>> {
     let queued = {
-        let queue = lock(writer());
+        let writer = writer();
+        let queue = lock(&writer);
         queue
             .entries
             .get(path)
@@ -161,7 +195,7 @@ pub(crate) fn read(path: &Path) -> Option<Vec<u8>> {
 pub(crate) fn flush(limit: Duration) -> bool {
     let writer = writer();
     let deadline = Instant::now() + limit;
-    let mut queue = lock(writer);
+    let mut queue = lock(&writer);
     while !queue.order.is_empty() || queue.writing.is_some() {
         let left = deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {
@@ -207,6 +241,9 @@ fn run(writer: &Writer) {
                     break (path, entry.content, entry.waiters);
                 }
                 writer.idle.notify_all();
+                if queue.closed {
+                    return;
+                }
                 queue = writer
                     .ready
                     .wait(queue)

@@ -215,7 +215,7 @@ pub fn perform(ui: Ui, item: MenuItem) {
                                     .strip_prefix("custom:")
                                     .and_then(|s| s.parse::<i64>().ok())
                                 {
-                                    Kind::CustomChannels(iptv_store_sqlite::CustomGroupId(id))
+                                    Kind::CustomChannels(crate::runtime::model::CustomGroupId(id))
                                 } else {
                                     Kind::GroupChannels(iptv_providers::GroupId::from_stored(key))
                                 }

@@ -1,7 +1,7 @@
 //! Apply user organization to the guide without replacing playback channels.
 use crate::Ui;
+use crate::runtime::model::SourceId;
 use iptv_guide::EpgSchedule;
-use iptv_store_sqlite::SourceId;
 
 pub fn revision() -> u64 {
     crate::runtime().organization_revision.get()

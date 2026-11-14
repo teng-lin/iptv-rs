@@ -4,6 +4,13 @@ use iptv_library::SourceId;
 use std::rc::Rc;
 
 pub(crate) enum RuntimeEvent {
+    RefreshDue(SourceId),
+    CatalogChanged,
+    EarlyResume {
+        source: super::model::StoredSource,
+        done: futures_channel::oneshot::Sender<()>,
+    },
+    Message(String),
     BackupProgress(super::backup::Progress),
     FavoritesChanged {
         channels: std::collections::BTreeSet<usize>,

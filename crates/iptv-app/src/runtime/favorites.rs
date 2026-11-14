@@ -66,9 +66,9 @@ async fn load<R: Send + 'static>(
     read: impl FnOnce(&Store) -> Result<R, StoreError> + Send + 'static,
 ) -> Result<R, StoreError> {
     if unsaved().load(Ordering::Acquire) > 0 {
-        crate::store_service::call(move |store| read(store)).await
+        super::store_service::call(move |store| read(store)).await
     } else {
-        crate::store_service::read(read).await
+        super::store_service::read(read).await
     }
 }
 
@@ -334,7 +334,7 @@ pub fn played(key: &str) {
         send(Write::Watched {
             source,
             key,
-            at: crate::time::wall_unix(),
+            at: super::imports::now_unix(),
         });
     }
 }
@@ -349,7 +349,7 @@ fn send(write: Write) {
         let tx = w.get_or_insert_with(|| {
             let (tx, rx) = mpsc::channel();
             let unsaved = unsaved();
-            std::thread::spawn(crate::store_service::scoped(move || write_all(rx, unsaved)));
+            std::thread::spawn(super::store_service::scoped(move || write_all(rx, unsaved)));
             tx
         });
         if tx.send(write).is_err() {
@@ -412,7 +412,7 @@ fn write_all(rx: Receiver<Write>, unsaved: std::sync::Arc<AtomicUsize>) {
                 at: *at,
             },
         };
-        let result = crate::store_service::blocking(move |store| match operation {
+        let result = super::store_service::blocking(move |store| match operation {
             Write::Barrier(_) | Write::Shutdown(_) => unreachable!(),
             Write::MoveFavourite { source, key, index } => store
                 .move_favourite(source, &ContentId::from_stored(key), index)

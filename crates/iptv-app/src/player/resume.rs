@@ -12,10 +12,10 @@
 //! blocked one, or one the store no longer has starts as before, once the
 //! guide is shown (`player::source_ready`).
 
+use crate::runtime::model::StoredSource;
 use iptv_core::playback::PlaySource;
 use iptv_guide::playback::{Resolution, resolve};
 use iptv_providers::id::ContentId;
-use iptv_store_sqlite::StoredSource;
 
 use crate::{Playback, Ui, ViewMode};
 
@@ -79,11 +79,6 @@ pub async fn early(ui: Ui, stored: &StoredSource) -> bool {
     super::load(ui, 0, session, source);
     ui.mode.set(ViewMode::Fullscreen);
     true
-}
-
-/// The content key of `source`'s last channel, if one is kept.
-pub fn last_key(source: iptv_store_sqlite::SourceId) -> Option<String> {
-    super::load_last_channel(Some(source))
 }
 
 /// Whether surface 0 plays an early stream (no catalog channel yet).

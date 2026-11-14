@@ -1,6 +1,6 @@
 //! Bounded refresh execution. Work for the visible source precedes background work.
 use std::collections::VecDeque;
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 
 type Work = Box<dyn FnOnce() + Send>;
@@ -13,7 +13,7 @@ struct State {
     background: VecDeque<Work>,
     closed: bool,
 }
-struct Pool {
+pub(crate) struct Pool {
     shared: Arc<(Mutex<State>, Condvar)>,
     workers: Vec<JoinHandle<()>>,
     capacity: usize,
@@ -83,29 +83,36 @@ impl Pool {
         true
     }
 }
+impl Pool {
+    pub(crate) fn close(&self) {
+        let (lock, ready) = &*self.shared;
+        let mut state = lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.closed = true;
+        state.visible.clear();
+        state.background.clear();
+        ready.notify_all();
+    }
+}
 impl Drop for Pool {
     fn drop(&mut self) {
-        let (lock, ready) = &*self.shared;
-        lock.lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .closed = true;
-        ready.notify_all();
-        for worker in self.workers.drain(..) {
-            let _ = worker.join();
-        }
+        self.close();
+        self.workers.clear();
     }
 }
 
 pub(crate) fn submit(visible: bool, work: impl FnOnce() + Send + 'static) -> bool {
-    let work = crate::store_service::scoped(move || {
+    let work = super::store_service::scoped(move || {
         // Retired queued refreshes must not spend a new app's network budget.
         // Running work remains guarded again at every store operation.
-        if crate::store_service::is_current() {
+        if super::store_service::is_current() {
             work();
         }
     });
-    static POOL: OnceLock<Pool> = OnceLock::new();
-    POOL.get_or_init(|| Pool::new(PARALLEL, WAITING))
+    super::store_service::service()
+        .pool
+        .get_or_init(|| Pool::new(PARALLEL, WAITING))
         .submit(visible, Box::new(work))
 }
 

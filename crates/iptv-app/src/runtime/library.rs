@@ -310,6 +310,54 @@ pub(crate) fn set_shown(source: Option<SourceId>) {
     crate::runtime().emit(super::RuntimeEvent::ShownSource(source));
 }
 
+pub(crate) fn save_all(all: bool) -> impl std::future::Future<Output = Result<(), StoreError>> {
+    super::store_service::call(move |store| store.set_all_playlists(all))
+}
+
+pub(crate) fn collapsed() -> impl std::future::Future<Output = Result<Vec<i64>, StoreError>> {
+    super::store_service::call(|store| store.collapsed_playlists())
+}
+
+pub(crate) fn save_collapsed(
+    collapsed: Vec<i64>,
+) -> impl std::future::Future<Output = Result<(), StoreError>> {
+    super::store_service::call(move |store| store.set_collapsed_playlists(&collapsed))
+}
+
+/// Refresh policy belongs to the application; the host supplies timers and
+/// foreground notifications. No device wakeups are requested in the background.
+pub(crate) fn start_scheduler() {
+    if crate::runtime().scheduler_started.replace(true) {
+        return;
+    }
+    crate::runtime().spawn(async {
+        let mut startup = true;
+        loop {
+            if crate::runtime().foreground.get() {
+                if let Ok(sources) = super::commands::source_policies().await {
+                    for (source, policy) in sources {
+                        let attempted = crate::runtime()
+                            .attempts
+                            .borrow()
+                            .get(&source.id)
+                            .copied()
+                            .or(source.import.last_attempt_at);
+                        if policy.due(super::imports::now_unix(), attempted, startup)
+                            && !running(source.id)
+                        {
+                            crate::runtime().emit(super::RuntimeEvent::RefreshDue(source.id));
+                        }
+                    }
+                }
+                startup = false;
+            }
+            crate::runtime()
+                .delay(std::time::Duration::from_secs(60))
+                .await;
+        }
+    });
+}
+
 #[cfg(test)]
 mod policy_tests {
     use super::*;

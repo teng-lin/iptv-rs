@@ -1,7 +1,7 @@
 //! Native import and refresh orchestration. No UI toolkit dependency.
+use super::paths::data_dir;
+use super::private_files::Client as NetClient;
 use super::{guides, opening, stored, wizard_map};
-use crate::data::data_dir;
-use crate::private_files::Client as NetClient;
 use iptv_core::wizard::{
     FailureKind, Field, ImportCounts, ImportFailure, ImportProgress, ImportStage,
 };
@@ -187,7 +187,7 @@ pub(crate) async fn guide_pipeline(source: SourceId, tx: &Sender<Msg>, read: Gui
     match stored::plan(Trigger::Timer, &guides, matching, state.as_ref(), now) {
         Decision::Refresh(reason) => {
             log::info!("iptv data: downloading the guide ({reason:?})");
-            match NetClient::new(crate::settings::net_config()) {
+            match NetClient::new(super::settings::net_config()) {
                 Ok(net) => {
                     let cancel = CancelToken::new();
                     let result = download_guide(
@@ -306,7 +306,7 @@ pub(crate) async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
             state.as_ref(),
             now,
         ) {
-            Decision::Refresh(_) => match NetClient::new(crate::settings::net_config()) {
+            Decision::Refresh(_) => match NetClient::new(super::settings::net_config()) {
                 Ok(net) => {
                     match download_guide(
                         &net,
@@ -362,7 +362,7 @@ pub(crate) async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
         return;
     }
     let stored_guide = job.stored.and_then(stored::guide_state);
-    let Ok(net) = NetClient::new(crate::settings::net_config()) else {
+    let Ok(net) = NetClient::new(super::settings::net_config()) else {
         log::warn!("iptv data: network client setup failed");
         return fail(ImportFailure::new(FailureKind::Network));
     };
@@ -375,13 +375,12 @@ pub(crate) async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
     options.limits.elapsed = CATALOG_IMPORT_TIME;
     #[cfg(debug_assertions)]
     {
-        options.allow_private_fixture =
-            cfg!(feature = "test-support") || crate::data::DEV_PLAYLIST.is_some();
+        options.allow_private_fixture = cfg!(feature = "test-support") || DEV_PLAYLIST.is_some();
     }
     let _ = std::fs::create_dir_all(data_dir());
     let mut stage = match CatalogStage::create_in_with(data_dir(), |path| {
         let path = path.to_owned();
-        crate::store_service::blocking(move |store| store.open_staging_connection(&path))
+        super::store_service::blocking(move |store| store.open_staging_connection(&path))
     }) {
         Ok(stage) => stage,
         Err(error) => {
@@ -611,7 +610,7 @@ pub(crate) async fn download_guide<P: ProgressSink>(
     must_load: Option<iptv_epg::FeedId>,
 ) -> Result<Downloaded, ImportError> {
     let mut stage =
-        crate::store_service::call(|store| EpgStage::create_in_store(store, data_dir()))
+        super::store_service::call(|store| EpgStage::create_in_store(store, data_dir()))
             .await
             .map_err(|e| ImportError::Storage(e.to_string()))?;
     let epg = import_epg(
@@ -648,7 +647,7 @@ pub(crate) fn save(
     let job = job.clone();
     let guide_urls = catalog.guide_urls();
     let planned = planned.to_vec();
-    crate::store_service::blocking(move |store| save_in(store, &job, guide_urls, planned, stage))
+    super::store_service::blocking(move |store| save_in(store, &job, guide_urls, planned, stage))
 }
 
 pub(crate) fn save_in(
@@ -692,7 +691,7 @@ pub(crate) fn record_failure(stored: Option<SourceId>, kind: ImportErrorKind) {
         return;
     };
     if let Err(e) =
-        crate::store_service::blocking(move |store| store.record_import_failure(id, kind))
+        super::store_service::blocking(move |store| store.record_import_failure(id, kind))
     {
         log::warn!("iptv data: could not record the failure: {e}");
     }
@@ -737,7 +736,7 @@ pub async fn keep_picked_file(name: &str, bytes: &[u8]) -> std::io::Result<Strin
         .join(format!("{:016x}", u64::from_le_bytes(random)));
     let path = dir.join(&name);
     let bytes = bytes.to_vec();
-    crate::store_service::call(move |store| {
+    super::store_service::call(move |store| {
         let mut builder = std::fs::DirBuilder::new();
         builder.recursive(true);
         #[cfg(unix)]
@@ -748,7 +747,7 @@ pub async fn keep_picked_file(name: &str, bytes: &[u8]) -> std::io::Result<Strin
         builder.create(&dir).map_err(|_| {
             iptv_store_sqlite::StoreError::Unavailable("cannot create private document directory")
         })?;
-        crate::private_files::write_atomic(store, &path, &mut bytes.as_slice())?;
+        super::private_files::write_atomic(store, &path, &mut bytes.as_slice())?;
         Ok(path.to_string_lossy().into_owned())
     })
     .await
@@ -763,7 +762,7 @@ pub(crate) fn network_due(id: SourceId, purpose: Purpose) -> bool {
     ) {
         return true;
     }
-    crate::store_service::blocking(move |store| {
+    super::store_service::blocking(move |store| {
         Ok((store.source_policy(id)?, store.import_status(id)?))
     })
     .map(|(p, status)| {
@@ -776,3 +775,5 @@ pub(crate) fn network_due(id: SourceId, purpose: Purpose) -> bool {
     })
     .unwrap_or(true)
 }
+
+pub const DEV_PLAYLIST: Option<&str> = option_env!("IPTV_RS_DEV_PLAYLIST");
