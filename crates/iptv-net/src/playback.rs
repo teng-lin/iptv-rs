@@ -33,9 +33,14 @@ const MAX_CONNECTIONS: usize = 12;
 
 /// Provenance of the original playable URL. A trusted URL authorizes only its
 /// exact origin; derived or redirected resources still require public hosts.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct PlaybackPolicy {
     pub public_only: bool,
+    /// DER certificates trusted in addition to the Mozilla roots: the
+    /// client's [`crate::NetConfig::extra_roots_der`]. A server whose
+    /// certificate needs one of them imports; without them here it would
+    /// then fail to play.
+    pub extra_roots_der: Vec<Vec<u8>>,
     #[cfg(debug_assertions)]
     pub allow_private_fixture: bool,
 }
@@ -43,6 +48,7 @@ impl Default for PlaybackPolicy {
     fn default() -> Self {
         Self {
             public_only: true,
+            extra_roots_der: Vec::new(),
             #[cfg(debug_assertions)]
             allow_private_fixture: false,
         }
@@ -217,7 +223,7 @@ impl PlaybackRelay {
         cookies.seed(&mut *fields.lock().map_err(|_| io_error("lock"))?, &root);
         let builder = || -> Result<reqwest::ClientBuilder, FetchError> {
             Ok(reqwest::Client::builder()
-                .tls_backend_preconfigured(crate::tls::client_config(&[])?)
+                .tls_backend_preconfigured(crate::tls::client_config(&policy.extra_roots_der)?)
                 .redirect(reqwest::redirect::Policy::none())
                 .referer(false)
                 .cookie_provider(cookies.clone())

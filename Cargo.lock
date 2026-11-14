@@ -2293,6 +2293,7 @@ dependencies = [
  "iptv-epg",
  "iptv-import",
  "iptv-providers",
+ "libc",
  "log",
  "quick-xml",
  "rcgen",

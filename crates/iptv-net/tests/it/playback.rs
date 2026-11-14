@@ -11,6 +11,7 @@ fn fixture_relay(url: &str, headers: &[(String, String)]) -> PlaybackRelay {
         PlaybackPolicy {
             public_only: true,
             allow_private_fixture: true,
+            ..PlaybackPolicy::default()
         },
     )
     .unwrap()
@@ -248,6 +249,38 @@ async fn dash_resources_on_another_origin_get_no_scoped_headers() {
 }
 
 #[tokio::test]
+async fn a_server_behind_an_extra_root_certificate_plays_as_well_as_it_imports() {
+    let (acceptor, der) = super::support::self_signed();
+    let origin = TestServer::https(|_| Resp::ok(vec![0x47, 0, 1, 2]), acceptor).await;
+    let policy = |extra_roots_der| PlaybackPolicy {
+        public_only: true,
+        extra_roots_der,
+        allow_private_fixture: true,
+    };
+    // Not in the Mozilla roots: the handshake is refused.
+    let unknown =
+        PlaybackRelay::start_with_policy(&origin.url("/media.ts"), &[], policy(Vec::new()))
+            .unwrap();
+    assert_eq!(reqwest::get(unknown.url()).await.unwrap().status(), 502);
+    assert!(origin.requests().is_empty());
+
+    let trusting =
+        PlaybackRelay::start_with_policy(&origin.url("/media.ts"), &[], policy(vec![der])).unwrap();
+    let response = reqwest::get(trusting.url()).await.unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.bytes().await.unwrap().as_ref(), &[0x47, 0, 1, 2]);
+
+    assert!(
+        PlaybackRelay::start_with_policy(
+            &origin.url("/media.ts"),
+            &[],
+            policy(vec![b"not der".to_vec()])
+        )
+        .is_err()
+    );
+}
+
+#[tokio::test]
 async fn relay_preserves_ranges_and_cancels_retired_streams() {
     let origin = TestServer::http(|request| {
         if request.path == "/slow.ts" {
@@ -361,7 +394,7 @@ async fn public_content_cannot_reach_local_hosts_and_trust_never_follows_origin_
         &identity(),
         PlaybackPolicy {
             public_only: false,
-            allow_private_fixture: false,
+            ..PlaybackPolicy::default()
         },
     )
     .unwrap();
@@ -391,7 +424,7 @@ async fn a_private_stream_plays_only_when_its_own_origin_is_trusted() {
         .replace("localhost", "127.0.0.1");
     let policy = |public_only| PlaybackPolicy {
         public_only,
-        allow_private_fixture: false,
+        ..PlaybackPolicy::default()
     };
 
     let refused = PlaybackRelay::start_with_policy(&private, &[], policy(true)).unwrap();

@@ -2927,6 +2927,7 @@ dependencies = [
  "getrandom 0.4.3",
  "iptv-import",
  "iptv-providers",
+ "libc",
  "log",
  "quick-xml",
  "reqwest",

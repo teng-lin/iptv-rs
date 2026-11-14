@@ -41,8 +41,16 @@ pub struct NetConfig {
     pub extra_roots_der: Vec<Vec<u8>>,
     /// Read `file://` URLs and absolute paths from the filesystem.
     pub allow_files: bool,
-    /// `http://host:port` proxy for every request. Environment proxies are
-    /// ignored.
+    /// `http://host:port` proxy. Environment proxies are ignored.
+    ///
+    /// It does **not** cover everything. Requests that must reach a public
+    /// address (`HttpRequest::public_only`, and every redirect to another
+    /// origin) connect directly: their DNS answers are checked and pinned
+    /// here ([`crate::PublicResolver`]), which a proxy resolving the name
+    /// itself would bypass. The playback relay ([`crate::playback`]) does
+    /// not use it either. A caller that needs every connection proxied
+    /// (privacy, a filtered network) cannot rely on this field alone. The
+    /// app sets no proxy.
     pub proxy: Option<String>,
     /// Explicit synthetic fixture escape hatch; absent from release builds.
     #[cfg(debug_assertions)]

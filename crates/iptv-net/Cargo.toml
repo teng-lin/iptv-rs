@@ -24,6 +24,10 @@ cookie_store = { version = "0.22", default-features = false }
 getrandom = "0.4"
 quick-xml = "0.42"
 
+[target.'cfg(unix)'.dependencies]
+# Only the `O_NONBLOCK` constant, for opening a picked file (`file.rs`).
+libc = "0.2"
+
 [dev-dependencies]
 # test-util: a paused clock for the retry wait (no real sleeping in tests).
 tokio = { version = "1", default-features = false, features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "test-util", "time"] }
