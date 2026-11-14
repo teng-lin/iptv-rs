@@ -228,7 +228,9 @@ How the macOS and Linux archives are produced:
    `usr/bin/notices/native/` of the AppImage, naming the Ubuntu source package
    and exact version behind every bundled library (`dpkg-query`). Both also
    write `SOURCE.txt`, which tells a user where the source archive is.
-   Packaging fails when a bundled library has no checksummed source.
+   On macOS, packaging fails when a bundled library has no checksummed
+   source; on Linux the check happens in step 2, when the sources are
+   downloaded.
 2. **The release job downloads exactly that list** with
    `tools/ci/native-sources.py`, reading the manifest back out of the finished
    package. On macOS it downloads each address (mirrors are tried too) and

@@ -21,7 +21,9 @@ jobs:
         with:
           persist-credentials: false
           # A pull request's changed paths need both sides of the comparison.
-          fetch-depth: ${{ github.event_name == 'pull_request' && 0 || 1 }}
+          # Pull requests diff base...head, which needs both commits. Not
+          # `&& 0 || 1`: 0 is falsy in expressions, so that is always 1.
+          fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
       - id: paths
         env:
           EVENT: ${{ github.event_name }}

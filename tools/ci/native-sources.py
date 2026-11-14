@@ -330,6 +330,8 @@ def run(arguments, cwd=None):
 def download(url, destination):
     """True when the file arrived. Integrity is the caller's checksum, not the transport."""
     result = run(["curl", "--fail", "--location", "--silent", "--show-error", "--retry", "3",
+                  # Also refused and reset connections; the checksum guards what arrives.
+                  "--retry-all-errors",
                   "--connect-timeout", "30", "--max-time", "1800", "--proto", "=https,http",
                   "--proto-redir", "=https,http", "--output", str(destination), url])
     if result.returncode != 0:
@@ -338,16 +340,38 @@ def download(url, destination):
     return result.returncode == 0
 
 
+GIT_ATTEMPTS = 3
+GIT_TIMEOUT = 1800
+
+
+def clone(url, directory):
+    """Clones without checking out, trying again after a dropped connection."""
+    for attempt in range(1, GIT_ATTEMPTS + 1):
+        shutil.rmtree(directory, ignore_errors=True)
+        try:
+            result = subprocess.run(["git", "clone", "--quiet", "--no-checkout", url, directory],
+                                    capture_output=True, text=True, timeout=GIT_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            print(f"  git clone timed out for {url} (attempt {attempt})", file=sys.stderr)
+            continue
+        if result.returncode == 0:
+            return True
+        print(f"  git clone failed for {url} (attempt {attempt}): {result.stderr.strip()}", file=sys.stderr)
+    return False
+
+
 def git_archive(url, revision, destination):
     """A tar of exactly one commit; the commit hash is the integrity check."""
-    with tempfile.TemporaryDirectory() as directory:
-        for arguments in (["git", "clone", "--quiet", "--no-checkout", url, directory],
-                          ["git", "-C", directory, "archive", "--format=tar", f"--prefix={revision}/",
-                           "--output", str(destination), revision + "^{commit}"]):
-            result = run(arguments)
-            if result.returncode != 0:
-                print(f"  {' '.join(arguments[:2])} failed for {url}: {result.stderr.strip()}", file=sys.stderr)
-                return False
+    with tempfile.TemporaryDirectory() as parent:
+        directory = str(Path(parent) / "repository")
+        if not clone(url, directory):
+            return False
+        arguments = ["git", "-C", directory, "archive", "--format=tar", f"--prefix={revision}/",
+                     "--output", str(destination), revision + "^{commit}"]
+        result = run(arguments)
+        if result.returncode != 0:
+            print(f"  git archive failed for {url}: {result.stderr.strip()}", file=sys.stderr)
+            return False
         resolved = run(["git", "-C", directory, "rev-parse", revision + "^{commit}"]).stdout.strip()
         return resolved == revision
 

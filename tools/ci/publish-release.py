@@ -25,17 +25,24 @@ def gh(*arguments):
     return subprocess.run(["gh", *arguments], capture_output=True, text=True)
 
 
-def release_state(tag):
-    """absent, draft or public. Anything unclear is an error, never "absent"."""
-    result = gh("release", "view", tag, "--json", "isDraft,tagName")
+def describe(tag):
+    """(absent, draft or public; the names of its files). Anything unclear is
+    an error, never "absent"."""
+    result = gh("release", "view", tag, "--json", "isDraft,tagName,assets")
     if result.returncode != 0:
         if "release not found" in result.stderr.lower():
-            return "absent"
+            return "absent", []
         raise SystemExit(f"could not read the state of release {tag}: {result.stderr.strip()}")
     release = json.loads(result.stdout)
-    if release.get("tagName") != tag or not isinstance(release.get("isDraft"), bool):
+    files = release.get("assets", [])
+    if (release.get("tagName") != tag or not isinstance(release.get("isDraft"), bool)
+            or not isinstance(files, list) or not all(isinstance(f, dict) and isinstance(f.get("name"), str) for f in files)):
         raise SystemExit(f"unexpected description of release {tag}: {result.stdout.strip()}")
-    return "draft" if release["isDraft"] else "public"
+    return ("draft" if release["isDraft"] else "public"), [f["name"] for f in files]
+
+
+def release_state(tag):
+    return describe(tag)[0]
 
 
 def refuse_public(tag):
@@ -90,9 +97,15 @@ def publish(directory, tag):
     if state == "absent":
         must("release", "create", tag, "--verify-tag", "--draft", "--generate-notes")
     # Replacing is safe only here: the release was just seen to be a draft.
-    must("release", "upload", tag, *(str(path) for path in [*assets(directory), directory / CHECKSUMS]), "--clobber")
-    if release_state(tag) != "draft":
+    files = [*assets(directory), directory / CHECKSUMS]
+    must("release", "upload", tag, *(str(path) for path in files), "--clobber")
+    state, present = describe(tag)
+    if state != "draft":
         raise SystemExit(f"release {tag} stopped being a draft during the upload; not publishing")
+    # An earlier attempt may have left files this one does not have: they are
+    # in neither SHA256SUMS nor the attestations, so they must not go public.
+    for name in sorted(set(present) - {path.name for path in files}):
+        must("release", "delete-asset", tag, name, "--yes")
     must("release", "edit", tag, "--draft=false")
 
 

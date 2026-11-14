@@ -31,7 +31,8 @@ if state.get("fail") == action:
 if action == "view":
     if state["release"] == "absent":
         sys.exit("release not found")
-    print(json.dumps({"isDraft": state["release"] == "draft", "tagName": "v9.8.7"}))
+    print(json.dumps({"isDraft": state["release"] == "draft", "tagName": "v9.8.7",
+                      "assets": [{"name": name} for name in state.get("assets", [])]}))
 elif action == "create":
     if state["release"] != "absent" or "--draft" not in arguments or "--verify-tag" not in arguments:
         sys.exit("a release for this tag already exists")
@@ -41,8 +42,13 @@ elif action == "upload":
         sys.exit("release not found")
     state["uploaded"] = sorted(Path(a).name for a in arguments[3:] if not a.startswith("--"))
     state["clobber"] = "--clobber" in arguments
+    state["assets"] = sorted(set(state.get("assets", [])) | set(state["uploaded"]))
     if state.get("publish_during_upload"):
         state["release"] = "public"
+elif action == "delete-asset":
+    if state["release"] != "draft" or "--yes" not in arguments:
+        sys.exit("unexpected delete")
+    state["assets"].remove(arguments[3])
 elif action == "edit":
     if arguments[3:] != ["--draft=false"] or state["release"] != "draft":
         sys.exit("unexpected edit")
@@ -103,6 +109,14 @@ class Publishing(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.actions(), ["view", "upload", "view", "edit"])
         self.assertTrue(self.state()["clobber"])
+
+    def test_files_left_on_the_draft_by_an_earlier_attempt_are_removed(self):
+        self.checksums()
+        self.release("draft", assets=["Patina-9.8.7-synthetic.apk", "Patina-9.8.7-renamed.apk"])
+        result = self.run_script("publish")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.actions(), ["view", "upload", "view", "delete-asset", "edit"])
+        self.assertEqual(self.state()["assets"], self.state()["uploaded"])
 
     def test_public_release_is_refused_before_any_write(self):
         self.checksums()

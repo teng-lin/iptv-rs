@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - '.github/workflows/fuzz.yml'
+      - 'crates/iptv-core/**'
+      - 'crates/iptv-settings/**'
       - 'crates/iptv-providers/**'
       - 'crates/iptv-epg/**'
       - 'crates/iptv-import/**'
