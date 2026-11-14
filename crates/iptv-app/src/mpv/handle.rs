@@ -8,6 +8,28 @@ use super::{DEFAULT_UA, ffi};
 /// An mpv instance.
 pub struct Mpv(pub *mut ffi::mpv_handle);
 
+/// What the player must never do, whatever a stream, a playlist or the
+/// user's own mpv files ask for: read mpv's configuration, run scripts,
+/// hand an address to `youtube-dl`, or open files that lie beside a
+/// stream. Streams come from providers, so these are the app's sandbox:
+/// an instance that cannot be given all of them is not used
+/// ([`Mpv::new`] fails).
+const RESTRICTIONS: [&str; 4] = ["config", "load-scripts", "ytdl", "autoload-files"];
+
+/// Whether mpv's answer `result` to setting option `name` to `value`
+/// leaves the option as the player needs it.
+///
+/// Runtimes built without scripting omit `load-scripts` and `ytdl`
+/// entirely: there is nothing to switch off, so for these two (and only
+/// when switching them off) "no such option" is as good as set. Every
+/// other refusal counts, for every option.
+fn option_holds(name: &str, value: &str, result: std::ffi::c_int) -> bool {
+    let scripting_compiled_out = result == ffi::MPV_ERROR_OPTION_NOT_FOUND
+        && value == "no"
+        && matches!(name, "load-scripts" | "ytdl");
+    result >= 0 || scripting_compiled_out
+}
+
 // SAFETY: libmpv's client API may be used from any thread; the handle is
 // destroyed once, when the last owner drops it.
 unsafe impl Send for Mpv {}
@@ -64,8 +86,10 @@ impl Mpv {
             // (AudioUnit).
             options.push(("ao", "null".to_owned()));
         }
-        for (k, v) in &options {
-            mpv.option(k, v);
+        if !mpv.configure(&options) {
+            // `mpv` drops here: `mpv_terminate_destroy` also destroys a
+            // handle that was created and never initialized.
+            return None;
         }
         // SAFETY: a created, uninitialized handle.
         if unsafe { ffi::mpv_initialize(h) } < 0 {
@@ -93,20 +117,34 @@ impl Mpv {
         Some(mpv)
     }
 
-    fn option(&self, name: &str, value: &str) {
+    /// Sets the options of a handle that is not initialized yet. False
+    /// when one of the [`RESTRICTIONS`] could not be set: the instance
+    /// must not be initialized or play anything then. Any other option
+    /// that mpv refuses keeps mpv's default, with a warning.
+    fn configure(&self, options: &[(&'static str, String)]) -> bool {
+        let mut restricted = true;
+        for (name, value) in options {
+            if self.option(name, value) {
+                continue;
+            }
+            if RESTRICTIONS.contains(name) {
+                log::error!("iptv mpv: restriction {name} could not be set; no player");
+                restricted = false;
+            } else {
+                log::warn!("iptv mpv: option {name} not set");
+            }
+        }
+        restricted
+    }
+
+    /// Whether option `name` now holds `value` ([`option_holds`]).
+    fn option(&self, name: &str, value: &str) -> bool {
         let (Ok(n), Ok(v)) = (CString::new(name), CString::new(value)) else {
-            return;
+            return false;
         };
         // SAFETY: a live handle and NUL-terminated strings.
         let result = unsafe { ffi::mpv_set_option_string(self.0, n.as_ptr(), v.as_ptr()) };
-        // Runtimes built without scripting omit these options entirely. Still
-        // disable them whenever present; only OPTION_NOT_FOUND is harmless,
-        // and only when disabling these two optional scripting facilities.
-        let scripting_compiled_out =
-            result == -5 && value == "no" && matches!(name, "load-scripts" | "ytdl");
-        if result < 0 && !scripting_compiled_out {
-            log::warn!("iptv mpv: option {name} not set");
-        }
+        option_holds(name, value, result)
     }
 
     pub fn set(&self, name: &str, value: &str) {
@@ -197,8 +235,9 @@ mod tests {
     }
 
     /// The instance renders through the app (no window of its own), stays
-    /// idle between files, reads no user configuration and prefetches the
-    /// next entry (the live bridge's spare).
+    /// idle between files, reads no user configuration, runs no scripts,
+    /// loads no files beside a stream and prefetches the next entry (the
+    /// live bridge's spare).
     #[test]
     fn a_new_instance_has_the_players_options() {
         let mpv = mpv();
@@ -214,6 +253,10 @@ mod tests {
         ] {
             assert_eq!(mpv.get(name).as_deref(), Some(want), "{name:?}");
         }
+        // The restrictions every runtime has.
+        for name in [c"config", c"autoload-files"] {
+            assert_eq!(mpv.get(name).as_deref(), Some("no"), "{name:?}");
+        }
         // A runtime with scripting compiled out has neither capability nor
         // its option. Runtimes that expose either must have it disabled.
         for name in [c"load-scripts", c"ytdl"] {
@@ -222,6 +265,11 @@ mod tests {
                 "{name:?}"
             );
         }
+        // All four are in the list `Mpv::new` insists on.
+        assert_eq!(
+            RESTRICTIONS,
+            ["config", "load-scripts", "ytdl", "autoload-files"]
+        );
         assert_eq!(mpv.get_f64(c"network-timeout"), Some(15.0));
         if std::env::var_os("IPTV_RS_HWDEC").is_none() {
             assert_eq!(mpv.get(c"hwdec").as_deref(), Some("auto-copy-safe"));
@@ -231,14 +279,47 @@ mod tests {
         assert_eq!(mpv.get_f64(c"volume"), Some(50.5));
     }
 
+    /// Only scripting that is compiled out may be missing; any other
+    /// refusal of a restriction, or of any option, counts as not set.
+    #[test]
+    fn only_absent_scripting_options_are_excused() {
+        let absent = ffi::MPV_ERROR_OPTION_NOT_FOUND;
+        for name in RESTRICTIONS {
+            assert!(option_holds(name, "no", 0), "{name}");
+            assert!(!option_holds(name, "no", -4), "{name}: another error");
+        }
+        assert!(option_holds("load-scripts", "no", absent));
+        assert!(option_holds("ytdl", "no", absent));
+        assert!(!option_holds("config", "no", absent));
+        assert!(!option_holds("autoload-files", "no", absent));
+        // Asking for scripting on a runtime without it is not excused.
+        assert!(!option_holds("ytdl", "yes", absent));
+        assert!(!option_holds("no-such-option", "no", absent));
+    }
+
+    /// A handle that refuses a restriction is not configured: `Mpv::new`
+    /// gives no player, and the handle is destroyed uninitialized.
+    #[test]
+    fn a_refused_restriction_fails_the_configuration() {
+        // SAFETY: creates a handle; the wrapper destroys it once.
+        let mpv = Mpv(unsafe { ffi::mpv_create() });
+        assert!(!mpv.0.is_null(), "libmpv");
+        assert!(mpv.configure(&[("config", "no".to_owned())]));
+        // mpv refuses a value the flag cannot take.
+        assert!(!mpv.configure(&[("autoload-files", "perhaps".to_owned())]));
+        assert!(!mpv.configure(&[("idle", "yes".to_owned()), ("config", "perhaps".to_owned()),]));
+        // An ordinary option it refuses only warns.
+        assert!(mpv.configure(&[("no-such-option", "1".to_owned())]));
+    }
+
     /// Unknown names and strings C cannot carry fail without effect.
     #[test]
     fn bad_names_are_refused() {
         let mpv = mpv();
         mpv.set("no-such-property", "1");
         mpv.set("volume\0", "1");
-        mpv.option("no-such-option", "1");
-        mpv.option("volume", "1\0");
+        assert!(!mpv.option("no-such-option", "1"));
+        assert!(!mpv.option("volume", "1\0"));
         assert_eq!(mpv.get_f64(c"volume"), Some(100.0));
         assert!(!mpv.command(&["no-such-command"]));
         assert!(!mpv.command(&["set", "volume\0", "1"]));
