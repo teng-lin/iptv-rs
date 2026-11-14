@@ -215,6 +215,44 @@ async fn cross_origin_redirects_keep_only_transport_headers_and_the_referer_orig
 }
 
 #[tokio::test]
+async fn a_body_sent_again_to_another_origin_keeps_its_media_type_only() {
+    let target = TestServer::http(|_| Resp::ok("landed")).await;
+    let to = target.url("/final");
+    let origin = TestServer::http(move |req| match req.path.as_str() {
+        "/again" => Resp::redirect(307, &to),
+        _ => Resp::redirect(303, &to),
+    })
+    .await;
+    let net = NetClient::new(NetConfig {
+        allow_private_fixture: true,
+        ..Default::default()
+    })
+    .unwrap();
+    let post = |path: &str| {
+        let mut request = HttpRequest::get(origin.url(path))
+            .with_header("Content-Type", "application/x-www-form-urlencoded")
+            .with_header("X-Api-Key", "synthetic-secret");
+        request.method = iptv_providers::Method::Post;
+        request.body = Some(b"synthetic=1".to_vec());
+        request
+    };
+    net.fetch(post("/again")).await.unwrap();
+    net.fetch(post("/other")).await.unwrap();
+    let landed = target.requests();
+    // 307: the same request again, described but without the credential.
+    assert_eq!(
+        landed[0].header("content-type"),
+        Some("application/x-www-form-urlencoded")
+    );
+    assert_eq!(landed[0].header("content-length"), Some("11"));
+    // 303: a GET without the body, so nothing describes one.
+    assert_eq!(landed[1].header("content-type"), None);
+    for request in &landed {
+        assert_eq!(request.header("x-api-key"), None);
+    }
+}
+
+#[tokio::test]
 async fn tls_uses_webpki_roots_plus_extra_roots() {
     let (acceptor, der) = self_signed();
     let server = TestServer::https(|_| Resp::ok("secure"), acceptor).await;

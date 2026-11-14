@@ -103,7 +103,10 @@ pub(crate) async fn execute(
         if next.origin() != p.url.origin() {
             // A body that is sent again (307/308) keeps its media type; the
             // method change below removes it together with the body.
-            let content_type = p.headers.get(CONTENT_TYPE).cloned();
+            let content_type = p
+                .body
+                .as_ref()
+                .and_then(|_| p.headers.get(CONTENT_TYPE).cloned());
             cross_origin::restrict(&mut p.headers, &p.url, &next);
             if let Some(content_type) = content_type {
                 p.headers.insert(CONTENT_TYPE, content_type);
