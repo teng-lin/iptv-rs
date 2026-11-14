@@ -39,7 +39,7 @@ mkdir -p "$mount"
 hdiutil attach "$dmg" -readonly -nobrowse -mountpoint "$mount"
 trap 'hdiutil detach "$mount"' EXIT
 app="$mount/Patina.app"
-python3 tools/ci/check-notices.py "$app" native/components.json
+python3 tools/ci/check-notices.py "$app" mpv-runtime/components.json
 codesign --verify --deep --strict "$app"
 python3 - "$app" <<'PY'
 from pathlib import Path
