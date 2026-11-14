@@ -384,9 +384,14 @@ fn stored_playlists_switch_refresh_and_go() {
     )
     .unwrap();
     rail(&mut app, "Playlists");
+    // Keep publication pending while checking the in-progress action. A local
+    // import can otherwise finish before the driver observes that brief state.
+    let held = super::store_latency::hold_writer(&home);
     act(&mut app, "first", "Refresh now");
     // Asked again while it runs: it runs once.
     act(&mut app, "first", "Refreshing…");
+    held.execute_batch("ROLLBACK").unwrap();
+    drop(held);
     step(app.wait_for_within("text:M3U playlist · 3 channels", IMPORT));
     to_guide(&mut app);
     step(app.wait_for("text:Alpha Zero"));
