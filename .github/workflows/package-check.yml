@@ -20,6 +20,8 @@ on:
       - 'tools/ci/**'
       - 'tools/package-macos.sh'
       - 'tools/bundle-macos.py'
+      - 'tools/mpv-runtime-unix/**'
+      - 'tools/mpv-runtime/prepare.py'
   workflow_dispatch:
 # Superseded PR checks need not keep occupying runners. Releases are never cancelled.
 concurrency:
@@ -65,7 +67,8 @@ jobs:
           export APPIMAGE_EXTRACT_AND_RUN=1 CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target"
           bash tools/ci/package-linux.sh
           bash tools/ci/check-linux-packages.sh
-          # As in a release: every bundled library's source must be fetchable.
+          # As in a release: every bundled system library's source must be
+          # fetchable (libmpv's is retained with its pinned runtime release).
           bash tools/ci/enable-deb-src.sh
           python3 tools/ci/native-sources.py linux target/Patina.AppDir \
             "target/native-sources/Patina-$VERSION-linux-native-sources.tar"

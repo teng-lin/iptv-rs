@@ -37,4 +37,14 @@ private: /usr/library/libexample.so
 """, "amd64"), {"first", "second"})
 
 
+class PinnedRuntime(unittest.TestCase):
+    def test_runtime_library_is_left_to_its_own_notices(self):
+        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "runtime.json").write_text(json.dumps({"library": "libmpv.so.2"}))
+            self.assertEqual(notices.runtime_libraries(directory), {"libmpv.so.2"})
+        self.assertEqual(notices.runtime_libraries(None), set())
+
+
 unittest.main()
