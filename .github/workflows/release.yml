@@ -75,6 +75,87 @@ jobs:
       - name: Check installation, launch and uninstall
         shell: pwsh
         run: ./tools/ci/check-windows-package.ps1
+      # Signed (or not) on a fresh runner that never builds code: windows-sign.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: signing-input-windows
+          path: dist/Patina-*-windows-x86_64-setup.exe
+          if-no-files-found: error
+  # Authenticode through Azure Trusted Signing (Artifact Signing) when its
+  # credentials exist; otherwise the installer is released as an unsigned
+  # preview and the release notes say so (docs/release.md, "Platform signing").
+  windows-sign:
+    needs: [windows-package]
+    environment: release
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: signing-input-windows
+          path: dist
+      # Only whether each secret is set reaches this step, never its value.
+      - name: Check the signing configuration
+        id: config
+        shell: bash
+        env:
+          TENANT: ${{ secrets.AZURE_TENANT_ID != '' }}
+          CLIENT: ${{ secrets.AZURE_CLIENT_ID != '' }}
+          CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET != '' }}
+          ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT != '' }}
+          ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT != '' }}
+          PROFILE: ${{ secrets.AZURE_CERTIFICATE_PROFILE != '' }}
+        run: |
+          set -euo pipefail
+          test "$(find dist -type f | wc -l)" -eq 1
+          states="$TENANT $CLIENT $CLIENT_SECRET $ENDPOINT $ACCOUNT $PROFILE"
+          case "$states" in
+            *false*true*|*true*false*)
+              echo "Windows signing is partly configured ($states): set all six AZURE_* secrets or none" >&2
+              exit 1 ;;
+            *true*) echo "sign=true" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "Authenticode credentials absent: the installer is released as an unsigned preview"
+              echo "sign=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+      - name: Sign the installer
+        if: steps.config.outputs.sign == 'true'
+        uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_CERTIFICATE_PROFILE }}
+          files-folder: ${{ github.workspace }}\dist
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: Verify the Authenticode signature and timestamp
+        if: steps.config.outputs.sign == 'true'
+        shell: pwsh
+        run: |
+          foreach ($file in Get-ChildItem dist -Filter *.exe) {
+            $signature = Get-AuthenticodeSignature $file.FullName
+            if ($signature.Status -ne 'Valid') { throw "$($file.Name): signature $($signature.Status)" }
+            if (-not $signature.TimeStamperCertificate) { throw "$($file.Name): no timestamp" }
+            Write-Host "$($file.Name): $($signature.SignerCertificate.Subject)"
+          }
+      - name: Record the signing state for the release notes
+        shell: bash
+        run: |
+          python tools/ci/publish-release.py signing windows \
+            "${{ steps.config.outputs.sign == 'true' && 'signed' || 'unsigned' }}" target/signing-status
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: signing-status-windows
+          path: target/signing-status/windows.json
+          if-no-files-found: error
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: packages-windows
@@ -126,10 +207,13 @@ jobs:
           export APPIMAGE_EXTRACT_AND_RUN=1 CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target"
           bash tools/ci/package-linux.sh
           bash tools/ci/check-linux-packages.sh
-      # The AppImage bundles Ubuntu's libmpv, FFmpeg and GTK: publish the exact
-      # source packages they were built from. A source that cannot be fetched
-      # or does not match its checksum fails the release.
-      - name: Corresponding source of the libraries bundled in the AppImage
+      # The AppImage's libmpv (with FFmpeg) is the pinned runtime, fetched by
+      # hash from its dependency release, which retains its exact sources
+      # (tools/mpv-runtime-unix). GTK and the host libraries libmpv uses are
+      # Ubuntu's: publish the exact source packages they were built from. A
+      # source that cannot be fetched or does not match its checksum fails the
+      # release.
+      - name: Corresponding source of the system libraries bundled in the AppImage
         if: matrix.platform == 'linux'
         run: |
           bash tools/ci/enable-deb-src.sh
@@ -138,6 +222,7 @@ jobs:
       - name: Prepare unsigned Android artifacts
         if: matrix.platform == 'android'
         run: bash tools/ci/prepare-android.sh
+      # libmpv is the pinned macOS runtime, fetched and verified by hash.
       - name: Build macOS app without signing credentials
         if: matrix.platform == 'macos'
         env:
@@ -145,9 +230,10 @@ jobs:
         run: |
           bash tools/package-macos.sh
           bash tools/ci/package-macos.sh
-      # The app bundles Homebrew's libmpv, FFmpeg and their dependencies:
-      # publish the sources named by the formulae of the installed versions.
-      - name: Corresponding source of the libraries bundled in the macOS app
+      # Homebrew libraries the app may still link beside the pinned runtime
+      # (normally none, and then there is no archive): publish the sources
+      # named by the formulae of the installed versions.
+      - name: Corresponding source of Homebrew libraries bundled in the macOS app
         if: matrix.platform == 'macos'
         run: |
           python3 tools/ci/native-sources.py macos target/package/Patina.app \
@@ -183,7 +269,9 @@ jobs:
         with:
           name: packages-${{ matrix.platform }}-native-sources
           path: target/native-sources/Patina-*-native-sources.*
-          if-no-files-found: error
+          # The AppImage always bundles Ubuntu libraries; the macOS app only
+          # the pinned runtime unless it links a Homebrew library.
+          if-no-files-found: ${{ matrix.platform == 'linux' && 'error' || 'ignore' }}
           # The members are compressed archives already.
           compression-level: 0
   sbom:
@@ -288,6 +376,21 @@ jobs:
       - name: Smoke signed macOS package after credential cleanup
         if: matrix.platform == 'macos'
         run: bash tools/ci/smoke-macos-dmg.sh
+      # Whether the certificate is set, never its value. With it, the step
+      # above only succeeds once the app and image are notarized and stapled.
+      - name: Record the signing state for the release notes
+        if: matrix.platform == 'macos'
+        env:
+          SIGNED: ${{ secrets.MACOS_CERTIFICATE_BASE64 != '' }}
+        run: |
+          python3 tools/ci/publish-release.py signing macos \
+            "$([ "$SIGNED" = true ] && echo signed || echo unsigned)" target/signing-status
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: matrix.platform == 'macos'
+        with:
+          name: signing-status-macos
+          path: target/signing-status/macos.json
+          if-no-files-found: error
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: packages-${{ matrix.platform }}
@@ -295,7 +398,7 @@ jobs:
           if-no-files-found: error
   publish:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [tests, package, sign, windows-package, sbom]
+    needs: [tests, package, sign, windows-package, windows-sign, sbom]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -330,5 +433,13 @@ jobs:
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/SHA256SUMS
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: signing-status-*
+          merge-multiple: true
+          path: signing-status
+      # Unsigned macOS/Windows packages are announced as previews.
+      - name: Release notes from the signing records
+        run: python3 tools/ci/publish-release.py notes signing-status release-notes.md
       - name: Upload to a draft and publish it once
-        run: python3 tools/ci/publish-release.py publish dist "$TAG"
+        run: python3 tools/ci/publish-release.py publish dist "$TAG" release-notes.md

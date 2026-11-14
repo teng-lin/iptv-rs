@@ -5,7 +5,11 @@ Also records which Ubuntu source package version built each library
 (sources.json) and where a user finds that source (SOURCE.txt); the release
 job downloads exactly that list with tools/ci/native-sources.py.
 
-Usage: linux-native-notices.py APPDIR VERSION
+The pinned libmpv runtime (tools/mpv-runtime-unix) is not an Ubuntu build:
+with RUNTIME given, its library is left to the runtime's own notices and
+source archive (notices/mpv-runtime) and every other library is recorded.
+
+Usage: linux-native-notices.py APPDIR VERSION [RUNTIME]
 """
 import importlib.util
 from pathlib import Path
@@ -47,15 +51,24 @@ def select_owner(query_output, architecture, library):
     return owners.pop()
 
 
+def runtime_libraries(runtime):
+    """The file names of the pinned runtime's libraries (its manifest's)."""
+    if runtime is None:
+        return set()
+    manifest = json.loads((Path(runtime) / "runtime.json").read_text())
+    return {manifest["library"]}
+
+
 def main():
-    if len(sys.argv) != 3:
+    if len(sys.argv) not in (3, 4):
         raise SystemExit(__doc__)
     appdir, release = Path(sys.argv[1]), sys.argv[2]
+    pinned = runtime_libraries(sys.argv[3] if len(sys.argv) == 4 else None)
     output = appdir / "usr/bin/notices/native"
     output.mkdir(parents=True, exist_ok=True)
     inventory = []
     for library in sorted((appdir / "usr/lib").rglob("*.so*")):
-        if not library.is_file() or library.is_symlink():
+        if not library.is_file() or library.is_symlink() or library.name in pinned:
             continue
         # SONAME paths are package-owned even when the bundled file has been rewritten.
         result = subprocess.run(["dpkg-query", "-S", "*/" + library.relative_to(appdir / "usr/lib").as_posix()], capture_output=True, text=True)

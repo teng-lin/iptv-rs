@@ -18,7 +18,8 @@ if [ -n "${MACOS_CERTIFICATE:-}" ]; then
   security set-key-partition-list -S apple-tool:,apple:,codesign: -k "$password" "$keychain"
   bash tools/ci/notarize-macos.sh target/package/Patina.app
 else
-  echo "Developer ID certificate absent: producing an ad hoc macOS package"
+  # Released as a preview: the release notes and README say it is unsigned.
+  echo "Developer ID certificate absent: producing an ad hoc signed, unnotarized preview package"
 fi
 rm -rf target/dmg
 mkdir -p dist target/dmg
@@ -39,7 +40,7 @@ mkdir -p "$mount"
 hdiutil attach "$dmg" -readonly -nobrowse -mountpoint "$mount"
 trap 'hdiutil detach "$mount"' EXIT
 app="$mount/Patina.app"
-python3 tools/ci/check-notices.py "$app" native/components.json
+python3 tools/ci/check-notices.py "$app" mpv-runtime/components.json
 codesign --verify --deep --strict "$app"
 python3 - "$app" <<'PY'
 from pathlib import Path
