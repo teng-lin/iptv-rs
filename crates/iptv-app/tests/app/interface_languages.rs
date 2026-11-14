@@ -25,6 +25,9 @@ fn interface_language_changes_live_persists_and_can_be_recovered() {
         }
         step(app.press_key("down"));
     }
+    // The chooser's backdrop is mounted while closed; its name is read by
+    // screen readers only.
+    step(app.wait_for("label:Close the chooser"));
     step(app.wait_for("text:/Español/"));
     step(app.press("text:/Español/"));
     step(app.wait_for("text:Ajustes"));
@@ -32,6 +35,12 @@ fn interface_language_changes_live_persists_and_can_be_recovered() {
     step(app.wait_for("text:☰  Todos los canales"));
     step(app.wait_for("text:TV en directo"));
     step(app.wait_for("text:Reproducir el último canal al iniciar"));
+    // Accessibility labels of mounted views follow: the rail's item, the
+    // video's tap target and the chooser's backdrop.
+    step(app.wait_for("label:Ajustes"));
+    step(app.wait_for("label:Vídeo"));
+    step(app.wait_for("label:Cerrar el selector"));
+    assert!(!app.screen().matches("label:Close the chooser").unwrap());
     // A second switch while the settings remain mounted must update every
     // bound heading; native language names always remain readable.
     step(app.press("text:Idioma"));
@@ -44,6 +53,7 @@ fn interface_language_changes_live_persists_and_can_be_recovered() {
     step(app.wait_for("text:語言"));
     step(app.wait_for("text:直播電視"));
     step(app.wait_for("text:啟動時播放上次頻道"));
+    step(app.wait_for("label:關閉選擇器"));
     let path = fixture.path.parent().unwrap().join("settings.json");
     let (stored, report) = Settings::from_json(&std::fs::read_to_string(path).unwrap()).unwrap();
     assert!(report.is_clean());
@@ -55,6 +65,7 @@ fn interface_language_changes_live_persists_and_can_be_recovered() {
     step(app.press("text:/系統語言/"));
     step(app.wait_for("text:Language"));
     step(app.wait_for("text:Settings >> nth=1"));
+    step(app.wait_for("label:Close the chooser"));
     for _ in 0..3 {
         step(app.back());
     }

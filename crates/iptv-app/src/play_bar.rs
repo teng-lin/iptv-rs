@@ -370,7 +370,7 @@ fn volume(ui: Ui) -> impl IntoElement {
         .w(px(W))
         .h(px(24.0))
         .justify_center()
-        .label("Volume")
+        .label(move || tr("Volume"))
         .child(
             view()
                 .h(px(4.0))
