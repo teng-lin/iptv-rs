@@ -66,6 +66,7 @@ Release builds are published on
 | Android TV and tablets (Android 8.0+) | `.apk` |
 | Linux x86_64 (glibc 2.39+, GTK 4.14+) | `.deb`, `.rpm`, `.pkg.tar.zst`, `.AppImage` |
 | macOS (Apple silicon) | `.dmg` (ad hoc signed, not notarized) |
+| Windows x64 (experimental) | `-setup.exe` installer (unsigned) |
 | iPad | Not released yet; [build from source](#ipad) |
 
 The native Linux packages need the system's GTK 4, libmpv and GStreamer.
@@ -82,6 +83,20 @@ gh attestation verify Patina-<version>-linux-x86_64.AppImage --repo teng-lin/pat
 [The release guide](docs/release.md#checksums-provenance-and-sbom) has the
 stricter form, checksum verification and the SBOM. Releases up to v0.1.1
 predate the attestations.
+
+### Opening the macOS and Windows builds
+
+The macOS and Windows packages are not signed with a platform developer
+certificate yet, so the system warns before the first launch. Verify the
+download as above first.
+
+- **macOS (Gatekeeper):** drag Patina to Applications and open it once; macOS
+  refuses. Then open System Settings, Privacy & Security, scroll to the
+  message about Patina and choose **Open Anyway**. Alternatively remove the
+  download marker in a terminal:
+  `xattr -dr com.apple.quarantine /Applications/Patina.app`.
+- **Windows (SmartScreen):** when "Windows protected your PC" appears, choose
+  **More info**, then **Run anyway**.
 
 ## Build from source
 
@@ -272,10 +287,15 @@ Useful environment variables: `IPTV_RS_AUDIO=null` (mute),
 `IPTV_RS_HWDEC` (mpv `hwdec`), `RUST_LOG=info` (player state, never stream
 addresses).
 
-Project rules for contributors and coding agents are in
+[docs/architecture.md](docs/architecture.md) explains the crate layering, the
+sans-IO ports, the state and video-layer rules, the import pipeline and the
+NSH boundary. [CONTRIBUTING.md](CONTRIBUTING.md) covers setup, checks and
+commit style; the project rules for contributors and coding agents are in
 [AGENTS.md](AGENTS.md). Release and signing setup is in
-[docs/release.md](docs/release.md). The storage and transport security
-model is in [docs/security.md](docs/security.md).
+[docs/release.md](docs/release.md), and changes per release in
+[CHANGELOG.md](CHANGELOG.md). The storage and transport security model is in
+[docs/security.md](docs/security.md); to report a vulnerability see
+[SECURITY.md](SECURITY.md).
 
 `python3 tools/bump-version.py patch` bumps the version. A `v<version>`
 tag builds and publishes the release.

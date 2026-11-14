@@ -49,7 +49,7 @@ not make them required checks.
   with `--locked`; `tools/bump-version.py` keeps its workspace crate versions in
   step.
 
-## Desktop packages
+## Packaging and releases
 
 Desktop Package checks likewise run only for package/build inputs on PRs and
 support manual dispatch. Signed release packaging still runs on tags or manual
@@ -79,20 +79,44 @@ Native packages depend on system GTK4, mpv and GStreamer. The AppImage bundles
 linked libraries and GTK resources, and uses X11 (XWayland on Wayland desktops).
 It uses the host's OpenGL/EGL/GLES drivers and audio servers.
 Linux compatibility starts at glibc 2.39 and GTK 4.14 from Ubuntu 24.04, not
-every older distribution. Packaging checks inspect all three native package
-formats, install and launch the DEB, and launch the AppImage under Xvfb with
-empty temporary app state. A second AppImage launch uses a minimal Ubuntu
-container without system GTK, mpv or GStreamer. RPM and pacman metadata checks do not replace
-installation tests on their respective distributions.
+every older distribution. `tools/ci/check-linux-packages.sh` inspects all three
+native package formats and then installs and launches every package, each with
+empty temporary app state under Xvfb:
+
+- the DEB on the Ubuntu 24.04 runner itself;
+- the AppImage on the runner, and again in a minimal Ubuntu container that has
+  no system GTK, mpv or GStreamer (`Dockerfile.appimage-smoke`);
+- the RPM in a Fedora 43 container (`Dockerfile.rpm-smoke`) and the pacman
+  package in an Arch Linux container (`Dockerfile.pacman-smoke`). Each installs
+  the package with the distribution's package manager, which resolves its
+  dependencies, checks that the notices were installed, and launches the app.
+
+These containers have no GPU and no audio device, so they prove installation
+and start-up, not playback on real desktops.
 
 macOS produces a self-contained .dmg with Patina.app and an Applications
 shortcut. Packaging verifies the disk image, mounts it read-only, verifies the
 app's signature and arm64 architecture, and launches it with empty temporary
 app state. Bundled dependencies are checked for unresolved external references.
 
+Developer ID signing and notarization are wired but conditional.
+`tools/ci/package-macos.sh` checks for `MACOS_CERTIFICATE`: when it is set, the
+sign job imports the certificate into a temporary keychain, signs every bundled
+binary with the hardened runtime, notarizes and staples the app
+(`tools/ci/notarize-macos.sh`), then signs, notarizes and staples the disk
+image. When it is not set, the script says so and produces an ad hoc signed
+image. As of v0.1.1 no Apple secrets are configured, so every DMG released so far is
+ad hoc signed and not notarized, and Gatekeeper warns about it (the README
+explains how to open it).
+
 Create a GitHub environment named release and set these secrets for Android:
 - ANDROID_KEYSTORE_BASE64, ANDROID_STORE_PASSWORD, ANDROID_KEY_PASSWORD,
   ANDROID_KEY_ALIAS: a persistent release signing key.
+To sign and notarize the macOS disk image, also set:
+- MACOS_CERTIFICATE_BASE64, MACOS_CERTIFICATE_PASSWORD, MACOS_SIGN_IDENTITY: a
+  Developer ID Application certificate and its identity name.
+- APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD: the account and app-specific
+  password `notarytool` submits with.
 For the optional all-platform run, also set:
 - IOS_CERTIFICATE_BASE64, IOS_CERTIFICATE_PASSWORD, IOS_SIGN_IDENTITY,
   IOS_PROFILE_BASE64: a certificate and matching distribution profile for
@@ -105,12 +129,16 @@ version such as `0.2.1`) from the repository root using Python 3.11 or newer.
 Add `--dry-run` to preview. The script also accepts an absolute path when
 invoked from another directory.
 The command updates `Cargo.toml`, every inherited workspace package version in
-`Cargo.lock` and `tools/ci/package.Cargo.lock`, and the NSH packaging version in `crates/iptv-app/nsh.json` without
+`Cargo.lock`, `tools/ci/package.Cargo.lock` and the fuzz harness's `fuzz/Cargo.lock`,
+and the NSH packaging version in `crates/iptv-app/nsh.json` without
 updating dependencies. It accepts increasing MAJOR.MINOR.PATCH versions.
 Review and commit those changes, then tag that commit `v<version>` when ready.
 The command does not commit, tag, or publish. Tag/version mismatch fails.
 workflow_dispatch builds artifacts
 without publishing; use platforms=desktop to validate desktop packages alone.
+A manual run on master is also the dry run for the release-only steps: it
+downloads the native source archives and writes the SBOM, and stops before the
+checksum, attestation and publish steps.
 A tag publishes Android and desktop artifacts and SHA256SUMS to GitHub Releases only
 after every job succeeds.
 
@@ -237,15 +265,14 @@ as on Windows:
 
 This does not submit to Play or App Store Connect. An IPA's distribution
 profile determines where it can be installed; an App Store profile does not
-make a GitHub download sideloadable. macOS uses the existing ad hoc signing
-and is NOT notarized. Homebrew libraries determine its minimum OS version.
-Before tagging a public release, notarize the macOS app (Developer ID,
-hardened runtime, `tools/ci/notarize-macos.sh`). Bundled mpv/FFmpeg licensing obligations
-still apply.
+make a GitHub download sideloadable. Without the Apple secrets above the macOS
+image is ad hoc signed and NOT notarized. Homebrew libraries determine its
+minimum OS version. The Windows installer is unsigned. Before calling a release
+stable, configure Developer ID notarization and Windows code signing.
 
-Before a stable release, also validate installation of the RPM and pacman
-packages on their native distributions, the AppImage and DMG on clean desktops,
-and signed iPad installation when enabling iOS. Android releases need tablet/TV smoke
+Before a stable release, also validate the RPM, pacman package, AppImage and
+DMG on real desktops with a GPU and sound (CI covers installation and start-up
+only), and signed iPad installation when enabling iOS. Android releases need tablet/TV smoke
 tests on tab36 and tv36 with synthetic playlists. CI build and headless tests
 do not replace those device checks.
 
