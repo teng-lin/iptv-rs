@@ -370,6 +370,50 @@ async fn public_content_cannot_reach_local_hosts_and_trust_never_follows_origin_
     assert!(second.requests().is_empty());
 }
 
+/// The transport half of a Stalker portal on a private network: a link the
+/// player may open only on public addresses is refused before any request,
+/// and one trusted for its own origin (the portal's host) plays, without
+/// that trust reaching another private origin.
+#[tokio::test]
+async fn a_private_stream_plays_only_when_its_own_origin_is_trusted() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let other = TestServer::http(|_| Resp::ok(vec![0x47, 9, 9])).await;
+    let elsewhere = other.url("/other.ts");
+    let portal = TestServer::http(move |request| match request.path.as_str() {
+        "/live/list.m3u8" => Resp::ok(format!(
+            "#EXTM3U\n#EXTINF:2,\nsegment.ts\n#EXTINF:2,\n{elsewhere}\n"
+        )),
+        _ => Resp::ok(vec![0x47, 0, 1, 2]),
+    })
+    .await;
+    let private = portal
+        .url("/live/list.m3u8")
+        .replace("localhost", "127.0.0.1");
+    let policy = |public_only| PlaybackPolicy {
+        public_only,
+        allow_private_fixture: false,
+    };
+
+    let refused = PlaybackRelay::start_with_policy(&private, &[], policy(true)).unwrap();
+    assert_eq!(reqwest::get(refused.url()).await.unwrap().status(), 502);
+    assert!(portal.requests().is_empty(), "refused before any request");
+
+    let trusted = PlaybackRelay::start_with_policy(&private, &[], policy(false)).unwrap();
+    let manifest = reqwest::get(trusted.url())
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let urls = relay_urls(&trusted, &manifest);
+    assert_eq!(urls.len(), 2, "{manifest}");
+    let segment = reqwest::get(&urls[0]).await.unwrap();
+    assert_eq!(segment.status(), 200);
+    assert_eq!(segment.bytes().await.unwrap().as_ref(), &[0x47, 0, 1, 2]);
+    assert_eq!(reqwest::get(&urls[1]).await.unwrap().status(), 502);
+    assert!(other.requests().is_empty(), "another private origin");
+}
+
 #[tokio::test]
 async fn rewritten_ranges_are_whole_entities_and_mislabeled_media_still_streams() {
     let origin = TestServer::http(|request| match request.path.as_str() {

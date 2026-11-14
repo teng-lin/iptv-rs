@@ -195,13 +195,18 @@ pub struct StalkerLink {
 impl StalkerLink {
     /// The source for the link the portal returned, with the headers of
     /// `session` (after any re-authentication).
+    ///
+    /// The link must be on a public address, unless the portal the user
+    /// entered is on a private one and serves the stream itself
+    /// ([`StalkerSession::stream_must_be_public`]): a portal on the LAN
+    /// plays, a public portal cannot point the player into the LAN.
     pub fn source(
         session: &StalkerSession,
         url: String,
         channel_headers: &[(String, String)],
     ) -> PlaySource {
         PlaySource {
-            public_only: true,
+            public_only: session.stream_must_be_public(&url),
             headers: session.playback_headers(&url),
             url,
         }
