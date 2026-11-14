@@ -154,10 +154,25 @@ mkdir -p "$build/ffmpeg"
 # off Meson's undefined-symbol check (dynamic_lookup on macOS); make a
 # missing library a link error instead of a load-time failure.
 # No build timestamp, so that independent builds can be compared byte for byte.
+# mpv's CoreAudio output calls cfstr_from_cstr, which osdep/utils-mac.c
+# defines; mpv builds that file only with the cocoa feature, and cocoa needs
+# Swift. Build it with the CoreAudio sources instead (this working copy
+# only; the published source archive is the pinned upstream one, and this
+# script is the change).
+/usr/bin/python3 - "$sources/mpv/meson.build" <<'PATCH'
+import sys
+path = sys.argv[1]
+text = open(path).read()
+old = "'audio/out/ao_coreaudio_utils.c')"
+new = "'audio/out/ao_coreaudio_utils.c')\n    if not features['cocoa']\n        sources += files('osdep/utils-mac.c')\n    endif"
+if text.count(old) != 1:
+    sys.exit("mpv's meson.build changed: cannot add osdep/utils-mac.c")
+open(path, "w").write(text.replace(old, new))
+PATCH
 meson_build mpv -Ddefault_library=shared -Dauto_features=disabled \
     "-Dc_link_args=['-Wl,-exported_symbol,_mpv_*', '-Wl,-dead_strip_dylibs', '-lc++', '-Wl,-undefined,error']" \
     -Dgpl=false -Dcplayer=false -Dlibmpv=true -Dbuild-date=false -Dgl=enabled -Dplain-gl=enabled \
-    -Dcoreaudio=enabled -Dcocoa=enabled -Dswift-build=disabled -Diconv=enabled \
+    -Dcoreaudio=enabled -Dcocoa=disabled -Dswift-build=disabled -Diconv=enabled \
     -Dlibavdevice=enabled -Dzlib=enabled -Dlua=disabled -Djavascript=disabled
 cp "$build/mpv/config.h" "$output/logs/mpv-config.h"
 verify mpv "$output/logs/mpv-config.h"
