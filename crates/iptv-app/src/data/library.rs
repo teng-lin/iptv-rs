@@ -6,7 +6,7 @@
 //! cancelled one never overwrites what a newer one reports.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::rc::{Rc, Weak};
 
 use iptv_core::wizard::{ImportCounts, ImportFailure, ImportProgress};
@@ -56,55 +56,8 @@ pub enum Activity {
 
 pub use iptv_library::Playlist;
 
-thread_local! {
-    /// Running imports of stored playlists: their ticket and cancel token.
-    static RUNNING: RefCell<HashMap<SourceId, (u64, CancelToken)>> = RefCell::default();
-    static ATTEMPTS: RefCell<HashMap<SourceId,i64>> = RefCell::default();
-    static TICKETS: Cell<u64> = const { Cell::new(0) };
-    // Unlike RUNNING, this lasts through post-playlist guide work. Weak entries
-    // identify the latest worker without retaining completed guides or tasks.
-    static COMPLETIONS: RefCell<HashMap<SourceId, Weak<ImportWork>>> = RefCell::default();
-}
 pub(super) type ImportCompletion = Rc<ImportWork>;
-pub(super) struct ImportWork {
-    finished: Cell<bool>,
-    catalog_done: Cell<bool>,
-    cancel: CancelToken,
-    /// Tasks waiting for [`Self::finish`].
-    waiting: RefCell<Vec<futures_channel::oneshot::Sender<()>>>,
-}
-impl ImportWork {
-    pub(super) fn finished(&self) -> bool {
-        self.finished.get()
-    }
-    pub(super) fn finish(&self) {
-        self.finished.set(true);
-        for waiting in self.waiting.take() {
-            let _ = waiting.send(());
-        }
-    }
-    /// Resolves when the work has finished (at once if it has).
-    pub(super) fn until_finished(&self) -> impl std::future::Future<Output = ()> + 'static {
-        let wait = (!self.finished.get()).then(|| {
-            let (sender, receiver) = futures_channel::oneshot::channel();
-            self.waiting.borrow_mut().push(sender);
-            receiver
-        });
-        async move {
-            if let Some(wait) = wait {
-                let _ = wait.await;
-            }
-        }
-    }
-    pub(super) fn playlist_done(&self) {
-        self.catalog_done.set(true);
-    }
-    pub(super) fn cancel_guide(&self) {
-        if self.catalog_done.get() {
-            self.cancel.cancel();
-        }
-    }
-}
+pub(super) use crate::runtime::state::ImportWork;
 pub(super) fn import_completion(cancel: CancelToken) -> ImportCompletion {
     Rc::new(ImportWork {
         finished: Cell::new(false),
@@ -114,12 +67,14 @@ pub(super) fn import_completion(cancel: CancelToken) -> ImportCompletion {
     })
 }
 pub(super) fn track_import(source: SourceId, completion: &ImportCompletion) {
-    COMPLETIONS.with(|jobs| jobs.borrow_mut().insert(source, Rc::downgrade(completion)));
+    crate::runtime()
+        .completions
+        .with(|jobs| jobs.borrow_mut().insert(source, Rc::downgrade(completion)));
 }
 /// An Add learns its source ID only after saving. A newer known-source job may
 /// already own that ID by then, including a worker that has just completed.
 pub(super) fn track_added_import(source: SourceId, completion: &ImportCompletion) {
-    COMPLETIONS.with(|jobs| {
+    crate::runtime().completions.with(|jobs| {
         jobs.borrow_mut()
             .entry(source)
             .or_insert_with(|| Rc::downgrade(completion));
@@ -127,7 +82,9 @@ pub(super) fn track_added_import(source: SourceId, completion: &ImportCompletion
 }
 pub(super) type ImportRevision = Option<Weak<ImportWork>>;
 pub(super) fn import_revision(source: SourceId) -> ImportRevision {
-    COMPLETIONS.with(|jobs| jobs.borrow().get(&source).cloned())
+    crate::runtime()
+        .completions
+        .with(|jobs| jobs.borrow().get(&source).cloned())
 }
 pub(super) fn import_revision_is_current(source: SourceId, revision: &ImportRevision) -> bool {
     match (import_revision(source), revision) {
@@ -137,12 +94,13 @@ pub(super) fn import_revision_is_current(source: SourceId, revision: &ImportRevi
     }
 }
 pub(super) fn pending_import(source: SourceId) -> Option<ImportCompletion> {
-    COMPLETIONS
+    crate::runtime()
+        .completions
         .with(|jobs| jobs.borrow().get(&source).and_then(Weak::upgrade))
         .filter(|job| !job.finished())
 }
 pub(super) fn import_is_current(source: SourceId, completion: &ImportCompletion) -> bool {
-    COMPLETIONS.with(|jobs| {
+    crate::runtime().completions.with(|jobs| {
         jobs.borrow()
             .get(&source)
             .and_then(Weak::upgrade)
@@ -150,7 +108,7 @@ pub(super) fn import_is_current(source: SourceId, completion: &ImportCompletion)
     })
 }
 pub(super) fn revoke_import_handoff(source: SourceId) {
-    if let Some(job) = COMPLETIONS.with(|jobs| {
+    if let Some(job) = crate::runtime().completions.with(|jobs| {
         jobs.borrow_mut()
             .remove(&source)
             .and_then(|job| job.upgrade())
@@ -161,7 +119,7 @@ pub(super) fn revoke_import_handoff(source: SourceId) {
     }
 }
 pub(super) fn reset_imports() {
-    COMPLETIONS.with(|jobs| {
+    crate::runtime().completions.with(|jobs| {
         for job in jobs
             .borrow_mut()
             .drain()
@@ -172,14 +130,7 @@ pub(super) fn reset_imports() {
     });
 }
 
-#[derive(Clone, Default, PartialEq, Eq)]
-pub(super) struct Snapshot {
-    playlists: Vec<Playlist>,
-    details: BTreeMap<SourceId, StoredSource>,
-    imports: BTreeMap<SourceId, iptv_store_sqlite::ImportStatus>,
-    active: Option<SourceId>,
-}
-thread_local! { static SNAPSHOT: RefCell<Option<Snapshot>> = const { RefCell::new(None) }; }
+pub(super) use crate::runtime::state::LibrarySnapshot as Snapshot;
 
 pub(super) fn snapshot_in(store: &Store) -> Result<Snapshot, StoreError> {
     let playlists = playlists_in(store)?;
@@ -199,7 +150,7 @@ pub(super) fn snapshot_in(store: &Store) -> Result<Snapshot, StoreError> {
     })
 }
 pub(super) fn install(snapshot: Snapshot) -> bool {
-    SNAPSHOT.with(|current| {
+    crate::runtime().library.with(|current| {
         let changed = current.borrow().as_ref() != Some(&snapshot);
         *current.borrow_mut() = Some(snapshot);
         changed
@@ -214,7 +165,7 @@ pub(super) async fn refresh_cache(ui: Ui) -> Result<(), StoreError> {
 
 /// A committed mutation must retain its cleanup even if a subsequent read fails.
 async fn refresh_after_commit(ui: Ui, patch: impl FnOnce(&mut Snapshot)) {
-    SNAPSHOT.with(|snapshot| {
+    crate::runtime().library.with(|snapshot| {
         if let Some(snapshot) = snapshot.borrow_mut().as_mut() {
             patch(snapshot);
         }
@@ -230,7 +181,7 @@ async fn refresh_after_commit(ui: Ui, patch: impl FnOnce(&mut Snapshot)) {
 
 /// The stored playlists in list order.
 pub fn playlists() -> Result<Vec<Playlist>, StoreError> {
-    SNAPSHOT.with(|snapshot| {
+    crate::runtime().library.with(|snapshot| {
         snapshot
             .borrow()
             .as_ref()
@@ -286,7 +237,7 @@ pub(super) fn startup_source(store: &Store) -> Result<Option<StoredSource>, Stor
 }
 
 fn newest() -> Result<Option<StoredSource>, StoreError> {
-    SNAPSHOT.with(|snapshot| {
+    crate::runtime().library.with(|snapshot| {
         let snapshot = snapshot.borrow();
         let snapshot = snapshot
             .as_ref()
@@ -396,7 +347,8 @@ pub fn start_scheduler(ui: Ui) {
             .await;
             if let Ok(sources) = sources {
                 for (source, policy) in sources {
-                    let attempted = ATTEMPTS
+                    let attempted = crate::runtime()
+                        .attempts
                         .with(|a| a.borrow().get(&source.id).copied())
                         .or(source.import.last_attempt_at);
                     if policy.due(super::now_unix(), attempted, startup) && !running(source.id) {
@@ -411,7 +363,7 @@ pub fn start_scheduler(ui: Ui) {
 }
 
 pub(super) fn load(id: SourceId) -> Option<StoredSource> {
-    SNAPSHOT.with(|snapshot| {
+    crate::runtime().library.with(|snapshot| {
         snapshot
             .borrow()
             .as_ref()
@@ -434,12 +386,17 @@ fn changed(_ui: Ui) {
 }
 
 pub(super) fn running(id: SourceId) -> bool {
-    RUNNING.with(|r| r.borrow().contains_key(&id))
+    crate::runtime()
+        .imports
+        .with(|r| r.borrow().contains_key(&id))
 }
 
 fn cancel_running(id: SourceId) {
     revoke_import_handoff(id);
-    if let Some((_, token)) = RUNNING.with(|r| r.borrow_mut().remove(&id)) {
+    if let Some((_, token)) = crate::runtime()
+        .imports
+        .with(|r| r.borrow_mut().remove(&id))
+    {
         log::info!(
             "iptv data: cancelling the running import of source {}",
             id.0
@@ -458,7 +415,7 @@ pub(super) fn run(ui: Ui, stored: StoredSource, purpose: Purpose, edit: bool) {
     let due = !matches!(
         purpose,
         Purpose::Startup | Purpose::Switch | Purpose::Combined
-    ) || SNAPSHOT.with(|snapshot| {
+    ) || crate::runtime().library.with(|snapshot| {
         let snapshot = snapshot.borrow();
         let Some(snapshot) = snapshot.as_ref() else {
             return true;
@@ -477,19 +434,24 @@ pub(super) fn run(ui: Ui, stored: StoredSource, purpose: Purpose, edit: bool) {
             )
     });
     if due {
-        ATTEMPTS.with(|a| a.borrow_mut().insert(id, super::now_unix()));
+        crate::runtime()
+            .attempts
+            .with(|a| a.borrow_mut().insert(id, super::now_unix()));
     }
     log::info!(
         "iptv data: {purpose:?} of source {} ({:?})",
         id.0,
         stored.source.kind()
     );
-    let ticket = TICKETS.with(|t| {
+    let ticket = crate::runtime().tickets.with(|t| {
         t.set(t.get() + 1);
         t.get()
     });
-    let current =
-        move || RUNNING.with(|r| r.borrow().get(&id).is_some_and(|(at, _)| *at == ticket));
+    let current = move || {
+        crate::runtime()
+            .imports
+            .with(|r| r.borrow().get(&id).is_some_and(|(at, _)| *at == ticket))
+    };
     let job = Job {
         source: stored.source,
         epg_url: None,
@@ -498,7 +460,9 @@ pub(super) fn run(ui: Ui, stored: StoredSource, purpose: Purpose, edit: bool) {
         edit,
     };
     let token = CancelToken::new();
-    RUNNING.with(|r| r.borrow_mut().insert(id, (ticket, token.clone())));
+    crate::runtime()
+        .imports
+        .with(|r| r.borrow_mut().insert(id, (ticket, token.clone())));
     ui.library.activity.update(|a| {
         a.insert(
             id,
@@ -522,7 +486,9 @@ pub(super) fn run(ui: Ui, stored: StoredSource, purpose: Purpose, edit: bool) {
             Update::Progress(p) => Activity::Running(Some(p)),
             Update::Done(Err(f)) if edit => {
                 log::warn!("iptv data: the new details did not import ({f:?}); the old ones stay");
-                RUNNING.with(|r| r.borrow_mut().remove(&id));
+                crate::runtime()
+                    .imports
+                    .with(|r| r.borrow_mut().remove(&id));
                 changed(ui);
                 Activity::Rejected(f)
             }
@@ -533,7 +499,9 @@ pub(super) fn run(ui: Ui, stored: StoredSource, purpose: Purpose, edit: bool) {
                         log::warn!("iptv data: refresh failed ({f:?}); the stored data stays")
                     }
                 }
-                RUNNING.with(|r| r.borrow_mut().remove(&id));
+                crate::runtime()
+                    .imports
+                    .with(|r| r.borrow_mut().remove(&id));
                 changed(ui);
                 Activity::Done(result)
             }

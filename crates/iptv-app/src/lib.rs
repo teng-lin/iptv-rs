@@ -403,6 +403,25 @@ pub(crate) fn runtime() -> Rc<runtime::Runtime> {
     RUNTIME.with(|runtime| runtime.borrow().clone())
 }
 
+/// Poll an application task with the runtime that accepted it. A late wake
+/// from an old root must never read or change its successor's state.
+pub(crate) fn in_runtime(
+    future: impl std::future::Future<Output = ()> + 'static,
+) -> impl std::future::Future<Output = ()> {
+    let runtime = runtime();
+    let mut future = Box::pin(future);
+    std::future::poll_fn(move |context| {
+        struct Restore(Rc<runtime::Runtime>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                RUNTIME.set(self.0.clone());
+            }
+        }
+        let _restore = Restore(RUNTIME.replace(runtime.clone()));
+        future.as_mut().poll(context)
+    })
+}
+
 /// The guide data in use (synthetic until a playlist is imported).
 pub fn schedule() -> Rc<dyn Schedule> {
     runtime().schedule()
@@ -453,6 +472,7 @@ pub fn channel_name(ch: usize) -> String {
 
 #[component]
 pub fn App() -> impl IntoElement {
+    RUNTIME.set(Rc::new(runtime::Runtime::default()));
     startup::mark("rust root");
     startup::log_library_base();
     fonts::register();

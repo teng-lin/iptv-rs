@@ -3,9 +3,8 @@ use crate::Ui;
 use iptv_guide::{EpgSchedule, Organization};
 use iptv_store_sqlite::{ChannelQuery, SourceId, Store, StoreError};
 
-thread_local! { static REVISION: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
 pub fn revision() -> u64 {
-    REVISION.get()
+    crate::runtime().organization_revision.get()
 }
 
 pub fn read_in(store: &Store, source: SourceId) -> Result<Organization, StoreError> {
@@ -104,7 +103,9 @@ pub async fn apply(schedule: &EpgSchedule, source: SourceId) {
     }
 }
 pub fn changed(ui: Ui, source: SourceId) {
-    REVISION.set(REVISION.get().wrapping_add(1));
+    crate::runtime()
+        .organization_revision
+        .set(crate::runtime().organization_revision.get().wrapping_add(1));
     crate::runtime().emit(crate::runtime::RuntimeEvent::LibraryChanged);
     if super::combined::active(ui) {
         super::combined::organization_changed(ui, source);

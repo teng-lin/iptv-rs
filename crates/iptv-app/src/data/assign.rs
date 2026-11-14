@@ -15,7 +15,7 @@ use iptv_providers::ContentId;
 use iptv_store_sqlite::{EpgOverride, GuideChannel, SourceId, Store, StoreError};
 
 use super::stored::{self, Matching};
-use super::{GENERATION, Imported, Streams};
+use super::{Imported, Streams};
 use crate::Ui;
 
 pub use iptv_library::Choice;
@@ -97,7 +97,7 @@ pub fn choose(
     done: impl FnOnce(Applied) + 'static,
 ) {
     super::library::revoke_import_handoff(source);
-    let generation = GENERATION.with(std::cell::Cell::get);
+    let generation = crate::runtime().generation.with(std::cell::Cell::get);
     let saved =
         crate::store_service::call(move |store| save_and_rebind(store, source, &key, &choice));
     super::spawn_in_app(async move {

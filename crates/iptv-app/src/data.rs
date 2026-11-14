@@ -187,8 +187,6 @@ enum Msg {
 thread_local! {
     /// The app's root owner: import tasks outlive the view that started them.
     static APP_OWNER: Cell<Option<Owner>> = const { Cell::new(None) };
-    /// The latest import; an older one no longer changes the guide.
-    static GENERATION: Cell<u64> = const { Cell::new(0) };
 }
 
 fn now_unix() -> i64 {
@@ -208,6 +206,7 @@ pub fn data_dir() -> PathBuf {
 /// Runs `future` on the UI thread under the app's root owner.
 pub fn spawn_in_app(future: impl Future<Output = ()> + 'static) {
     let owner = APP_OWNER.with(Cell::get).unwrap_or_else(Owner::current);
+    let future = crate::in_runtime(future);
     owner.run(move || {
         // Dropping the handle detaches the task; it lives with the owner.
         drop(spawn(future));
@@ -309,7 +308,7 @@ pub fn start(ui: Ui) {
 /// A new generation owns the guide: older imports no longer show and
 /// their guide timers stop.
 fn next_generation() -> u64 {
-    GENERATION.with(|g| {
+    crate::runtime().generation.with(|g| {
         g.set(g.get() + 1);
         g.get()
     })
@@ -343,7 +342,7 @@ fn start_import_with(ui: Ui, job: Job, cancel: CancelToken, on_update: impl Fn(U
     let generation = if shows {
         next_generation()
     } else {
-        GENERATION.with(Cell::get)
+        crate::runtime().generation.with(Cell::get)
     };
     // Only the startup refresh may start the last channel.
     let resume = purpose == Purpose::Startup;
@@ -376,7 +375,7 @@ fn start_import_with(ui: Ui, job: Job, cancel: CancelToken, on_update: impl Fn(U
     let merge_requested = Cell::new(false);
     let show = async move |imported: Box<Imported>, held: Option<opening::Held>| {
         let _ = library::refresh_cache(ui).await;
-        if GENERATION.with(Cell::get) != generation {
+        if crate::runtime().generation.with(Cell::get) != generation {
             return;
         }
         if shows || combined::active(ui) {
@@ -405,7 +404,7 @@ fn start_import_with(ui: Ui, job: Job, cancel: CancelToken, on_update: impl Fn(U
                     Ok(Msg::Playlist(result)) => {
                         completion.playlist_done();
                         if import_source.is_none()
-                            && GENERATION.with(Cell::get) == generation
+                            && crate::runtime().generation.with(Cell::get) == generation
                             && let Ok((_, imported)) = &result
                         {
                             import_source = Some(imported.source);
@@ -488,7 +487,7 @@ async fn show_part(
     resume: bool,
     held: Option<opening::Held>,
 ) {
-    if GENERATION.with(Cell::get) != generation {
+    if crate::runtime().generation.with(Cell::get) != generation {
         return;
     }
     if combined::active(ui) {
@@ -515,7 +514,7 @@ async fn show_part(
     } = *imported;
     let mut organization_revision = organization::revision();
     let schedule = organization::build(source, groups, catalog, guide, now).await;
-    if GENERATION.with(Cell::get) != generation || combined::active(ui) {
+    if crate::runtime().generation.with(Cell::get) != generation || combined::active(ui) {
         return;
     }
     let built = started.elapsed();
@@ -544,7 +543,7 @@ async fn show_part(
             .held_channels(held.keys),
         None => pages::paged(ui, schedule, source, now).await,
     };
-    if GENERATION.with(Cell::get) != generation || combined::active(ui) {
+    if crate::runtime().generation.with(Cell::get) != generation || combined::active(ui) {
         return;
     }
     let wrapped = started.elapsed();
@@ -556,7 +555,7 @@ async fn show_part(
         organization_revision = organization::revision();
         organization::apply(&schedule, source).await;
     }
-    if GENERATION.with(Cell::get) != generation || combined::active(ui) {
+    if crate::runtime().generation.with(Cell::get) != generation || combined::active(ui) {
         return;
     }
     let favorites = started.elapsed();
@@ -607,7 +606,7 @@ fn schedule_check(ui: Ui, source: SourceId, at: i64, generation: u64) {
     log::info!("iptv data: next guide check in {} min", wait.as_secs() / 60);
     spawn_in_app(async move {
         timer(wait).await;
-        if GENERATION.with(Cell::get) == generation
+        if crate::runtime().generation.with(Cell::get) == generation
             && (!combined::active(ui) || combined::includes(ui, source))
         {
             check_guide(ui, source, generation);
@@ -1317,7 +1316,7 @@ pub async fn keep_picked_file(name: &str, bytes: &[u8]) -> std::io::Result<Strin
 
 /// Current browser generation for async state installation guards.
 pub(crate) fn generation() -> u64 {
-    GENERATION.with(Cell::get)
+    crate::runtime().generation.with(Cell::get)
 }
 
 #[cfg(test)]

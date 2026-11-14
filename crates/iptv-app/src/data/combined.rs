@@ -7,35 +7,14 @@ use iptv_guide::{
     combined::{CombinedSchedule, SourceSchedule, split_key},
 };
 use iptv_store_sqlite::SourceId;
-use std::{
-    cell::{Cell, RefCell},
-    collections::BTreeMap,
-    rc::Rc,
-};
-thread_local! {
-    static PARTS: RefCell<BTreeMap<SourceId,Rc<EpgSchedule>>> = RefCell::default();
-    static LIMITS: RefCell<BTreeMap<SourceId,Option<u32>>> = RefCell::default();
-    static RESUME: Cell<bool> = const { Cell::new(false) };
-    static REBUILD: Cell<u64> = const { Cell::new(0) };
-    static EPOCH: Cell<i64> = const { Cell::new(0) };
-    static SINGLE: RefCell<Option<SingleSchedule>> = const { RefCell::new(None) };
-}
+use std::{cell::Cell, rc::Rc};
 
-/// The current single-source schedule can enter the combined catalogue without
-/// dropping a portal session, account format, connection limit or loaded guide.
-#[derive(Clone)]
-pub(super) struct SingleSchedule {
-    source: SourceId,
-    schedule: Rc<EpgSchedule>,
-    limit: Option<u32>,
-    pending: Option<library::ImportCompletion>,
-    revision: library::ImportRevision,
-}
+pub(super) use crate::runtime::state::SingleSchedule;
 pub(super) fn reset_single() {
-    SINGLE.with(|s| s.borrow_mut().take());
+    crate::runtime().single.with(|s| s.borrow_mut().take());
 }
 pub(super) fn single() -> Option<SingleSchedule> {
-    SINGLE.with(|s| s.borrow().clone())
+    crate::runtime().single.with(|s| s.borrow().clone())
 }
 /// Snapshot before Add advances the generation. An unfinished account refresh
 /// can still replace a cached source's provisional playback metadata, so that
@@ -50,7 +29,7 @@ pub(super) fn ready_single() -> Option<SingleSchedule> {
         })
 }
 pub(super) fn remember_single(source: SourceId, schedule: Rc<EpgSchedule>) {
-    SINGLE.with(|s| {
+    crate::runtime().single.with(|s| {
         *s.borrow_mut() = Some(SingleSchedule {
             source,
             schedule,
@@ -71,7 +50,9 @@ pub(super) fn added(ui: Ui, source: SourceId, generation: u64, previous: Option<
             ));
             return;
         }
-        if active(ui) || super::GENERATION.with(Cell::get) != generation || !has_multiple_enabled()
+        if active(ui)
+            || crate::runtime().generation.with(Cell::get) != generation
+            || !has_multiple_enabled()
         {
             return;
         }
@@ -84,7 +65,7 @@ pub(super) fn added(ui: Ui, source: SourceId, generation: u64, previous: Option<
             log::warn!("iptv combined: cannot save browsing mode: {e}");
             return;
         }
-        if super::GENERATION.with(Cell::get) != generation || active(ui) {
+        if crate::runtime().generation.with(Cell::get) != generation || active(ui) {
             return;
         }
         let Ok(playlists) = library::playlists() else {
@@ -94,20 +75,26 @@ pub(super) fn added(ui: Ui, source: SourceId, generation: u64, previous: Option<
         super::source_changed(ui, None);
         stored::note_shown(None);
         ui.library.all.set(true);
-        PARTS.with(|p| p.borrow_mut().clear());
-        LIMITS.with(|p| p.borrow_mut().clear());
+        crate::runtime().parts.with(|p| p.borrow_mut().clear());
+        crate::runtime().limits.with(|p| p.borrow_mut().clear());
         let previous = previous.filter(|s| {
             enabled(s.source) && library::import_revision_is_current(s.source, &s.revision)
         });
         let previous_guide = previous.as_ref().map(|s| (s.source, s.pending.clone()));
         for kept in previous.into_iter().chain(std::iter::once(added)) {
-            PARTS.with(|p| p.borrow_mut().insert(kept.source, kept.schedule));
-            LIMITS.with(|p| p.borrow_mut().insert(kept.source, kept.limit));
+            crate::runtime()
+                .parts
+                .with(|p| p.borrow_mut().insert(kept.source, kept.schedule));
+            crate::runtime()
+                .limits
+                .with(|p| p.borrow_mut().insert(kept.source, kept.limit));
         }
         reset_single();
         crate::runtime().emit(crate::runtime::RuntimeEvent::AccountStreams(None));
         let now = super::now_unix();
-        EPOCH.with(|e| e.set(now - now.rem_euclid(3600)));
+        crate::runtime()
+            .epoch
+            .with(|e| e.set(now - now.rem_euclid(3600)));
         rebuild(ui);
         // The previous single source's timer belonged to its older generation.
         // Reattach guide work without fetching its playlist/account again.
@@ -115,7 +102,9 @@ pub(super) fn added(ui: Ui, source: SourceId, generation: u64, previous: Option<
             reattach_guide(ui, previous, generation, pending);
         }
         for playlist in playlists.into_iter().filter(|p| p.policy.enabled) {
-            if !PARTS.with(|p| p.borrow().contains_key(&playlist.id))
+            if !crate::runtime()
+                .parts
+                .with(|p| p.borrow().contains_key(&playlist.id))
                 && let Some(stored) = library::load(playlist.id)
             {
                 library::run(ui, stored, Purpose::Combined, false);
@@ -138,7 +127,7 @@ fn reattach_guide(
     };
     super::spawn_in_app(async move {
         let current = || {
-            super::GENERATION.with(Cell::get) == generation
+            crate::runtime().generation.with(Cell::get) == generation
                 && includes(ui, source)
                 && library::import_is_current(source, &pending)
         };
@@ -192,7 +181,7 @@ pub fn has_multiple_enabled() -> bool {
 }
 
 pub fn start(ui: Ui) {
-    RESUME.with(|r| r.set(true));
+    crate::runtime().resume.with(|r| r.set(true));
     // Startup precedes user edits; install the empty real guide at once.
     super::spawn_in_app(async move {
         switch_all_ready(ui).await;
@@ -210,7 +199,7 @@ pub fn switch_all(ui: Ui) {
     });
 }
 async fn switch_all_ready(ui: Ui) {
-    let generation = super::GENERATION.with(Cell::get);
+    let generation = crate::runtime().generation.with(Cell::get);
     if active(ui) {
         return;
     }
@@ -218,7 +207,7 @@ async fn switch_all_ready(ui: Ui) {
         log::warn!("iptv combined: cannot save browsing mode: {e}");
         return;
     }
-    if super::GENERATION.with(Cell::get) != generation || active(ui) {
+    if crate::runtime().generation.with(Cell::get) != generation || active(ui) {
         return;
     }
     super::next_generation();
@@ -226,11 +215,13 @@ async fn switch_all_ready(ui: Ui) {
     super::source_changed(ui, None);
     stored::note_shown(None);
     ui.library.all.set(true);
-    PARTS.with(|p| p.borrow_mut().clear());
-    LIMITS.with(|p| p.borrow_mut().clear());
+    crate::runtime().parts.with(|p| p.borrow_mut().clear());
+    crate::runtime().limits.with(|p| p.borrow_mut().clear());
     crate::runtime().emit(crate::runtime::RuntimeEvent::AccountStreams(None));
     let now = super::now_unix();
-    EPOCH.with(|e| e.set(now - now.rem_euclid(3600)));
+    crate::runtime()
+        .epoch
+        .with(|e| e.set(now - now.rem_euclid(3600)));
     rebuild(ui);
     if let Ok(playlists) = library::playlists() {
         for playlist in playlists
@@ -245,10 +236,10 @@ async fn switch_all_ready(ui: Ui) {
 }
 pub fn leave(ui: Ui) {
     reset_single();
-    RESUME.with(|r| r.set(false));
+    crate::runtime().resume.with(|r| r.set(false));
     ui.library.all.set(false);
-    PARTS.with(|p| p.borrow_mut().clear());
-    LIMITS.with(|p| p.borrow_mut().clear());
+    crate::runtime().parts.with(|p| p.borrow_mut().clear());
+    crate::runtime().limits.with(|p| p.borrow_mut().clear());
     let saved = crate::store_service::call(|store| store.set_all_playlists(false));
     super::spawn_in_app(async move {
         if let Err(error) = saved.await {
@@ -261,11 +252,11 @@ pub(super) async fn show(ui: Ui, imported: Box<Imported>, held: Option<opening::
         return;
     }
     let source = imported.source;
-    let generation = super::GENERATION.with(Cell::get);
+    let generation = crate::runtime().generation.with(Cell::get);
     let revision = library::import_revision(source);
     let current = || {
         includes(ui, source)
-            && super::GENERATION.with(Cell::get) == generation
+            && crate::runtime().generation.with(Cell::get) == generation
             && library::import_revision_is_current(source, &revision)
     };
     let Imported {
@@ -283,7 +274,7 @@ pub(super) async fn show(ui: Ui, imported: Box<Imported>, held: Option<opening::
     }
     schedule = match playback {
         Streams::New(context, allowed) => {
-            LIMITS.with(|l| {
+            crate::runtime().limits.with(|l| {
                 let mut l = l.borrow_mut();
                 if allowed.is_some() || !l.contains_key(&source) {
                     l.insert(source, allowed);
@@ -292,7 +283,9 @@ pub(super) async fn show(ui: Ui, imported: Box<Imported>, held: Option<opening::
             schedule.with_playback(context)
         }
         Streams::Current => schedule.with_shared_playback(
-            PARTS.with(|p| p.borrow().get(&source).and_then(|s| s.shared_playback())),
+            crate::runtime()
+                .parts
+                .with(|p| p.borrow().get(&source).and_then(|s| s.shared_playback())),
         ),
     };
     if let Some(lookup) = stored::description_lookup(ui, source) {
@@ -305,9 +298,11 @@ pub(super) async fn show(ui: Ui, imported: Box<Imported>, held: Option<opening::
     if !current() {
         return;
     }
-    PARTS.with(|p| p.borrow_mut().insert(source, Rc::new(schedule)));
+    crate::runtime()
+        .parts
+        .with(|p| p.borrow_mut().insert(source, Rc::new(schedule)));
     rebuild_ready(ui).await;
-    if can_resume && RESUME.with(Cell::get) {
+    if can_resume && crate::runtime().resume.with(Cell::get) {
         resume(ui);
     }
 }
@@ -315,8 +310,8 @@ pub fn rebuild(ui: Ui) {
     super::spawn_in_app(rebuild_ready(ui));
 }
 async fn rebuild_ready(ui: Ui) {
-    let generation = super::GENERATION.with(Cell::get);
-    let revision = REBUILD.with(|r| {
+    let generation = crate::runtime().generation.with(Cell::get);
+    let revision = crate::runtime().rebuild.with(|r| {
         let next = r.get().wrapping_add(1);
         r.set(next);
         next
@@ -332,8 +327,10 @@ async fn rebuild_ready(ui: Ui) {
         .filter(|p| p.policy.enabled)
         .map(|p| p.id)
         .collect();
-    PARTS.with(|p| p.borrow_mut().retain(|id, _| enabled.contains(id)));
-    let sources = PARTS.with(|p| {
+    crate::runtime()
+        .parts
+        .with(|p| p.borrow_mut().retain(|id, _| enabled.contains(id)));
+    let sources = crate::runtime().parts.with(|p| {
         let parts = p.borrow();
         playlists
             .into_iter()
@@ -357,27 +354,32 @@ async fn rebuild_ready(ui: Ui) {
         .await
         .unwrap_or_default();
     if !active(ui)
-        || super::GENERATION.with(Cell::get) != generation
-        || REBUILD.with(Cell::get) != revision
+        || crate::runtime().generation.with(Cell::get) != generation
+        || crate::runtime().rebuild.with(Cell::get) != revision
     {
         return;
     }
     install_favorites();
     crate::runtime().emit(crate::runtime::RuntimeEvent::ScheduleReady(Rc::new(
-        CombinedSchedule::new(sources, EPOCH.with(Cell::get)).with_collapsed_sources(collapsed),
+        CombinedSchedule::new(sources, crate::runtime().epoch.with(Cell::get))
+            .with_collapsed_sources(collapsed),
     )));
     pages::replaced();
 }
 
 pub fn connection_limit(source: SourceId) -> Option<u32> {
-    LIMITS.with(|l| l.borrow().get(&source).copied().flatten())
+    crate::runtime()
+        .limits
+        .with(|l| l.borrow().get(&source).copied().flatten())
 }
 pub fn organization_changed(ui: Ui, source: SourceId) {
-    let schedule = PARTS.with(|parts| parts.borrow().get(&source).cloned());
+    let schedule = crate::runtime()
+        .parts
+        .with(|parts| parts.borrow().get(&source).cloned());
     super::spawn_in_app(async move {
         if let Some(schedule) = schedule {
             organization::apply(&schedule, source).await;
-            let current = PARTS.with(|parts| {
+            let current = crate::runtime().parts.with(|parts| {
                 parts
                     .borrow()
                     .get(&source)
@@ -393,7 +395,7 @@ pub fn resume(ui: Ui) {
     if !crate::settings::flag(iptv_settings::keys::RESUME_LAST_CHANNEL)
         || ui.playing.get_untracked().is_some()
     {
-        RESUME.with(|r| r.set(false));
+        crate::runtime().resume.with(|r| r.set(false));
         return;
     }
     let loaded = crate::store_service::call(|store| {
@@ -411,7 +413,10 @@ pub fn resume(ui: Ui) {
     });
     super::spawn_in_app(async move {
         let key = loaded.await.ok().flatten();
-        if !RESUME.with(Cell::get) || ui.playing.get_untracked().is_some() || !active(ui) {
+        if !crate::runtime().resume.with(Cell::get)
+            || ui.playing.get_untracked().is_some()
+            || !active(ui)
+        {
             return;
         }
         let schedule = crate::schedule();
@@ -423,7 +428,7 @@ pub fn resume(ui: Ui) {
             {
                 return;
             }
-            RESUME.with(|r| r.set(false));
+            crate::runtime().resume.with(|r| r.set(false));
             ui.play(c, crate::Playback::Live);
             crate::runtime().emit(crate::runtime::RuntimeEvent::ResumeFullscreen);
         }

@@ -45,28 +45,10 @@ use iptv_store_sqlite::{
 
 use nsh_core::prelude::timer;
 
-use super::{Downloaded, GENERATION, Imported, Msg, Streams, guides};
+use super::{Downloaded, Imported, Msg, Streams, guides};
 use crate::Ui;
 
-thread_local! {
-    /// The source whose guide is on screen.
-    static SHOWN: Cell<Option<SourceId>> = const { Cell::new(None) };
-    /// The sources whose update asked for by hand is running.
-    static UPDATING: RefCell<Vec<SourceId>> = const { RefCell::new(Vec::new()) };
-    /// Edits of guide sources since the app started: a check waits for
-    /// the last one.
-    static EDITS: RefCell<BTreeMap<SourceId, u64>> = const { RefCell::new(BTreeMap::new()) };
-}
-
-#[derive(Default)]
-struct StatusSnapshot {
-    library: Option<super::library::Snapshot>,
-    combined: bool,
-    enabled: Vec<SourceId>,
-    guides: BTreeMap<SourceId, StoredGuide>,
-    lines: BTreeMap<SourceId, Vec<SourceLine>>,
-}
-thread_local! { static STATUS: RefCell<StatusSnapshot> = RefCell::default(); }
+use crate::runtime::state::StatusSnapshot;
 
 /// Refresh small UI metadata after imports/edits without querying SQLite in views.
 pub fn bind(ui: Ui) {
@@ -111,7 +93,9 @@ pub fn bind(ui: Ui) {
                 && revision.get() == expected
             {
                 let library_changed = snapshot.library.take().is_some_and(super::library::install);
-                STATUS.with(|status| *status.borrow_mut() = snapshot);
+                crate::runtime()
+                    .status
+                    .with(|status| *status.borrow_mut() = snapshot);
                 if library_changed && super::combined::active(ui) {
                     super::combined::rebuild(ui);
                 }
@@ -122,7 +106,9 @@ pub fn bind(ui: Ui) {
 }
 
 pub fn cached_guide_state(source: SourceId) -> Option<StoredGuide> {
-    STATUS.with(|status| status.borrow().guides.get(&source).cloned())
+    crate::runtime()
+        .status
+        .with(|status| status.borrow().guides.get(&source).cloned())
 }
 
 /// How long a guide check waits after the guide sources changed (more
@@ -497,7 +483,7 @@ pub fn description_lookup(
 
 /// `data.rs` put `source`'s schedule on screen.
 pub fn note_shown(source: Option<SourceId>) {
-    SHOWN.with(|s| s.set(source));
+    crate::runtime().shown.with(|s| s.set(source));
 }
 
 /// How the guide on screen was last updated.
@@ -522,7 +508,10 @@ pub enum GuideStatus {
 pub fn guide_status() -> GuideStatus {
     let sources = shown_sources();
     if sources.is_empty() {
-        return if STATUS.with(|status| status.borrow().combined) {
+        return if crate::runtime()
+            .status
+            .with(|status| status.borrow().combined)
+        {
             GuideStatus::Empty
         } else {
             GuideStatus::NoSource
@@ -552,10 +541,10 @@ pub fn guide_status() -> GuideStatus {
 /// Individual mode has one guide owner; aggregate commands cover every
 /// enabled source, with failures and feeds still managed per playlist.
 pub fn shown_sources() -> Vec<SourceId> {
-    if let Some(source) = SHOWN.with(Cell::get) {
+    if let Some(source) = crate::runtime().shown.with(Cell::get) {
         return vec![source];
     }
-    STATUS.with(|status| {
+    crate::runtime().status.with(|status| {
         let status = status.borrow();
         if status.combined {
             status.enabled.clone()
@@ -567,12 +556,14 @@ pub fn shown_sources() -> Vec<SourceId> {
 
 /// The source whose guide is on screen.
 pub fn shown() -> Option<SourceId> {
-    SHOWN.with(Cell::get)
+    crate::runtime().shown.with(Cell::get)
 }
 
 /// An update of `source`'s guide asked for by hand is running.
 pub fn updating(source: SourceId) -> bool {
-    UPDATING.with(|u| u.borrow().contains(&source))
+    crate::runtime()
+        .updating
+        .with(|u| u.borrow().contains(&source))
 }
 
 pub use iptv_library::SourceLine;
@@ -580,7 +571,7 @@ pub use iptv_library::SourceLine;
 /// `source`'s guide sources in order, each with its last result (one
 /// short read of the store).
 pub fn source_lines(source: SourceId) -> Vec<SourceLine> {
-    STATUS.with(|status| {
+    crate::runtime().status.with(|status| {
         status
             .borrow()
             .lines
@@ -652,7 +643,7 @@ pub fn update_source(ui: Ui, source: SourceId, done: impl FnOnce(bool) + 'static
     if updating(source) {
         return true;
     }
-    let has_guides = STATUS.with(|status| {
+    let has_guides = crate::runtime().status.with(|status| {
         let status = status.borrow();
         match status.lines.get(&source) {
             Some(lines) if !lines.is_empty() => lines.iter().any(|line| line.source.enabled),
@@ -668,13 +659,17 @@ pub fn update_source(ui: Ui, source: SourceId, done: impl FnOnce(bool) + 'static
     let loaded = crate::store_service::call(move |store| {
         Ok((store.epg_guide(source)?, store.guide_sources(source)?))
     });
-    UPDATING.with(|updating| updating.borrow_mut().push(source));
+    crate::runtime()
+        .updating
+        .with(|updating| updating.borrow_mut().push(source));
     super::spawn_in_app(async move {
         let (stored, sources) = match loaded.await {
             Ok(loaded) => loaded,
             Err(error) => {
                 log::warn!("iptv data: cannot load guide sources: {error}");
-                UPDATING.with(|updating| updating.borrow_mut().retain(|id| *id != source));
+                crate::runtime()
+                    .updating
+                    .with(|updating| updating.borrow_mut().retain(|id| *id != source));
                 done(false);
                 return;
             }
@@ -691,7 +686,9 @@ pub fn update_source(ui: Ui, source: SourceId, done: impl FnOnce(bool) + 'static
             configs(&sources)
         };
         if guides.is_empty() {
-            UPDATING.with(|updating| updating.borrow_mut().retain(|id| *id != source));
+            crate::runtime()
+                .updating
+                .with(|updating| updating.borrow_mut().retain(|id| *id != source));
             crate::runtime().emit(crate::runtime::RuntimeEvent::Notify(
                 "No guide sources are configured",
             ));
@@ -706,7 +703,7 @@ pub fn update_source(ui: Ui, source: SourceId, done: impl FnOnce(bool) + 'static
         // Without a stored guide the periodic checks stopped: start them again.
         let restart_checks = stored.is_none();
 
-        let generation = GENERATION.with(Cell::get);
+        let generation = crate::runtime().generation.with(Cell::get);
         let (tx, mut rx) = unbounded_channel();
         let accepted = super::workers::submit(super::source_is_visible(ui, source), move || {
             super::with_runtime(|| download_now(source, guides, restart_checks, &tx, &cancel));
@@ -720,14 +717,14 @@ pub fn update_source(ui: Ui, source: SourceId, done: impl FnOnce(bool) + 'static
             loop {
                 match rx.recv().await {
                     Some(Msg::Guide(imported))
-                        if (SHOWN.with(Cell::get) == Some(source)
+                        if (crate::runtime().shown.with(Cell::get) == Some(source)
                             || super::combined::includes(ui, source))
                             && super::library::import_is_current(source, &completion) =>
                     {
                         super::show(ui, imported, generation, false).await
                     }
                     Some(Msg::NextCheck { source, at })
-                        if (SHOWN.with(Cell::get) == Some(source)
+                        if (crate::runtime().shown.with(Cell::get) == Some(source)
                             || super::combined::includes(ui, source))
                             && super::library::import_is_current(source, &completion) =>
                     {
@@ -738,7 +735,9 @@ pub fn update_source(ui: Ui, source: SourceId, done: impl FnOnce(bool) + 'static
                 }
             }
             completion.finish();
-            UPDATING.with(|u| u.borrow_mut().retain(|id| *id != source));
+            crate::runtime()
+                .updating
+                .with(|u| u.borrow_mut().retain(|id| *id != source));
             crate::runtime().emit(crate::runtime::RuntimeEvent::LibraryChanged);
             done(accepted);
         });
@@ -804,15 +803,17 @@ async fn download_now(
 /// settle (the refresh policy downloads changed feeds). Only for the
 /// source on screen; another one is checked when it is shown.
 pub fn guides_changed(ui: Ui, source: SourceId) {
-    if SHOWN.with(Cell::get) != Some(source) && !super::combined::includes(ui, source) {
+    if crate::runtime().shown.with(Cell::get) != Some(source)
+        && !super::combined::includes(ui, source)
+    {
         return;
     }
     let edit = next_guide_edit(source);
-    let generation = GENERATION.with(Cell::get);
+    let generation = crate::runtime().generation.with(Cell::get);
     super::spawn_in_app(async move {
         timer(SETTLE).await;
-        let current =
-            GENERATION.with(Cell::get) == generation && guide_edit_is_current(source, edit);
+        let current = crate::runtime().generation.with(Cell::get) == generation
+            && guide_edit_is_current(source, edit);
         if current && !updating(source) {
             log::info!("iptv data: guide sources changed; checking the guide");
             super::check_guide(ui, source, generation);
@@ -821,7 +822,7 @@ pub fn guides_changed(ui: Ui, source: SourceId) {
 }
 
 fn next_guide_edit(source: SourceId) -> u64 {
-    EDITS.with(|edits| {
+    crate::runtime().edits.with(|edits| {
         let mut edits = edits.borrow_mut();
         let generation = edits.entry(source).or_default();
         *generation += 1;
@@ -830,7 +831,9 @@ fn next_guide_edit(source: SourceId) -> u64 {
 }
 
 fn guide_edit_is_current(source: SourceId, generation: u64) -> bool {
-    EDITS.with(|edits| edits.borrow().get(&source) == Some(&generation))
+    crate::runtime()
+        .edits
+        .with(|edits| edits.borrow().get(&source) == Some(&generation))
 }
 
 /// "Delete stored guide data": the source on screen keeps its channels
@@ -846,7 +849,7 @@ pub fn clear(ui: Ui, done: impl FnOnce(bool) + 'static) -> bool {
     for source in &sources {
         super::library::revoke_import_handoff(*source);
     }
-    let generation = GENERATION.with(Cell::get);
+    let generation = crate::runtime().generation.with(Cell::get);
     let saved = crate::store_service::call(move |store| {
         let mut deleted = true;
         let mut imports = Vec::new();

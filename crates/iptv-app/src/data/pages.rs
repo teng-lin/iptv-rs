@@ -14,7 +14,9 @@
 //! day of the programme playing from the archive is pinned meanwhile, and
 //! catch-up waits for its day before it resolves the archive ([`ready`]).
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
+#[cfg(test)]
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -30,12 +32,6 @@ use crate::{Playback, Ui};
 /// Days of finished programmes held in memory with the guide (at most
 /// what `epg.keep_past` keeps). Older ones are paged in.
 pub const LOADED_PAST_DAYS: u32 = 1;
-
-thread_local! {
-    /// What waits for a page (catch-up of an older programme): run after
-    /// every page that arrives, each checks again.
-    static WAITERS: RefCell<Vec<Box<dyn FnOnce()>>> = const { RefCell::new(Vec::new()) };
-}
 
 /// What a schedule shown at `now` holds of the stored guide: from
 /// [`LOADED_PAST_DAYS`] (at most `keep_past_days`) before the hour of
@@ -132,7 +128,10 @@ fn arrived(ui: Ui, source: SourceId, request: PageRequest, store: GuideStore, to
     if inserted {
         crate::runtime().emit(crate::runtime::RuntimeEvent::GuideChanged);
     }
-    for waiter in WAITERS.with(|w| std::mem::take(&mut *w.borrow_mut())) {
+    for waiter in crate::runtime()
+        .page_waiters
+        .with(|w| std::mem::take(&mut *w.borrow_mut()))
+    {
         waiter();
     }
 }
@@ -157,7 +156,10 @@ fn each(schedule: &dyn Schedule, mut f: impl FnMut(&EpgSchedule)) {
 /// A schedule replaced the one on screen (with the whole window after a
 /// first screen, `opening.rs`): what waited for its programmes looks again.
 pub fn replaced() {
-    for waiter in WAITERS.with(|w| std::mem::take(&mut *w.borrow_mut())) {
+    for waiter in crate::runtime()
+        .page_waiters
+        .with(|w| std::mem::take(&mut *w.borrow_mut()))
+    {
         waiter();
     }
 }
@@ -188,7 +190,9 @@ pub fn ready(
         return true;
     }
     log::info!("iptv data: catch-up waits for its guide day");
-    WAITERS.with(|w| w.borrow_mut().push(Box::new(retry)));
+    crate::runtime()
+        .page_waiters
+        .with(|w| w.borrow_mut().push(Box::new(retry)));
     false
 }
 
@@ -284,7 +288,9 @@ mod tests {
         assert!(a.insert_page(request, GuideStore::default()));
         assert!(ready(&schedule, 0, time, || panic!("A is already loaded")));
         assert!(!b.ensure_loaded(time));
-        WAITERS.with(|waiters| waiters.borrow_mut().clear());
+        crate::runtime()
+            .page_waiters
+            .with(|waiters| waiters.borrow_mut().clear());
     }
 
     #[test]
