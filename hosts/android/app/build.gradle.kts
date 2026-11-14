@@ -9,6 +9,15 @@ val nshJava: File = rootProject.file(providers.gradleProperty("nsh.java").get())
 // Filled by tools/sync-host.sh from the NSH build of the Rust crate.
 val nshOut = layout.buildDirectory.dir("nsh").get().asFile
 
+// How `release` is signed: "distribution", "unsigned", "debug" or null (none
+// chosen: its tasks fail rather than fall back to the debug key unasked).
+val releaseSigning: String? = when {
+    System.getenv("IPTV_UNSIGNED_RELEASE") == "1" -> "unsigned"
+    System.getenv("KEYSTORE_PATH") != null -> "distribution"
+    System.getenv("IPTV_DEBUG_SIGNED_RELEASE") == "1" -> "debug"
+    else -> null
+}
+
 android {
     namespace = "com.hantekllc.iptvrs.host"
     compileSdk = 35
@@ -37,13 +46,28 @@ android {
         // What a viewer installs: not debuggable, so ART compiles the host's
         // and Media3's Java instead of interpreting it (a debuggable APK runs
         // it in the slow interpreter: seconds of a cold start on a TV box;
-        // measured on a TV box). Signed with the debug key, so it installs over a
-        // debug build and keeps the app's data. `profileable` (manifest)
-        // keeps simpleperf working on it.
+        // measured on a TV box). Signed with the distribution key
+        // (KEYSTORE_PATH), or left unsigned for CI's separate signing job
+        // (IPTV_UNSIGNED_RELEASE=1). The debug key only on request
+        // (IPTV_DEBUG_SIGNED_RELEASE=1, a local install over a debug build);
+        // with none of them a release task fails ([releaseSigning]).
         getByName("release") {
             isMinifyEnabled = false
-            signingConfig = if (System.getenv("IPTV_UNSIGNED_RELEASE") == "1") null
-                else signingConfigs.findByName("distribution") ?: signingConfigs.getByName("debug")
+            signingConfig = when (releaseSigning) {
+                "distribution" -> signingConfigs.getByName("distribution")
+                "debug" -> signingConfigs.getByName("debug")
+                else -> null
+            }
+        }
+        // `release` for measuring (tools/perf-android.sh): profileable from
+        // the shell (src/profile/AndroidManifest.xml), so simpleperf works on
+        // it, which a release must not be. Debug-signed, so it installs over
+        // a debug build and keeps the app's data.
+        create("profile") {
+            initWith(getByName("release"))
+            isDebuggable = false
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release")
         }
     }
 
@@ -63,6 +87,23 @@ android {
         checkReleaseBuilds = true
     }
 }
+
+val checkReleaseSigning by tasks.registering {
+    val chosen = releaseSigning
+    doLast {
+        if (chosen == null) {
+            throw GradleException(
+                "No signing chosen for the release build. Set KEYSTORE_PATH (with " +
+                    "STORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD) to sign with the distribution " +
+                    "key, IPTV_UNSIGNED_RELEASE=1 for an unsigned build, or " +
+                    "IPTV_DEBUG_SIGNED_RELEASE=1 to sign it with the debug key for a " +
+                    "local install.",
+            )
+        }
+    }
+}
+// Every release build (assemble, bundle, install, lint) starts with preReleaseBuild.
+tasks.matching { it.name == "preReleaseBuild" }.configureEach { dependsOn(checkReleaseSigning) }
 
 dependencies {
     testImplementation("junit:junit:4.13.2")

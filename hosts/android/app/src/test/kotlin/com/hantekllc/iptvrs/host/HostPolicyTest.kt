@@ -32,6 +32,17 @@ class HostPolicyTest {
         }
     }
 
+    @Test fun onlyTheProfileBuildIsProfileable() {
+        val parser = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }.newDocumentBuilder()
+        val main = parser.parse(File("src/main/AndroidManifest.xml"))
+        assertEquals(0, main.getElementsByTagName("profileable").length)
+        val profile = parser.parse(File("src/profile/AndroidManifest.xml"))
+        val profileable = profile.getElementsByTagName("profileable").item(0) as org.w3c.dom.Element
+        assertEquals("true", profileable.getAttributeNS("http://schemas.android.com/apk/res/android", "shell"))
+        // No other source set may bring it back into a release.
+        assertFalse(File("src/release").exists())
+    }
+
     @Test fun cloudAndTransferRulesExcludeEveryCredentialStorageDomain() {
         val manifest = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
             .newDocumentBuilder().parse(File("src/main/AndroidManifest.xml"))

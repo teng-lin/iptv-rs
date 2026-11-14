@@ -60,7 +60,8 @@ import com.longbridge.nsh.NshComponentContext
  *   also emits its `pip` and `pipAction` events through this component.
  *
  * Events: `state` {state: idle|buffering|ready|ended}, `error` {code, http?}
- * (code is Media3's error code name; no URLs or messages), `size` {width,
+ * (code is Media3's error code name, or `ERROR_CODE_UNSUPPORTED_SCHEME` for
+ * a load outside the relay, [RelayGuard]; no URLs or messages), `size` {width,
  * height}, `position` {ms} (from where the stream opened; once a second
  * while playing), `tracks` (whenever they change; [PlayerTracks.event])
  * and `format` {fps?, channels?} for what plays. Subtitles of the chosen
@@ -181,12 +182,15 @@ class PlayerComponent(
     private val player: ExoPlayer
 
     private fun build(context: Context): ExoPlayer {
-        // No factory User-Agent: it would override the per-stream one.
-        val http = DefaultHttpDataSource.Factory()
-            .setUserAgent(null)
-            .setAllowCrossProtocolRedirects(false)
-            .setConnectTimeoutMs(8_000)
-            .setReadTimeoutMs(15_000)
+        // No factory User-Agent: it would override the per-stream one. Every
+        // load goes through this player's relay, never straight out ([RelayGuard]).
+        val http = RelayOnlyDataSource.Factory(
+            DefaultHttpDataSource.Factory()
+                .setUserAgent(null)
+                .setAllowCrossProtocolRedirects(false)
+                .setConnectTimeoutMs(8_000)
+                .setReadTimeoutMs(15_000),
+        ) { transport.prefix }
         // The audio sink carries the audio delay (one per player).
         val renderers = object : DefaultRenderersFactory(context) {
             override fun buildAudioSink(
@@ -346,12 +350,16 @@ class PlayerComponent(
                 }
             }
             val transportError = transport.takeError()
-            val status = if (transportError == null) httpStatus(error) else null
-            if (quickReopen(error, status)) return
+            // A load outside the relay: as the desktops' players report an
+            // address they may not open (no retry, no reopen).
+            val refused = RelayGuard.refusedIn(error)
+            val status = if (transportError == null && !refused) httpStatus(error) else null
+            if (!refused && quickReopen(error, status)) return
             // A live stream keeps its last frame: the app reconnects it,
             // with "Reconnecting…" or its card over the frame.
             if (!live || !rendered) shutter.visibility = View.VISIBLE
-            val event = mutableMapOf<String, Any>("code" to (transportError ?: error.errorCodeName))
+            val code = if (refused) "ERROR_CODE_UNSUPPORTED_SCHEME" else transportError ?: error.errorCodeName
+            val event = mutableMapOf<String, Any>("code" to code)
             status?.let { event["http"] = it }
             nsh.emit("error", event)
         }
