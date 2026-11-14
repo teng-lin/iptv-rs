@@ -1,13 +1,21 @@
 #!/usr/bin/env python3
 """Makes a macOS .app self-contained: copies the dylibs its executable
-links outside the system (libmpv from Homebrew and everything it pulls in:
-FFmpeg, libass, libplacebo, ...) into Contents/Frameworks, points every
-reference at them (@rpath/<name>, the executable's rpath
-@executable_path/../Frameworks, each dylib's @loader_path), drops the rpaths
-that lead back to Homebrew, and signs it all again ad hoc (`codesign -s -`).
+links outside the system into Contents/Frameworks, points every reference at
+them (@rpath/<name>, the executable's rpath @executable_path/../Frameworks,
+each dylib's @loader_path), drops the rpaths that lead back to the build
+machine, and signs it all again ad hoc (`codesign -s -`).
+
+libmpv comes from Patina's pinned runtime (`--runtime`, unpacked by
+`tools/mpv-runtime-unix/runtime.py fetch`): one libmpv.2.dylib with FFmpeg and
+the rest linked in, which references only the system. Its notices and the
+address of its exact sources go to Contents/Resources/notices/mpv-runtime,
+and the bundled copy is checked to be that runtime's (by Mach-O UUID). Any
+other dylib the executable links (normally none) is taken from Homebrew as
+before, with the notices and source records described below.
 
 Usage (after `nsh package --target macos`):
-  python3 -I tools/bundle-macos.py target/package/Patina.app
+  python3 -I tools/bundle-macos.py --runtime target/mpv-runtime-macos target/package/Patina.app
+  python3 -I tools/bundle-macos.py target/package/Patina.app   (Homebrew libmpv, development only)
 
 Needs Xcode's command line tools (otool, install_name_tool, codesign). It
 fails when a dependency cannot be found, and checks at the end that no
@@ -42,6 +50,14 @@ SYSTEM = ("/usr/lib/", "/System/")
 _spec = importlib.util.spec_from_file_location("native_sources", Path(__file__).parent / "ci/native-sources.py")
 native_sources = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(native_sources)
+# The pinned runtime's manifest checks and notices.
+_spec = importlib.util.spec_from_file_location("media_runtime", Path(__file__).parent / "mpv-runtime-unix/runtime.py")
+media_runtime = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(media_runtime)
+
+# The unpacked pinned runtime, when given: its lib directory serves @rpath/
+# references the executable cannot resolve itself (it has no rpath yet).
+RUNTIME = None
 
 
 def run(*args):
@@ -88,7 +104,15 @@ def resolve(ref, loader, exe_dir):
     for c in candidates:
         if os.path.exists(c):
             return os.path.realpath(c)
+    if RUNTIME is not None and ref.startswith("@rpath/"):
+        pinned = RUNTIME / "lib" / ref[len("@rpath/"):]
+        if pinned.is_file():
+            return os.path.realpath(pinned)
     return None
+
+
+def from_runtime(real):
+    return RUNTIME is not None and Path(real).is_relative_to(RUNTIME.resolve())
 
 
 def minimum_os(path):
@@ -176,9 +200,15 @@ def record_sources(prefixes, notices, version):
 
 
 def main():
-    if len(sys.argv) != 2 or not sys.argv[1].rstrip("/").endswith(".app"):
+    global RUNTIME
+    arguments = sys.argv[1:]
+    if len(arguments) == 3 and arguments[0] == "--runtime":
+        RUNTIME = Path(arguments[1]).resolve()
+        media_runtime.read_manifest("macos", RUNTIME / "runtime.json")
+        arguments = arguments[2:]
+    if len(arguments) != 1 or not arguments[0].rstrip("/").endswith(".app"):
         sys.exit(__doc__)
-    app = os.path.abspath(sys.argv[1].rstrip("/"))
+    app = os.path.abspath(arguments[0].rstrip("/"))
     info = plistlib.load(open(os.path.join(app, "Contents", "Info.plist"), "rb"))
     exe = os.path.join(app, "Contents", "MacOS", info["CFBundleExecutable"])
     exe_dir = os.path.dirname(exe)
@@ -214,10 +244,12 @@ def main():
     # Homebrew installs upstream notices in each versioned formula prefix.
     # Keep those texts and the bottle receipt alongside the bundled libraries.
     notices = Path(app) / "Contents/Resources/notices/native"
-    notices.mkdir(parents=True, exist_ok=True)
     inventory = []
     prefixes = set()
     for real in names:
+        if from_runtime(real):
+            continue
+        notices.mkdir(parents=True, exist_ok=True)
         library = Path(real)
         prefix = next((p for p in library.parents if (p / "INSTALL_RECEIPT.json").exists()), None)
         if prefix is None:
@@ -240,11 +272,16 @@ def main():
             target = destination / text.relative_to(prefix)
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(text, target)
-    (notices / "components.json").write_text(json.dumps(inventory, indent=2) + "\n")
-    try:
-        record_sources(prefixes, notices, info["CFBundleShortVersionString"])
-    except (OSError, ValueError) as error:
-        sys.exit(f"cannot record the source of a bundled library: {error}")
+    if inventory:
+        (notices / "components.json").write_text(json.dumps(inventory, indent=2) + "\n")
+        try:
+            record_sources(prefixes, notices, info["CFBundleShortVersionString"])
+        except (OSError, ValueError) as error:
+            sys.exit(f"cannot record the source of a bundled library: {error}")
+    if RUNTIME is not None:
+        if not any(from_runtime(real) for real in names):
+            sys.exit(f"the executable does not link the pinned runtime's libmpv in {RUNTIME}")
+        media_runtime.install_notices(RUNTIME, notices.parent / "mpv-runtime")
 
     os.makedirs(frameworks, exist_ok=True)
     copies = {}
@@ -287,6 +324,14 @@ def main():
         info["LSMinimumSystemVersion"] = ".".join(str(x) for x in needed)
         with open(plist_path, "wb") as f:
             plistlib.dump(info, f)
+
+    # The bundled libmpv is the pinned runtime's, and no Homebrew FFmpeg/libmpv
+    # came along beside it.
+    if RUNTIME is not None:
+        try:
+            media_runtime.check_bundle("macos", RUNTIME, Path(frameworks))
+        except ValueError as error:
+            sys.exit(str(error))
 
     # Signatures: the dylibs, then the app around them.
     for dest in sorted(copies.values()):

@@ -16,8 +16,18 @@ is below 1.0, a minor release may change behaviour.
   `SHA256SUMS`, and a CycloneDX SBOM of the Rust dependencies.
 - `docs/architecture.md`, `CONTRIBUTING.md`, `SECURITY.md` and this changelog.
 
+- Unsigned macOS and Windows packages are announced as previews in the release
+  notes. The Windows installer is signed through Azure Trusted Signing and the
+  macOS app notarized when their credentials are configured.
+
 ### Changed
 
+- The Linux AppImage and the macOS disk image bundle Patina's own libmpv,
+  built from pinned sources with an LGPL-only FFmpeg (`tools/mpv-runtime-unix`),
+  instead of the build machine's Ubuntu or Homebrew libmpv and FFmpeg. Each
+  runtime's dependency release retains its exact sources. The macOS runtime
+  is built for macOS 14.0, the app's declared minimum, where Homebrew's
+  bottles targeted the macOS of the build runner.
 - The NSH fork commit is recorded in `nsh.rev`. Clone that exact commit;
   `tools/check.sh` refuses another one unless `IPTV_ALLOW_NSH_DRIFT=1` is set.
 - The minimum supported Rust version is the pinned toolchain, 1.99.1.

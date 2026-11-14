@@ -77,7 +77,11 @@ only that option requires Apple signing secrets and still needs iPad validation.
 Linux outputs are .deb, .rpm, .pkg.tar.zst (a pacman package), and .AppImage.
 Native packages depend on system GTK4, mpv and GStreamer. The AppImage bundles
 linked libraries and GTK resources, and uses X11 (XWayland on Wayland desktops).
-It uses the host's OpenGL/EGL/GLES drivers and audio servers.
+Its libmpv, with FFmpeg linked in, is the pinned Linux runtime
+(`tools/mpv-runtime-unix`, fetched and verified by hash); packaging checks that
+the bundled `libmpv.so.2` carries that runtime's build ID and that no system
+FFmpeg or libmpv library came along. The other bundled libraries are Ubuntu
+24.04's. It uses the host's OpenGL/EGL/GLES drivers and audio servers.
 Linux compatibility starts at glibc 2.39 and GTK 4.14 from Ubuntu 24.04, not
 every older distribution. `tools/ci/check-linux-packages.sh` inspects all three
 native package formats and then installs and launches every package, each with
@@ -98,25 +102,69 @@ macOS produces a self-contained .dmg with Patina.app and an Applications
 shortcut. Packaging verifies the disk image, mounts it read-only, verifies the
 app's signature and arm64 architecture, and launches it with empty temporary
 app state. Bundled dependencies are checked for unresolved external references.
+libmpv is the pinned macOS runtime (`tools/mpv-runtime-unix`): one
+`libmpv.2.dylib` with FFmpeg linked in, referencing only `/usr/lib` and system
+frameworks, built for macOS 14.0, the app's declared minimum. The bundler
+checks that the copy in `Contents/Frameworks` has the runtime's Mach-O UUID.
 
-Developer ID signing and notarization are wired but conditional.
-`tools/ci/package-macos.sh` checks for `MACOS_CERTIFICATE`: when it is set, the
-sign job imports the certificate into a temporary keychain, signs every bundled
-binary with the hardened runtime, notarizes and staples the app
-(`tools/ci/notarize-macos.sh`), then signs, notarizes and staples the disk
-image. When it is not set, the script says so and produces an ad hoc signed
-image. As of v0.1.1 no Apple secrets are configured, so every DMG released so far is
-ad hoc signed and not notarized, and Gatekeeper warns about it (the README
-explains how to open it).
+### Platform signing
+
+The macOS disk image and the Windows installer are platform-signed only when
+their credentials exist. Without them the release still ships, and the
+release notes start with a "Preview builds" section naming each unsigned
+package (`tools/ci/publish-release.py notes`, from a record each signing job
+writes). The README's download table and its "Opening the macOS and Windows
+builds" section describe the previews. File names do not change.
+
+- **macOS.** `tools/ci/package-macos.sh` checks for `MACOS_CERTIFICATE`: when
+  it is set, the sign job imports the certificate into a temporary keychain,
+  signs every Mach-O file in the app, the pinned libmpv runtime included, with
+  the hardened runtime and a secure timestamp, checks that each one carries
+  both, notarizes and staples the app (`tools/ci/notarize-macos.sh`), then
+  signs, notarizes and staples the disk image. A partly configured set of
+  Apple secrets fails the job. When the certificate is not set, the script
+  says so and produces an ad hoc signed preview.
+- **Windows.** The `windows-sign` job takes the installer that
+  `windows-package` built and tested, on a fresh runner in the `release`
+  environment. With all six `AZURE_*` secrets set it signs the installer
+  through Azure Trusted Signing (now named Artifact Signing) with
+  `Azure/artifact-signing-action` v2.0.0, pinned by commit, SHA-256 digest and
+  an RFC 3161 timestamp, then requires `Get-AuthenticodeSignature` to report a
+  valid, timestamped signature. With none set the installer is an unsigned
+  preview; with some set the job fails. Only the installer is signed: the
+  `iptv-app.exe` and `libmpv-2.dll` it installs are not (a follow-up). SmartScreen
+  reputation attaches to the signing identity, so expect warnings to fade only
+  after a signed release has been downloaded for a while.
+
+As of v0.1.1 neither set of secrets is configured: every DMG and installer
+released so far is unsigned, and Gatekeeper and SmartScreen warn about them.
 
 Create a GitHub environment named release and set these secrets for Android:
 - ANDROID_KEYSTORE_BASE64, ANDROID_STORE_PASSWORD, ANDROID_KEY_PASSWORD,
   ANDROID_KEY_ALIAS: a persistent release signing key.
-To sign and notarize the macOS disk image, also set:
+To sign and notarize the macOS disk image, also set (all or none):
 - MACOS_CERTIFICATE_BASE64, MACOS_CERTIFICATE_PASSWORD, MACOS_SIGN_IDENTITY: a
-  Developer ID Application certificate and its identity name.
+  Developer ID Application certificate (base64 of its .p12), the .p12's
+  password, and its identity name ("Developer ID Application: NAME (TEAM)").
 - APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD: the account and app-specific
   password `notarytool` submits with.
+To sign the Windows installer with Azure Trusted Signing, also set (all or none):
+- AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET: an Entra ID app
+  registration with the "Trusted Signing Certificate Profile Signer" role on
+  the certificate profile, and a client secret for it.
+- AZURE_SIGNING_ENDPOINT: the signing account's regional endpoint, for
+  example `https://eus.codesigning.azure.net/`.
+- AZURE_SIGNING_ACCOUNT, AZURE_CERTIFICATE_PROFILE: the signing account and
+  its public-trust certificate profile.
+
+A conventional code-signing certificate (a PFX file) would work instead of
+Trusted Signing but is not wired: it would need `signtool sign /fd SHA256 /tr
+<timestamp URL> /td SHA256 /f cert.pfx /p <password>` in `windows-sign`, with
+the PFX in a secret such as WINDOWS_CERTIFICATE_PFX_BASE64 and its password in
+WINDOWS_CERTIFICATE_PASSWORD, written to `RUNNER_TEMP` with a restrictive
+umask and deleted in an `always()` step, as the macOS keychain is. Most
+certificate authorities now issue code-signing keys only on hardware tokens or
+in cloud HSMs, which is why Trusted Signing was chosen.
 For the optional all-platform run, also set:
 - IOS_CERTIFICATE_BASE64, IOS_CERTIFICATE_PASSWORD, IOS_SIGN_IDENTITY,
   IOS_PROFILE_BASE64: a certificate and matching distribution profile for
@@ -204,29 +252,40 @@ below).
 ## Corresponding source for bundled media libraries
 
 Three packages bundle libmpv, FFmpeg and the libraries they use, which are
-LGPL or GPL software. Each release publishes the source those exact binaries
-were built from:
+LGPL software. All three take them from Patina's own builds from pinned
+sources, with FFmpeg configured `--disable-gpl --disable-version3
+--disable-nonfree` and mpv `-Dgpl=false`; each build fails unless FFmpeg's
+and mpv's generated configuration headers confirm it. Each runtime's
+dependency release retains the exact sources it was built from:
 
-| Package | Bundled binaries come from | Source published as |
-| --- | --- | --- |
-| Windows installer | Patina's own pinned build (`tools/mpv-runtime`) | the retained `mpv-runtime-sources.tar.gz` of the dependency release; see [Windows installer](#windows-installer-experimental) |
-| macOS disk image | Homebrew bottles on the build runner | `Patina-<version>-macos-native-sources.tar` in the same release |
-| Linux AppImage | Ubuntu 24.04 packages on the build runner | `Patina-<version>-linux-native-sources.tar` in the same release |
+| Package | Bundled libmpv/FFmpeg | Its source | Other bundled native libraries |
+| --- | --- | --- | --- |
+| Windows installer | `tools/mpv-runtime` (one `libmpv-2.dll`) | `mpv-runtime-sources.tar.gz` of release `mpv-runtime-<digest>`; see [Windows installer](#windows-installer-experimental) | the VC runtime |
+| macOS disk image | `tools/mpv-runtime-unix` (one `libmpv.2.dylib`) | `mpv-runtime-macos-sources.tar.gz` of release `mpv-runtime-macos-<digest>` | normally none; any Homebrew library: `Patina-<version>-macos-native-sources.tar` |
+| Linux AppImage | `tools/mpv-runtime-unix` (one `libmpv.so.2`) | `mpv-runtime-linux-sources.tar.gz` of release `mpv-runtime-linux-<digest>` | GTK, GStreamer and the host libraries libmpv uses, from Ubuntu 24.04: `Patina-<version>-linux-native-sources.tar` |
+
+Each package carries its runtime's notices, licences, build configuration and
+`SOURCE.txt` (the source archive's address and SHA-256) in
+`notices/mpv-runtime` (`notices/libmpv` on Windows). The source archives hold
+the downloaded upstream archives byte for byte, the licences, the lock and
+the build scripts, and restore offline with `prepare.py prepare
+--source-bundle`. See [`tools/mpv-runtime-unix/README.md`](../tools/mpv-runtime-unix/README.md)
+for what each runtime contains and how to rebuild it.
 
 The `.deb`, `.rpm` and pacman packages bundle no media libraries; they depend
 on the distribution's.
 
-How the macOS and Linux archives are produced:
+How the per-release archives of the remaining system libraries are produced:
 
-1. **Packaging records what was bundled.** `tools/bundle-macos.py` writes, into
-   `Contents/Resources/notices/native/`, the inventory (`components.json`), each
-   Homebrew keg's installed formula, and `sources.json`: for every formula the
-   upstream archive, patches and resources with their SHA-256 checksums, or the
-   Git commit. It reads the formula Homebrew keeps inside the installed keg, so
-   the list describes the installed version even when the tap has moved on.
-   `tools/ci/linux-native-notices.py` writes the same files into
-   `usr/bin/notices/native/` of the AppImage, naming the Ubuntu source package
-   and exact version behind every bundled library (`dpkg-query`). Both also
+1. **Packaging records what was bundled.** `tools/ci/linux-native-notices.py`
+   writes, into `usr/bin/notices/native/` of the AppImage, the inventory
+   (`components.json`) and `sources.json`, naming the Ubuntu source package
+   and exact version behind every bundled library except the pinned runtime
+   (`dpkg-query`). `tools/bundle-macos.py` does the same in
+   `Contents/Resources/notices/native/` for any Homebrew keg the app still
+   links, recording each installed formula and the upstream archive, patches
+   and resources it names with their SHA-256 checksums or Git commits; when
+   only the pinned runtime is bundled it writes no such directory. Both also
    write `SOURCE.txt`, which tells a user where the source archive is.
    On macOS, packaging fails when a bundled library has no checksummed
    source; on Linux the check happens in step 2, when the sources are
@@ -250,27 +309,29 @@ job, so no release is published without it. The Package checks workflow runs
 the same collection on pull requests that change packaging and uploads only the
 manifest.
 
-Limits of this interim step, until the libraries are built from pinned sources
-as on Windows:
+Limits:
 
-- It covers the libraries that are copied into the package. Code that Homebrew
-  or Ubuntu linked statically into those libraries from build-only dependencies
-  is not traced.
+- The system-library archives cover the libraries that are copied into the
+  package. Code that Homebrew or Ubuntu linked statically into those libraries
+  from build-only dependencies is not traced.
 - On macOS, formula sources that are computed while installing cannot be read
   from the formula text; packaging fails rather than guess. Sample data that a
   formula downloads only for its own test is left out.
-- Never delete these release assets. Every distributed DMG and AppImage points
-  at the archive of its own release.
-- Whether these builds enable GPL-only FFmpeg components was not determined.
-  Publishing complete source satisfies the source requirement of both licences,
-  but a legal review of the distribution terms is still worthwhile.
+- Never delete these release assets or the runtime dependency releases. Every
+  distributed DMG and AppImage points at the archives of its own release and
+  of its runtime.
+- Releases up to v0.1.1 bundled Homebrew's and Ubuntu's FFmpeg, whose GPL
+  configuration was never determined; their per-release source archives stay
+  the corresponding source for them. A legal review of the distribution terms
+  is still worthwhile.
 
 This does not submit to Play or App Store Connect. An IPA's distribution
 profile determines where it can be installed; an App Store profile does not
 make a GitHub download sideloadable. Without the Apple secrets above the macOS
-image is ad hoc signed and NOT notarized. Homebrew libraries determine its
-minimum OS version. The Windows installer is unsigned. Before calling a release
-stable, configure Developer ID notarization and Windows code signing.
+image is ad hoc signed and NOT notarized, and without the Azure secrets the
+Windows installer is unsigned: both are then released as previews (see
+[Platform signing](#platform-signing)). Before calling a release stable,
+configure Developer ID notarization and Windows code signing.
 
 Before a stable release, also validate the RPM, pacman package, AppImage and
 DMG on real desktops with a GPU and sound (CI covers installation and start-up
@@ -374,16 +435,29 @@ Installer generation runs only in the
 release workflow for tags and manual desktop selections, using
 `tools/package-windows.ps1`. It produces one x64 `.exe` installer, with no portable
 ZIP. The per-user install bundles libmpv and the VC runtime, adds a Start menu
-shortcut, and preserves application data on uninstall. Signing is not configured.
+shortcut, and preserves application data on uninstall. The `windows-sign` job
+signs it when the Azure secrets exist ([Platform signing](#platform-signing)).
 The package smoke check uses synthetic data and verifies the executable and window
 icons, launch, clean exit, and uninstall.
 
 The native runtime comes from the separate, manually dispatched
-`.github/workflows/mpv-runtime.yml` dependency workflow. It prepares checksum-pinned
-source and toolchain archives, compiles in a pinned Linux Docker environment with
-network access disabled, and tests the packaged DLL on Windows with generated
-MPEG-TS and local HLS media. Publication depends on that smoke test. Normal app PRs
-and releases download the selected runtime; they do not rebuild the native graph.
+`.github/workflows/mpv-runtime.yml` dependency workflow (platform `windows`). It
+prepares checksum-pinned source and toolchain archives, compiles in a pinned
+Linux Docker environment with network access disabled, and tests the packaged DLL
+on Windows with generated MPEG-TS and local HLS media. Publication depends on that
+smoke test. Normal app PRs and releases download the selected runtime; they do not
+rebuild the native graph.
+
+The same workflow builds the Linux and macOS runtimes (platforms `linux` and
+`macos`, from `tools/mpv-runtime-unix`). Linux compiles in the pinned Ubuntu
+24.04 builder with networking disabled, plays synthetic MPEG-TS/HLS in the
+builder, then again on a stock runner and runs the app's real-player tests
+against the candidate with the system libmpv removed. macOS compiles on
+`macos-15` with the Xcode named in `tools/mpv-runtime-unix/macos/xcode-version`,
+isolated from Homebrew and the network, and plays the same media at build time
+and on a fresh runner. Each publishes `mpv-runtime-<platform>-<digest>`; commit
+its `runtime-<platform>.json` to `tools/mpv-runtime-unix/`. Until a platform's
+manifest is committed, its app packaging fails and names the missing pin.
 
 The dependency release tag includes a digest of the source lock and build scripts.
 It contains the runtime ZIP, exact corresponding-source archive, `runtime.json`

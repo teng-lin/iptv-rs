@@ -8,9 +8,16 @@ publishes it once every file is uploaded. An interrupted run leaves a draft,
 which a rerun completes; a release that is already public is refused, and the
 fix is a new version.
 
-Usage (with GH_TOKEN and GH_REPO in the environment):
-  publish-release.py checksums DIR TAG  refuse a public release, write DIR/SHA256SUMS
-  publish-release.py publish DIR TAG    create or reuse the draft, upload DIR/*, publish
+The macOS and Windows packages are platform-signed only when the signing
+credentials exist. Each signing job records what it did (`signing`), and the
+release notes then say plainly which packages are unsigned previews (`notes`).
+
+Usage (with GH_TOKEN and GH_REPO in the environment for checksums/publish):
+  publish-release.py checksums DIR TAG          refuse a public release, write DIR/SHA256SUMS
+  publish-release.py publish DIR TAG [NOTES]    create or reuse the draft (NOTES prepended to the
+                                                generated notes), upload DIR/*, publish
+  publish-release.py signing PLATFORM STATE DIR record STATE (signed|unsigned) as DIR/PLATFORM.json
+  publish-release.py notes DIR OUTPUT           write release notes from DIR's signing records
 """
 import hashlib
 import json
@@ -91,11 +98,53 @@ def must(*arguments):
         raise SystemExit(f"gh {' '.join(arguments[:3])} failed: {result.stderr.strip()}")
 
 
-def publish(directory, tag):
+# What platform trust each signed package gets, and what an unsigned one lacks.
+SIGNED_PLATFORMS = {
+    "macos": ("macOS disk image", "signed with a Developer ID certificate and notarized by Apple",
+              "Gatekeeper blocks it until you allow it"),
+    "windows": ("Windows installer", "Authenticode-signed",
+                "SmartScreen warns before it runs"),
+}
+
+
+def record_signing(platform, state, directory):
+    if platform not in SIGNED_PLATFORMS or state not in ("signed", "unsigned"):
+        raise SystemExit(f"unknown signing record: {platform} {state}")
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / f"{platform}.json").write_text(json.dumps({"platform": platform, "signed": state == "signed"}) + "\n")
+
+
+def release_notes(directory):
+    """Notes for the unsigned packages, from every signing record. Missing records fail:
+    a package must never be described as signed without its job saying so."""
+    states = {}
+    for platform in SIGNED_PLATFORMS:
+        path = directory / f"{platform}.json"
+        if not path.is_file():
+            raise SystemExit(f"no signing record for {platform} in {directory}")
+        record = json.loads(path.read_text())
+        if record.get("platform") != platform or not isinstance(record.get("signed"), bool):
+            raise SystemExit(f"malformed signing record: {path}")
+        states[platform] = record["signed"]
+    previews = [platform for platform, signed in states.items() if not signed]
+    if not previews:
+        return ""
+    lines = ["## Preview builds: " + " and ".join(SIGNED_PLATFORMS[p][0] for p in previews), ""]
+    for platform in previews:
+        name, trust, warning = SIGNED_PLATFORMS[platform]
+        lines.append(f"- The {name} is a **preview**: it is not {trust}, so {warning}. "
+                     "The README explains how to open it.")
+    lines += ["", "Signed packages follow once signing credentials are configured. SHA256SUMS and the "
+              "build provenance attestations cover every file either way.", ""]
+    return "\n".join(lines)
+
+
+def publish(directory, tag, notes=None):
     state = refuse_public(tag)
     verify_checksums(directory)
     if state == "absent":
-        must("release", "create", tag, "--verify-tag", "--draft", "--generate-notes")
+        extra = ["--notes-file", str(notes)] if notes is not None and notes.read_text().strip() else []
+        must("release", "create", tag, "--verify-tag", "--draft", "--generate-notes", *extra)
     # Replacing is safe only here: the release was just seen to be a draft.
     files = [*assets(directory), directory / CHECKSUMS]
     must("release", "upload", tag, *(str(path) for path in files), "--clobber")
@@ -110,14 +159,23 @@ def publish(directory, tag):
 
 
 def main(arguments):
-    if len(arguments) != 3 or arguments[0] not in ("checksums", "publish"):
+    command = arguments[0] if arguments else None
+    if command == "signing" and len(arguments) == 4:
+        record_signing(arguments[1], arguments[2], Path(arguments[3]))
+        return
+    if command == "notes" and len(arguments) == 3:
+        text = release_notes(Path(arguments[1]))
+        Path(arguments[2]).write_text(text)
+        print(text or "every platform-signed package is signed: no preview notes")
+        return
+    if not (command == "checksums" and len(arguments) == 3 or command == "publish" and len(arguments) in (3, 4)):
         raise SystemExit(__doc__)
-    command, directory, tag = arguments[0], Path(arguments[1]), arguments[2]
+    directory, tag = Path(arguments[1]), arguments[2]
     if command == "checksums":
         refuse_public(tag)
         sys.stdout.writelines(write_checksums(directory))
     else:
-        publish(directory, tag)
+        publish(directory, tag, Path(arguments[3]) if len(arguments) == 4 else None)
         print(f"published {tag}")
 
 
