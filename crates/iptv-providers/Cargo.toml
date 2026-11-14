@@ -15,6 +15,8 @@ url.workspace = true
 percent-encoding.workspace = true
 xxhash-rust.workspace = true
 sha1_smol.workspace = true
+# Wipes secrets when they are dropped; pure Rust, builds for wasm32.
+zeroize = "1.8"
 
 [lints]
 workspace = true

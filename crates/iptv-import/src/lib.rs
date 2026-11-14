@@ -12,7 +12,8 @@
 //! - [`import_epg`]: chunked XMLTV download per source with priorities,
 //!   programmes streamed into a [`GuideSink`] as they are parsed (only the
 //!   feeds' channel lists stay in memory), matched against the catalog's
-//!   channels. [`MemoryGuide`] is an in-memory sink.
+//!   channels. Each source has its own time and size budget and is tried
+//!   again after a passing failure. [`MemoryGuide`] is an in-memory sink.
 //!   [`Catalog::epg_sources`] turns the M3U header's `url-tvg`/`x-tvg-url`
 //!   (or the Xtream export) into [`EpgSourceConfig`]s.
 //! - [`decide`] / [`plan_startup`]: when to download a stored guide again
@@ -24,7 +25,8 @@
 //! while a request is in flight.
 //!
 //! **Portable.** No runtime (no tokio), no NSH, no platform APIs, no clock
-//! (callers pass `now`); builds for `wasm32-unknown-unknown`. The native
+//! (callers pass `now`; elapsed time and the wait before a retry come from
+//! the [`Fetch`] adapter); builds for `wasm32-unknown-unknown`. The native
 //! adapter is `iptv-net`.
 
 pub mod backup_manifest;
@@ -47,7 +49,8 @@ pub use cancel::{CancelToken, Cancelled};
 pub use catalog::{Catalog, CatalogWarning, ImportOptions, ImportStats, SourceMeta};
 pub use catalog_sink::{CatalogRow, CatalogSink};
 pub use epg::{
-    EpgImport, EpgSourceConfig, EpgSourceOutcome, EpgSourceStats, ListedChannel, import_epg,
+    EpgImport, EpgSourceConfig, EpgSourceOutcome, EpgSourceStats, GUIDE_RETRIES, GUIDE_RETRY_DELAY,
+    GUIDE_RETRY_MAX_DELAY, GUIDE_SOURCE_BYTES, GUIDE_SOURCE_TIME, ListedChannel, import_epg,
 };
 pub use error::{AuthProblem, FailureKind, ImportError, ParseProblem, Step};
 pub use fetch::{BodyStream, Fetch, FetchError, FetchErrorKind, MemoryBody, StreamingResponse};

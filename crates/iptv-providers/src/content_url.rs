@@ -53,7 +53,9 @@ pub fn public_ip(ip: IpAddr) -> bool {
                 || (a == 100 && (64..=127).contains(&b))
                 || (a == 169 && b == 254)
                 || (a == 172 && (16..=31).contains(&b))
-                || (a == 192 && (b == 168 || (b == 0 && (c == 0 || c == 2))))
+                // 192.88.99.0/24: the retired 6to4 relay anycast (RFC 7526).
+                || (a == 192
+                    && (b == 168 || (b == 0 && (c == 0 || c == 2)) || (b == 88 && c == 99)))
                 || (a == 198 && (b == 18 || b == 19 || (b == 51 && c == 100)))
                 || (a == 203 && b == 0 && c == 113))
         }
@@ -70,9 +72,17 @@ pub fn public_ip(ip: IpAddr) -> bool {
                     std::net::Ipv4Addr::new(octets[12], octets[13], octets[14], octets[15]).into(),
                 );
             }
-            (s[0] & 0xe000) == 0x2000
-                && s[0] != 0x2002
-                && !(s[0] == 0x2001 && (s[1] == 0 || s[1] == 0xdb8))
+            // Inside 2000::/3, by the IANA special-purpose registry: Teredo
+            // (2001::/32), benchmarking (2001:2::/48), ORCHID and ORCHIDv2
+            // (2001:10::/28, 2001:20::/28), documentation (2001:db8::/32,
+            // 3fff::/20) and 6to4 (2002::/16), which embeds an IPv4 address.
+            let special_2001 = s[0] == 0x2001
+                && (s[1] == 0
+                    || s[1] == 0xdb8
+                    || (s[1] == 2 && s[2] == 0)
+                    || matches!(s[1] & 0xfff0, 0x10 | 0x20));
+            let documentation = s[0] == 0x3fff && (s[1] & 0xf000) == 0;
+            (s[0] & 0xe000) == 0x2000 && s[0] != 0x2002 && !special_2001 && !documentation
         }
     }
 }
@@ -154,5 +164,62 @@ mod tests {
         assert!(public_ip("64:ff9b::808:808".parse().unwrap()));
         assert!(!public_ip("64:ff9b::a00:1".parse().unwrap()));
         assert!(!public_ip("64:ff9b::7f00:1".parse().unwrap()));
+    }
+
+    #[test]
+    fn special_purpose_ranges_are_not_public_and_their_neighbours_are() {
+        for ip in [
+            // IPv4: protocol assignments, documentation, 6to4 relay anycast,
+            // benchmarking.
+            "192.0.0.8",
+            "192.0.2.1",
+            "192.88.99.0",
+            "192.88.99.1",
+            "192.88.99.255",
+            "198.18.0.1",
+            "198.51.100.7",
+            "203.0.113.9",
+            // IPv6: Teredo, benchmarking, ORCHID, ORCHIDv2, documentation,
+            // 6to4.
+            "2001::1",
+            "2001:0:ffff::1",
+            "2001:2::1",
+            "2001:2:0:ffff::1",
+            "2001:10::1",
+            "2001:1f:ffff::1",
+            "2001:20::1",
+            "2001:2f:ffff::1",
+            "2001:db8::1",
+            "3fff::1",
+            "3fff:fff:ffff::1",
+            "2002:c000:201::1",
+        ] {
+            assert!(!public_ip(ip.parse().unwrap()), "{ip}");
+            let url = match ip.contains(':') {
+                true => format!("http://[{ip}]/a"),
+                false => format!("http://{ip}/a"),
+            };
+            assert!(validate(&url).is_err(), "{url}");
+        }
+        for ip in [
+            "192.88.98.255",
+            "192.88.100.0",
+            "192.89.99.1",
+            "193.88.99.1",
+            "192.0.1.1",
+            // Just outside each range, and still global unicast.
+            "2001:1::1",
+            "2001:2:1::1",
+            "2001:3::1",
+            "2001:f::1",
+            "2001:30::1",
+            "2001:200::1",
+            "2001:4860:4860::8888",
+            "3ffe::1",
+            "3fff:1000::1",
+            "2003::1",
+        ] {
+            assert!(public_ip(ip.parse().unwrap()), "{ip}");
+        }
     }
 }

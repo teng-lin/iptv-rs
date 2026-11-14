@@ -499,6 +499,20 @@ impl StalkerSession {
         headers
     }
 
+    /// Whether a stream the portal named (a `create_link` result) has to be
+    /// on a public address.
+    ///
+    /// It does, with one exception: the portal the user entered is itself
+    /// on a private address or local name (a LAN installation) and the
+    /// stream is on that same host. Such a stream is as trusted as the
+    /// portal, which the user chose and which already receives the session's
+    /// requests there. A portal on a public address never unlocks a private
+    /// destination, and a private portal does not unlock another host.
+    pub fn stream_must_be_public(&self, stream_url: &str) -> bool {
+        let private_portal = crate::content_url::validate(self.portal.endpoint()).is_err();
+        !(private_portal && super::parse::is_portal_owned(stream_url, &self.portal))
+    }
+
     /// The URL to play now, or the `create_link` request to send first.
     pub fn resolve_stream(
         &self,

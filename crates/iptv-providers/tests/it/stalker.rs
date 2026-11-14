@@ -817,6 +817,61 @@ fn playback_headers_never_leak_to_foreign_hosts() {
 }
 
 #[test]
+fn only_a_private_portal_unlocks_private_streams_and_only_on_its_own_host() {
+    let session = |endpoint: &str| {
+        StalkerSession::new(
+            StalkerPortal::new(endpoint, MacAddress::parse(MAC).unwrap(), PortalMode::Full)
+                .unwrap(),
+        )
+    };
+    // A LAN installation: the portal's own host may serve the stream, on
+    // any port.
+    for endpoint in [
+        "http://192.168.50.10/stalker_portal/server/load.php",
+        "http://10.0.0.7:8080/portal.php",
+        "http://portal.local/portal.php",
+        "http://mediabox/portal.php",
+        "http://[fd00::10]/portal.php",
+    ] {
+        let lan = session(endpoint);
+        let host = url::Url::parse(endpoint).unwrap();
+        let host = host.host_str().unwrap();
+        for stream in [
+            format!("http://{host}/live/1.ts?play_token=t"),
+            format!("http://{host}:8888/live/1.m3u8"),
+        ] {
+            assert!(!lan.stream_must_be_public(&stream), "{endpoint} {stream}");
+        }
+        // Not another machine on the LAN, a public host, or a non-URL.
+        for stream in [
+            "http://192.168.50.11/live/1.ts",
+            "http://127.0.0.1:8080/admin",
+            "http://router.local/reboot",
+            "http://cdn.example.net/live/1.m3u8",
+            "/live/1.ts",
+        ] {
+            assert!(lan.stream_must_be_public(stream), "{endpoint} {stream}");
+        }
+    }
+    // A portal on a public address never unlocks a private destination,
+    // and its own host stays under the public-address checks (DNS included).
+    let public = session(ENDPOINT);
+    for stream in [
+        "http://192.168.50.10/live/1.ts",
+        "http://127.0.0.1/live/1.ts",
+        "http://portal.local/live/1.ts",
+        "http://portal.example.com/live/1.ts",
+        "http://cdn.example.net/live/1.m3u8",
+    ] {
+        assert!(public.stream_must_be_public(stream), "{stream}");
+    }
+    // A downgrade from an HTTPS portal is not the portal's own stream.
+    let secure = session("https://192.168.50.10/portal.php");
+    assert!(!secure.stream_must_be_public("https://192.168.50.10/live/1.ts"));
+    assert!(secure.stream_must_be_public("http://192.168.50.10/live/1.ts"));
+}
+
+#[test]
 fn from_credentials_and_debug_redaction() {
     let creds = StalkerCredentials {
         portal_url: "http://portal.example.com/c/".into(),

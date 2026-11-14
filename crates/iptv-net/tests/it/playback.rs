@@ -11,6 +11,7 @@ fn fixture_relay(url: &str, headers: &[(String, String)]) -> PlaybackRelay {
         PlaybackPolicy {
             public_only: true,
             allow_private_fixture: true,
+            ..PlaybackPolicy::default()
         },
     )
     .unwrap()
@@ -73,6 +74,210 @@ async fn hls_redirect_segments_keys_and_maps_scope_headers_by_exact_origin() {
             assert_eq!(request.header(name), None);
         }
     }
+}
+
+/// What a playlist or a portal attaches to a stream besides identity: a
+/// credential header under a name of its own, and a `Referer` whose path
+/// and query hold a session token.
+const SCOPED_SECRET: &str = "synthetic-secret";
+const SCOPED_REFERER: &str = "https://portal.example.test/watch/42?token=synthetic-secret";
+
+fn scoped() -> Vec<(String, String)> {
+    [
+        ("User-Agent", "SyntheticPlayer/1.0"),
+        ("Accept-Language", "en"),
+        ("X-Api-Key", SCOPED_SECRET),
+        ("X-Auth-Token", SCOPED_SECRET),
+        ("Authorization", "Bearer synthetic-secret"),
+        ("Referer", SCOPED_REFERER),
+        ("Origin", "https://portal.example.test"),
+    ]
+    .into_iter()
+    .map(|(name, value)| (name.to_owned(), value.to_owned()))
+    .collect()
+}
+
+/// The stream's own origin gets every header as configured.
+fn assert_first_party(request: &super::support::synth::SimRequest) {
+    for (name, value) in scoped() {
+        assert_eq!(
+            request.header(&name),
+            Some(value.as_str()),
+            "{name} {}",
+            request.path
+        );
+    }
+}
+
+/// Another origin gets transport headers, `Origin` and the Referer's origin.
+fn assert_third_party(request: &super::support::synth::SimRequest) {
+    let path = &request.path;
+    for name in ["x-api-key", "x-auth-token", "authorization", "cookie"] {
+        assert_eq!(request.header(name), None, "{name} {path}");
+    }
+    assert_eq!(
+        request.header("referer"),
+        Some("https://portal.example.test/"),
+        "{path}"
+    );
+    assert_eq!(
+        request.header("origin"),
+        Some("https://portal.example.test"),
+        "{path}"
+    );
+    assert_eq!(
+        request.header("user-agent"),
+        Some("SyntheticPlayer/1.0"),
+        "{path}"
+    );
+    assert_eq!(request.header("accept-language"), Some("en"), "{path}");
+    for (name, value) in &request.headers {
+        assert!(!value.contains(SCOPED_SECRET), "{name} {path}");
+    }
+}
+
+/// Every relay URL a rewritten manifest names (lines and quoted attributes).
+fn relay_urls(relay: &PlaybackRelay, manifest: &str) -> Vec<String> {
+    manifest
+        .split(['"', '\n', '<', '>'])
+        .map(str::trim)
+        .filter(|part| relay.owns_url(part))
+        .map(str::to_owned)
+        .collect()
+}
+
+#[tokio::test]
+async fn hls_segments_keys_and_redirects_on_another_origin_get_no_scoped_headers() {
+    let second = TestServer::http(|_| Resp::ok(vec![0x47, 0, 1, 2, 3, 4])).await;
+    let (key, segment, redirected) = (
+        second.url("/keys/key.bin"),
+        second.url("/media/other.ts"),
+        second.url("/media/redirected.ts"),
+    );
+    let origin = TestServer::http(move |request| match request.path.as_str() {
+        "/live/list.m3u8" => Resp::ok(format!(
+            "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"{key}\"\n#EXTINF:2,\nsame.ts\n#EXTINF:2,\n{segment}\n#EXTINF:2,\nredirect.ts\n"
+        )),
+        "/live/redirect.ts" => Resp::redirect(302, &redirected),
+        _ => Resp::ok(vec![0x47, 0, 1, 2, 3, 4]),
+    })
+    .await;
+    let relay = fixture_relay(&origin.url("/live/list.m3u8"), &scoped());
+    let manifest = reqwest::get(relay.url())
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let urls = relay_urls(&relay, &manifest);
+    assert_eq!(urls.len(), 4, "{manifest}");
+    for url in urls {
+        assert!(reqwest::get(url).await.unwrap().status().is_success());
+    }
+    let first_party = origin.requests();
+    assert_eq!(
+        first_party
+            .iter()
+            .map(|r| r.path.as_str())
+            .collect::<Vec<_>>(),
+        ["/live/list.m3u8", "/live/same.ts", "/live/redirect.ts"]
+    );
+    first_party.iter().for_each(assert_first_party);
+    let mut third_party = second.requests();
+    third_party.sort_by(|a, b| a.path.cmp(&b.path));
+    assert_eq!(
+        third_party
+            .iter()
+            .map(|r| r.path.as_str())
+            .collect::<Vec<_>>(),
+        ["/keys/key.bin", "/media/other.ts", "/media/redirected.ts"]
+    );
+    third_party.iter().for_each(assert_third_party);
+}
+
+#[tokio::test]
+async fn dash_resources_on_another_origin_get_no_scoped_headers() {
+    let second = TestServer::http(|_| Resp::ok(vec![0, 0, 0, 1])).await;
+    let (base, absolute) = (second.url("/cdn/"), second.url("/media/two.m4s"));
+    let origin = TestServer::http(move |request| match request.path.as_str() {
+        "/vod/main.mpd" => Resp::ok(format!(
+            "<MPD><Period><AdaptationSet><Representation><SegmentList>\
+             <Initialization sourceURL=\"init.mp4\"/><SegmentURL media=\"{absolute}\"/>\
+             </SegmentList></Representation><Representation><BaseURL>{base}</BaseURL>\
+             <SegmentList><SegmentURL media=\"three.m4s\"/></SegmentList></Representation>\
+             </AdaptationSet></Period></MPD>"
+        )),
+        _ => Resp::ok(vec![0, 0, 0, 1]),
+    })
+    .await;
+    let relay = fixture_relay(&origin.url("/vod/main.mpd"), &scoped());
+    let manifest = reqwest::get(relay.url())
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(manifest.starts_with("<MPD>"), "{manifest}");
+    // The BaseURL itself is a directory, not a resource a player requests.
+    let urls: Vec<String> = relay_urls(&relay, &manifest)
+        .into_iter()
+        .filter(|url| !url.ends_with("/cdn/"))
+        .collect();
+    assert_eq!(urls.len(), 3, "{manifest}");
+    for url in urls {
+        assert!(reqwest::get(url).await.unwrap().status().is_success());
+    }
+    let first_party = origin.requests();
+    assert_eq!(
+        first_party
+            .iter()
+            .map(|r| r.path.as_str())
+            .collect::<Vec<_>>(),
+        ["/vod/main.mpd", "/vod/init.mp4"]
+    );
+    first_party.iter().for_each(assert_first_party);
+    let mut third_party = second.requests();
+    third_party.sort_by(|a, b| a.path.cmp(&b.path));
+    assert_eq!(
+        third_party
+            .iter()
+            .map(|r| r.path.as_str())
+            .collect::<Vec<_>>(),
+        ["/cdn/three.m4s", "/media/two.m4s"]
+    );
+    third_party.iter().for_each(assert_third_party);
+}
+
+#[tokio::test]
+async fn a_server_behind_an_extra_root_certificate_plays_as_well_as_it_imports() {
+    let (acceptor, der) = super::support::self_signed();
+    let origin = TestServer::https(|_| Resp::ok(vec![0x47, 0, 1, 2]), acceptor).await;
+    let policy = |extra_roots_der| PlaybackPolicy {
+        public_only: true,
+        extra_roots_der,
+        allow_private_fixture: true,
+    };
+    // Not in the Mozilla roots: the handshake is refused.
+    let unknown =
+        PlaybackRelay::start_with_policy(&origin.url("/media.ts"), &[], policy(Vec::new()))
+            .unwrap();
+    assert_eq!(reqwest::get(unknown.url()).await.unwrap().status(), 502);
+    assert!(origin.requests().is_empty());
+
+    let trusting =
+        PlaybackRelay::start_with_policy(&origin.url("/media.ts"), &[], policy(vec![der])).unwrap();
+    let response = reqwest::get(trusting.url()).await.unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.bytes().await.unwrap().as_ref(), &[0x47, 0, 1, 2]);
+
+    assert!(
+        PlaybackRelay::start_with_policy(
+            &origin.url("/media.ts"),
+            &[],
+            policy(vec![b"not der".to_vec()])
+        )
+        .is_err()
+    );
 }
 
 #[tokio::test]
@@ -189,13 +394,57 @@ async fn public_content_cannot_reach_local_hosts_and_trust_never_follows_origin_
         &identity(),
         PlaybackPolicy {
             public_only: false,
-            allow_private_fixture: false,
+            ..PlaybackPolicy::default()
         },
     )
     .unwrap();
     assert_eq!(reqwest::get(trusted.url()).await.unwrap().status(), 502);
     assert_eq!(origin.requests().len(), 1);
     assert!(second.requests().is_empty());
+}
+
+/// The transport half of a Stalker portal on a private network: a link the
+/// player may open only on public addresses is refused before any request,
+/// and one trusted for its own origin (the portal's host) plays, without
+/// that trust reaching another private origin.
+#[tokio::test]
+async fn a_private_stream_plays_only_when_its_own_origin_is_trusted() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let other = TestServer::http(|_| Resp::ok(vec![0x47, 9, 9])).await;
+    let elsewhere = other.url("/other.ts");
+    let portal = TestServer::http(move |request| match request.path.as_str() {
+        "/live/list.m3u8" => Resp::ok(format!(
+            "#EXTM3U\n#EXTINF:2,\nsegment.ts\n#EXTINF:2,\n{elsewhere}\n"
+        )),
+        _ => Resp::ok(vec![0x47, 0, 1, 2]),
+    })
+    .await;
+    let private = portal
+        .url("/live/list.m3u8")
+        .replace("localhost", "127.0.0.1");
+    let policy = |public_only| PlaybackPolicy {
+        public_only,
+        ..PlaybackPolicy::default()
+    };
+
+    let refused = PlaybackRelay::start_with_policy(&private, &[], policy(true)).unwrap();
+    assert_eq!(reqwest::get(refused.url()).await.unwrap().status(), 502);
+    assert!(portal.requests().is_empty(), "refused before any request");
+
+    let trusted = PlaybackRelay::start_with_policy(&private, &[], policy(false)).unwrap();
+    let manifest = reqwest::get(trusted.url())
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let urls = relay_urls(&trusted, &manifest);
+    assert_eq!(urls.len(), 2, "{manifest}");
+    let segment = reqwest::get(&urls[0]).await.unwrap();
+    assert_eq!(segment.status(), 200);
+    assert_eq!(segment.bytes().await.unwrap().as_ref(), &[0x47, 0, 1, 2]);
+    assert_eq!(reqwest::get(&urls[1]).await.unwrap().status(), 502);
+    assert!(other.requests().is_empty(), "another private origin");
 }
 
 #[tokio::test]

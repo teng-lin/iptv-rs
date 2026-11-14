@@ -1,7 +1,9 @@
 //! A per-player loopback transport. Every upstream fetch, including redirects
-//! and HLS/DASH subresources, scopes identity to the original stream's origin.
-//! Players receive no identity headers. Media bodies stream; only manifests
-//! are buffered (at most 2 MiB). Dropping the owner cancels every open fetch.
+//! and HLS/DASH subresources, scopes the stream's headers to the original
+//! stream's origin: another origin gets only what [`crate::cross_origin`]
+//! allows. Players receive no identity headers. Media bodies stream; only
+//! manifests are buffered (at most 2 MiB). Dropping the owner cancels every
+//! open fetch.
 
 use std::{
     io,
@@ -21,26 +23,24 @@ use tokio::{
 };
 
 use crate::{
-    FetchError, FetchErrorKind,
+    FetchError, FetchErrorKind, cross_origin,
     redirect::{self, Prepared},
 };
 
 const MAX_MANIFEST: usize = 2 * 1024 * 1024;
 const MAX_REQUEST: usize = 16 * 1024;
 const MAX_CONNECTIONS: usize = 12;
-const IDENTITY: &[&str] = &[
-    "authorization",
-    "cookie",
-    "proxy-authorization",
-    "sn",
-    "x-user-agent",
-];
 
 /// Provenance of the original playable URL. A trusted URL authorizes only its
 /// exact origin; derived or redirected resources still require public hosts.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct PlaybackPolicy {
     pub public_only: bool,
+    /// DER certificates trusted in addition to the Mozilla roots: the
+    /// client's [`crate::NetConfig::extra_roots_der`]. A server whose
+    /// certificate needs one of them imports; without them here it would
+    /// then fail to play.
+    pub extra_roots_der: Vec<Vec<u8>>,
     #[cfg(debug_assertions)]
     pub allow_private_fixture: bool,
 }
@@ -48,6 +48,7 @@ impl Default for PlaybackPolicy {
     fn default() -> Self {
         Self {
             public_only: true,
+            extra_roots_der: Vec::new(),
             #[cfg(debug_assertions)]
             allow_private_fixture: false,
         }
@@ -222,7 +223,7 @@ impl PlaybackRelay {
         cookies.seed(&mut *fields.lock().map_err(|_| io_error("lock"))?, &root);
         let builder = || -> Result<reqwest::ClientBuilder, FetchError> {
             Ok(reqwest::Client::builder()
-                .tls_backend_preconfigured(crate::tls::client_config(&[])?)
+                .tls_backend_preconfigured(crate::tls::client_config(&policy.extra_roots_der)?)
                 .redirect(reqwest::redirect::Policy::none())
                 .referer(false)
                 .cookie_provider(cookies.clone())
@@ -415,9 +416,7 @@ async fn serve(mut socket: TcpStream, session: &Session) -> io::Result<()> {
         .map_err(|_| io::Error::other("Transport unavailable"))?
         .clone();
     if target.origin() != session.root.origin() {
-        for name in IDENTITY {
-            headers.remove(*name);
-        }
+        cross_origin::restrict(&mut headers, &session.root, &target);
     }
     // Only range negotiation comes from the local player; no client can inject
     // replacement identity, Host, proxy or hop-by-hop headers.
@@ -787,7 +786,11 @@ fn resolve(prefix: &str, base: &Url, value: &str) -> Result<String, FetchError> 
 fn rewrite_hls(body: &[u8], base: &Url, prefix: &str) -> Result<Vec<u8>, FetchError> {
     let text = std::str::from_utf8(body).map_err(|_| invalid("Invalid manifest text"))?;
     let mut out = String::new();
-    for line in text.lines() {
+    // A lone carriage return ends a line too. Some players read lines that
+    // way (Java's `readLine`, behind the Android player): a URI hidden after
+    // a CR inside a tag line would pass here as part of the tag and be
+    // fetched by the player directly, outside this relay and its checks.
+    for line in text.lines().flat_map(|line| line.split('\r')) {
         let line = line.trim();
         if !line.is_empty() && !line.starts_with('#') {
             out.push_str(&resolve(prefix, base, line)?);
@@ -822,6 +825,26 @@ fn rewrite_hls(body: &[u8], base: &Url, prefix: &str) -> Result<Vec<u8>, FetchEr
 
 mod dash;
 use dash::rewrite_dash;
+
+/// The manifest rewriters as `fuzz/fuzz_targets/manifests.rs` calls them.
+/// Compiled only with the `fuzzing` feature, which the fuzz crate alone
+/// enables; not an API.
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub mod fuzzing {
+    use super::Url;
+
+    /// The rewritten playlist, or `None` when `base` is not a URL or the
+    /// playlist is refused.
+    pub fn rewrite_hls(body: &[u8], base: &str, prefix: &str) -> Option<Vec<u8>> {
+        super::rewrite_hls(body, &Url::parse(base).ok()?, prefix).ok()
+    }
+
+    /// As [`rewrite_hls`], for a DASH manifest.
+    pub fn rewrite_dash(body: &[u8], base: &str, prefix: &str) -> Option<Vec<u8>> {
+        super::rewrite_dash(body, &Url::parse(base).ok()?, prefix).ok()
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -866,6 +889,28 @@ mod tests {
             .is_err()
         );
     }
+    #[test]
+    fn a_lone_carriage_return_cannot_hide_a_uri_inside_a_tag_line() {
+        let base = Url::parse("http://synthetic.example.test/live/main.m3u8").unwrap();
+        let prefix = "http://127.0.0.1:1/cap/";
+        let body = "#EXTM3U\r\n#EXTINF:2,\rhttp://192.0.2.7/direct.ts\n\
+                    #EXT-X-DISCONTINUITY\r#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\rnext.ts\r\n";
+        let out = String::from_utf8(rewrite_hls(body.as_bytes(), &base, prefix).unwrap()).unwrap();
+        assert!(!out.contains('\r'), "{out:?}");
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(
+            lines,
+            [
+                "#EXTM3U",
+                "#EXTINF:2,",
+                "http://127.0.0.1:1/cap/http://192.0.2.7/direct.ts",
+                "#EXT-X-DISCONTINUITY",
+                "#EXT-X-KEY:METHOD=AES-128,URI=\"http://127.0.0.1:1/cap/key/http://synthetic.example.test/live/key.bin\"",
+                "http://127.0.0.1:1/cap/http://synthetic.example.test/live/next.ts",
+            ]
+        );
+    }
+
     #[test]
     fn cookie_flood_cannot_grow_the_store_or_replace_existing_session() {
         use reqwest::cookie::CookieStore;

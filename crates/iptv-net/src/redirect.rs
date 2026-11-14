@@ -2,24 +2,17 @@
 //!
 //! reqwest's automatic policy adds a `Referer` with the previous URL's
 //! query (Xtream credentials) and keeps non-standard secret headers such
-//! as Stalker's `SN` on another host. Here a hop that changes origin
-//! (scheme, host or port) drops every header in [`CROSS_ORIGIN_STRIP`],
-//! and no `Referer` is ever added. HTTPS-to-HTTP downgrades are refused.
+//! as Stalker's `SN` or a playlist's `X-Api-Key` on another host. Here a
+//! hop that changes origin (scheme, host or port) keeps only what
+//! [`crate::cross_origin`] allows, and no `Referer` is ever added.
+//! HTTPS-to-HTTP downgrades are refused.
 
 use iptv_import::{FetchError, FetchErrorKind};
 use reqwest::header::{CONTENT_LENGTH, CONTENT_TYPE, HeaderMap, LOCATION};
 use reqwest::{Method, Url};
 
+use crate::cross_origin;
 use crate::error::from_reqwest;
-
-/// Identity headers that must not follow a redirect to another origin.
-const CROSS_ORIGIN_STRIP: &[&str] = &[
-    "authorization",
-    "cookie",
-    "proxy-authorization",
-    "sn",
-    "x-user-agent",
-];
 
 /// A request that can be re-sent to a redirect target.
 #[derive(Clone)]
@@ -108,8 +101,15 @@ pub(crate) async fn execute(
             ));
         }
         if next.origin() != p.url.origin() {
-            for h in CROSS_ORIGIN_STRIP {
-                p.headers.remove(*h);
+            // A body that is sent again (307/308) keeps its media type; the
+            // method change below removes it together with the body.
+            let content_type = p
+                .body
+                .as_ref()
+                .and_then(|_| p.headers.get(CONTENT_TYPE).cloned());
+            cross_origin::restrict(&mut p.headers, &p.url, &next);
+            if let Some(content_type) = content_type {
+                p.headers.insert(CONTENT_TYPE, content_type);
             }
         }
         if status == 303 || (matches!(status, 301 | 302) && p.method == Method::POST) {

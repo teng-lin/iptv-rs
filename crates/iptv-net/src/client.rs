@@ -17,10 +17,16 @@ use crate::redirect::{self, Prepared};
 #[derive(Clone, PartialEq, Eq)]
 pub struct NetConfig {
     pub connect_timeout: Duration,
-    /// Maximum silence while waiting for response headers or body bytes.
+    /// Longest silence while waiting for response headers or for more body
+    /// bytes. An idle timeout: it starts again with every read, so it ends a
+    /// stalled download however large the download is.
     pub read_timeout: Duration,
     pub max_redirects: usize,
-    /// Total time including headers, redirects, and the response body.
+    /// Ceiling on the total time of one request: headers, redirects and the
+    /// response body. A request's own `HttpRequest::timeout` (an import's
+    /// remaining budget) applies when it is shorter. Large because a slow
+    /// but steady download is fine; a stalled one ends at
+    /// [`Self::read_timeout`].
     pub request_timeout: Duration,
     /// Bytes delivered after HTTP content decoding, including streamed reads.
     pub max_streamed_bytes: u64,
@@ -35,8 +41,16 @@ pub struct NetConfig {
     pub extra_roots_der: Vec<Vec<u8>>,
     /// Read `file://` URLs and absolute paths from the filesystem.
     pub allow_files: bool,
-    /// `http://host:port` proxy for every request. Environment proxies are
-    /// ignored.
+    /// `http://host:port` proxy. Environment proxies are ignored.
+    ///
+    /// It does **not** cover everything. Requests that must reach a public
+    /// address (`HttpRequest::public_only`, and every redirect to another
+    /// origin) connect directly: their DNS answers are checked and pinned
+    /// here ([`crate::PublicResolver`]), which a proxy resolving the name
+    /// itself would bypass. The playback relay ([`crate::playback`]) does
+    /// not use it either. A caller that needs every connection proxied
+    /// (privacy, a filtered network) cannot rely on this field alone. The
+    /// app sets no proxy.
     pub proxy: Option<String>,
     /// Explicit synthetic fixture escape hatch; absent from release builds.
     #[cfg(debug_assertions)]
@@ -47,9 +61,9 @@ impl Default for NetConfig {
     fn default() -> Self {
         Self {
             connect_timeout: Duration::from_secs(15),
-            read_timeout: Duration::from_secs(30),
+            read_timeout: Duration::from_secs(60),
             max_redirects: 10,
-            request_timeout: Duration::from_secs(300),
+            request_timeout: Duration::from_secs(30 * 60),
             max_streamed_bytes: 512 << 20,
             user_agent: iptv_providers::xtream::DEFAULT_USER_AGENT.to_owned(),
             max_buffered_bytes: 128 * 1024 * 1024,
@@ -280,6 +294,10 @@ impl Fetch for NetClient {
 
     fn elapsed(&self) -> Duration {
         self.started.elapsed()
+    }
+
+    fn sleep(&self, duration: Duration) -> impl Future<Output = ()> {
+        tokio::time::sleep(duration)
     }
 
     fn fetch(

@@ -15,9 +15,24 @@
 //! [`EpgSourceOutcome`] and its programmes are dropped from the sink. The
 //! import fails only when every source failed, on cancellation, or when
 //! the sink fails ([`ImportError::Storage`]).
+//!
+//! Each source has a budget of its own ([`GUIDE_SOURCE_BYTES`],
+//! [`GUIDE_SOURCE_TIME`]): a large or slow feed cannot use up the time of
+//! the feeds after it, and running out ends that source only. The time is
+//! generous because the adapter ends a stalled download by its idle
+//! timeout; the total only bounds a download that never stops.
+//!
+//! A source that fails for a passing reason (no connection, a stalled or
+//! interrupted download, HTTP 5xx) is downloaded again from the start, up
+//! to [`GUIDE_RETRIES`] times, after waits that double from
+//! [`GUIDE_RETRY_DELAY`]. The wait is [`Fetch::sleep`], the adapter's
+//! timer; this crate has none. A refusal (4xx), content that is not a
+//! guide, an exhausted budget and cancellation are not retried.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
+use iptv_core::import_limits::ImportLimits;
 use iptv_epg::{
     ChannelKey, Compression, EpgRef, IngestReport, MatchFilter, MatchIndex, MatchReport, Overrides,
     ParseOptions, ParseStats, PlaylistChannel, ProgrammeData, SourceId, StoreOptions, TimePolicy,
@@ -27,12 +42,35 @@ use iptv_providers::m3u::M3uHeader;
 use iptv_providers::model::Channel;
 use iptv_providers::{HttpRequest, SecretUrl};
 
-use crate::cancel::CancelToken;
+use crate::cancel::{CancelToken, check, or_cancel};
 use crate::ctx::Ctx;
 use crate::error::{ImportError, ParseProblem, Step};
 use crate::fetch::Fetch;
 use crate::progress::{Phase, Progress, ProgressSink};
 use crate::sink::{GuideSink, SinkError};
+
+/// Bytes one guide source may send, as downloaded (a `.gz` file before it
+/// is unpacked), counted per attempt.
+pub const GUIDE_SOURCE_BYTES: u64 = 512 << 20;
+/// Time one guide source may take on the adapter's clock
+/// ([`Fetch::elapsed`]), retries and their waits included. The adapter
+/// also gets it as each request's deadline.
+pub const GUIDE_SOURCE_TIME: Duration = Duration::from_secs(30 * 60);
+/// Further attempts at a source after a passing failure.
+pub const GUIDE_RETRIES: u32 = 3;
+/// The wait before the first retry; each later one waits twice as long
+/// (2 s, 4 s, 8 s), at most [`GUIDE_RETRY_MAX_DELAY`].
+pub const GUIDE_RETRY_DELAY: Duration = Duration::from_secs(2);
+/// Upper bound of one wait, should the number of retries be raised.
+pub const GUIDE_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
+
+/// The wait before retry number `retry` (from 1).
+fn retry_delay(retry: u32) -> Duration {
+    let doublings = retry.saturating_sub(1).min(16);
+    GUIDE_RETRY_DELAY
+        .saturating_mul(1 << doublings)
+        .min(GUIDE_RETRY_MAX_DELAY)
+}
 
 /// One XMLTV source.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -161,7 +199,6 @@ pub async fn import_epg<F: Fetch, S: GuideSink, P: ProgressSink>(
     progress: &mut P,
     cancel: &CancelToken,
 ) -> Result<EpgImport, ImportError> {
-    let mut ctx = Ctx::new(fetch, progress, cancel);
     let keys: Vec<ChannelKey> = channels
         .iter()
         .map(|c| ChannelKey::new(c.id.as_str()))
@@ -181,27 +218,45 @@ pub async fn import_epg<F: Fetch, S: GuideSink, P: ProgressSink>(
     let mut loaded: Vec<(SourceId, i32)> = Vec::new();
     let mut listed: Vec<(SourceId, Vec<ListedChannel>)> = Vec::new();
     for cfg in sources {
-        ctx.check()?;
-        sink.begin_feed(cfg.id, cfg.priority, cfg.store, now)
-            .map_err(storage)?;
-        let result = match load_source(&mut ctx, cfg, &filter, sink).await {
-            Ok((feed_channels, mut stats)) => {
-                stats.ingest = sink.finish_feed().map_err(storage)?;
-                index.add_source(cfg.id, cfg.priority, &feed_channels);
-                loaded.retain(|(id, _)| *id != cfg.id);
-                loaded.push((cfg.id, cfg.priority));
-                listed.retain(|(id, _)| *id != cfg.id);
-                listed.push((cfg.id, feed_channels.into_iter().map(listed_of).collect()));
-                Ok(stats)
-            }
-            Err(e) => {
-                sink.discard_feed().map_err(storage)?;
-                // A failed feed leaves the others; these end the import.
-                match e {
-                    ImportError::Cancelled | ImportError::Storage(_) => return Err(e),
-                    e => Err(e),
+        // Only the user ends the run between sources. Time and bytes are
+        // counted per source, so one that used up its budget is recorded
+        // like any other failure and the next one starts fresh.
+        check(cancel)?;
+        let mut ctx = Ctx::new(fetch, &mut *progress, cancel);
+        ctx.limits = ImportLimits {
+            input_bytes: GUIDE_SOURCE_BYTES,
+            elapsed: GUIDE_SOURCE_TIME,
+            ..ImportLimits::default()
+        };
+        ctx.limit_step = Step::Guide(cfg.id);
+        let mut retries = 0;
+        let result = loop {
+            sink.begin_feed(cfg.id, cfg.priority, cfg.store, now)
+                .map_err(storage)?;
+            let error = match load_source(&mut ctx, cfg, &filter, sink).await {
+                Ok((feed_channels, mut stats)) => {
+                    stats.ingest = sink.finish_feed().map_err(storage)?;
+                    index.add_source(cfg.id, cfg.priority, &feed_channels);
+                    loaded.retain(|(id, _)| *id != cfg.id);
+                    loaded.push((cfg.id, cfg.priority));
+                    listed.retain(|(id, _)| *id != cfg.id);
+                    listed.push((cfg.id, feed_channels.into_iter().map(listed_of).collect()));
+                    break Ok(stats);
                 }
+                Err(e) => e,
+            };
+            // Whatever the attempt stored is incomplete, also before a retry.
+            sink.discard_feed().map_err(storage)?;
+            // A failed feed leaves the others; these end the import.
+            if matches!(error, ImportError::Cancelled | ImportError::Storage(_)) {
+                return Err(error);
             }
+            if retries == GUIDE_RETRIES || !error.retry_now() {
+                break Err(error);
+            }
+            retries += 1;
+            or_cancel(cancel, fetch.sleep(retry_delay(retries))).await?;
+            ctx.restart_bytes();
         };
         outcomes.push(EpgSourceOutcome { id: cfg.id, result });
     }
@@ -211,7 +266,7 @@ pub async fn import_epg<F: Fetch, S: GuideSink, P: ProgressSink>(
         return Err(first.clone());
     }
 
-    ctx.phase(Phase::Matching);
+    progress.report(&Progress::phase(Phase::Matching));
     let result = index.match_channels(playlist(), overrides);
     // Source rank as the guide store orders sources: priority, then load
     // order.
@@ -239,7 +294,7 @@ pub async fn import_epg<F: Fetch, S: GuideSink, P: ProgressSink>(
     bindings.sort_by(|a, b| a.0.cmp(&b.0));
     let mut done = Progress::phase(Phase::Done);
     done.items = bindings.len() as u64;
-    ctx.report(done);
+    progress.report(&done);
     Ok(EpgImport {
         bindings,
         matches: result.report,
@@ -382,4 +437,21 @@ async fn load_source<F: Fetch, S: GuideSink, P: ProgressSink>(
     p.bytes = bytes;
     ctx.report(p);
     Ok((state.channels, stats))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn waits_double_from_the_first_and_stay_bounded() {
+        let waits: Vec<u64> = (1..=GUIDE_RETRIES)
+            .map(|n| retry_delay(n).as_secs())
+            .collect();
+        assert_eq!(waits, [2, 4, 8]);
+        assert_eq!(retry_delay(0), GUIDE_RETRY_DELAY);
+        for retry in [5, 6, 40, u32::MAX] {
+            assert_eq!(retry_delay(retry), GUIDE_RETRY_MAX_DELAY, "{retry}");
+        }
+    }
 }

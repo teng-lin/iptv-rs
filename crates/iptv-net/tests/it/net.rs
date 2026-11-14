@@ -157,6 +157,102 @@ async fn redirects_relative_cross_origin_and_cross_protocol() {
 }
 
 #[tokio::test]
+async fn cross_origin_redirects_keep_only_transport_headers_and_the_referer_origin() {
+    let target = TestServer::http(|_| Resp::ok("landed")).await;
+    let to = target.url("/final");
+    let origin = TestServer::http(move |req| match req.path.as_str() {
+        "/start" => Resp::redirect(302, "/same"),
+        _ => Resp::redirect(307, &to),
+    })
+    .await;
+    let net = NetClient::new(NetConfig {
+        allow_private_fixture: true,
+        ..Default::default()
+    })
+    .unwrap();
+    // A playlist's own credential header, and a Referer whose path and query
+    // hold a token (a portal page, an embedding site).
+    let referer = origin.url("/portal/c/index.html?token=synthetic-secret");
+    let sent = [
+        ("User-Agent", "SyntheticPlayer/1.0"),
+        ("Accept-Language", "en"),
+        ("X-Api-Key", "synthetic-secret"),
+        ("X-Auth-Token", "synthetic-secret"),
+        ("Referer", referer.as_str()),
+        ("Origin", "https://app.example.test"),
+    ];
+    let mut request = HttpRequest::get(origin.url("/start"));
+    for (name, value) in sent {
+        request = request.with_header(name, value);
+    }
+    assert_eq!(net.fetch(request).await.unwrap().body, b"landed");
+
+    // Same origin, including a same-origin redirect: exactly as given.
+    let first_party = origin.requests();
+    assert_eq!(first_party.len(), 2);
+    for request in &first_party {
+        for (name, value) in sent {
+            assert_eq!(request.header(name), Some(value), "{name} {}", request.path);
+        }
+    }
+    let landed = &target.requests()[0];
+    for name in ["x-api-key", "x-auth-token"] {
+        assert_eq!(
+            landed.header(name),
+            None,
+            "{name} must not reach another origin"
+        );
+    }
+    assert_eq!(landed.header("user-agent"), Some("SyntheticPlayer/1.0"));
+    assert_eq!(landed.header("accept-language"), Some("en"));
+    assert_eq!(landed.header("origin"), Some("https://app.example.test"));
+    // Path and query stay behind; the host a CDN may check is still named.
+    let referer_origin = origin.url("/");
+    assert_eq!(landed.header("referer"), Some(referer_origin.as_str()));
+    for (name, value) in &landed.headers {
+        assert!(!value.contains("synthetic-secret"), "{name}");
+    }
+}
+
+#[tokio::test]
+async fn a_body_sent_again_to_another_origin_keeps_its_media_type_only() {
+    let target = TestServer::http(|_| Resp::ok("landed")).await;
+    let to = target.url("/final");
+    let origin = TestServer::http(move |req| match req.path.as_str() {
+        "/again" => Resp::redirect(307, &to),
+        _ => Resp::redirect(303, &to),
+    })
+    .await;
+    let net = NetClient::new(NetConfig {
+        allow_private_fixture: true,
+        ..Default::default()
+    })
+    .unwrap();
+    let post = |path: &str| {
+        let mut request = HttpRequest::get(origin.url(path))
+            .with_header("Content-Type", "application/x-www-form-urlencoded")
+            .with_header("X-Api-Key", "synthetic-secret");
+        request.method = iptv_providers::Method::Post;
+        request.body = Some(b"synthetic=1".to_vec());
+        request
+    };
+    net.fetch(post("/again")).await.unwrap();
+    net.fetch(post("/other")).await.unwrap();
+    let landed = target.requests();
+    // 307: the same request again, described but without the credential.
+    assert_eq!(
+        landed[0].header("content-type"),
+        Some("application/x-www-form-urlencoded")
+    );
+    assert_eq!(landed[0].header("content-length"), Some("11"));
+    // 303: a GET without the body, so nothing describes one.
+    assert_eq!(landed[1].header("content-type"), None);
+    for request in &landed {
+        assert_eq!(request.header("x-api-key"), None);
+    }
+}
+
+#[tokio::test]
 async fn tls_uses_webpki_roots_plus_extra_roots() {
     let (acceptor, der) = self_signed();
     let server = TestServer::https(|_| Resp::ok("secure"), acceptor).await;
@@ -259,6 +355,70 @@ async fn timeouts_and_connection_failures() {
         "{shown}"
     );
     assert!(!shown.contains("127.0.0.1"), "no URL in errors: {shown}");
+}
+
+#[tokio::test]
+async fn a_slow_steady_download_outlives_the_idle_timeout_and_a_stalled_one_does_not() {
+    // A stall is what ends a download, not its total time.
+    let defaults = NetConfig::default();
+    assert_eq!(defaults.connect_timeout, Duration::from_secs(15));
+    assert_eq!(defaults.read_timeout, Duration::from_secs(60));
+    assert_eq!(defaults.request_timeout, Duration::from_secs(30 * 60));
+
+    let idle = Duration::from_millis(400);
+    let pieces: Vec<Vec<u8>> = (0..15).map(|i| vec![b'a' + i; 100]).collect();
+    let steady = pieces.clone();
+    let server = TestServer::http(move |req| match req.path.as_str() {
+        // 15 pauses of 40 ms: longer in total than the idle timeout, never
+        // silent for that long.
+        "/steady" => Resp::ok("").chunked(steady.clone(), Duration::from_millis(40)),
+        _ => Resp::ok("").chunked(vec![b"x".to_vec(), b"y".to_vec()], Duration::from_secs(5)),
+    })
+    .await;
+    let net = NetClient::new(NetConfig {
+        read_timeout: idle,
+        ..NetConfig::default()
+    })
+    .unwrap();
+    let fixture_url = |path: &str| server.url(path).replace("localhost", "127.0.0.1");
+
+    let started = std::time::Instant::now();
+    let mut body = net
+        .fetch_stream(HttpRequest::get(fixture_url("/steady")))
+        .await
+        .unwrap()
+        .body;
+    let mut got = Vec::new();
+    while let Some(chunk) = body.next_chunk().await.unwrap() {
+        got.extend(chunk);
+    }
+    assert_eq!(got, pieces.concat());
+    assert!(started.elapsed() > idle, "{:?}", started.elapsed());
+
+    let mut body = net
+        .fetch_stream(HttpRequest::get(fixture_url("/stall")))
+        .await
+        .unwrap()
+        .body;
+    assert_eq!(body.next_chunk().await.unwrap().as_deref(), Some(&b"x"[..]));
+    let stalled = std::time::Instant::now();
+    let err = body.next_chunk().await.unwrap_err();
+    // An idle timeout, which an import retries; not the total deadline.
+    assert_eq!(err.kind, FetchErrorKind::Timeout, "{err}");
+    assert!(
+        stalled.elapsed() < Duration::from_secs(4),
+        "{:?}",
+        stalled.elapsed()
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_wait_before_a_retry_is_a_runtime_sleep() {
+    let net = client();
+    let before = tokio::time::Instant::now();
+    iptv_import::Fetch::sleep(&net, Duration::from_secs(8)).await;
+    // The paused clock moved by the wait; no wall-clock time passed.
+    assert_eq!(before.elapsed(), Duration::from_secs(8));
 }
 
 #[tokio::test]

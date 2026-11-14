@@ -195,13 +195,18 @@ pub struct StalkerLink {
 impl StalkerLink {
     /// The source for the link the portal returned, with the headers of
     /// `session` (after any re-authentication).
+    ///
+    /// The link must be on a public address, unless the portal the user
+    /// entered is on a private one and serves the stream itself
+    /// ([`StalkerSession::stream_must_be_public`]): a portal on the LAN
+    /// plays, a public portal cannot point the player into the LAN.
     pub fn source(
         session: &StalkerSession,
         url: String,
         channel_headers: &[(String, String)],
     ) -> PlaySource {
         PlaySource {
-            public_only: true,
+            public_only: session.stream_must_be_public(&url),
             headers: session.playback_headers(&url),
             url,
         }
@@ -244,10 +249,16 @@ fn channel_headers(channel: &Channel) -> &[(String, String)] {
 
 fn source(context: Option<&PlaybackContext>, url: String, channel: &Channel) -> PlaySource {
     let headers = context.map_or_else(Vec::new, |c| c.headers(&url));
-    let public_only = !matches!(
-        (&channel.stream, context.map(|c| &c.inner)),
-        (StreamLocator::Xtream { .. }, Some(Inner::Xtream { .. }))
-    );
+    let public_only = match (&channel.stream, context.map(|c| &c.inner)) {
+        (StreamLocator::Xtream { .. }, Some(Inner::Xtream { .. })) => false,
+        // A static Stalker link follows the rule of a resolved one
+        // ([`StalkerLink::source`]): private only on a private portal's
+        // own host.
+        (StreamLocator::Stalker { .. }, Some(Inner::Stalker { session })) => {
+            session.borrow().stream_must_be_public(&url)
+        }
+        _ => true,
+    };
     PlaySource {
         url,
         headers,

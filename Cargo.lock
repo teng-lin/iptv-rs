@@ -2293,6 +2293,7 @@ dependencies = [
  "iptv-epg",
  "iptv-import",
  "iptv-providers",
+ "libc",
  "log",
  "quick-xml",
  "rcgen",
@@ -2315,6 +2316,7 @@ dependencies = [
  "sha1_smol",
  "url",
  "xxhash-rust",
+ "zeroize",
 ]
 
 [[package]]

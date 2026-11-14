@@ -901,6 +901,11 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
     };
     let mut progress = Forward(tx);
     let mut options = ImportOptions::new(now);
+    // A whole catalog import (live, movies and series of an Xtream account)
+    // may take long on a slow box; a stalled download still ends at the
+    // client's idle timeout. The budget is counted over the whole import
+    // now that the client reports elapsed time.
+    options.limits.elapsed = CATALOG_IMPORT_TIME;
     #[cfg(debug_assertions)]
     {
         options.allow_private_fixture = cfg!(feature = "test-support") || DEV_PLAYLIST.is_some();
@@ -1227,7 +1232,13 @@ fn record_failure(stored: Option<SourceId>, kind: ImportErrorKind) {
 
 /// Keeps a picked playlist file in the app's files (a picked document is
 /// only readable now; a refresh reads the copy). Returns its path.
-pub async fn keep_picked_file(name: &str, bytes: &[u8]) -> std::io::Result<String> {
+/// Total time of one catalog import ([`ImportOptions`] limits).
+const CATALOG_IMPORT_TIME: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+/// A kept playlist file's name: letters, digits, `-`, `_` and `.` only, no
+/// leading or trailing dot, and never a name Windows reserves (`con.m3u`),
+/// which a whole-app backup would refuse to carry.
+fn kept_file_name(name: &str) -> String {
     let name: String = name
         .chars()
         .map(|c| {
@@ -1238,19 +1249,25 @@ pub async fn keep_picked_file(name: &str, bytes: &[u8]) -> std::io::Result<Strin
             }
         })
         .collect();
-    let name = name.trim_start_matches('.');
-    let name = if name.is_empty() {
-        "playlist.m3u"
+    let name = name.trim_matches('.');
+    if name.is_empty() {
+        "playlist.m3u".to_owned()
+    } else if iptv_import::backup_manifest::portable_component(name) {
+        name.to_owned()
     } else {
-        name
-    };
+        format!("playlist-{name}")
+    }
+}
+
+pub async fn keep_picked_file(name: &str, bytes: &[u8]) -> std::io::Result<String> {
+    let name = kept_file_name(name);
     let mut random = [0u8; 8];
     getrandom::fill(&mut random)
         .map_err(|_| std::io::Error::other("cannot create document identity"))?;
     let dir = data_dir()
         .join("playlists")
         .join(format!("{:016x}", u64::from_le_bytes(random)));
-    let path = dir.join(name);
+    let path = dir.join(&name);
     let bytes = bytes.to_vec();
     crate::store_service::call(move |store| {
         let mut builder = std::fs::DirBuilder::new();
@@ -1273,4 +1290,26 @@ pub async fn keep_picked_file(name: &str, bytes: &[u8]) -> std::io::Result<Strin
 /// Current browser generation for async state installation guards.
 pub(crate) fn generation() -> u64 {
     GENERATION.with(Cell::get)
+}
+
+#[cfg(test)]
+mod kept_file_tests {
+    use super::kept_file_name;
+
+    #[test]
+    fn kept_playlist_names_are_portable() {
+        assert_eq!(kept_file_name("my list (1).m3u"), "my_list__1_.m3u");
+        assert_eq!(kept_file_name("..hidden.m3u"), "hidden.m3u");
+        assert_eq!(kept_file_name("list."), "list");
+        assert_eq!(kept_file_name("///"), "___");
+        assert_eq!(kept_file_name(""), "playlist.m3u");
+        for reserved in ["con.m3u", "NUL", "com1.m3u8", "Lpt9.txt"] {
+            let kept = kept_file_name(reserved);
+            assert_eq!(kept, format!("playlist-{reserved}"));
+            assert!(
+                iptv_import::backup_manifest::portable_component(&kept),
+                "{kept}"
+            );
+        }
+    }
 }

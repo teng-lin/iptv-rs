@@ -26,11 +26,42 @@ pub fn entry_limit(name: &str, bytes: u64) -> Result<(), EntryLimit> {
     };
     if bytes > max { Err(EntryLimit) } else { Ok(()) }
 }
+/// Whether Windows would store `component` (one name between slashes)
+/// under that name. It does not for a name ending in a dot or a space
+/// (both are dropped, so `list.` and `list` are the same file), and not for
+/// a device name: `NUL`, `nul.txt` and `Com1.tar.gz` all open the device
+/// whatever the directory, as the part before the first dot decides. A
+/// backup is restored on any platform, so these are refused everywhere.
+/// Whether `component` is a file name every supported system can hold:
+/// none of Windows' device names (`CON`, `NUL`, `COM1`…, with or without an
+/// extension) and no trailing dot or space.
+pub fn portable_component(component: &str) -> bool {
+    if component.ends_with(['.', ' ']) {
+        return false;
+    }
+    let stem = component.split('.').next().unwrap_or(component);
+    let stem = stem.trim_end_matches(' ').to_ascii_uppercase();
+    let numbered = |prefix: &str| {
+        // Port 0 and the superscript digits are reserved like 1 to 9.
+        stem.strip_prefix(prefix).is_some_and(|n| {
+            matches!(
+                n,
+                "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+            )
+        })
+    };
+    !(matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) || numbered("COM")
+        || numbered("LPT"))
+}
+
 pub fn allowed(name: &str) -> bool {
     !name.contains(['\\', ':', '\0'])
         && name
             .split('/')
-            .all(|c| !c.is_empty() && c != "." && c != "..")
+            .all(|c| !c.is_empty() && c != "." && c != ".." && portable_component(c))
         && (matches!(
             name,
             "iptv.sqlite" | "settings.json" | "search-history.json" | "last_channel"
@@ -169,6 +200,83 @@ mod windows_tests {
                 "files": [{"name": "iptv.sqlite", "length": 0}, {"name": "settings.json", "length": 0}]
             })).unwrap();
             assert_eq!(parse(&bytes).is_ok(), valid, "{root}");
+        }
+    }
+
+    #[test]
+    fn windows_device_names_and_trailing_dots_or_spaces_are_not_archive_entries() {
+        let manifest = |name: &str| {
+            serde_json::to_vec(&serde_json::json!({
+                "format": "patina-whole-app", "version": 1, "root": "/home/synthetic",
+                "files": [
+                    {"name": "iptv.sqlite", "length": 0},
+                    {"name": "settings.json", "length": 0},
+                    {"name": name, "length": 0}
+                ]
+            }))
+            .unwrap()
+        };
+        for name in [
+            "playlists/CON",
+            "playlists/con",
+            "playlists/Prn",
+            "playlists/AUX",
+            "playlists/nul",
+            "playlists/NUL.m3u",
+            "playlists/aux.tar.gz",
+            "playlists/con .m3u",
+            "playlists/COM1",
+            "playlists/com9.m3u",
+            "playlists/Com5.txt",
+            "playlists/COM0",
+            "playlists/COM\u{b9}",
+            "playlists/LPT1",
+            "playlists/lpt9.m3u",
+            "playlists/LPT\u{b3}.m3u",
+            "playlists/CONIN$",
+            "playlists/conout$.m3u",
+            "playlists/0123456789abcdef/aux.m3u",
+            "playlists/nul/list.m3u",
+            "playlists/list.m3u.",
+            "playlists/list.m3u ",
+            "playlists/list.",
+            "playlists/folder./list.m3u",
+            "playlists/folder /list.m3u",
+            "playlists/...",
+        ] {
+            assert!(!allowed(name), "{name}");
+            assert_eq!(
+                parse(&manifest(name)),
+                Err("Backup contains an unsafe or duplicate file path"),
+                "{name}"
+            );
+        }
+        // Names that only resemble them are ordinary files.
+        for name in [
+            "iptv.sqlite",
+            "settings.json",
+            "search-history.json",
+            "last_channel",
+            "last_channel-12",
+            "playlists/0123456789abcdef/list.m3u",
+            "playlists/console.m3u",
+            "playlists/nullable.m3u",
+            "playlists/auxiliary",
+            "playlists/com10.m3u",
+            "playlists/com.m3u",
+            "playlists/lpt.m3u",
+            "playlists/lpt12",
+            "playlists/my.con",
+            "playlists/list.nul.m3u",
+            "playlists/_con.m3u",
+            "playlists/a b.m3u",
+            "playlists/.hidden.m3u",
+        ] {
+            assert!(allowed(name), "{name}");
+            // The manifest above already lists the two required files.
+            if !matches!(name, "iptv.sqlite" | "settings.json") {
+                assert!(parse(&manifest(name)).is_ok(), "{name}");
+            }
         }
     }
 

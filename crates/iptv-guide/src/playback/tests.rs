@@ -302,6 +302,7 @@ fn stalker_static_commands_play_and_dynamic_ones_need_a_link() {
         owned.header("Referer"),
         Some("http://portal.example.com/stalker_portal/")
     );
+    assert!(owned.public_only, "a public portal's own host is checked");
     assert!(matches!(
         resolve(None, &dynamic, None, CLOCK),
         Resolution::Unavailable(Unavailable::NeedsAccount)
@@ -325,6 +326,62 @@ fn stalker_static_commands_play_and_dynamic_ones_need_a_link() {
         ),
         Resolution::Unavailable(Unavailable::NoArchive(CatchupError::Unsupported))
     ));
+}
+
+#[test]
+fn a_resolved_stalker_link_may_be_private_only_on_a_private_portals_own_host() {
+    let session = |endpoint: &str| {
+        StalkerSession::new(
+            StalkerPortal::new(
+                endpoint,
+                MacAddress::parse("00:1A:79:00:00:42").unwrap(),
+                PortalMode::Simple,
+            )
+            .unwrap(),
+        )
+    };
+    let link = |session: &StalkerSession, url: &str| StalkerLink::source(session, url.into(), &[]);
+
+    // A portal on the LAN that serves its streams itself plays.
+    let lan = session("http://192.168.50.10/stalker_portal/server/load.php");
+    let own = link(&lan, "http://192.168.50.10:8888/live/1.ts?play_token=x");
+    assert!(!own.public_only);
+    assert!(own.header("Cookie").is_some(), "the portal's own stream");
+    // Another private host stays refused, even from a private portal.
+    let other = link(&lan, "http://192.168.50.11/live/1.ts");
+    assert!(other.public_only);
+    assert_eq!(other.header("Cookie"), None);
+    assert!(link(&lan, "http://cdn.example.net/live/1.m3u8").public_only);
+
+    // A public portal that hands back a private address is still refused.
+    let public = session("http://portal.example.com/stalker_portal/server/load.php");
+    for url in [
+        "http://192.168.50.10/live/1.ts",
+        "http://127.0.0.1:8080/live/1.ts",
+        "http://mediabox.local/live/1.ts",
+        "http://portal.example.com/live/1.ts",
+    ] {
+        assert!(link(&public, url).public_only, "{url}");
+    }
+}
+
+#[test]
+fn a_static_stalker_link_follows_the_same_private_portal_rule() {
+    let lan_portal = StalkerPortal::new(
+        "http://192.168.50.10/stalker_portal/server/load.php",
+        MacAddress::parse("00:1A:79:00:00:42").unwrap(),
+        PortalMode::Simple,
+    )
+    .unwrap();
+    let lan = PlaybackContext::stalker(StalkerSession::new(lan_portal));
+    let own = stalker_channel("ffmpeg http://192.168.50.10:8888/live/1.ts", Some(false));
+    assert!(!play(resolve(Some(&lan), &own, None, CLOCK)).public_only);
+    let other = stalker_channel("ffmpeg http://192.168.50.11/live/1.ts", Some(false));
+    assert!(play(resolve(Some(&lan), &other, None, CLOCK)).public_only);
+
+    let public = PlaybackContext::stalker(StalkerSession::new(portal()));
+    let private = stalker_channel("ffmpeg http://192.168.50.10/live/1.ts", Some(false));
+    assert!(play(resolve(Some(&public), &private, None, CLOCK)).public_only);
 }
 
 #[test]
