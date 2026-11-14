@@ -105,7 +105,7 @@ pub async fn apply(schedule: &EpgSchedule, source: SourceId) {
 }
 pub fn changed(ui: Ui, source: SourceId) {
     REVISION.set(REVISION.get().wrapping_add(1));
-    ui.library.version.update(|v| *v += 1);
+    crate::runtime().emit(crate::runtime::RuntimeEvent::LibraryChanged);
     if super::combined::active(ui) {
         super::combined::organization_changed(ui, source);
         return;

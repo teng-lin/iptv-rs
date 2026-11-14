@@ -130,7 +130,7 @@ fn arrived(ui: Ui, source: SourceId, request: PageRequest, store: GuideStore, to
         inserted
     });
     if inserted {
-        ui.guide_pages.update(|v| *v += 1);
+        crate::runtime().emit(crate::runtime::RuntimeEvent::GuideChanged);
     }
     for waiter in WAITERS.with(|w| std::mem::take(&mut *w.borrow_mut())) {
         waiter();

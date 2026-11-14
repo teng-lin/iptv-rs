@@ -35,6 +35,8 @@ mod list_rows;
 mod lists;
 mod media;
 mod menu_view;
+mod runtime;
+mod runtime_events;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "ios", windows))]
 use iptv_player_mpv as mpv;
 mod multiview;
@@ -79,7 +81,7 @@ pub(crate) const IOS: bool = cfg!(target_os = "ios");
 
 use std::time::{Duration, Instant};
 
-use guide::{Airing, Focus, Pane, Program, Schedule, SyntheticSchedule};
+use guide::{Airing, Focus, Pane, Program, Schedule};
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::rc::Rc;
@@ -393,12 +395,17 @@ impl Ui {
 }
 
 thread_local! {
-    static SCHEDULE: RefCell<Rc<dyn Schedule>> = RefCell::new(Rc::new(SyntheticSchedule));
+    static RUNTIME: RefCell<Rc<runtime::Runtime>> = RefCell::new(Rc::new(runtime::Runtime::default()));
+}
+
+/// The shell owns one application handle; all library state belongs to it.
+pub(crate) fn runtime() -> Rc<runtime::Runtime> {
+    RUNTIME.with(|runtime| runtime.borrow().clone())
 }
 
 /// The guide data in use (synthetic until a playlist is imported).
 pub fn schedule() -> Rc<dyn Schedule> {
-    SCHEDULE.with(|s| s.borrow().clone())
+    runtime().schedule()
 }
 
 /// Swaps the guide data (after an import) and tells the views to re-read.
@@ -408,7 +415,7 @@ pub fn schedule() -> Rc<dyn Schedule> {
 /// again by key.
 pub fn set_schedule(ui: &Ui, schedule: Rc<dyn Schedule>) {
     let kept = lists::keep(*ui);
-    SCHEDULE.with(|s| *s.borrow_mut() = schedule.clone());
+    runtime().set_schedule(schedule.clone());
     time::mark_shown();
     let n = schedule.channel_count();
     if ui.playing.get_untracked().is_some_and(|ch| ch >= n) {

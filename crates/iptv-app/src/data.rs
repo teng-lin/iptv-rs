@@ -217,6 +217,7 @@ pub fn spawn_in_app(future: impl Future<Output = ()> + 'static) {
 /// Startup: browse enabled playlists together when there is more than one,
 /// otherwise refresh the active source or open the wizard.
 pub fn start(ui: Ui) {
+    crate::runtime().bind(move |event| crate::runtime_events::apply(ui, event));
     crate::store_service::register_ui_thread();
     // NSH drops cleanup callbacks without invoking them when the entire Rust
     // runtime exits. Capture an RAII guard so both owner disposal and runtime
@@ -288,15 +289,17 @@ pub fn start(ui: Ui) {
             }
             Ok((None, false, true)) => {
                 show_nothing(ui);
-                crate::playlists_view::open(ui);
+                crate::runtime().emit(crate::runtime::RuntimeEvent::OpenPlaylists);
             }
-            Ok((None, false, false)) => crate::wizard_view::open_first_run(ui),
+            Ok((None, false, false)) => {
+                crate::runtime().emit(crate::runtime::RuntimeEvent::FirstRun)
+            }
             Err(error) => {
                 log::warn!("iptv data: store unavailable ({error}); opening the wizard");
-                crate::wizard_view::open_first_run(ui);
-                crate::settings_view::notify(
+                crate::runtime().emit(crate::runtime::RuntimeEvent::FirstRun);
+                crate::runtime().emit(crate::runtime::RuntimeEvent::Notify(
                     "The saved library could not be opened. Unlock the device and restart the app.",
-                );
+                ));
             }
         }
         library::start_scheduler(ui);
@@ -518,7 +521,7 @@ async fn show_part(
     let built = started.elapsed();
     let mut schedule = match playback {
         Streams::New(context, allowed) => {
-            crate::multiview::set_account_streams(allowed);
+            crate::runtime().emit(crate::runtime::RuntimeEvent::AccountStreams(allowed));
             schedule.with_playback(context)
         }
         Streams::Current => {
@@ -560,7 +563,7 @@ async fn show_part(
     install_favorites();
     let schedule = Rc::new(schedule);
     combined::remember_single(source, schedule.clone());
-    crate::set_schedule(&ui, schedule);
+    crate::runtime().emit(crate::runtime::RuntimeEvent::ScheduleReady(schedule));
     pages::replaced();
     crate::startup::shown(&[
         ("schedule", built),
@@ -568,14 +571,14 @@ async fn show_part(
         ("favourites", favorites),
         ("swapped", started.elapsed()),
     ]);
-    crate::player::source_ready(ui, resume && resumes);
+    crate::runtime().emit(crate::runtime::RuntimeEvent::SourceReady(resume && resumes));
 }
 
 /// Another stored source (or none) is about to be shown: what played and
 /// the favourites belong to the old one, and the choice is remembered.
 fn source_changed(ui: Ui, source: Option<SourceId>) {
     log::info!("iptv data: showing source {:?}", source.map(|id| id.0));
-    crate::player::source_changed(ui);
+    crate::runtime().emit(crate::runtime::RuntimeEvent::SourceChanged);
     if ui.favorites.with_untracked(|f| !f.is_empty()) {
         ui.favorites.set(BTreeSet::new());
     }
@@ -591,14 +594,9 @@ fn show_nothing(ui: Ui) {
     combined::reset_single();
     next_generation();
     source_changed(ui, None);
-    crate::set_schedule(
-        &ui,
-        Rc::new(EpgSchedule::new(
-            Vec::new(),
-            GuideStore::default(),
-            now_unix(),
-        )),
-    );
+    crate::runtime().emit(crate::runtime::RuntimeEvent::ScheduleReady(Rc::new(
+        EpgSchedule::new(Vec::new(), GuideStore::default(), now_unix()),
+    )));
 }
 
 /// Looks at `source`'s guide again at `at` (unix time), unless a newer
@@ -668,7 +666,9 @@ async fn read_guide(
     if !workers::submit(source_is_visible(ui, source), move || {
         with_runtime(|| guide_pipeline(source, &tx, read));
     }) {
-        crate::settings_view::notify("Too many playlists are updating. Try again shortly.");
+        crate::runtime().emit(crate::runtime::RuntimeEvent::Notify(
+            "Too many playlists are updating. Try again shortly.",
+        ));
         return;
     }
     loop {

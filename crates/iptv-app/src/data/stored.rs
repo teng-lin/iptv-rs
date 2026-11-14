@@ -115,7 +115,7 @@ pub fn bind(ui: Ui) {
                 if library_changed && super::combined::active(ui) {
                     super::combined::rebuild(ui);
                 }
-                ui.settings.update(|version| *version += 1);
+                crate::runtime().emit(crate::runtime::RuntimeEvent::SettingsChanged);
             }
         });
     });
@@ -452,7 +452,7 @@ pub fn discard(source: SourceId) {
 
 /// Fetch descriptions on the shared worker; a bounded cache makes later renders synchronous.
 pub fn description_lookup(
-    ui: Ui,
+    _ui: Ui,
     source: SourceId,
 ) -> Option<impl Fn(&ChannelKey, UnixTime) -> Option<String> + 'static> {
     let cache = std::rc::Rc::new(RefCell::new(
@@ -489,7 +489,7 @@ pub fn description_lookup(
                     return;
                 }
             }
-            ui.guide_pages.update(|version| *version += 1);
+            crate::runtime().emit(crate::runtime::RuntimeEvent::GuideChanged);
         });
         None
     })
@@ -692,7 +692,9 @@ pub fn update_source(ui: Ui, source: SourceId, done: impl FnOnce(bool) + 'static
         };
         if guides.is_empty() {
             UPDATING.with(|updating| updating.borrow_mut().retain(|id| *id != source));
-            crate::settings_view::notify("No guide sources are configured");
+            crate::runtime().emit(crate::runtime::RuntimeEvent::Notify(
+                "No guide sources are configured",
+            ));
             done(false);
             return;
         }
@@ -710,7 +712,9 @@ pub fn update_source(ui: Ui, source: SourceId, done: impl FnOnce(bool) + 'static
             super::with_runtime(|| download_now(source, guides, restart_checks, &tx, &cancel));
         });
         if !accepted {
-            crate::settings_view::notify("Too many playlists are updating. Try again shortly.");
+            crate::runtime().emit(crate::runtime::RuntimeEvent::Notify(
+                "Too many playlists are updating. Try again shortly.",
+            ));
         }
         super::spawn_in_app(async move {
             loop {
@@ -735,7 +739,7 @@ pub fn update_source(ui: Ui, source: SourceId, done: impl FnOnce(bool) + 'static
             }
             completion.finish();
             UPDATING.with(|u| u.borrow_mut().retain(|id| *id != source));
-            ui.library.version.update(|v| *v += 1);
+            crate::runtime().emit(crate::runtime::RuntimeEvent::LibraryChanged);
             done(accepted);
         });
     });

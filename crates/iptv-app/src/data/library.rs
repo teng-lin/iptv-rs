@@ -222,7 +222,9 @@ async fn refresh_after_commit(ui: Ui, patch: impl FnOnce(&mut Snapshot)) {
     changed(ui);
     if let Err(error) = refresh_cache(ui).await {
         log::warn!("iptv library: change saved but metadata refresh failed: {error}");
-        crate::settings_view::notify("Change saved; library details could not be refreshed.");
+        crate::runtime().emit(crate::runtime::RuntimeEvent::Notify(
+            "Change saved; library details could not be refreshed.",
+        ));
     }
 }
 
@@ -345,7 +347,7 @@ pub async fn set_policy(
             super::show_nothing(ui);
             match next {
                 Some(next) => run(ui, next, Purpose::Switch, false),
-                None => crate::playlists_view::open(ui),
+                None => crate::runtime().emit(crate::runtime::RuntimeEvent::OpenPlaylists),
             }
         }
     }
@@ -427,8 +429,8 @@ pub(super) fn remember_shown(id: SourceId) {
     });
 }
 
-fn changed(ui: Ui) {
-    ui.library.version.update(|v| *v += 1);
+fn changed(_ui: Ui) {
+    crate::runtime().emit(crate::runtime::RuntimeEvent::LibraryChanged);
 }
 
 pub(super) fn running(id: SourceId) -> bool {
@@ -549,7 +551,9 @@ pub fn switch_to(ui: Ui, id: SourceId) {
         if crate::favorites::flush().await {
             switch_to_ready(ui, id);
         } else {
-            crate::settings_view::notify("Recent changes could not be saved; try again");
+            crate::runtime().emit(crate::runtime::RuntimeEvent::Notify(
+                "Recent changes could not be saved; try again",
+            ));
         }
     });
 }
@@ -692,7 +696,7 @@ pub async fn delete(ui: Ui, id: SourceId) -> Result<(), StoreError> {
     })
     .await;
     log::info!("iptv data: deleted source {}", id.0);
-    crate::player::forget_source(id);
+    crate::runtime().emit(crate::runtime::RuntimeEvent::ForgetSource(id));
     ui.library.activity.update(|a| {
         a.remove(&id);
     });
@@ -705,8 +709,8 @@ pub async fn delete(ui: Ui, id: SourceId) -> Result<(), StoreError> {
     }
     if playlists()?.is_empty() {
         super::show_nothing(ui);
-        crate::playlists_view::close(ui);
-        crate::wizard_view::open_first_run(ui);
+        crate::runtime().emit(crate::runtime::RuntimeEvent::ClosePlaylists);
+        crate::runtime().emit(crate::runtime::RuntimeEvent::FirstRun);
         return Ok(());
     }
     if ui.library.shown.get_untracked() != Some(id) {
@@ -716,11 +720,11 @@ pub async fn delete(ui: Ui, id: SourceId) -> Result<(), StoreError> {
         Some(next) => run(ui, next, Purpose::Switch, false),
         None => {
             super::show_nothing(ui);
-            crate::playlists_view::close(ui);
+            crate::runtime().emit(crate::runtime::RuntimeEvent::ClosePlaylists);
             if playlists()?.is_empty() {
-                crate::wizard_view::open_first_run(ui);
+                crate::runtime().emit(crate::runtime::RuntimeEvent::FirstRun);
             } else {
-                crate::playlists_view::open(ui);
+                crate::runtime().emit(crate::runtime::RuntimeEvent::OpenPlaylists);
             }
         }
     }

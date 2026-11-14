@@ -68,7 +68,7 @@ pub fn first_rows(channels: &[Channel], focus: Option<&str>) -> Vec<ChannelKey> 
 /// empty shell, and the last channel when it can start at once.
 pub async fn begin(ui: Ui, stored: &StoredSource) {
     let shell = EpgSchedule::new(Vec::new(), GuideStore::default(), super::now_unix());
-    crate::set_schedule(&ui, Rc::new(shell));
+    crate::runtime().emit(crate::runtime::RuntimeEvent::ScheduleReady(Rc::new(shell)));
     crate::player::resume::early(ui, stored).await;
 }
 

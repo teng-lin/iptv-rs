@@ -66,7 +66,9 @@ pub(super) fn remember_single(source: SourceId, schedule: Rc<EpgSchedule>) {
 pub(super) fn added(ui: Ui, source: SourceId, generation: u64, previous: Option<SingleSchedule>) {
     super::spawn_in_app(async move {
         if !crate::favorites::flush().await {
-            crate::settings_view::notify("Recent changes could not be saved; try again");
+            crate::runtime().emit(crate::runtime::RuntimeEvent::Notify(
+                "Recent changes could not be saved; try again",
+            ));
             return;
         }
         if active(ui) || super::GENERATION.with(Cell::get) != generation || !has_multiple_enabled()
@@ -103,7 +105,7 @@ pub(super) fn added(ui: Ui, source: SourceId, generation: u64, previous: Option<
             LIMITS.with(|p| p.borrow_mut().insert(kept.source, kept.limit));
         }
         reset_single();
-        crate::multiview::set_account_streams(None);
+        crate::runtime().emit(crate::runtime::RuntimeEvent::AccountStreams(None));
         let now = super::now_unix();
         EPOCH.with(|e| e.set(now - now.rem_euclid(3600)));
         rebuild(ui);
@@ -201,7 +203,9 @@ pub fn switch_all(ui: Ui) {
         if crate::favorites::flush().await {
             switch_all_ready(ui).await;
         } else {
-            crate::settings_view::notify("Recent changes could not be saved; try again");
+            crate::runtime().emit(crate::runtime::RuntimeEvent::Notify(
+                "Recent changes could not be saved; try again",
+            ));
         }
     });
 }
@@ -224,7 +228,7 @@ async fn switch_all_ready(ui: Ui) {
     ui.library.all.set(true);
     PARTS.with(|p| p.borrow_mut().clear());
     LIMITS.with(|p| p.borrow_mut().clear());
-    crate::multiview::set_account_streams(None);
+    crate::runtime().emit(crate::runtime::RuntimeEvent::AccountStreams(None));
     let now = super::now_unix();
     EPOCH.with(|e| e.set(now - now.rem_euclid(3600)));
     rebuild(ui);
@@ -359,12 +363,9 @@ async fn rebuild_ready(ui: Ui) {
         return;
     }
     install_favorites();
-    crate::set_schedule(
-        &ui,
-        Rc::new(
-            CombinedSchedule::new(sources, EPOCH.with(Cell::get)).with_collapsed_sources(collapsed),
-        ),
-    );
+    crate::runtime().emit(crate::runtime::RuntimeEvent::ScheduleReady(Rc::new(
+        CombinedSchedule::new(sources, EPOCH.with(Cell::get)).with_collapsed_sources(collapsed),
+    )));
     pages::replaced();
 }
 
@@ -424,8 +425,7 @@ pub fn resume(ui: Ui) {
             }
             RESUME.with(|r| r.set(false));
             ui.play(c, crate::Playback::Live);
-            ui.mode.set(crate::ViewMode::Fullscreen);
-            ui.show_playing();
+            crate::runtime().emit(crate::runtime::RuntimeEvent::ResumeFullscreen);
         }
     });
 }
