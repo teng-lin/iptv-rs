@@ -2,6 +2,12 @@
 # Measures the product plan's budgets on an Android device or emulator with
 # the app installed and a playlist already added (synthetic data only; the
 # large fixture: tools/make-iptv-fixtures.py --channels 10000 --days-back 7).
+# Install the `profile` build: a release build (not debuggable, so ART
+# compiles the Java a debug build interprets) that simpleperf can attach to,
+# signed with the debug key, so it installs over a debug build:
+#
+#   (cd hosts/android && ./gradlew assembleProfile)
+#   adb install -r hosts/android/app/build/outputs/apk/profile/app-profile.apk
 #
 #   tools/perf-android.sh [serial] [--cold]   (default: the only device)
 #

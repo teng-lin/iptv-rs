@@ -280,6 +280,52 @@ async fn a_server_behind_an_extra_root_certificate_plays_as_well_as_it_imports()
     );
 }
 
+/// The Android host refuses any load outside this shape (`RelayGuard.kt`):
+/// `http://127.0.0.1:<port>/<hex token>/`, then `key/` for an HLS key, then
+/// the absolute `http(s)` address the relay fetches, without dot segments.
+#[tokio::test]
+async fn relay_addresses_keep_the_shape_the_android_guard_admits() {
+    let origin = TestServer::http(|request| match request.path.as_str() {
+        "/a/list.m3u8" => Resp::ok("#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"../key.bin\"\n#EXT-X-MAP:URI=\"./init.mp4\"\n#EXTINF:2,\n../b/./segment.ts?x=1\n"),
+        _ => Resp::ok(vec![0x47, 0, 1, 2, 3, 4]),
+    })
+    .await;
+    let relay = fixture_relay(&origin.url("/a/list.m3u8"), &identity());
+    let prefix = relay.prefix();
+    let rest = prefix.strip_prefix("http://127.0.0.1:").unwrap();
+    let (port, token) = rest.trim_end_matches('/').split_once('/').unwrap();
+    assert!(port.parse::<u16>().unwrap() > 0);
+    assert!(
+        token.len() >= 32
+            && token
+                .bytes()
+                .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    );
+    let text = reqwest::get(relay.url())
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let mut urls = vec![relay.url().to_owned()];
+    for line in text.lines() {
+        if line.starts_with("http") {
+            urls.push(line.to_owned());
+        }
+        if let Some((_, rest)) = line.split_once("URI=\"") {
+            urls.push(rest.split('"').next().unwrap().to_owned());
+        }
+    }
+    assert_eq!(urls.len(), 4);
+    for url in urls {
+        let target = url.strip_prefix(prefix).unwrap();
+        let target = target.strip_prefix("key/").unwrap_or(target);
+        assert!(target.starts_with("http://"), "{target}");
+        let path = target["http://".len()..].split(['?', '#']).next().unwrap();
+        assert!(path.split('/').all(|s| s != "." && s != ".."), "{target}");
+    }
+}
+
 #[tokio::test]
 async fn relay_preserves_ranges_and_cancels_retired_streams() {
     let origin = TestServer::http(|request| {

@@ -62,7 +62,11 @@ A change to the Android host (`hosts/android`), to the video layer
 input handling on Android, or to threading and storage that Android exercises
 differently needs a run on a real device before it merges: an Android tablet,
 an Android TV box, or both when the change affects both form factors. CI
-builds and lints the Android app but does not launch it. Say in the pull
+launches the app only on emulators (`tools/ci/android-smoke.sh`, which you
+can also run against your own emulator or device), not on real hardware.
+The smoke script reinstalls the app or clears its data, so it erases the
+playlists and settings on that device: run it on a disposable emulator or
+device, or back the app up first. Say in the pull
 request which devices you ran and what you checked, using the synthetic
 playlist (`10.0.2.2` instead of `127.0.0.1` from an emulator).
 

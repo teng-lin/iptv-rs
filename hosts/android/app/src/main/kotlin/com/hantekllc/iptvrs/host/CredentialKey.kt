@@ -5,6 +5,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.AtomicFile
 import java.io.File
+import java.io.InputStream
 import java.security.KeyStore
 import java.security.SecureRandom
 import javax.crypto.Cipher
@@ -16,6 +17,9 @@ import javax.crypto.spec.GCMParameterSpec
  * key is non-exportable and owned by Android Keystore for this application's UID. */
 object CredentialKey {
     private const val ALIAS = "iptv-rs.catalog.v1"
+    /** The wrapped file: GCM IV (12 bytes), the 32-byte key, GCM tag (16). */
+    internal const val WRAPPED_SIZE = 60
+    private val SQLITE_HEADER = "SQLite format 3\u0000".toByteArray(Charsets.US_ASCII)
     @JvmStatic private external fun installDatabaseKey(key: ByteArray): Boolean
 
     @Synchronized fun initialize(context: Context): Boolean = try {
@@ -23,11 +27,7 @@ object CredentialKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         val exists = wrapped.baseFile.exists() || File(wrapped.baseFile.path + ".bak").exists()
         val catalog = File(context.filesDir, "iptv.sqlite")
-        val encryptedCatalog = catalog.exists() && catalog.length() > 0 && catalog.inputStream().use {
-            val header = ByteArray(16)
-            it.read(header) != 16 || !header.contentEquals("SQLite format 3\u0000".toByteArray(Charsets.US_ASCII))
-        }
-        if ((exists && !store.containsAlias(ALIAS)) || (!exists && encryptedCatalog)) {
+        if (refuses(exists, store.containsAlias(ALIAS), encryptedCatalog(catalog))) {
             false // Never replace a lost wrapping key or overwrite its ciphertext.
         } else {
             val wrapping = if (store.containsAlias(ALIAS)) {
@@ -42,29 +42,12 @@ object CredentialKey {
                 }.generateKey()
             }
             val key = if (exists) {
-                val payload = wrapped.openRead().use { input ->
-                    val data = ByteArray(61)
-                    var count = 0
-                    while (count < data.size) {
-                        val n = input.read(data, count, data.size - count)
-                        if (n < 0) break
-                        count += n
-                    }
-                    require(count == 60 && input.read() == -1)
-                    data.copyOf(count)
-                }
-                Cipher.getInstance("AES/GCM/NoPadding").run {
-                    init(Cipher.DECRYPT_MODE, wrapping, GCMParameterSpec(128, payload.copyOfRange(0, 12)))
-                    doFinal(payload, 12, payload.size - 12)
-                }
+                unwrap(wrapping, wrapped.openRead().use(::readWrapped))
             } else {
                 ByteArray(32).also { bytes ->
                     SecureRandom().nextBytes(bytes)
                     try {
-                        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-                        cipher.init(Cipher.ENCRYPT_MODE, wrapping)
-                        require(cipher.iv.size == 12)
-                        val payload = cipher.iv + cipher.doFinal(bytes)
+                        val payload = wrap(wrapping, bytes)
                         val output = wrapped.startWrite()
                         try {
                             output.write(payload)
@@ -88,4 +71,47 @@ object CredentialKey {
         // No exception message or credential material enters Android logs.
         false
     }
+
+    /**
+     * Whether to give up instead of making a new key: the wrapped key's file
+     * is there but the Keystore key that unwraps it is gone, or there is no
+     * wrapped key but the catalog is already encrypted (with a key now lost).
+     */
+    internal fun refuses(wrappedExists: Boolean, wrappingExists: Boolean, encryptedCatalog: Boolean) =
+        (wrappedExists && !wrappingExists) || (!wrappedExists && encryptedCatalog)
+
+    /** Whether `catalog` has content that is not plaintext SQLite (SQLCipher's, or unreadable). */
+    internal fun encryptedCatalog(catalog: File): Boolean =
+        catalog.exists() && catalog.length() > 0 && catalog.inputStream().use {
+            val header = ByteArray(16)
+            it.read(header) != 16 || !header.contentEquals(SQLITE_HEADER)
+        }
+
+    /** The wrapped key's [WRAPPED_SIZE] bytes; anything shorter or longer is refused. */
+    internal fun readWrapped(input: InputStream): ByteArray {
+        val data = ByteArray(WRAPPED_SIZE + 1)
+        var count = 0
+        while (count < data.size) {
+            val n = input.read(data, count, data.size - count)
+            if (n < 0) break
+            count += n
+        }
+        require(count == WRAPPED_SIZE && input.read() == -1)
+        return data.copyOf(count)
+    }
+
+    /** `key` encrypted with `wrapping` (AES-GCM): IV, ciphertext and tag. */
+    internal fun wrap(wrapping: SecretKey, key: ByteArray): ByteArray {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, wrapping)
+        require(cipher.iv.size == 12)
+        return cipher.iv + cipher.doFinal(key)
+    }
+
+    /** The key [wrap] wrapped; throws if `payload` was altered or another key wrapped it. */
+    internal fun unwrap(wrapping: SecretKey, payload: ByteArray): ByteArray =
+        Cipher.getInstance("AES/GCM/NoPadding").run {
+            init(Cipher.DECRYPT_MODE, wrapping, GCMParameterSpec(128, payload.copyOfRange(0, 12)))
+            doFinal(payload, 12, payload.size - 12)
+        }
 }
