@@ -66,6 +66,9 @@ fn choosing_a_channels_guide_data() {
     t.press("text:Playlist file");
     t.wait("text:Choose a file…", 5);
     t.press("text:Choose a file…");
+    // Keeping the picked file runs on the store worker. Wait until the
+    // selected file is rendered and the submit button is enabled.
+    t.wait("text:synthetic.m3u", 5);
     t.press("text:Add playlist");
     t.wait("text:Playlist added", 30);
     t.press("text:Watch");
