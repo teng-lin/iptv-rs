@@ -786,7 +786,11 @@ fn resolve(prefix: &str, base: &Url, value: &str) -> Result<String, FetchError> 
 fn rewrite_hls(body: &[u8], base: &Url, prefix: &str) -> Result<Vec<u8>, FetchError> {
     let text = std::str::from_utf8(body).map_err(|_| invalid("Invalid manifest text"))?;
     let mut out = String::new();
-    for line in text.lines() {
+    // A lone carriage return ends a line too. Some players read lines that
+    // way (Java's `readLine`, behind the Android player): a URI hidden after
+    // a CR inside a tag line would pass here as part of the tag and be
+    // fetched by the player directly, outside this relay and its checks.
+    for line in text.lines().flat_map(|line| line.split('\r')) {
         let line = line.trim();
         if !line.is_empty() && !line.starts_with('#') {
             out.push_str(&resolve(prefix, base, line)?);
@@ -865,6 +869,28 @@ mod tests {
             .is_err()
         );
     }
+    #[test]
+    fn a_lone_carriage_return_cannot_hide_a_uri_inside_a_tag_line() {
+        let base = Url::parse("http://synthetic.example.test/live/main.m3u8").unwrap();
+        let prefix = "http://127.0.0.1:1/cap/";
+        let body = "#EXTM3U\r\n#EXTINF:2,\rhttp://192.0.2.7/direct.ts\n\
+                    #EXT-X-DISCONTINUITY\r#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\rnext.ts\r\n";
+        let out = String::from_utf8(rewrite_hls(body.as_bytes(), &base, prefix).unwrap()).unwrap();
+        assert!(!out.contains('\r'), "{out:?}");
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(
+            lines,
+            [
+                "#EXTM3U",
+                "#EXTINF:2,",
+                "http://127.0.0.1:1/cap/http://192.0.2.7/direct.ts",
+                "#EXT-X-DISCONTINUITY",
+                "#EXT-X-KEY:METHOD=AES-128,URI=\"http://127.0.0.1:1/cap/key/http://synthetic.example.test/live/key.bin\"",
+                "http://127.0.0.1:1/cap/http://synthetic.example.test/live/next.ts",
+            ]
+        );
+    }
+
     #[test]
     fn cookie_flood_cannot_grow_the_store_or_replace_existing_session() {
         use reqwest::cookie::CookieStore;
