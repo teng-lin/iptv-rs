@@ -1,6 +1,6 @@
 //! The favourites editor for one list: its channels with a star each.
 //! OK toggles the focused channel, Left clears the whole list, Right sets
-//! the whole list (the reference UX's observed editor, tivimate docs/09);
+//! the whole list (how the reference UX's editor was observed to behave);
 //! changes apply immediately. Channels are catalog indices (the list's
 //! rows when it opened); the shell keeps favourites by channel key.
 

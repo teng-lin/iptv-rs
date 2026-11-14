@@ -2,8 +2,8 @@
 //! focus that skips headings and disabled actions, and the content the menu
 //! was opened on so focus returns there when it closes.
 //!
-//! [`program_menu`] follows the reference UX's observed structure
-//! (`~/src/tivimate/docs/08-menus-and-past-programmes.md`, section A):
+//! [`program_menu`] follows the structure observed in the reference UX's
+//! programme menu:
 //! global actions, then the programme's, the channel's and the group's
 //! sections. Programme actions that cannot apply are **omitted** (not shown
 //! disabled); which actions are enabled is the app's call (what it has
