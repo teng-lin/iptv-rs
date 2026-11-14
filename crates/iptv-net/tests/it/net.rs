@@ -157,6 +157,64 @@ async fn redirects_relative_cross_origin_and_cross_protocol() {
 }
 
 #[tokio::test]
+async fn cross_origin_redirects_keep_only_transport_headers_and_the_referer_origin() {
+    let target = TestServer::http(|_| Resp::ok("landed")).await;
+    let to = target.url("/final");
+    let origin = TestServer::http(move |req| match req.path.as_str() {
+        "/start" => Resp::redirect(302, "/same"),
+        _ => Resp::redirect(307, &to),
+    })
+    .await;
+    let net = NetClient::new(NetConfig {
+        allow_private_fixture: true,
+        ..Default::default()
+    })
+    .unwrap();
+    // A playlist's own credential header, and a Referer whose path and query
+    // hold a token (a portal page, an embedding site).
+    let referer = origin.url("/portal/c/index.html?token=synthetic-secret");
+    let sent = [
+        ("User-Agent", "SyntheticPlayer/1.0"),
+        ("Accept-Language", "en"),
+        ("X-Api-Key", "synthetic-secret"),
+        ("X-Auth-Token", "synthetic-secret"),
+        ("Referer", referer.as_str()),
+        ("Origin", "https://app.example.test"),
+    ];
+    let mut request = HttpRequest::get(origin.url("/start"));
+    for (name, value) in sent {
+        request = request.with_header(name, value);
+    }
+    assert_eq!(net.fetch(request).await.unwrap().body, b"landed");
+
+    // Same origin, including a same-origin redirect: exactly as given.
+    let first_party = origin.requests();
+    assert_eq!(first_party.len(), 2);
+    for request in &first_party {
+        for (name, value) in sent {
+            assert_eq!(request.header(name), Some(value), "{name} {}", request.path);
+        }
+    }
+    let landed = &target.requests()[0];
+    for name in ["x-api-key", "x-auth-token"] {
+        assert_eq!(
+            landed.header(name),
+            None,
+            "{name} must not reach another origin"
+        );
+    }
+    assert_eq!(landed.header("user-agent"), Some("SyntheticPlayer/1.0"));
+    assert_eq!(landed.header("accept-language"), Some("en"));
+    assert_eq!(landed.header("origin"), Some("https://app.example.test"));
+    // Path and query stay behind; the host a CDN may check is still named.
+    let referer_origin = origin.url("/");
+    assert_eq!(landed.header("referer"), Some(referer_origin.as_str()));
+    for (name, value) in &landed.headers {
+        assert!(!value.contains("synthetic-secret"), "{name}");
+    }
+}
+
+#[tokio::test]
 async fn tls_uses_webpki_roots_plus_extra_roots() {
     let (acceptor, der) = self_signed();
     let server = TestServer::https(|_| Resp::ok("secure"), acceptor).await;

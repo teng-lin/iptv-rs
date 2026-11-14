@@ -75,6 +75,178 @@ async fn hls_redirect_segments_keys_and_maps_scope_headers_by_exact_origin() {
     }
 }
 
+/// What a playlist or a portal attaches to a stream besides identity: a
+/// credential header under a name of its own, and a `Referer` whose path
+/// and query hold a session token.
+const SCOPED_SECRET: &str = "synthetic-secret";
+const SCOPED_REFERER: &str = "https://portal.example.test/watch/42?token=synthetic-secret";
+
+fn scoped() -> Vec<(String, String)> {
+    [
+        ("User-Agent", "SyntheticPlayer/1.0"),
+        ("Accept-Language", "en"),
+        ("X-Api-Key", SCOPED_SECRET),
+        ("X-Auth-Token", SCOPED_SECRET),
+        ("Authorization", "Bearer synthetic-secret"),
+        ("Referer", SCOPED_REFERER),
+        ("Origin", "https://portal.example.test"),
+    ]
+    .into_iter()
+    .map(|(name, value)| (name.to_owned(), value.to_owned()))
+    .collect()
+}
+
+/// The stream's own origin gets every header as configured.
+fn assert_first_party(request: &super::support::synth::SimRequest) {
+    for (name, value) in scoped() {
+        assert_eq!(
+            request.header(&name),
+            Some(value.as_str()),
+            "{name} {}",
+            request.path
+        );
+    }
+}
+
+/// Another origin gets transport headers, `Origin` and the Referer's origin.
+fn assert_third_party(request: &super::support::synth::SimRequest) {
+    let path = &request.path;
+    for name in ["x-api-key", "x-auth-token", "authorization", "cookie"] {
+        assert_eq!(request.header(name), None, "{name} {path}");
+    }
+    assert_eq!(
+        request.header("referer"),
+        Some("https://portal.example.test/"),
+        "{path}"
+    );
+    assert_eq!(
+        request.header("origin"),
+        Some("https://portal.example.test"),
+        "{path}"
+    );
+    assert_eq!(
+        request.header("user-agent"),
+        Some("SyntheticPlayer/1.0"),
+        "{path}"
+    );
+    assert_eq!(request.header("accept-language"), Some("en"), "{path}");
+    for (name, value) in &request.headers {
+        assert!(!value.contains(SCOPED_SECRET), "{name} {path}");
+    }
+}
+
+/// Every relay URL a rewritten manifest names (lines and quoted attributes).
+fn relay_urls(relay: &PlaybackRelay, manifest: &str) -> Vec<String> {
+    manifest
+        .split(['"', '\n', '<', '>'])
+        .map(str::trim)
+        .filter(|part| relay.owns_url(part))
+        .map(str::to_owned)
+        .collect()
+}
+
+#[tokio::test]
+async fn hls_segments_keys_and_redirects_on_another_origin_get_no_scoped_headers() {
+    let second = TestServer::http(|_| Resp::ok(vec![0x47, 0, 1, 2, 3, 4])).await;
+    let (key, segment, redirected) = (
+        second.url("/keys/key.bin"),
+        second.url("/media/other.ts"),
+        second.url("/media/redirected.ts"),
+    );
+    let origin = TestServer::http(move |request| match request.path.as_str() {
+        "/live/list.m3u8" => Resp::ok(format!(
+            "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"{key}\"\n#EXTINF:2,\nsame.ts\n#EXTINF:2,\n{segment}\n#EXTINF:2,\nredirect.ts\n"
+        )),
+        "/live/redirect.ts" => Resp::redirect(302, &redirected),
+        _ => Resp::ok(vec![0x47, 0, 1, 2, 3, 4]),
+    })
+    .await;
+    let relay = fixture_relay(&origin.url("/live/list.m3u8"), &scoped());
+    let manifest = reqwest::get(relay.url())
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let urls = relay_urls(&relay, &manifest);
+    assert_eq!(urls.len(), 4, "{manifest}");
+    for url in urls {
+        assert!(reqwest::get(url).await.unwrap().status().is_success());
+    }
+    let first_party = origin.requests();
+    assert_eq!(
+        first_party
+            .iter()
+            .map(|r| r.path.as_str())
+            .collect::<Vec<_>>(),
+        ["/live/list.m3u8", "/live/same.ts", "/live/redirect.ts"]
+    );
+    first_party.iter().for_each(assert_first_party);
+    let mut third_party = second.requests();
+    third_party.sort_by(|a, b| a.path.cmp(&b.path));
+    assert_eq!(
+        third_party
+            .iter()
+            .map(|r| r.path.as_str())
+            .collect::<Vec<_>>(),
+        ["/keys/key.bin", "/media/other.ts", "/media/redirected.ts"]
+    );
+    third_party.iter().for_each(assert_third_party);
+}
+
+#[tokio::test]
+async fn dash_resources_on_another_origin_get_no_scoped_headers() {
+    let second = TestServer::http(|_| Resp::ok(vec![0, 0, 0, 1])).await;
+    let (base, absolute) = (second.url("/cdn/"), second.url("/media/two.m4s"));
+    let origin = TestServer::http(move |request| match request.path.as_str() {
+        "/vod/main.mpd" => Resp::ok(format!(
+            "<MPD><Period><AdaptationSet><Representation><SegmentList>\
+             <Initialization sourceURL=\"init.mp4\"/><SegmentURL media=\"{absolute}\"/>\
+             </SegmentList></Representation><Representation><BaseURL>{base}</BaseURL>\
+             <SegmentList><SegmentURL media=\"three.m4s\"/></SegmentList></Representation>\
+             </AdaptationSet></Period></MPD>"
+        )),
+        _ => Resp::ok(vec![0, 0, 0, 1]),
+    })
+    .await;
+    let relay = fixture_relay(&origin.url("/vod/main.mpd"), &scoped());
+    let manifest = reqwest::get(relay.url())
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(manifest.starts_with("<MPD>"), "{manifest}");
+    // The BaseURL itself is a directory, not a resource a player requests.
+    let urls: Vec<String> = relay_urls(&relay, &manifest)
+        .into_iter()
+        .filter(|url| !url.ends_with("/cdn/"))
+        .collect();
+    assert_eq!(urls.len(), 3, "{manifest}");
+    for url in urls {
+        assert!(reqwest::get(url).await.unwrap().status().is_success());
+    }
+    let first_party = origin.requests();
+    assert_eq!(
+        first_party
+            .iter()
+            .map(|r| r.path.as_str())
+            .collect::<Vec<_>>(),
+        ["/vod/main.mpd", "/vod/init.mp4"]
+    );
+    first_party.iter().for_each(assert_first_party);
+    let mut third_party = second.requests();
+    third_party.sort_by(|a, b| a.path.cmp(&b.path));
+    assert_eq!(
+        third_party
+            .iter()
+            .map(|r| r.path.as_str())
+            .collect::<Vec<_>>(),
+        ["/cdn/three.m4s", "/media/two.m4s"]
+    );
+    third_party.iter().for_each(assert_third_party);
+}
+
 #[tokio::test]
 async fn relay_preserves_ranges_and_cancels_retired_streams() {
     let origin = TestServer::http(|request| {

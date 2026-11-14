@@ -1,7 +1,9 @@
 //! A per-player loopback transport. Every upstream fetch, including redirects
-//! and HLS/DASH subresources, scopes identity to the original stream's origin.
-//! Players receive no identity headers. Media bodies stream; only manifests
-//! are buffered (at most 2 MiB). Dropping the owner cancels every open fetch.
+//! and HLS/DASH subresources, scopes the stream's headers to the original
+//! stream's origin: another origin gets only what [`crate::cross_origin`]
+//! allows. Players receive no identity headers. Media bodies stream; only
+//! manifests are buffered (at most 2 MiB). Dropping the owner cancels every
+//! open fetch.
 
 use std::{
     io,
@@ -21,20 +23,13 @@ use tokio::{
 };
 
 use crate::{
-    FetchError, FetchErrorKind,
+    FetchError, FetchErrorKind, cross_origin,
     redirect::{self, Prepared},
 };
 
 const MAX_MANIFEST: usize = 2 * 1024 * 1024;
 const MAX_REQUEST: usize = 16 * 1024;
 const MAX_CONNECTIONS: usize = 12;
-const IDENTITY: &[&str] = &[
-    "authorization",
-    "cookie",
-    "proxy-authorization",
-    "sn",
-    "x-user-agent",
-];
 
 /// Provenance of the original playable URL. A trusted URL authorizes only its
 /// exact origin; derived or redirected resources still require public hosts.
@@ -415,9 +410,7 @@ async fn serve(mut socket: TcpStream, session: &Session) -> io::Result<()> {
         .map_err(|_| io::Error::other("Transport unavailable"))?
         .clone();
     if target.origin() != session.root.origin() {
-        for name in IDENTITY {
-            headers.remove(*name);
-        }
+        cross_origin::restrict(&mut headers, &session.root, &target);
     }
     // Only range negotiation comes from the local player; no client can inject
     // replacement identity, Host, proxy or hop-by-hop headers.

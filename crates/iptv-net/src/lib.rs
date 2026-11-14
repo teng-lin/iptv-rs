@@ -13,13 +13,16 @@
 //! - **HTTP:** HTTP/1.1; `gzip`/`deflate` `Content-Encoding` decoded
 //!   transparently (a `.gz` *file* is passed through for the parsers to
 //!   detect); up to [`NetConfig::max_redirects`] redirects, including
-//!   HTTP to HTTPS; HTTPS to HTTP is refused. A redirect to another origin drops `Cookie`,
-//!   `Authorization` and `SN`, and no `Referer` is ever added (it would
-//!   carry Xtream credentials from the query), so portal identity never
-//!   leaks to a CDN.
-//! - **Headers:** sent exactly as the request carries them (User-Agent,
-//!   Cookie, Referer…). [`NetConfig::user_agent`] applies only when the
-//!   request has none. No cookie store: `Set-Cookie` is ignored.
+//!   HTTP to HTTPS; HTTPS to HTTP is refused. A redirect to another origin
+//!   keeps only content negotiation, range, `User-Agent` and `Origin`
+//!   headers and the origin of a `Referer` (`cross_origin`); no `Referer`
+//!   is ever added (it would carry Xtream credentials from the query). So
+//!   neither portal identity nor a playlist's own credential header leaks
+//!   to a CDN.
+//! - **Headers:** sent to the request's origin exactly as the request
+//!   carries them (User-Agent, Cookie, Referer…). [`NetConfig::user_agent`]
+//!   applies only when the request has none. No cookie store: `Set-Cookie`
+//!   is ignored.
 //! - **Timeouts:** connect, idle, and total import/response deadlines; streamed
 //!   and buffered bodies both enforce byte budgets.
 //! - **Local files:** `file://` URLs and absolute paths are read with tokio
@@ -32,6 +35,7 @@
 
 mod body;
 mod client;
+mod cross_origin;
 mod error;
 mod file;
 pub mod playback;
