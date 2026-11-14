@@ -34,4 +34,5 @@ python3 tools/ci/test-ios-entitlements.py
 python3 tools/ci/test-unpack-signing-input.py
 python3 tools/ci/test-nsh-tool-key.py
 python3 tools/ci/test-pins.py
+python3 tools/ci/test-android-changes.py
 echo "all checks passed"

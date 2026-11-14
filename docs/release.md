@@ -1,15 +1,27 @@
 # Releases and CI
 
 PRs and pushes to master run tools/check.sh on Linux and macOS, including
-the headless app scenarios and portable crates' wasm builds. The separate
-Android packaging job runs on PRs only when Android host files, Cargo
-manifests/lockfile, app build or package metadata/assets, packaging tooling, or
-its workflow/setup actions change (see `.github/workflows/android.yml`). It also
-runs on every master push and can be started manually. A lightweight change
-check runs on every PR so the required `android` check can report skipped for
-ordinary Rust source and documentation changes. Change-detection failures fail
-the required check. Desktop packaging is path-filtered at the workflow level
-and must not be required, since skipped workflows can remain pending.
+the headless app scenarios and portable crates' wasm builds.
+
+The Android workflow (`.github/workflows/android.yml`) has two jobs behind one
+lightweight change check, `tools/ci/android-changes.py`:
+
+- `android` builds the arm64 native library and the Gradle host. On PRs it runs
+  only when Android host files, Cargo manifests/lockfile, app build or package
+  metadata/assets, packaging tooling, the NSH or Rust pin, or its workflow/setup
+  actions change.
+- `android-check` runs `tools/ci/check-android.sh`, a `cargo check` of the app
+  library for `aarch64-linux-android`. On PRs it runs when Rust sources or
+  manifests change and `android` does not already build them. The host checks
+  never compile `cfg(target_os = "android")` code, so this is the check that
+  stops a Rust-only change from breaking the Android build.
+
+Both jobs run on every master push (which also keeps their build caches warm
+for PRs) and can be started manually. The change check runs on every PR, so
+both jobs always report: skipped when not needed, failed when change detection
+itself fails. Either can therefore be a required check. Desktop packaging is
+path-filtered at the workflow level and must not be required, since skipped
+workflows can remain pending.
 
 Desktop Package checks likewise run only for package/build inputs on PRs and
 support manual dispatch. Signed release packaging still runs on tags or manual

@@ -11,17 +11,8 @@ app="$root/crates/iptv-app"
 nsh=${NSH:-$root/../nsh/target/release/nsh}
 out="$root/hosts/android/app/build/nsh"
 export JAVA_HOME=${JAVA_HOME:-/usr/lib/jvm/default}
-export ANDROID_HOME=${ANDROID_HOME:-$HOME/Android/Sdk}
-export ANDROID_NDK_HOME=${ANDROID_NDK_HOME:-$ANDROID_HOME/ndk/30.0.16248370}
-# C dependencies (TLS and SQLCipher) need the NDK compiler and archive tools.
-# Vendored OpenSSL uses ranlib separately; modern NDKs ship only llvm-ranlib.
-toolchain="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
-export CC_x86_64_linux_android=${CC_x86_64_linux_android:-$toolchain/x86_64-linux-android26-clang}
-export AR_x86_64_linux_android=${AR_x86_64_linux_android:-$toolchain/llvm-ar}
-export RANLIB_x86_64_linux_android=${RANLIB_x86_64_linux_android:-$toolchain/llvm-ranlib}
-export CC_aarch64_linux_android=${CC_aarch64_linux_android:-$toolchain/aarch64-linux-android26-clang}
-export AR_aarch64_linux_android=${AR_aarch64_linux_android:-$toolchain/llvm-ar}
-export RANLIB_aarch64_linux_android=${RANLIB_aarch64_linux_android:-$toolchain/llvm-ranlib}
+# The Android SDK and NDK locations, and the NDK compiler for C dependencies.
+source "$root/tools/ci/android-ndk-env.sh"
 # Development builds link fast; `--release` builds the smallest library
 # (arm64 only: 44 MB -> 17 MB stripped with these and nsh.json "features").
 abis=${ABIS:-x86_64,arm64-v8a}
