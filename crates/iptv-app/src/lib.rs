@@ -474,9 +474,9 @@ pub fn App() -> impl IntoElement {
             let result = match backup::startup() {
                 Ok(()) => Ok(()),
                 Err(error) => {
-                    log::warn!("iptv backup: {}", error.message);
+                    log::warn!("iptv backup: {}", error.error);
                     if error.fatal {
-                        Err(error.message)
+                        Err(error.error.message())
                     } else {
                         Ok(())
                     }

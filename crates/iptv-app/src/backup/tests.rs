@@ -318,7 +318,7 @@ fn structured_entry_budgets_preserve_current_and_pending_data() {
         bytes.extend((manifest.len() as u64).to_le_bytes());
         bytes.extend(manifest);
         assert_eq!(
-            stage(&root, &mut bytes.as_slice()),
+            stage(&root, &mut bytes.as_slice()).map_err(|error| error.message()),
             Err("Backup structured entry is too large")
         );
         assert_eq!(fs::read(pending.join("iptv.sqlite")).unwrap(), before);
@@ -329,7 +329,10 @@ fn structured_entry_budgets_preserve_current_and_pending_data() {
         .unwrap()
         .set_len((1 << 20) + 1)
         .unwrap();
-    assert_eq!(activate(&root), Err("Backup structured entry is too large"));
+    assert_eq!(
+        activate(&root).map_err(|error| error.message()),
+        Err("Backup structured entry is too large")
+    );
     assert_eq!(
         Store::open(root.join("iptv.sqlite"))
             .unwrap()
@@ -398,4 +401,40 @@ fn backup_collection_skips_interrupted_atomic_document_writes() {
     let mut names = Vec::new();
     collect(directory.path(), &documents, &mut names).unwrap();
     assert_eq!(names, ["playlists/valid.m3u"]);
+}
+
+#[test]
+fn a_failed_operation_keeps_its_cause_for_the_log_without_paths() {
+    use super::error::Cause;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("current");
+    seed(&root, "Synthetic retained");
+
+    let truncated = stage(&root, &mut &MAGIC[..5]).unwrap_err();
+    assert_eq!(truncated.message(), "This is not a complete Patina backup");
+    assert_eq!(
+        truncated.cause(),
+        Cause::Io(std::io::ErrorKind::UnexpectedEof)
+    );
+
+    let nowhere = dir.path().join("missing").join("saved.patinabackup");
+    let unsaved = export(&root, &nowhere, &Settings::new().to_json_string()).unwrap_err();
+    assert_eq!(unsaved.message(), "Could not open backup destination");
+    assert_eq!(unsaved.cause(), Cause::Io(std::io::ErrorKind::NotFound));
+    let line = unsaved.to_string();
+    assert_eq!(line, "Could not open backup destination (I/O: NotFound)");
+    assert!(!line.contains(dir.path().to_str().unwrap()));
+
+    // A rule of the backup has no cause underneath.
+    let inside = export(
+        &root,
+        &root.join("saved.patinabackup"),
+        &Settings::new().to_json_string(),
+    )
+    .unwrap_err();
+    assert_eq!(inside.cause(), Cause::Rule);
+    assert_eq!(
+        inside.to_string(),
+        "Choose a backup destination outside application storage"
+    );
 }

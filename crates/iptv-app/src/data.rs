@@ -839,8 +839,8 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
             state.as_ref(),
             now,
         ) {
-            Decision::Refresh(_) => {
-                if let Ok(net) = NetClient::new(crate::settings::net_config()) {
+            Decision::Refresh(_) => match NetClient::new(crate::settings::net_config()) {
+                Ok(net) => {
                     match download_guide(
                         &net,
                         &guides,
@@ -868,7 +868,15 @@ async fn pipeline(job: Job, tx: &Sender<Msg>, cancel: &CancelToken) {
                         Err(e) => stored::record_failure(id, &e, &guides),
                     }
                 }
-            }
+                // Without a client no guide source was tried. Noted as the
+                // failed download it amounts to, so the guide's state shows
+                // it and the refresh policy backs off instead of finding
+                // the guide due again at every check.
+                Err(e) => {
+                    log::warn!("iptv data: network client setup failed: {e}");
+                    stored::record_client_failure(id, &guides);
+                }
+            },
             Decision::Discard => {
                 stored::discard(id);
                 let _ = tx.send(Msg::Guide(Box::new(Imported {
