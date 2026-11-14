@@ -37,6 +37,8 @@ elif action == "create":
     if state["release"] != "absent" or "--draft" not in arguments or "--verify-tag" not in arguments:
         sys.exit("a release for this tag already exists")
     state["release"] = "draft"
+    if "--notes-file" in arguments:
+        state["notes"] = Path(arguments[arguments.index("--notes-file") + 1]).read_text()
 elif action == "upload":
     if state["release"] == "absent":
         sys.exit("release not found")
@@ -101,6 +103,16 @@ class Publishing(unittest.TestCase):
         state = self.state()
         self.assertEqual((state["release"], state["published"]), ("public", 1))
         self.assertEqual(state["uploaded"], ["Patina-9.8.7-synthetic-sources.tar", "Patina-9.8.7-synthetic.apk", "SHA256SUMS"])
+
+    def test_preview_notes_are_given_to_the_new_draft(self):
+        self.checksums()
+        self.release("absent")
+        notes = self.home / "notes.md"
+        notes.write_text("## Preview builds: Windows installer\n")
+        result = subprocess.run([sys.executable, str(SCRIPT), "publish", str(self.dist), TAG, str(notes)],
+                                env=self.environment, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.state()["notes"], "## Preview builds: Windows installer\n")
 
     def test_interrupted_draft_is_completed_without_creating_again(self):
         self.checksums()
@@ -192,6 +204,47 @@ class Publishing(unittest.TestCase):
         result = self.run_script("checksums")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("no files to release", result.stderr)
+
+
+class SigningNotes(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.records = self.root / "signing-status"
+
+    def script(self, *arguments, env=None):
+        return subprocess.run([sys.executable, str(SCRIPT), *arguments], capture_output=True, text=True, env=env)
+
+    def notes(self, **states):
+        for platform, state in states.items():
+            self.assertEqual(self.script("signing", platform, state, str(self.records)).returncode, 0)
+        output = self.root / "notes.md"
+        result = self.script("notes", str(self.records), str(output))
+        return result, output.read_text() if output.exists() else None
+
+    def test_unsigned_packages_are_called_previews(self):
+        result, text = self.notes(macos="unsigned", windows="unsigned")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("## Preview builds: macOS disk image and Windows installer", text)
+        self.assertIn("not signed with a Developer ID certificate and notarized", text)
+        self.assertIn("not Authenticode-signed", text)
+
+    def test_only_the_unsigned_platform_is_named(self):
+        _, text = self.notes(macos="signed", windows="unsigned")
+        self.assertIn("Windows installer", text)
+        self.assertNotIn("macOS", text)
+
+    def test_signed_everywhere_adds_nothing(self):
+        result, text = self.notes(macos="signed", windows="signed")
+        self.assertEqual((result.returncode, text), (0, ""))
+
+    def test_a_missing_or_unknown_record_fails(self):
+        result, _ = self.notes(macos="signed")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no signing record for windows", result.stderr)
+        self.assertNotEqual(self.script("signing", "linux", "signed", str(self.records)).returncode, 0)
+        self.assertNotEqual(self.script("signing", "macos", "maybe", str(self.records)).returncode, 0)
 
 
 if __name__ == "__main__":
