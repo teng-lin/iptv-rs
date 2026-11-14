@@ -252,7 +252,10 @@ impl Generated {
                     let t = self.shape.from + h * HOUR;
                     let _ = writeln!(
                         s,
-                        "<programme start=\"{}\" stop=\"{}\" channel=\"gen{n}.example\"><title>Show {n}-{h}</title><desc>Invented episode {h} of show {n}, with a description of ordinary length.</desc></programme>",
+                        "<programme start=\"{}\" stop=\"{}\" channel=\"gen{n}.example\">\
+                         <title>Show {n}-{h}</title>\
+                         <desc>Invented episode {h} of show {n}, with a description of ordinary \
+                         length.</desc></programme>",
                         format_xmltv_time(t),
                         format_xmltv_time(t + HOUR)
                     );

@@ -61,7 +61,10 @@ fn guide(now: i64) -> String {
         for k in 0..36 {
             let (a, b) = (start + shift + k * 1800, start + shift + (k + 1) * 1800);
             xml.push_str(&format!(
-                "<programme channel=\"c{n}\" start=\"{}\" stop=\"{}\"><title>Programme {n}-{k}</title><desc>A synthetic description of programme {n}-{k}, long enough to take two lines of the header.</desc></programme>",
+                "<programme channel=\"c{n}\" start=\"{}\" stop=\"{}\">\
+                 <title>Programme {n}-{k}</title>\
+                 <desc>A synthetic description of programme {n}-{k}, long enough to take two \
+                 lines of the header.</desc></programme>",
                 format_xmltv_time(a),
                 format_xmltv_time(b)
             ));

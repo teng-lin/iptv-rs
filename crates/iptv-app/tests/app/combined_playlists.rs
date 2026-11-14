@@ -56,10 +56,18 @@ fn seed(store: &mut Store, home: &Path, name: &str) -> SourceId {
         .unwrap()
         .as_secs() as i64;
     let guide = home.join(format!("{name}.xml"));
-    std::fs::write(&guide, format!(
-        "<tv><channel id=\"shared\"><display-name>Shared</display-name></channel><programme channel=\"shared\" start=\"{}\" stop=\"{}\"><title>{name} bulletin</title><desc>{name} synthetic programme details.</desc></programme></tv>",
-        iptv_epg::format_xmltv_time(now - 1800), iptv_epg::format_xmltv_time(now + 1800)
-    )).unwrap();
+    std::fs::write(
+        &guide,
+        format!(
+            "<tv><channel id=\"shared\"><display-name>Shared</display-name></channel>\
+             <programme channel=\"shared\" start=\"{}\" stop=\"{}\">\
+             <title>{name} bulletin</title>\
+             <desc>{name} synthetic programme details.</desc></programme></tv>",
+            iptv_epg::format_xmltv_time(now - 1800),
+            iptv_epg::format_xmltv_time(now + 1800)
+        ),
+    )
+    .unwrap();
     store
         .set_guide_sources(
             source,
@@ -647,7 +655,10 @@ fn delayed_account(hold_first_account: bool) -> DelayedAccount {
                     (
                         "200 OK",
                         format!(
-                            "<tv><channel id=\"beta1\"><display-name>Imported Beta One</display-name></channel><programme channel=\"beta1\" start=\"{}\" stop=\"{}\"><title>Delayed Beta guide {count}</title></programme></tv>",
+                            "<tv><channel id=\"beta1\">\
+                             <display-name>Imported Beta One</display-name></channel>\
+                             <programme channel=\"beta1\" start=\"{}\" stop=\"{}\">\
+                             <title>Delayed Beta guide {count}</title></programme></tv>",
                             iptv_epg::format_xmltv_time(now - 3600),
                             iptv_epg::format_xmltv_time(now + 24 * 3600),
                         ),
@@ -959,7 +970,10 @@ fn exercise_previous_guide_handoff(home: &super::isolated::Home, action: Previou
                         .unwrap()
                         .as_secs() as i64;
                     format!(
-                        "<tv><channel id=\"previous\"><display-name>Previous channel</display-name></channel><programme channel=\"previous\" start=\"{}\" stop=\"{}\"><title>{title}</title></programme></tv>",
+                        "<tv><channel id=\"previous\">\
+                         <display-name>Previous channel</display-name></channel>\
+                         <programme channel=\"previous\" start=\"{}\" stop=\"{}\">\
+                         <title>{title}</title></programme></tv>",
                         iptv_epg::format_xmltv_time(now - 3600),
                         iptv_epg::format_xmltv_time(now + 24 * 3600)
                     )

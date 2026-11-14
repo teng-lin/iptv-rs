@@ -594,6 +594,78 @@ fn entry_sheet(ui: Ui) -> impl IntoElement {
         },
     )
 }
+/// Under the screen's title: what copying and moving do.
+const CAPTION: &str = "Copy adds membership. Move transfers between custom groups. \
+                       Channels and provider groups are retained.";
+
+/// The line over the lists: the selection on a members page, the question
+/// on the delete page, else how many groups there are.
+fn summary(s: &Open) -> String {
+    match s.page {
+        Page::Members | Page::Destination(_) => format!(
+            "{} selected · {} matching · {} total",
+            s.members.selected.len(),
+            s.members.visible_len(),
+            s.members.rows.len()
+        ),
+        Page::Delete(_) => "Delete this group? Channels are kept.".into(),
+        _ => format!("{} custom groups", s.groups.len()),
+    }
+}
+
+/// Whether the page shows a group's members under its controls.
+fn on_members_page(ui: Ui) -> bool {
+    read(ui, |s| s.page == Page::Members).unwrap_or(false)
+}
+
+/// Row `at` of the page's controls (its actions and the groups).
+fn control_row(ui: Ui, size: Scale, at: Position) -> impl IntoElement {
+    let label = move || {
+        read(ui, |s| {
+            labels(s).get(at.index()).cloned().unwrap_or_default()
+        })
+        .unwrap_or_default()
+    };
+    let focused = move || read(ui, |s| s.control == Some(at.index())).unwrap_or(false);
+    ui_kit::action(ui, size, label, focused, 0xFFFFFF, move || {
+        act(ui, at.index())
+    })
+    .test_id(&format!("custom-control-{}", at.index()))
+}
+
+/// Row `at` of the members shown: its name, checked while selected. A
+/// press focuses the member and toggles its selection.
+fn member_row(ui: Ui, size: Scale, at: Position) -> impl IntoElement {
+    let item = move || read(ui, |s| s.members.visible_at(at.index()).cloned()).flatten();
+    let label = move || {
+        item()
+            .map(|r| {
+                let selected = read(ui, |s| s.members.selected.contains(&r.id)).unwrap_or(false);
+                format!("{}{}", if selected { "✓ " } else { "" }, r.name)
+            })
+            .unwrap_or_default()
+    };
+    let focused = move || {
+        item().is_some_and(|r| {
+            read(ui, |s| {
+                s.control.is_none() && s.members.focus.as_ref() == Some(&r.id)
+            })
+            .unwrap_or(false)
+        })
+    };
+    let toggle = move || {
+        if let Some(row) = item() {
+            update(ui, |s| {
+                s.control = None;
+                s.members.focus = Some(row.id.clone());
+                s.members.toggle(&row.id);
+            });
+        }
+    };
+    ui_kit::action(ui, size, label, focused, 0xFFFFFF, toggle)
+        .test_id(&format!("custom-member-{}", at.index()))
+}
+
 pub fn layer(ui: Ui) -> impl IntoElement {
     effect(move || {
         ui.library.version.get();
@@ -622,21 +694,41 @@ pub fn layer(ui: Ui) -> impl IntoElement {
                     }
                 }
             });
-            ui_kit::screen(ui,size).test_id("custom-groups-screen")
-        .child(ui_kit::header(ui,size,"Custom groups",close))
-        .child(ui_kit::caption(size,"Copy adds membership. Move transfers between custom groups. Channels and provider groups are retained."))
-        .child(ui_kit::body(size,move||read(ui,|s|s.status.clone()).unwrap_or_default()))
-        .child(ui_kit::heading(size,move||read(ui,|s|match s.page{Page::Members|Page::Destination(_)=>format!("{} selected · {} matching · {} total",s.members.selected.len(),s.members.visible_len(),s.members.rows.len()),Page::Delete(_)=>"Delete this group? Channels are kept.".into(),_=>format!("{} custom groups",s.groups.len())}).unwrap_or_default()))
-        .child(virtual_list(move||read(ui,|s|labels(s).len()).unwrap_or(0),move|at|{
-            ui_kit::action(ui,size,move||read(ui,|s|labels(s).get(at.index()).cloned().unwrap_or_default()).unwrap_or_default(),move||read(ui,|s|s.control==Some(at.index())).unwrap_or(false),0xFFFFFF,move||act(ui,at.index())).test_id(&format!("custom-control-{}",at.index()))
-        }).element_ref(&controls).estimated_item_size(crate::list_rows::pitch(size,crate::list_rows::ROW)).h(move||size.px(if read(ui,|s|s.page==Page::Members).unwrap_or(false){260.0}else{480.0})))
-        .child(when(move||read(ui,|s|s.page==Page::Members).unwrap_or(false),move||{
-            virtual_list(move||read(ui,|s|s.members.visible_len()).unwrap_or(0),move|at|{
-                let item=move||read(ui,|s|s.members.visible_at(at.index()).cloned()).flatten();
-                ui_kit::action(ui,size,move||item().map(|r|format!("{}{}",if read(ui,|s|s.members.selected.contains(&r.id)).unwrap_or(false){"✓ "}else{""},r.name)).unwrap_or_default(),move||item().is_some_and(|r|read(ui,|s|s.control.is_none()&&s.members.focus.as_ref()==Some(&r.id)).unwrap_or(false)),0xFFFFFF,move||{if let Some(row)=item(){update(ui,|s|{s.control=None;s.members.focus=Some(row.id.clone());s.members.toggle(&row.id);});}}).test_id(&format!("custom-member-{}",at.index()))
-            }).element_ref(&members).estimated_item_size(crate::list_rows::pitch(size,crate::list_rows::ROW)).flex_1()
-        }))
-        .child(when(move||read(ui,|s|s.editing.is_some()).unwrap_or(false),move||entry_sheet(ui)))
+            ui_kit::screen(ui, size)
+                .test_id("custom-groups-screen")
+                .child(ui_kit::header(ui, size, "Custom groups", close))
+                .child(ui_kit::caption(size, CAPTION))
+                .child(ui_kit::body(size, move || {
+                    read(ui, |s| s.status.clone()).unwrap_or_default()
+                }))
+                .child(ui_kit::heading(size, move || {
+                    read(ui, summary).unwrap_or_default()
+                }))
+                .child(
+                    virtual_list(
+                        move || read(ui, |s| labels(s).len()).unwrap_or(0),
+                        move |at| control_row(ui, size, at),
+                    )
+                    .element_ref(&controls)
+                    .estimated_item_size(crate::list_rows::pitch(size, crate::list_rows::ROW))
+                    .h(move || size.px(if on_members_page(ui) { 260.0 } else { 480.0 })),
+                )
+                .child(when(
+                    move || on_members_page(ui),
+                    move || {
+                        virtual_list(
+                            move || read(ui, |s| s.members.visible_len()).unwrap_or(0),
+                            move |at| member_row(ui, size, at),
+                        )
+                        .element_ref(&members)
+                        .estimated_item_size(crate::list_rows::pitch(size, crate::list_rows::ROW))
+                        .flex_1()
+                    },
+                ))
+                .child(when(
+                    move || read(ui, |s| s.editing.is_some()).unwrap_or(false),
+                    move || entry_sheet(ui),
+                ))
         },
     )
 }

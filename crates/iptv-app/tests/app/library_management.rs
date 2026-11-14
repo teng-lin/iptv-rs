@@ -9,7 +9,13 @@ use nsh_engine::EngineConfig;
 use nsh_testing::Headless;
 use std::time::Duration;
 
-const PLAYLIST: &str = "#EXTM3U\n#EXTINF:-1 group-title=\"News\",Local A\nhttp://stream.example.test/a\n#EXTINF:-1 group-title=\"News\",Local B\nhttp://stream.example.test/b\n#EXTINF:-1 group-title=\"Sport\",Local C\nhttp://stream.example.test/c\n";
+const PLAYLIST: &str = "#EXTM3U\n\
+                        #EXTINF:-1 group-title=\"News\",Local A\n\
+                        http://stream.example.test/a\n\
+                        #EXTINF:-1 group-title=\"News\",Local B\n\
+                        http://stream.example.test/b\n\
+                        #EXTINF:-1 group-title=\"Sport\",Local C\n\
+                        http://stream.example.test/c\n";
 #[track_caller]
 fn step(result: Result<(), String>) {
     if let Err(error) = result {

@@ -333,7 +333,10 @@ mod tests {
         );
         let channel = &parsed.channels.items[0];
         let xml = format!(
-            "<tv><channel id=\"same\"><display-name>Shared</display-name></channel><programme channel=\"same\" start=\"20270115080000 +0000\" stop=\"20270115090000 +0000\"><title>{name} programme</title><desc>{name} description</desc></programme></tv>"
+            "<tv><channel id=\"same\"><display-name>Shared</display-name></channel>\
+             <programme channel=\"same\" start=\"20270115080000 +0000\" \
+             stop=\"20270115090000 +0000\"><title>{name} programme</title>\
+             <desc>{name} description</desc></programme></tv>"
         );
         let xml = parse_xmltv(xml.as_bytes(), ParseOptions::default()).unwrap();
         let mut builder =
@@ -513,7 +516,14 @@ mod tests {
         );
         // The fixture's programme lies at the same absolute time in each child,
         // despite their different epochs.
-        let t=iptv_epg::parse_xmltv(b"<tv><programme channel=\"same\" start=\"20270115080000 +0000\" stop=\"20270115090000 +0000\"><title>P</title></programme></tv>",ParseOptions::default()).unwrap().programmes[0].start;
+        let t = iptv_epg::parse_xmltv(
+            b"<tv><programme channel=\"same\" start=\"20270115080000 +0000\" \
+              stop=\"20270115090000 +0000\"><title>P</title></programme></tv>",
+            ParseOptions::default(),
+        )
+        .unwrap()
+        .programmes[0]
+            .start;
         let minute = ((t - NOW) / 60) as i32;
         let a = all.program_at(0, minute);
         let b = all.program_at(1, minute);

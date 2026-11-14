@@ -50,6 +50,13 @@ fn invalid(s: &str) -> StoreError {
 fn sink_error(_: StoreError) -> SinkError {
     SinkError("could not write the catalog stage".into())
 }
+/// The staged channels in playlist order, in the column order
+/// `channels::decode` reads: the stage has no overlay columns, so those
+/// are constants.
+const STAGED_CHANNELS: &str = "SELECT source_id,id,provider_id,name,number,logo,group_ids,stream,\
+     epg_id,epg_name,epg_shift_minutes,catch_up,radio,NULL,NULL,0,0,0,NULL,NULL,NULL \
+     FROM channels ORDER BY position";
+
 impl CatalogStage {
     pub fn create_in(dir: impl AsRef<Path>) -> Result<Self> {
         Self::create_in_with(dir, |path| Ok(Connection::open(path)?))
@@ -202,7 +209,7 @@ impl CatalogStage {
         if !self.ready {
             return Err(invalid("catalog stage is not complete"));
         }
-        let mut stmt=self.db().prepare("SELECT source_id,id,provider_id,name,number,logo,group_ids,stream,epg_id,epg_name,epg_shift_minutes,catch_up,radio,NULL,NULL,0,0,0,NULL,NULL,NULL FROM channels ORDER BY position")?;
+        let mut stmt = self.db().prepare(STAGED_CHANNELS)?;
         let mut rows = stmt.query([])?;
         let mut out = Vec::new();
         while let Some(row) = rows.next()? {

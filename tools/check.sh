@@ -9,6 +9,7 @@ python3 tools/ci/pins.py check-nsh
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tools -p test_version.py
 # Only our packages: `--all` would also format path dependencies (the NSH checkout).
 cargo fmt -p iptv-core -p iptv-nav -p iptv-settings -p iptv-epg -p iptv-providers -p iptv-guide -p iptv-import -p iptv-net -p iptv-store-sqlite -p iptv-search -p iptv-app --check
+bash tools/ci/check-line-length.sh
 cargo clippy --locked --workspace --all-targets --features iptv-app/test-support -- -D warnings
 cargo deny --locked check
 cargo test --locked -p iptv-core -p iptv-nav -p iptv-settings -p iptv-epg -p iptv-providers -p iptv-guide -p iptv-import -p iptv-net -p iptv-store-sqlite -p iptv-search --quiet

@@ -184,8 +184,18 @@ fn xtream_server(now: i64) -> String {
             } else {
                 match action {
                     "" | "get_account_info" => format!(
-                        r#"{{"user_info":{{"username":"viewer","password":"secret","auth":1,"status":"Active","exp_date":"{}","is_trial":"0","active_cons":"0","max_connections":"1","allowed_output_formats":["ts"]}},"server_info":{{"url":"127.0.0.1","port":"{port}","server_protocol":"http","timezone":"UTC","timestamp_now":{now}}}}}"#,
-                        now + 30 * 86_400
+                        concat!(
+                            r#"{{"user_info":{{"username":"viewer","password":"secret","auth":1,"#,
+                            r#""status":"Active","exp_date":"{}","is_trial":"0","active_cons":"0","#,
+                            r#""max_connections":"1","allowed_output_formats":["ts"]}},"#,
+                            r#""server_info":{{"url":"127.0.0.1","port":"{port}","server_protocol":"http","#,
+                            r#""timezone":"UTC","timestamp_now":{now}}}}}"#,
+                        ),
+                        now + 30 * 86_400,
+                        // Named here: a format string built by `concat!`
+                        // cannot capture variables by itself.
+                        port = port,
+                        now = now,
                     ),
                     "get_live_categories" => {
                         r#"[{"category_id":"1","category_name":"Synthetic","parent_id":0}]"#

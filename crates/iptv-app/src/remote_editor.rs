@@ -225,31 +225,113 @@ fn field_label(s: &Editor, field: Field) -> String {
         Field::Reset => "Restore all default bindings".into(),
     }
 }
+/// Under the screen's title: how the rows are used.
+const CAPTION: &str = "Up/Down chooses a row; Left/Right or tap changes it. \
+                       Save applies immediately. Back remains available.";
+
+/// What the chosen key does now and whether that is the user's binding;
+/// while a key is being captured, what the editor waits for.
+fn status(ui: Ui) -> String {
+    ui.settings.get();
+    state(ui, |s| {
+        if s.capturing {
+            return "Press a key now. Back cancels capture.".into();
+        }
+        let effective = keymap()
+            .resolve(s.context, s.key, s.press)
+            .map_or("Nothing", action_name);
+        let custom = saved().iter().any(|b| same(s, b));
+        format!(
+            "Currently: {effective} · {}",
+            if custom {
+                "custom binding"
+            } else {
+                "default binding"
+            }
+        )
+    })
+    .unwrap_or_default()
+}
+
+/// The row of `field`: its value, changed or acted on by a press.
+fn field_row(ui: Ui, size: Scale, field: Field) -> impl IntoElement {
+    ui_kit::action(
+        ui,
+        size,
+        move || state(ui, |s| field_label(s, field)).unwrap_or_default(),
+        move || state(ui, |s| s.focus) == Some(field),
+        0xFFFFFF,
+        move || activate(ui, field),
+    )
+    .test_id(&format!("remote-{field:?}"))
+}
+
+/// The question before a binding replaces another or all are restored.
+fn confirm_sheet(ui: Ui, size: Scale) -> impl IntoElement {
+    let question = move || {
+        if state(ui, |s| s.confirm) == Some(Some(Confirm::Replace)) {
+            "Replace the existing binding?"
+        } else {
+            "Restore all defaults?"
+        }
+    };
+    let cancel = move || {
+        update(ui, |s| s.confirm = None);
+    };
+    let confirm = move || {
+        update(ui, |s| s.accept = true);
+        if let Some(f) = state(ui, |s| s.focus) {
+            activate(ui, f)
+        }
+    };
+    view()
+        .absolute()
+        .inset_0()
+        .items_center()
+        .justify_center()
+        .bg(crate::tint(0, 190))
+        .child(
+            ui_kit::card(ui, size, 600.0)
+                .child(ui_kit::title(size, question))
+                .child(ui_kit::action(
+                    ui,
+                    size,
+                    move || tr("Cancel"),
+                    move || state(ui, |s| !s.accept).unwrap_or(false),
+                    0xFFFFFF,
+                    cancel,
+                ))
+                .child(ui_kit::action(
+                    ui,
+                    size,
+                    move || tr("Confirm"),
+                    move || state(ui, |s| s.accept).unwrap_or(false),
+                    0xFFFFFF,
+                    confirm,
+                )),
+        )
+}
+
 pub fn layer(ui: Ui) -> impl IntoElement {
     let size = Scale::new();
     when(
         move || is_open(ui),
         move || {
-            ui_kit::screen(ui,size).test_id("remote-editor-screen")
-        .child(ui_kit::header(ui,size,"Remote bindings",close))
-        .child(ui_kit::caption(size,"Up/Down chooses a row; Left/Right or tap changes it. Save applies immediately. Back remains available."))
-        .child(ui_kit::body(size,move||{
-            ui.settings.get();state(ui,|s|{
-                if s.capturing{return "Press a key now. Back cancels capture.".into()}
-                let effective=keymap().resolve(s.context,s.key,s.press).map_or("Nothing",action_name);
-                let custom=saved().iter().any(|b|same(s,b));
-                format!("Currently: {effective} · {}",if custom{"custom binding"}else{"default binding"})
-            }).unwrap_or_default()
-        }))
-        .children(FIELDS.iter().copied().map(move|field|ui_kit::action(ui,size,
-            move||state(ui,|s|field_label(s,field)).unwrap_or_default(),move||state(ui,|s|s.focus)==Some(field),0xFFFFFF,move||activate(ui,field)).test_id(&format!("remote-{field:?}"))))
-        .child(when(move||state(ui,|s|s.confirm.is_some()).unwrap_or(false),move||{
-            view().absolute().inset_0().items_center().justify_center().bg(crate::tint(0,190))
-                .child(ui_kit::card(ui,size,600.0)
-                    .child(ui_kit::title(size,move||if state(ui,|s|s.confirm)==Some(Some(Confirm::Replace)){"Replace the existing binding?"}else{"Restore all defaults?"}))
-                    .child(ui_kit::action(ui,size,move || tr("Cancel"),move||state(ui,|s|!s.accept).unwrap_or(false),0xFFFFFF,move||{update(ui,|s|s.confirm=None);}))
-                    .child(ui_kit::action(ui,size,move || tr("Confirm"),move||state(ui,|s|s.accept).unwrap_or(false),0xFFFFFF,move||{update(ui,|s|s.accept=true);if let Some(f)=state(ui,|s|s.focus){activate(ui,f)}})))
-        }))
+            ui_kit::screen(ui, size)
+                .test_id("remote-editor-screen")
+                .child(ui_kit::header(ui, size, "Remote bindings", close))
+                .child(ui_kit::caption(size, CAPTION))
+                .child(ui_kit::body(size, move || status(ui)))
+                .children(
+                    FIELDS
+                        .iter()
+                        .copied()
+                        .map(move |field| field_row(ui, size, field)),
+                )
+                .child(when(
+                    move || state(ui, |s| s.confirm.is_some()).unwrap_or(false),
+                    move || confirm_sheet(ui, size),
+                ))
         },
     )
 }

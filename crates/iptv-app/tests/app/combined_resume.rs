@@ -25,7 +25,12 @@ use nsh_testing::Headless;
 const IMPORT: Duration = Duration::from_secs(20);
 const STREAM: &str = "http://stream.example.test/resumed-stalker.m3u8";
 const GENRES: &str = r#"{"js":[{"id":"1","title":"News","censored":0}]}"#;
-const CHANNELS: &str = r#"{"js":{"total_items":"1","max_page_items":"14","data":[{"id":"100","name":"Saved portal channel","number":"1","cmd":"ffmpeg http://stream.example.test/original/100.m3u8","tv_genre_id":"1","use_http_tmp_link":"1","use_load_balancing":"0"}]}}"#;
+const CHANNELS: &str = concat!(
+    r#"{"js":{"total_items":"1","max_page_items":"14","data":[{"id":"100","#,
+    r#""name":"Saved portal channel","number":"1","#,
+    r#""cmd":"ffmpeg http://stream.example.test/original/100.m3u8","#,
+    r#""tv_genre_id":"1","use_http_tmp_link":"1","use_load_balancing":"0"}]}}"#,
+);
 const M3U: &str = "#EXTM3U\n#EXTINF:-1 tvg-id=\"generated-m3u\" group-title=\"News\",Ready M3U\nhttp://stream.example.test/m3u\n";
 
 #[derive(Default)]

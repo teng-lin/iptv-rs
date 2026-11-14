@@ -24,7 +24,12 @@ fn guide_input_stays_under_budget_while_the_database_writer_is_locked() {
         ));
         for day in -3..4 {
             let start = now - 3600 + day * 86400;
-            guide.push_str(&format!("<programme channel=\"c{channel}\" start=\"{}\" stop=\"{}\"><title>Synthetic day {day}</title></programme>", iptv_epg::format_xmltv_time(start), iptv_epg::format_xmltv_time(start + 86400)));
+            guide.push_str(&format!(
+                "<programme channel=\"c{channel}\" start=\"{}\" stop=\"{}\">\
+                 <title>Synthetic day {day}</title></programme>",
+                iptv_epg::format_xmltv_time(start),
+                iptv_epg::format_xmltv_time(start + 86400)
+            ));
         }
     }
     guide.push_str("</tv>");

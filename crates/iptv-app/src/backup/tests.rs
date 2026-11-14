@@ -133,7 +133,17 @@ fn invalid_truncated_and_unsupported_archives_preserve_current_and_pending_state
 }
 
 fn packed(files: Vec<(&str, Vec<u8>)>) -> Vec<u8> {
-    let manifest = serde_json::to_vec(&json!({"format":"patina-whole-app", "version":1, "root":"/synthetic", "files":files.iter().map(|(name, bytes)| json!({"name":name,"length":bytes.len()})).collect::<Vec<_>>()})).unwrap();
+    let listed: Vec<_> = files
+        .iter()
+        .map(|(name, bytes)| json!({"name": name, "length": bytes.len()}))
+        .collect();
+    let manifest = serde_json::to_vec(&json!({
+        "format": "patina-whole-app",
+        "version": 1,
+        "root": "/synthetic",
+        "files": listed,
+    }))
+    .unwrap();
     let mut bytes = MAGIC.to_vec();
     bytes.extend((manifest.len() as u64).to_le_bytes());
     bytes.extend(manifest);

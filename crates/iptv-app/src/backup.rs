@@ -707,14 +707,34 @@ async fn worker<T: Send + 'static>(job: impl FnOnce() -> Result<T> + Send + 'sta
     rx.await.context("The backup task stopped")?
 }
 
+/// What a backup holds, before its file is chosen.
+const EXPORT_NOTE: &str = "The backup includes playlist logins and passwords, settings, \
+                           channel arrangements, history and cached guide data. \
+                           Keep the file private.";
+/// A restore is already scheduled: what happens to changes until then.
+const PENDING_NOTE: &str = "The backup replaces current data when you next open Patina. \
+                            Changes made before then will be replaced.";
+/// What scheduling a restore replaces, and how to call it off.
+const RESTORE_NOTE: &str = "This backup will replace all playlists, settings, favorites, \
+                            groups and history when you reopen Patina. You can cancel the \
+                            scheduled restore from Settings before closing the app.";
+/// Android: the app has to be closed and opened for the restore to apply.
+#[cfg(target_os = "android")]
+const RESTART_NOTE: &str = "Close Patina, then open it again to apply the backup. Keep the \
+                            app open to cancel the scheduled restore from Settings first.";
+
 pub(crate) fn export_ui() {
     crate::data::spawn_in_app(async move {
         let Some(_busy) = Busy::begin() else {
             return;
         };
-        let answer = nsh_base::alert_dialog().title("Back up Patina")
-            .description("The backup includes playlist logins and passwords, settings, channel arrangements, history and cached guide data. Keep the file private.")
-            .cancel("cancel", "Cancel").action("export", "Choose file…").show().await;
+        let answer = nsh_base::alert_dialog()
+            .title("Back up Patina")
+            .description(EXPORT_NOTE)
+            .cancel("cancel", "Cancel")
+            .action("export", "Choose file…")
+            .show()
+            .await;
         if !answer.is_ok_and(|a| a.action.as_deref() == Some("export")) {
             return;
         }
@@ -741,9 +761,14 @@ pub(crate) fn restore_ui(ui: crate::Ui) {
         };
         let root = crate::data::data_dir();
         if sibling(&root, "restore-pending").exists() {
-            let answer = nsh_base::alert_dialog().title("Restore scheduled")
-                .description("The backup replaces current data when you next open Patina. Changes made before then will be replaced.")
-                .cancel("keep", "Keep scheduled").action("cancel", "Cancel restore").action("replace", "Choose another backup…").show().await;
+            let answer = nsh_base::alert_dialog()
+                .title("Restore scheduled")
+                .description(PENDING_NOTE)
+                .cancel("keep", "Keep scheduled")
+                .action("cancel", "Cancel restore")
+                .action("replace", "Choose another backup…")
+                .show()
+                .await;
             match answer.ok().and_then(|a| a.action) {
                 Some(action) if action.as_str() == "cancel" => {
                     let result = worker(move || cancel(&root)).await;
@@ -769,9 +794,13 @@ pub(crate) fn restore_ui(ui: crate::Ui) {
                 return;
             }
         };
-        let answer = nsh_base::alert_dialog().title("Replace data on next launch?")
-            .description("This backup will replace all playlists, settings, favorites, groups and history when you reopen Patina. You can cancel the scheduled restore from Settings before closing the app.")
-            .cancel("cancel", "Cancel").destructive("restore", "Schedule restore").show().await;
+        let answer = nsh_base::alert_dialog()
+            .title("Replace data on next launch?")
+            .description(RESTORE_NOTE)
+            .cancel("cancel", "Cancel")
+            .destructive("restore", "Schedule restore")
+            .show()
+            .await;
         if !answer.is_ok_and(|a| a.action.as_deref() == Some("restore")) {
             return;
         }
@@ -944,9 +973,13 @@ async fn select_import(root: PathBuf) -> Result<Option<ImportFile>> {
 async fn offer_restart() {
     #[cfg(target_os = "android")]
     {
-        let answer = nsh_base::alert_dialog().title("Restore scheduled")
-            .description("Close Patina, then open it again to apply the backup. Keep the app open to cancel the scheduled restore from Settings first.")
-            .cancel("keep", "Keep app open").action("close", "Close Patina").show().await;
+        let answer = nsh_base::alert_dialog()
+            .title("Restore scheduled")
+            .description(RESTART_NOTE)
+            .cancel("keep", "Keep app open")
+            .action("close", "Close Patina")
+            .show()
+            .await;
         if answer.is_ok_and(|a| a.action.as_deref() == Some("close")) {
             android::close().await;
         }

@@ -502,7 +502,15 @@ fn returning_and_new_channels_keep_provider_identity_and_fill_missing_preference
         "missing customization falls back to provider name"
     );
     let added = parse_m3u(
-        "#EXTM3U\n#EXTINF:-1 group-title=\"News\",D\nhttp://example.test/d\n#EXTINF:-1 group-title=\"News\",A\nhttp://example.test/a\n#EXTINF:-1 group-title=\"Sport\",B\nhttp://example.test/b\n#EXTINF:-1 group-title=\"News\",C\nhttp://example.test/c\n",
+        "#EXTM3U\n\
+         #EXTINF:-1 group-title=\"News\",D\n\
+         http://example.test/d\n\
+         #EXTINF:-1 group-title=\"News\",A\n\
+         http://example.test/a\n\
+         #EXTINF:-1 group-title=\"Sport\",B\n\
+         http://example.test/b\n\
+         #EXTINF:-1 group-title=\"News\",C\n\
+         http://example.test/c\n",
     );
     let refreshed =
         EpgSchedule::from_catalog(&added.groups, &added.channels.items, GuideStore::new(), NOW);

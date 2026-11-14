@@ -395,6 +395,152 @@ fn label(edit: Edit, hidden: bool) -> &'static str {
         Edit::ShowAll => "Show all",
     }
 }
+/// The screen's title for what it arranges.
+fn screen_title(kind: &Kind) -> &'static str {
+    match kind {
+        Kind::Groups => "Organize groups",
+        Kind::Favorites => "Order favourites",
+        Kind::GroupChannels(_) => "Organize group channels",
+        Kind::CustomChannels(_) => "Order custom-group members",
+        Kind::Channels => "Organize channels",
+    }
+}
+
+/// Under the title: what the order, the names and the visibility apply to.
+fn screen_caption(kind: &Kind) -> &'static str {
+    match kind {
+        Kind::Favorites => {
+            "Order applies to favourites. Names and visibility apply across this playlist."
+        }
+        Kind::GroupChannels(_) => {
+            "Order applies only to this group. \
+             Names and visibility apply across this playlist."
+        }
+        Kind::CustomChannels(_) => {
+            "Order applies only to these members. Edit membership in Custom groups."
+        }
+        _ => {
+            "Includes hidden items. OK opens actions; \
+             select items for bulk hide/show. Back returns."
+        }
+    }
+}
+
+/// Row `at` of the items: its name, then whether it is selected and
+/// whether it is hidden. A press opens its actions.
+fn item_row(ui: Ui, size: Scale, at: Position) -> impl IntoElement {
+    let item = move || state(ui, |s| s.editor.items.get(at.index()).cloned()).flatten();
+    let focused = move || {
+        state(ui, |s| {
+            s.editor.focus.as_ref() == item().as_ref().map(|i| &i.id)
+        })
+        .unwrap_or(false)
+    };
+    let mark = move || Mark::of(ui.keys_shown() && focused(), false);
+    let status = move || {
+        item()
+            .map(|i| {
+                let selected = state(ui, |s| s.editor.selected.contains(&i.id)).unwrap_or(false);
+                format!(
+                    "{}{}",
+                    if selected { "Selected · " } else { "" },
+                    if i.hidden { "Hidden" } else { "Visible" }
+                )
+            })
+            .unwrap_or_default()
+    };
+    list_rows::row(size, ROW, mark)
+        .test_id(&format!("organization-row-{}", at.index()))
+        .flex_row()
+        .items_center()
+        .on_press(move || {
+            ui.touched();
+            if let Some(i) = item() {
+                update(ui, |s| s.editor.open_actions(i.id));
+            }
+        })
+        .child(
+            ui_kit::label(size, move || item().map(|i| i.name).unwrap_or_default())
+                .flex_1()
+                .text_color(move || mark().text()),
+        )
+        .child(ui_kit::detail(size, status).text_color(move || mark().secondary()))
+}
+
+/// The focused item's actions on a card over the dimmed screen; a press
+/// beside the card goes back.
+fn actions_sheet(ui: Ui, size: Scale) -> impl IntoElement {
+    let name = move || {
+        state(ui, |s| s.editor.focused().map(|i| i.name.clone()))
+            .flatten()
+            .unwrap_or_default()
+    };
+    view()
+        .absolute()
+        .inset_0()
+        .items_center()
+        .justify_center()
+        .child(
+            view()
+                .absolute()
+                .inset_0()
+                .bg(crate::tint(0, 160))
+                .on_press(move || {
+                    back(ui);
+                }),
+        )
+        .child(
+            ui_kit::card(ui, size, 620.0)
+                .child(ui_kit::title(size, name))
+                .child(actions_list(ui, size)),
+        )
+}
+
+/// The list of actions, scrolled to the one in focus.
+fn actions_list(ui: Ui, size: Scale) -> impl IntoElement {
+    let rows = element_ref();
+    effect(move || {
+        if let Some(edit) = state(ui, |s| s.editor.action).flatten()
+            && let Some(at) = ACTIONS.iter().position(|a| *a == edit)
+        {
+            rows.scroll_to_index(at as u32, percentage(0.5), px(0.0), false);
+        }
+    });
+    virtual_list(move || ACTIONS.len(), move |at| action_row(ui, size, at))
+        .element_ref(&rows)
+        .estimated_item_size(list_rows::pitch(size, ROW))
+        .h(move || size.px(420.0))
+}
+
+/// Action `at` for the focused item (Hide reads Show for a hidden one).
+fn action_row(ui: Ui, size: Scale, at: Position) -> impl IntoElement {
+    let edit = ACTIONS[at.index()];
+    let hidden =
+        move || state(ui, |s| s.editor.focused().is_some_and(|i| i.hidden)).unwrap_or(false);
+    ui_kit::action(
+        ui,
+        size,
+        move || label(edit, hidden()),
+        move || state(ui, |s| s.editor.action) == Some(Some(edit)),
+        0xFFFFFF,
+        move || perform(ui, edit),
+    )
+}
+
+/// The sheet that edits an item's display name.
+fn name_sheet() -> TextSheet {
+    TextSheet {
+        label: "Display name",
+        placeholder: "Empty restores the provider name",
+        url: false,
+        masked: false,
+        text: text_value,
+        set_text,
+        commit,
+        cancel,
+    }
+}
+
 pub fn layer(ui: Ui) -> impl IntoElement {
     let size = Scale::new();
     effect(move || {
@@ -426,45 +572,38 @@ pub fn layer(ui: Ui) -> impl IntoElement {
                     rows.scroll_to_index(at as u32, percentage(0.5), px(0.0), false);
                 }
             });
-            ui_kit::screen(ui,size).test_id("organization-screen")
-            .child(ui_kit::header(ui,size,move||state(ui,|s|match &s.kind{Kind::Groups=>"Organize groups",Kind::Favorites=>"Order favourites",Kind::GroupChannels(_)=>"Organize group channels",Kind::CustomChannels(_)=>"Order custom-group members",Kind::Channels=>"Organize channels"}).unwrap_or("Organize channels"),close))
-            .child(ui_kit::caption(size,move||state(ui,|s|match &s.kind {
-                Kind::Favorites=>"Order applies to favourites. Names and visibility apply across this playlist.",
-                Kind::GroupChannels(_)=>"Order applies only to this group. Names and visibility apply across this playlist.",
-                Kind::CustomChannels(_)=>"Order applies only to these members. Edit membership in Custom groups.",
-                _=>"Includes hidden items. OK opens actions; select items for bulk hide/show. Back returns.",
-            }).unwrap_or("")))
-            .child(when(move||state(ui,|s|s.editor.items.is_empty()).unwrap_or(true),move||ui_kit::body(size,"This playlist has no items to organize.")))
-            .child(virtual_list(move||state(ui,|s|s.editor.items.len()).unwrap_or(0),move|at|{
-                let item=move||state(ui,|s|s.editor.items.get(at.index()).cloned()).flatten();
-                let mark=move||Mark::of(ui.keys_shown()&&state(ui,|s|s.editor.focus.as_ref()==item().as_ref().map(|i|&i.id)).unwrap_or(false),false);
-                list_rows::row(size,ROW,mark).test_id(&format!("organization-row-{}",at.index())).flex_row().items_center()
-                    .on_press(move||{ui.touched();if let Some(i)=item(){update(ui,|s|s.editor.open_actions(i.id));}})
-                    .child(ui_kit::label(size,move||item().map(|i|i.name).unwrap_or_default()).flex_1().text_color(move||mark().text()))
-                    .child(ui_kit::detail(size,move||item().map(|i|{
-                        let selected=state(ui,|s|s.editor.selected.contains(&i.id)).unwrap_or(false);
-                        format!("{}{}",if selected{"Selected · "}else{""},if i.hidden{"Hidden"}else{"Visible"})
-                    }).unwrap_or_default()).text_color(move||mark().secondary()))
-            }).estimated_item_size(list_rows::pitch(size,ROW)).element_ref(&rows).flex_1())
-            .child(when(move||state(ui,|s|s.editor.action.is_some()).unwrap_or(false),move||{
-                view().absolute().inset_0().items_center().justify_center()
-                    .child(view().absolute().inset_0().bg(crate::tint(0,160)).on_press(move||{back(ui);}))
-                    .child(ui_kit::card(ui,size,620.0).child(ui_kit::title(size,move||state(ui,|s|s.editor.focused().map(|i|i.name.clone())).flatten().unwrap_or_default()))
-                        .child({
-                            let rows=element_ref();
-                            effect(move||{if let Some(edit)=state(ui,|s|s.editor.action).flatten()
-                                && let Some(at)=ACTIONS.iter().position(|a|*a==edit){rows.scroll_to_index(at as u32,percentage(0.5),px(0.0),false);}});
-                            virtual_list(move||ACTIONS.len(),move|at|{
-                                let edit=ACTIONS[at.index()];
-                                ui_kit::action(ui,size,
-                                    move||label(edit,state(ui,|s|s.editor.focused().is_some_and(|i|i.hidden)).unwrap_or(false)),
-                                    move||state(ui,|s|s.editor.action)==Some(Some(edit)),0xFFFFFF,move||perform(ui,edit))
-                            }).element_ref(&rows).estimated_item_size(list_rows::pitch(size,ROW)).h(move||size.px(420.0))
-                        }))
-            }))
-            .child(when(move||state(ui,|s|s.editor.text.is_some()).unwrap_or(false),move||entry::text_sheet(ui,TextSheet{
-                label:"Display name",placeholder:"Empty restores the provider name",url:false,masked:false,text:text_value,set_text,commit,cancel,
-            })))
+            ui_kit::screen(ui, size)
+                .test_id("organization-screen")
+                .child(ui_kit::header(
+                    ui,
+                    size,
+                    move || state(ui, |s| screen_title(&s.kind)).unwrap_or("Organize channels"),
+                    close,
+                ))
+                .child(ui_kit::caption(size, move || {
+                    state(ui, |s| screen_caption(&s.kind)).unwrap_or("")
+                }))
+                .child(when(
+                    move || state(ui, |s| s.editor.items.is_empty()).unwrap_or(true),
+                    move || ui_kit::body(size, "This playlist has no items to organize."),
+                ))
+                .child(
+                    virtual_list(
+                        move || state(ui, |s| s.editor.items.len()).unwrap_or(0),
+                        move |at| item_row(ui, size, at),
+                    )
+                    .estimated_item_size(list_rows::pitch(size, ROW))
+                    .element_ref(&rows)
+                    .flex_1(),
+                )
+                .child(when(
+                    move || state(ui, |s| s.editor.action.is_some()).unwrap_or(false),
+                    move || actions_sheet(ui, size),
+                ))
+                .child(when(
+                    move || state(ui, |s| s.editor.text.is_some()).unwrap_or(false),
+                    move || entry::text_sheet(ui, name_sheet()),
+                ))
         },
     )
 }
