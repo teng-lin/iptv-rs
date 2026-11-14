@@ -36,4 +36,5 @@ python3 tools/ci/test-nsh-tool-key.py
 python3 tools/ci/test-pins.py
 python3 tools/ci/test-android-changes.py
 python3 tools/ci/test-publish-release.py
+python3 tools/ci/test-sbom.py
 echo "all checks passed"

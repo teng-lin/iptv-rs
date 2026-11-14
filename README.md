@@ -71,6 +71,18 @@ Release builds are published on
 The native Linux packages need the system's GTK 4, libmpv and GStreamer.
 The AppImage bundles them.
 
+Each release has a `SHA256SUMS` file and build provenance attestations.
+With the [GitHub CLI](https://cli.github.com/) you can check that a download
+was built by this repository's release workflow:
+
+```sh
+gh attestation verify Patina-<version>-linux-x86_64.AppImage --repo teng-lin/patina-iptv
+```
+
+[The release guide](docs/release.md#checksums-provenance-and-sbom) has the
+stricter form, checksum verification and the SBOM. Releases up to v0.1.1
+predate the attestations.
+
 ## Build from source
 
 ### Prerequisites

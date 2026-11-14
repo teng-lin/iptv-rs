@@ -159,6 +159,28 @@ jobs:
           name: packages-linux
           path: dist/*
           if-no-files-found: error
+  sbom:
+    # No signing material and no publication rights: only the dependency graph.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          cache: 'false'
+      - name: Set release metadata
+        run: python3 tools/ci/version.py
+      - name: Write the CycloneDX SBOM of the locked Rust dependency graph
+        run: |
+          cargo install cargo-cyclonedx --version 0.5.10 --locked
+          python3 tools/ci/sbom.py "dist/Patina-$VERSION-sbom.cdx.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: packages-sbom
+          path: dist/*
+          if-no-files-found: error
   sign:
     needs: [plan, tests, package]
     environment: release
@@ -246,10 +268,14 @@ jobs:
           if-no-files-found: error
   publish:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [tests, package, sign, windows-package]
+    needs: [tests, package, sign, windows-package, sbom]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      # Build provenance: a short-lived Sigstore certificate bound to this
+      # workflow run signs the attestations. Only this job can request one.
+      id-token: write
+      attestations: write
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -266,5 +292,16 @@ jobs:
       # A public release is never written to again (tools/ci/publish-release.py).
       - name: Refuse to replace a public release, then write SHA256SUMS
         run: python3 tools/ci/publish-release.py checksums dist "$TAG"
+      # One attestation names every released file by its SHA-256 digest; a
+      # second covers SHA256SUMS itself, so the checksum file is signed too.
+      # Verify with `gh attestation verify` (docs/release.md).
+      - name: Attest the provenance of every released file
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS
+      - name: Attest the provenance of SHA256SUMS
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/SHA256SUMS
       - name: Upload to a draft and publish it once
         run: python3 tools/ci/publish-release.py publish dist "$TAG"

@@ -104,6 +104,47 @@ published release, bump the version and tag again; do not delete and recreate
 the release or move the tag. An error while reading the release state also
 fails the job rather than being read as "no release yet".
 
+## Checksums, provenance and SBOM
+
+Every release carries, next to the packages:
+
+- `SHA256SUMS`: the SHA-256 of every other file in the release, in the format
+  `sha256sum --check` reads.
+- `Patina-<version>-sbom.cdx.json`: a CycloneDX 1.5 SBOM written by
+  `tools/ci/sbom.py` (`cargo cyclonedx` 0.5.10). It lists the app crate's
+  resolved `Cargo.lock` graph for all targets (normal and build dependencies,
+  with registry checksums) and records the NSH commit. It does not list the
+  platform host crates of the generated NSH runners (those are in
+  `runner-components.json` inside each package) or the native media libraries
+  (see "Corresponding source for bundled media libraries").
+- Build provenance attestations, stored by GitHub rather than as release files.
+  The publish job attests every released file and `SHA256SUMS` itself with
+  `actions/attest-build-provenance`. The signature is keyless: Sigstore issues a
+  short-lived certificate for that workflow run, so there is no signing key to
+  keep or to leak. `SHA256SUMS` is not signed separately; its attestation is the
+  signature.
+
+To check a download, with the [GitHub CLI](https://cli.github.com/) installed:
+
+```sh
+# One file: built by this repository's release workflow from the release tag.
+gh attestation verify Patina-<version>-linux-x86_64.AppImage \
+  --repo teng-lin/patina-iptv \
+  --signer-workflow teng-lin/patina-iptv/.github/workflows/release.yml \
+  --source-ref refs/tags/v<version>
+
+# Or verify the checksum file once, then check every file you downloaded.
+gh attestation verify SHA256SUMS --repo teng-lin/patina-iptv \
+  --signer-workflow teng-lin/patina-iptv/.github/workflows/release.yml
+sha256sum --check --ignore-missing SHA256SUMS
+```
+
+Releases up to v0.1.1 predate this and have no attestations; their
+`SHA256SUMS` is unsigned. An attestation proves which workflow run built a
+file from which commit. It does not replace platform code signing: the macOS
+and Windows packages are still not trusted by Gatekeeper or SmartScreen (see
+below).
+
 This does not submit to Play or App Store Connect. An IPA's distribution
 profile determines where it can be installed; an App Store profile does not
 make a GitHub download sideloadable. macOS uses the existing ad hoc signing
