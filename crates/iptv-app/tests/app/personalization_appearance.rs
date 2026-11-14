@@ -22,11 +22,14 @@ fn setting(app: &mut Headless, label: &str) {
     panic!("missing {label}");
 }
 fn close(app: &mut Headless) {
-    for _ in 0..4 {
+    // Each Back leaves one level; a loaded machine may draw the level below
+    // only a moment later, so let it settle before looking again.
+    for _ in 0..8 {
         if !app.screen().matches("id:settings-screen").unwrap() {
             return;
         }
         step(app.back());
+        app.idle(Duration::from_millis(250)).unwrap();
     }
     panic!("settings stayed open");
 }
