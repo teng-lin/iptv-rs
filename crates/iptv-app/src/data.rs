@@ -1140,7 +1140,7 @@ async fn download_guide<P: ProgressSink>(
     now: i64,
     progress: &mut P,
     cancel: &CancelToken,
-    must_load: Option<iptv_epg::SourceId>,
+    must_load: Option<iptv_epg::FeedId>,
 ) -> Result<Downloaded, ImportError> {
     let mut stage =
         crate::store_service::call(|store| EpgStage::create_in_store(store, data_dir()))

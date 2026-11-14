@@ -12,6 +12,7 @@ license.workspace = true
 test-support = []
 
 [dependencies]
+iptv-library.workspace = true
 base64 = "0.22"
 sys-locale = "0.3.2"
 iptv-core.workspace = true

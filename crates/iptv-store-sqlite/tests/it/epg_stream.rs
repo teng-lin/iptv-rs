@@ -8,8 +8,9 @@ use crate::stream_support;
 use std::collections::{HashMap, HashSet};
 
 use iptv_epg::{
-    ChannelKey, DAY, GuideStore, MatchIndex, MatchReport, Override, Overrides, ParseOptions,
-    PlaylistChannel, ProgrammeData, SourceBuilder, SourceId, StoreOptions, UnixTime, parse_xmltv,
+    ChannelKey, DAY, FeedId, GuideStore, MatchIndex, MatchReport, Override, Overrides,
+    ParseOptions, PlaylistChannel, ProgrammeData, SourceBuilder, StoreOptions, UnixTime,
+    parse_xmltv,
 };
 use iptv_import::{
     CancelToken, EpgSourceConfig, ImportError, NoProgress, Progress, ProgressSink, import_epg,
@@ -24,7 +25,7 @@ const NOW: UnixTime = 1_800_000_000;
 
 fn config(id: u32, name: &str, priority: i32, store: StoreOptions) -> EpgSourceConfig {
     let mut c = EpgSourceConfig::new(
-        SourceId(id),
+        FeedId(id),
         SecretUrl::new(format!("{}{name}", stream_support::BASE)),
     )
     .with_priority(priority);
@@ -261,7 +262,7 @@ fn overrides(chans: &[Channel]) -> Overrides {
     o.insert(
         key(&chans[31]),
         Override::Epg {
-            source: Some(SourceId(1)),
+            source: Some(FeedId(1)),
             epg_id: "hidden".into(),
         },
     );
@@ -358,7 +359,7 @@ fn check_equivalent(store_opts: StoreOptions) {
 
     // What the store says about each feed matches the in-memory guide.
     let stored = store.epg_guide(source).unwrap().unwrap();
-    let mut per_feed: HashMap<SourceId, (HashSet<&str>, u64)> = HashMap::new();
+    let mut per_feed: HashMap<FeedId, (HashSet<&str>, u64)> = HashMap::new();
     let mut ends_at = None;
     for (_, epg) in expected.bindings() {
         let f = per_feed.entry(epg.source).or_default();
@@ -387,8 +388,8 @@ fn check_equivalent(store_opts: StoreOptions) {
     // Every channel the feeds list, bound or not, for choosing by hand
     // (plus feed 1's undeclared channel an override bound).
     let listed = store.guide_channels(source).unwrap();
-    let listed_one = listed.iter().filter(|c| c.feed == SourceId(1)).count();
-    let listed_two = listed.iter().filter(|c| c.feed == SourceId(2)).count();
+    let listed_one = listed.iter().filter(|c| c.feed == FeedId(1)).count();
+    let listed_two = listed.iter().filter(|c| c.feed == FeedId(2)).count();
     assert_eq!((listed_one, listed_two), (41 + 1, 8));
     assert!(
         listed
@@ -579,7 +580,7 @@ fn a_failed_feed_is_left_out_and_the_others_are_stored() {
     assert!(all.iter().all(|t| t.starts_with("Show ")));
     let stored = store.epg_guide(source).unwrap().unwrap();
     assert_eq!(stored.feeds.len(), 1);
-    assert_eq!(stored.feeds[0].meta.config.id, SourceId(2));
+    assert_eq!(stored.feeds[0].meta.config.id, FeedId(2));
 }
 
 #[test]

@@ -2207,6 +2207,7 @@ dependencies = [
  "iptv-epg",
  "iptv-guide",
  "iptv-import",
+ "iptv-library",
  "iptv-nav",
  "iptv-net",
  "iptv-player-mpv",
@@ -2265,10 +2266,20 @@ dependencies = [
  "flate2",
  "iptv-core",
  "iptv-epg",
+ "iptv-library",
  "iptv-providers",
  "iptv-settings",
  "proptest",
  "serde_json",
+]
+
+[[package]]
+name = "iptv-library"
+version = "0.1.1"
+dependencies = [
+ "iptv-core",
+ "iptv-epg",
+ "iptv-providers",
 ]
 
 [[package]]
@@ -2360,6 +2371,7 @@ dependencies = [
  "iptv-epg",
  "iptv-guide",
  "iptv-import",
+ "iptv-library",
  "iptv-net",
  "iptv-providers",
  "rusqlite",

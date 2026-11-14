@@ -89,7 +89,7 @@ use std::collections::{HashMap, HashSet};
 use iptv_epg::{
     ChannelKey, EpgRef, GuideStore, MatchKind, SettledBuilder, StoreOptions, TimePolicy, UnixTime,
 };
-use iptv_import::{EpgImport, EpgSourceConfig, FailureKind, GuideState};
+use iptv_import::{EpgImport, EpgSourceConfig, GuideState};
 
 use crate::epg_stage::EpgStage;
 use iptv_providers::SecretUrl;
@@ -217,20 +217,6 @@ impl EpgWindow<'static> {
     }
 }
 
-impl From<FailureKind> for ImportErrorKind {
-    fn from(kind: FailureKind) -> Self {
-        match kind {
-            FailureKind::Config => Self::InvalidConfig,
-            FailureKind::Cancelled => Self::Cancelled,
-            FailureKind::Network => Self::Network,
-            FailureKind::Server => Self::HttpStatus,
-            FailureKind::Auth => Self::AuthFailed,
-            FailureKind::Parse | FailureKind::Empty => Self::InvalidBody,
-            FailureKind::Storage => Self::Other,
-        }
-    }
-}
-
 pub(crate) fn kind_slug(kind: MatchKind) -> &'static str {
     match kind {
         MatchKind::Override => "override",
@@ -306,7 +292,7 @@ fn insert_feed(conn: &Connection, source: SourceId, f: &EpgFeedMeta) -> Result<(
 fn insert_feed_channels(
     conn: &Connection,
     source: SourceId,
-    feed: iptv_epg::SourceId,
+    feed: iptv_epg::FeedId,
     import: &EpgImport,
 ) -> Result<()> {
     let mut insert = conn.prepare_cached(
@@ -542,7 +528,7 @@ impl Store {
         let rows = stmt.query_map([source.0], |r| {
             let config = EpgSourceConfig {
                 content_supplied: r.get(14)?,
-                id: iptv_epg::SourceId(r.get(0)?),
+                id: iptv_epg::FeedId(r.get(0)?),
                 url: SecretUrl::new(r.get::<_, String>(1)?),
                 priority: r.get(2)?,
                 user_agent: r.get(3)?,
@@ -609,7 +595,7 @@ impl Store {
         let mut rows = feeds.query([source.0])?;
         while let Some(r) = rows.next()? {
             let id: u32 = r.get(0)?;
-            let b = SettledBuilder::new(iptv_epg::SourceId(id), r.get(1)?, window.descriptions);
+            let b = SettledBuilder::new(iptv_epg::FeedId(id), r.get(1)?, window.descriptions);
             builders.insert(id, b);
         }
         drop(rows);
@@ -622,7 +608,7 @@ impl Store {
             .into_iter()
             .map(|b| {
                 let cand = EpgRef {
-                    source: iptv_epg::SourceId(b.feed),
+                    source: iptv_epg::FeedId(b.feed),
                     epg_id: b.epg_channel,
                     kind: b.kind,
                 };

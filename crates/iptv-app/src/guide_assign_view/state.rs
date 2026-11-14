@@ -4,7 +4,7 @@
 //! identity. Pure: the view feeds it keys, taps and typed text and carries
 //! out its [`Effect`]s.
 
-use iptv_epg::SourceId as Feed;
+use iptv_epg::FeedId as Feed;
 use iptv_store_sqlite::{GuideChannel, SourceId};
 
 use crate::data::assign::{Choice, Current};

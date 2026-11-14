@@ -2,7 +2,7 @@ use crate::common;
 
 use common::synth::{self, NOW, SimResponse};
 use common::{Events, FakeFetch, Reply, block_on};
-use iptv_epg::{ChannelKey, GuideStore, Override, Overrides, SourceId, StoreOptions};
+use iptv_epg::{ChannelKey, FeedId, GuideStore, Override, Overrides, StoreOptions};
 use iptv_import::{
     CancelToken, EpgImport, EpgSourceConfig, FailureKind, ImportError, MemoryGuide, NoProgress,
     ParseProblem, Phase, ProgressSink, Step, import_epg, import_m3u_text,
@@ -26,7 +26,7 @@ fn channels(n: usize) -> Vec<Channel> {
 
 fn source(id: u32, path: &str) -> EpgSourceConfig {
     EpgSourceConfig::new(
-        SourceId(id),
+        FeedId(id),
         SecretUrl::new(format!("http://fixture.example.test:8089{path}")),
     )
 }
@@ -104,7 +104,7 @@ fn header_url_tvg_guide_matches_by_tvg_id() {
     assert_eq!(epg.matches.by_tvg_id, 200);
     assert_eq!(epg.bound_count(), 200);
     assert_eq!(guide.bound_count(), 200);
-    assert_eq!(epg.listed(SourceId(1)).len(), 200);
+    assert_eq!(epg.listed(FeedId(1)).len(), 200);
     let stats = epg.sources[0].result.as_ref().unwrap();
     assert_eq!(stats.parse.programmes, 200 * 9 * 24);
     assert_eq!(stats.skipped, 0);
@@ -115,7 +115,7 @@ fn header_url_tvg_guide_matches_by_tvg_id() {
         events
             .0
             .iter()
-            .any(|p| p.phase == Phase::Guide(SourceId(1)) && p.items > 0)
+            .any(|p| p.phase == Phase::Guide(FeedId(1)) && p.items > 0)
     );
     assert!(events.0.iter().any(|p| p.phase == Phase::Matching));
 }
@@ -145,7 +145,7 @@ fn priorities_names_overrides_and_partial_failure() {
     overrides.insert(
         key(&chans[8]),
         Override::Epg {
-            source: Some(SourceId(1)),
+            source: Some(FeedId(1)),
             epg_id: "ch2.example".into(),
         },
     );
@@ -162,19 +162,19 @@ fn priorities_names_overrides_and_partial_failure() {
     assert_eq!(
         epg.sources[2].result,
         Err(ImportError::HttpStatus {
-            step: Step::Guide(SourceId(3)),
+            step: Step::Guide(FeedId(3)),
             status: 404
         })
     );
     // Channel 0: high-priority source by name wins over tvg-id in the low one.
-    assert_eq!(guide.binding(&key(&chans[0])), Some((SourceId(2), "hi-0")));
+    assert_eq!(guide.binding(&key(&chans[0])), Some((FeedId(2), "hi-0")));
     assert_eq!(
         guide.binding(&key(&chans[6])),
-        Some((SourceId(1), "ch6.example"))
+        Some((FeedId(1), "ch6.example"))
     );
     assert_eq!(
         guide.binding(&key(&chans[8])),
-        Some((SourceId(1), "ch2.example"))
+        Some((FeedId(1), "ch2.example"))
     );
     assert_eq!(guide.binding(&key(&chans[9])), None);
     assert_eq!(epg.bound_count(), guide.bound_count());
@@ -197,7 +197,7 @@ fn every_source_failing_is_an_error() {
     assert_eq!(
         err,
         ImportError::Parse {
-            step: Step::Guide(SourceId(1)),
+            step: Step::Guide(FeedId(1)),
             problem: ParseProblem::NotXmltv
         }
     );
@@ -223,7 +223,7 @@ fn every_source_failing_is_an_error() {
         .expect("an error");
     assert_eq!(
         err.step(),
-        Some(Step::Guide(SourceId(4))),
+        Some(Step::Guide(FeedId(4))),
         "first failure reported"
     );
 }
@@ -324,7 +324,7 @@ fn programmes_of_channels_nothing_can_match_are_not_kept() {
     assert_eq!(stats.ingest.kept, 6);
     assert_eq!(guide.bound_count(), 3);
     // The feed's channel list is complete (for choosing a guide by hand).
-    let listed = epg.listed(SourceId(1));
+    let listed = epg.listed(FeedId(1));
     assert_eq!(listed.len(), 10);
     assert_eq!(listed[9].id, "ch9.example");
     assert_eq!(listed[9].name.as_deref(), Some("Synthetic 9"));
@@ -357,7 +357,7 @@ struct Recording {
 impl iptv_import::GuideSink for Recording {
     fn begin_feed(
         &mut self,
-        feed: SourceId,
+        feed: FeedId,
         priority: i32,
         store: StoreOptions,
         now: i64,
@@ -388,7 +388,7 @@ impl iptv_import::GuideSink for Recording {
         self.inner.discard_feed()
     }
 
-    fn has_programmes(&self, feed: SourceId, epg_id: &str) -> bool {
+    fn has_programmes(&self, feed: FeedId, epg_id: &str) -> bool {
         self.inner.has_programmes(feed, epg_id)
     }
 }
@@ -474,7 +474,7 @@ fn a_source_that_uses_up_its_budget_does_not_end_the_others() {
     assert!(
         matches!(
             &epg.sources[1].result,
-            Err(ImportError::Limit { step: Step::Guide(SourceId(2)), error })
+            Err(ImportError::Limit { step: Step::Guide(FeedId(2)), error })
                 if error.kind == LimitKind::Elapsed
         ),
         "{:?}",
@@ -484,8 +484,8 @@ fn a_source_that_uses_up_its_budget_does_not_end_the_others() {
     assert!(fetch.clock.get() > GUIDE_SOURCE_TIME);
     assert!(epg.sources[2].result.is_ok(), "{:?}", epg.sources[2].result);
     assert_eq!(guide.bound_count(), 4);
-    assert_eq!(epg.listed(SourceId(3)).len(), 4);
-    assert!(epg.listed(SourceId(2)).is_empty());
+    assert_eq!(epg.listed(FeedId(3)).len(), 4);
+    assert!(epg.listed(FeedId(2)).is_empty());
     // A budget is not a passing failure: one request per source, no waits.
     assert_eq!(fetch.requests().len(), 3);
     assert!(fetch.slept.borrow().is_empty());
@@ -553,7 +553,7 @@ fn retries_end_after_three_and_the_next_source_still_loads() {
     assert_eq!(
         epg.sources[0].result,
         Err(ImportError::HttpStatus {
-            step: Step::Guide(SourceId(1)),
+            step: Step::Guide(FeedId(1)),
             status: 502
         })
     );
@@ -613,7 +613,7 @@ fn refusals_bad_content_and_budgets_are_not_retried() {
     assert_eq!(
         err,
         ImportError::HttpStatus {
-            step: Step::Guide(SourceId(1)),
+            step: Step::Guide(FeedId(1)),
             status: 404
         }
     );

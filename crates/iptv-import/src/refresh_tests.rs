@@ -1,4 +1,4 @@
-use iptv_epg::{ChannelKey, Override, Overrides, SourceId, StoreOptions};
+use iptv_epg::{ChannelKey, FeedId, Override, Overrides, StoreOptions};
 use iptv_providers::model::{Channel, StreamLocator};
 use iptv_providers::{ContentId, SecretUrl};
 use iptv_settings::{Settings, Target, Value};
@@ -8,7 +8,7 @@ use super::*;
 const NOW: i64 = 1_800_000_000;
 
 fn feed(id: u32, url: &str) -> EpgSourceConfig {
-    EpgSourceConfig::new(SourceId(id), SecretUrl::new(url))
+    EpgSourceConfig::new(FeedId(id), SecretUrl::new(url))
 }
 
 fn feeds() -> Vec<EpgSourceConfig> {
@@ -261,7 +261,7 @@ fn fingerprint_tracks_matching_inputs_only() {
     o.insert(
         ChannelKey::new("m3u:b"),
         Override::Epg {
-            source: Some(SourceId(1)),
+            source: Some(FeedId(1)),
             epg_id: "x.example".into(),
         },
     );

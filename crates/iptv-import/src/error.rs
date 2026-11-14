@@ -8,7 +8,7 @@
 use iptv_core::import_limits::LimitExceeded;
 use std::fmt;
 
-use iptv_epg::SourceId;
+use iptv_epg::FeedId;
 use iptv_providers::model::ContentKind;
 use iptv_providers::xtream::AccountStatus;
 use iptv_providers::{ProviderError, StalkerError, StalkerErrorKind};
@@ -24,7 +24,7 @@ pub enum Step {
     Authentication,
     Categories(ContentKind),
     Items(ContentKind),
-    Guide(SourceId),
+    Guide(FeedId),
     /// A playback link (Stalker `create_link`), outside an import.
     StreamLink,
 }
@@ -307,3 +307,17 @@ impl fmt::Display for ImportError {
 }
 
 impl std::error::Error for ImportError {}
+
+impl From<FailureKind> for iptv_library::ImportErrorKind {
+    fn from(kind: FailureKind) -> Self {
+        match kind {
+            FailureKind::Config => Self::InvalidConfig,
+            FailureKind::Cancelled => Self::Cancelled,
+            FailureKind::Network => Self::Network,
+            FailureKind::Server => Self::HttpStatus,
+            FailureKind::Auth => Self::AuthFailed,
+            FailureKind::Parse | FailureKind::Empty => Self::InvalidBody,
+            FailureKind::Storage => Self::Other,
+        }
+    }
+}

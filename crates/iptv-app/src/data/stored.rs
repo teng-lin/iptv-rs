@@ -225,7 +225,7 @@ pub fn guide_sources(source: SourceId) -> Vec<GuideSource> {
 /// The download configs of `sources` (those switched on), with the storage
 /// settings of now (a stored config has those it was fetched with).
 pub fn configs(sources: &[GuideSource]) -> Vec<EpgSourceConfig> {
-    let template = EpgSourceConfig::new(iptv_epg::SourceId(0), SecretUrl::new(""));
+    let template = EpgSourceConfig::new(iptv_epg::FeedId(0), SecretUrl::new(""));
     let template = with_storage(vec![template], &crate::settings::get()).remove(0);
     guides::configs_of(sources, &template)
 }
@@ -1014,8 +1014,8 @@ mod tests {
         let edits = [
             guides::Edit::SetEnabled(guides::FIRST_USER_FEED, false),
             guides::Edit::Remove(guides::FIRST_USER_FEED),
-            guides::Edit::Move(iptv_epg::SourceId(2), -1),
-            guides::Edit::Shift(iptv_epg::SourceId(2), 60),
+            guides::Edit::Move(iptv_epg::FeedId(2), -1),
+            guides::Edit::Shift(iptv_epg::FeedId(2), 60),
             guides::Edit::Add {
                 url: SecretUrl::new("http://more.example.test/g.xml".to_owned()),
                 name: None,

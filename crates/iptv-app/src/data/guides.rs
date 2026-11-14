@@ -12,13 +12,13 @@
 //! source's natural one (the user's 1000, the provider's in its own order),
 //! so a guide arranged as a v5 build had it is not downloaded again.
 
-use iptv_epg::{SourceId, TimePolicy};
+use iptv_epg::{FeedId, TimePolicy};
 use iptv_import::EpgSourceConfig;
 use iptv_providers::SecretUrl;
 use iptv_store_sqlite::GuideSource;
 
 /// The feed of the first guide the user adds.
-pub const FIRST_USER_FEED: SourceId = SourceId(1);
+pub const FIRST_USER_FEED: FeedId = FeedId(1);
 /// The provider's n-th guide is feed `PROVIDER_FEEDS + n`.
 const PROVIDER_FEEDS: u32 = 2;
 /// Later guides the user adds: above this.
@@ -29,7 +29,7 @@ const USER_PRIORITY: i32 = 1000;
 pub const MAX_SHIFT_MINUTES: i32 = 12 * 60;
 
 /// A guide source the user adds.
-pub fn user_source(feed: SourceId, url: SecretUrl, name: Option<String>) -> GuideSource {
+pub fn user_source(feed: FeedId, url: SecretUrl, name: Option<String>) -> GuideSource {
     GuideSource {
         feed,
         provider_index: None,
@@ -41,7 +41,7 @@ pub fn user_source(feed: SourceId, url: SecretUrl, name: Option<String>) -> Guid
 }
 
 /// The feed id for a guide the user adds to `sources`.
-pub fn next_user_feed(sources: &[GuideSource]) -> SourceId {
+pub fn next_user_feed(sources: &[GuideSource]) -> FeedId {
     let highest = sources
         .iter()
         .filter(|s| !s.is_provider())
@@ -49,7 +49,7 @@ pub fn next_user_feed(sources: &[GuideSource]) -> SourceId {
         .max();
     match highest {
         None => FIRST_USER_FEED,
-        Some(n) => SourceId(n.max(MORE_USER_FEEDS) + 1),
+        Some(n) => FeedId(n.max(MORE_USER_FEEDS) + 1),
     }
 }
 
@@ -72,7 +72,7 @@ pub fn sync_provider(sources: &[GuideSource], urls: &[SecretUrl]) -> Vec<GuideSo
         let n = n as u32;
         if !out.iter().any(|s| s.provider_index == Some(n)) {
             out.push(GuideSource {
-                feed: SourceId(PROVIDER_FEEDS + n),
+                feed: FeedId(PROVIDER_FEEDS + n),
                 provider_index: Some(n),
                 url: url.clone(),
                 name: None,
@@ -127,20 +127,20 @@ pub enum Edit {
         name: Option<String>,
     },
     /// Only a guide the user added; the provider's are switched off.
-    Remove(SourceId),
-    SetEnabled(SourceId, bool),
+    Remove(FeedId),
+    SetEnabled(FeedId, bool),
     /// One place up (`-1`) or down (`1`).
-    Move(SourceId, i32),
-    Shift(SourceId, i32),
-    Rename(SourceId, Option<String>),
+    Move(FeedId, i32),
+    Shift(FeedId, i32),
+    Rename(FeedId, Option<String>),
     /// A new address for a guide the user added.
-    Relink(SourceId, SecretUrl),
+    Relink(FeedId, SecretUrl),
 }
 
 /// `sources` after `edit`; `None` when it changes nothing.
 pub fn apply(sources: &[GuideSource], edit: &Edit) -> Option<Vec<GuideSource>> {
     let mut out = sources.to_vec();
-    let at = |id: SourceId| out.iter().position(|s| s.feed == id);
+    let at = |id: FeedId| out.iter().position(|s| s.feed == id);
     match edit {
         Edit::Add { url, name } => {
             let feed = next_user_feed(&out);
@@ -192,7 +192,7 @@ mod tests {
     }
 
     fn template() -> EpgSourceConfig {
-        EpgSourceConfig::new(SourceId(0), url("template"))
+        EpgSourceConfig::new(FeedId(0), url("template"))
     }
 
     fn feeds(sources: &[GuideSource]) -> Vec<u32> {
@@ -267,15 +267,15 @@ mod tests {
             [(1, 1000), (2, 0)]
         );
         // The provider's guide first: above the user's.
-        let moved = apply(&v5, &Edit::Move(SourceId(2), -1)).unwrap();
+        let moved = apply(&v5, &Edit::Move(FeedId(2), -1)).unwrap();
         let c = configs_of(&moved, &template());
         assert_eq!(
             c.iter().map(|c| (c.id.0, c.priority)).collect::<Vec<_>>(),
             [(2, 1001), (1, 1000)]
         );
         // Switched off: not downloaded; the shift travels with the config.
-        let off = apply(&moved, &Edit::SetEnabled(SourceId(1), false)).unwrap();
-        let shifted = apply(&off, &Edit::Shift(SourceId(2), -120)).unwrap();
+        let off = apply(&moved, &Edit::SetEnabled(FeedId(1), false)).unwrap();
+        let shifted = apply(&off, &Edit::Shift(FeedId(2), -120)).unwrap();
         let c = configs_of(&shifted, &template());
         assert_eq!(c.len(), 1);
         assert_eq!(
@@ -287,7 +287,7 @@ mod tests {
     #[test]
     fn edits_change_only_what_they_name() {
         let s = sync_provider(&[user_source(FIRST_USER_FEED, url("u"), None)], &[url("p")]);
-        let provider = SourceId(2);
+        let provider = FeedId(2);
         assert_eq!(
             apply(&s, &Edit::Remove(provider)),
             None,

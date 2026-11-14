@@ -406,7 +406,7 @@ mod tests {
     #[test]
     fn the_log_names_no_channel_and_every_outcome_has_words() {
         let chosen = assign::Choice::Channel {
-            feed: iptv_epg::SourceId(1),
+            feed: iptv_epg::FeedId(1),
             epg_channel: "private.id".into(),
         };
         assert_eq!(choice_name(&chosen), "a guide channel");

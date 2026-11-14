@@ -339,8 +339,7 @@ mod tests {
              <desc>{name} description</desc></programme></tv>"
         );
         let xml = parse_xmltv(xml.as_bytes(), ParseOptions::default()).unwrap();
-        let mut builder =
-            SourceBuilder::new(iptv_epg::SourceId(1), 0, StoreOptions::default(), now);
+        let mut builder = SourceBuilder::new(iptv_epg::FeedId(1), 0, StoreOptions::default(), now);
         for c in xml.channels {
             builder.push_channel(c);
         }

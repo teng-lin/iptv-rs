@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use iptv_epg::{
-    ChannelKey, DAY, EpgRef, GuideStore, MatchKind, SourceBuilder, SourceId, StoreOptions,
+    ChannelKey, DAY, EpgRef, FeedId, GuideStore, MatchKind, SourceBuilder, StoreOptions,
     XmltvProgramme,
 };
 use iptv_search::{ProgrammeIndex, ProgrammeSearchOptions};
@@ -63,7 +63,7 @@ fn main() {
     let series: Vec<String> = (0..6000).map(|_| title(&mut rng, &words)).collect();
 
     let t = Instant::now();
-    let mut b = SourceBuilder::new(SourceId(1), 0, StoreOptions::default(), NOW);
+    let mut b = SourceBuilder::new(FeedId(1), 0, StoreOptions::default(), NOW);
     let (from, to) = (NOW - (days - 3).max(0) * DAY, NOW + 3.min(days) * DAY);
     for ch in 0..channels {
         let mut start = from - rng.below(3600) as i64;
@@ -94,7 +94,7 @@ fn main() {
         .enumerate()
         .map(|(c, k)| {
             let r = EpgRef {
-                source: SourceId(1),
+                source: FeedId(1),
                 epg_id: format!("c{c}.example"),
                 kind: MatchKind::TvgId,
             };

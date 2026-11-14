@@ -149,7 +149,7 @@ pub fn failure_of(error: &ImportError) -> ImportFailure {
 mod tests {
     use super::*;
     use iptv_core::wizard::{SecretText, UrlText};
-    use iptv_epg::SourceId;
+    use iptv_epg::FeedId;
     use iptv_import::{AuthProblem, FetchError, FetchErrorKind};
     use iptv_providers::model::ContentKind;
 
@@ -321,7 +321,7 @@ mod tests {
     fn only_guide_failures_point_at_a_field() {
         assert_eq!(failure_of(&net(Step::Playlist)).field, None);
         assert_eq!(
-            failure_of(&net(Step::Guide(SourceId(1)))),
+            failure_of(&net(Step::Guide(FeedId(1)))),
             ImportFailure {
                 kind: FailureKind::Network,
                 field: Some(Field::EpgUrl)

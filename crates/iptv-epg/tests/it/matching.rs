@@ -55,7 +55,7 @@ fn one_source() -> MatchIndex {
         ch("delta2.example", &["Delta News HD"]),
         ch("epsilon.example", &["UK: Epsilon Kids"]),
     ];
-    idx.add_source(SourceId(1), 0, chans.iter());
+    idx.add_source(FeedId(1), 0, chans.iter());
     idx
 }
 
@@ -120,7 +120,7 @@ fn ambiguous_names_pick_the_first_and_are_reported() {
 #[test]
 fn overrides_win_over_automatic_matching() {
     let mut idx = one_source();
-    idx.add_source(SourceId(2), 5, [ch("alpha.example", &["Alpha One"])].iter());
+    idx.add_source(FeedId(2), 5, [ch("alpha.example", &["Alpha One"])].iter());
     let playlist = [
         pl("o1", Some("alpha.example"), "Alpha One"),
         pl("o2", Some("alpha.example"), "Alpha One"),
@@ -132,7 +132,7 @@ fn overrides_win_over_automatic_matching() {
     ov.insert(
         "o1".into(),
         Override::Epg {
-            source: Some(SourceId(1)),
+            source: Some(FeedId(1)),
             epg_id: "gamma.example".into(),
         },
     );
@@ -147,7 +147,7 @@ fn overrides_win_over_automatic_matching() {
     ov.insert(
         "o4".into(),
         Override::Epg {
-            source: Some(SourceId(9)),
+            source: Some(FeedId(9)),
             epg_id: "later.example".into(),
         },
     );
@@ -163,7 +163,7 @@ fn overrides_win_over_automatic_matching() {
     assert_eq!(o1.len(), 1);
     assert_eq!(
         (o1[0].source, o1[0].epg_id.as_str()),
-        (SourceId(1), "gamma.example")
+        (FeedId(1), "gamma.example")
     );
     assert_eq!(o1[0].kind, MatchKind::Override);
     // Any-source override lists every source with that id, by priority.
@@ -171,10 +171,10 @@ fn overrides_win_over_automatic_matching() {
         .iter()
         .map(|c| c.source)
         .collect();
-    assert_eq!(o2, [SourceId(2), SourceId(1)]);
+    assert_eq!(o2, [FeedId(2), FeedId(1)]);
     assert!(!r.matches.contains_key(&ChannelKey::from("o3")));
     // A source-specific override is kept even when not resolvable yet.
-    assert_eq!(r.matches[&ChannelKey::from("o4")][0].source, SourceId(9));
+    assert_eq!(r.matches[&ChannelKey::from("o4")][0].source, FeedId(9));
     assert!(!r.matches.contains_key(&ChannelKey::from("o5")));
     let rep = &r.report;
     assert_eq!(
@@ -191,9 +191,9 @@ fn overrides_win_over_automatic_matching() {
 #[test]
 fn candidates_follow_source_priority() {
     let mut idx = MatchIndex::new();
-    idx.add_source(SourceId(1), 1, [ch("a.example", &["Alpha One"])].iter());
-    idx.add_source(SourceId(2), 10, [ch("x.example", &["alpha one hd"])].iter());
-    idx.add_source(SourceId(3), 1, [ch("alpha.example", &["Other"])].iter());
+    idx.add_source(FeedId(1), 1, [ch("a.example", &["Alpha One"])].iter());
+    idx.add_source(FeedId(2), 10, [ch("x.example", &["alpha one hd"])].iter());
+    idx.add_source(FeedId(3), 1, [ch("alpha.example", &["Other"])].iter());
     let r = run(
         &idx,
         &[pl("p", Some("alpha.example"), "Alpha One")],
@@ -215,12 +215,12 @@ fn candidates_follow_source_priority() {
     assert_eq!(r.report.by_name, 1);
 
     // Replacing a source re-sorts it.
-    idx.add_source(SourceId(2), 0, [ch("x.example", &["alpha one hd"])].iter());
+    idx.add_source(FeedId(2), 0, [ch("x.example", &["alpha one hd"])].iter());
     let r = run(&idx, &[pl("p", None, "Alpha One")], &Overrides::new());
-    assert_eq!(r.matches[&ChannelKey::from("p")][0].source, SourceId(1));
-    idx.remove_source(SourceId(1));
+    assert_eq!(r.matches[&ChannelKey::from("p")][0].source, FeedId(1));
+    idx.remove_source(FeedId(1));
     let r = run(&idx, &[pl("p", None, "Alpha One")], &Overrides::new());
-    assert_eq!(r.matches[&ChannelKey::from("p")][0].source, SourceId(2));
+    assert_eq!(r.matches[&ChannelKey::from("p")][0].source, FeedId(2));
 }
 
 /// Every candidate `match_channels` returns is a channel the filter wants,
@@ -240,7 +240,7 @@ fn match_filter_is_a_superset_of_the_candidates() {
         ch("unrelated.example", &["Nothing Here"]),
     ];
     let mut idx = MatchIndex::new();
-    idx.add_source(SourceId(1), 0, feed.iter());
+    idx.add_source(FeedId(1), 0, feed.iter());
     let mut tagged = pl("e", None, "Epsilon Kids");
     tagged.tvg_name = Some("FR: Epsilon Kids");
     let playlist = [
@@ -258,7 +258,7 @@ fn match_filter_is_a_superset_of_the_candidates() {
     overrides.insert(
         "z".into(),
         Override::Epg {
-            source: Some(SourceId(1)),
+            source: Some(FeedId(1)),
             epg_id: "undeclared.example".into(),
         },
     );
@@ -283,7 +283,7 @@ fn match_filter_is_a_superset_of_the_candidates() {
     }
     let wanted: Vec<&str> = feed
         .iter()
-        .filter(|c| filter.wants_channel(SourceId(1), c))
+        .filter(|c| filter.wants_channel(FeedId(1), c))
         .map(|c| c.id.as_str())
         .collect();
     assert_eq!(
@@ -298,6 +298,6 @@ fn match_filter_is_a_superset_of_the_candidates() {
             "epsilon.example"
         ]
     );
-    assert!(filter.wants_id(SourceId(1), "undeclared.example"));
-    assert!(!filter.wants_id(SourceId(2), "undeclared.example"));
+    assert!(filter.wants_id(FeedId(1), "undeclared.example"));
+    assert!(!filter.wants_id(FeedId(2), "undeclared.example"));
 }

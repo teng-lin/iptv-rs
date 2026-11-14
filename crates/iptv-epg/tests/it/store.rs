@@ -24,7 +24,7 @@ fn build(
     opts: StoreOptions,
     now: i64,
 ) -> EpgSource {
-    let mut b = SourceBuilder::new(SourceId(id), priority, opts, now);
+    let mut b = SourceBuilder::new(FeedId(id), priority, opts, now);
     for p in progs {
         b.push_programme(p);
     }
@@ -160,7 +160,7 @@ fn retention_drops_old_programmes_at_ingest_and_prune() {
     store.set_matches(HashMap::from([(
         key.clone(),
         vec![EpgRef {
-            source: SourceId(1),
+            source: FeedId(1),
             epg_id: "c".into(),
             kind: MatchKind::TvgId,
         }],
@@ -254,7 +254,7 @@ fn programme_data_round_trips() {
     assert_eq!(rows[0].rating, Some("12"));
     assert_eq!(rows[1].desc, None);
 
-    let mut b = SourceBuilder::new(SourceId(1), 0, StoreOptions::default(), T0);
+    let mut b = SourceBuilder::new(FeedId(1), 0, StoreOptions::default(), T0);
     for r in &rows {
         b.push_data("c", r);
     }
@@ -269,7 +269,7 @@ fn programme_data_round_trips() {
 
     // Loaded without descriptions: everything else stays.
     let mut b = SourceBuilder::new(
-        SourceId(1),
+        FeedId(1),
         0,
         StoreOptions {
             store_descriptions: false,
@@ -314,7 +314,7 @@ fn bind_all(store: &mut GuideStore, keys: &[(&str, &[(u32, &str)])]) {
             let refs = cands
                 .iter()
                 .map(|&(s, id)| EpgRef {
-                    source: SourceId(s),
+                    source: FeedId(s),
                     epg_id: id.into(),
                     kind: MatchKind::TvgId,
                 })
@@ -356,7 +356,7 @@ fn higher_priority_source_with_data_wins_per_channel() {
     // The high source has no "b": fall back to the low one.
     assert_eq!(at(&store, "kb").as_deref(), Some("low b"));
     assert_eq!(at(&store, "kz"), None);
-    assert_eq!(store.binding(&"ka".into()), Some((SourceId(2), "a")));
+    assert_eq!(store.binding(&"ka".into()), Some((FeedId(2), "a")));
     assert_eq!(store.bound_count(), 2);
     let mut bound: Vec<_> = store
         .bindings()
@@ -366,8 +366,8 @@ fn higher_priority_source_with_data_wins_per_channel() {
     assert_eq!(
         bound,
         [
-            ("ka".to_owned(), SourceId(2), "a".to_owned()),
-            ("kb".to_owned(), SourceId(1), "b".to_owned())
+            ("ka".to_owned(), FeedId(2), "a".to_owned()),
+            ("kb".to_owned(), FeedId(1), "b".to_owned())
         ]
     );
 
@@ -380,7 +380,7 @@ fn higher_priority_source_with_data_wins_per_channel() {
         T0,
     ));
     assert_eq!(at(&store, "ka").as_deref(), Some("low a"));
-    store.remove_source(SourceId(1));
+    store.remove_source(FeedId(1));
     assert_eq!(at(&store, "ka").as_deref(), Some("high a"));
     assert_eq!(at(&store, "kb"), None);
 }
@@ -442,7 +442,7 @@ fn parse_match_store_end_to_end() {
         e.write_all(xml.as_bytes()).unwrap();
         e.finish().unwrap()
     };
-    let mut builder = SourceBuilder::new(SourceId(1), 0, StoreOptions::default(), T0);
+    let mut builder = SourceBuilder::new(FeedId(1), 0, StoreOptions::default(), T0);
     let mut parser = XmltvParser::new(ParseOptions::default());
     for chunk in gz.chunks(50) {
         parser.feed(chunk, &mut |item| builder.push(item)).unwrap();

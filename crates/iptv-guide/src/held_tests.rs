@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use iptv_core::guide::Schedule;
 use iptv_epg::{
-    ChannelKey, DAY, EpgRef, GuideStore, MatchKind, ProgrammeData, SourceBuilder, SourceId,
+    ChannelKey, DAY, EpgRef, FeedId, GuideStore, MatchKind, ProgrammeData, SourceBuilder,
     StoreOptions,
 };
 
@@ -24,7 +24,7 @@ const TO: i64 = NOW + 6 * 3600;
 
 /// Channel `a`'s programmes overlapping `[from, to)`, as the store reads them.
 fn store_between(from: i64, to: i64) -> GuideStore {
-    let mut b = SourceBuilder::new(SourceId(1), 0, StoreOptions::default(), NOW);
+    let mut b = SourceBuilder::new(FeedId(1), 0, StoreOptions::default(), NOW);
     let titles: Vec<String> = (0..(4 * DAY / LEN)).map(|n| format!("P{n}")).collect();
     for (n, title) in titles.iter().enumerate() {
         let start = FIRST + n as i64 * LEN;
@@ -43,7 +43,7 @@ fn store_between(from: i64, to: i64) -> GuideStore {
     let mut store = GuideStore::new();
     store.replace_source(b.finish());
     let cand = EpgRef {
-        source: SourceId(1),
+        source: FeedId(1),
         epg_id: "a.test".into(),
         kind: MatchKind::TvgId,
     };

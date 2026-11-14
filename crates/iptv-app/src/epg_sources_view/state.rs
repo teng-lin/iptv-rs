@@ -6,7 +6,7 @@
 //! Pure: the view feeds it keys and taps and carries out its [`Effect`]s.
 
 use iptv_core::wizard::{Field, FieldError, validate_field};
-use iptv_epg::SourceId as Feed;
+use iptv_epg::FeedId as Feed;
 use iptv_providers::SecretUrl;
 use iptv_store_sqlite::SourceId;
 

@@ -73,7 +73,7 @@ impl ProgrammeIndexBuilder {
 #[cfg(test)]
 mod tests {
     use iptv_epg::{
-        ChannelKey, EpgRef, GuideStore, MatchKind, SourceBuilder, SourceId, StoreOptions,
+        ChannelKey, EpgRef, FeedId, GuideStore, MatchKind, SourceBuilder, StoreOptions,
     };
 
     use super::*;
@@ -87,7 +87,7 @@ mod tests {
             (1, 1500, 2500, "News at Noon"),
             (1, 2500, 9000, "Morning News"),
         ];
-        let mut b = SourceBuilder::new(SourceId(1), 0, StoreOptions::default(), 0);
+        let mut b = SourceBuilder::new(FeedId(1), 0, StoreOptions::default(), 0);
         let mut built = ProgrammeIndexBuilder::new(2);
         for (ch, start, stop, title) in rows {
             b.push_data(
@@ -111,7 +111,7 @@ mod tests {
             .enumerate()
             .map(|(i, k)| {
                 let cand = EpgRef {
-                    source: SourceId(1),
+                    source: FeedId(1),
                     epg_id: format!("e{i}"),
                     kind: MatchKind::TvgId,
                 };

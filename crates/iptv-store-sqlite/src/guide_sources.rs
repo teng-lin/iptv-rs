@@ -14,28 +14,7 @@ use crate::error::Result;
 use crate::sources::ensure_source;
 use crate::{SourceId, Store};
 
-/// One guide source of a playlist source. `Debug` is safe: the address is
-/// a redacting [`SecretUrl`].
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GuideSource {
-    /// Its feed id in the stored guide (unique within the playlist source).
-    pub feed: iptv_epg::SourceId,
-    /// `None`: added by the user. `Some(n)`: the provider's n-th own guide.
-    pub provider_index: Option<u32>,
-    /// May carry credentials (Xtream `xmltv.php`).
-    pub url: SecretUrl,
-    /// The name the user gave it.
-    pub name: Option<String>,
-    pub enabled: bool,
-    /// Added to every programme time of the feed (minutes).
-    pub shift_minutes: i32,
-}
-
-impl GuideSource {
-    pub fn is_provider(&self) -> bool {
-        self.provider_index.is_some()
-    }
-}
+pub use iptv_library::GuideSource;
 
 impl Store {
     /// `source`'s guide sources in the user's order (first wins). Empty for
@@ -48,7 +27,7 @@ impl Store {
         )?;
         let rows = stmt.query_map([source.0], |r| {
             Ok(GuideSource {
-                feed: iptv_epg::SourceId(r.get(0)?),
+                feed: iptv_epg::FeedId(r.get(0)?),
                 provider_index: r.get(1)?,
                 url: SecretUrl::new(r.get::<_, String>(2)?),
                 name: r.get(3)?,

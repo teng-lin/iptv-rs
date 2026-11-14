@@ -25,7 +25,7 @@ pub enum Choice {
     Automatic,
     NoGuide,
     Channel {
-        feed: iptv_epg::SourceId,
+        feed: iptv_epg::FeedId,
         epg_channel: String,
     },
 }
@@ -73,7 +73,7 @@ pub enum Applied {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Current {
     pub choice: Option<Choice>,
-    pub bound: Option<(iptv_epg::SourceId, String, MatchKind)>,
+    pub bound: Option<(iptv_epg::FeedId, String, MatchKind)>,
 }
 
 /// The saved choice and the binding of channel `key` of `source`.
@@ -246,7 +246,7 @@ mod tests {
 
     #[test]
     fn choices_round_trip_through_the_overlay() {
-        let feed = iptv_epg::SourceId(1001);
+        let feed = iptv_epg::FeedId(1001);
         for choice in [
             Choice::Automatic,
             Choice::NoGuide,

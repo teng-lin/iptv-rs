@@ -168,7 +168,7 @@ fn concurrent_guide_source_edits_wait_for_each_other() {
             thread::spawn(move || {
                 let mut store = Store::open(&path).unwrap();
                 let guides = [GuideSource {
-                    feed: iptv_epg::SourceId(1),
+                    feed: iptv_epg::FeedId(1),
                     provider_index: Some(0),
                     url: SecretUrl::new("http://guide.example.test/g.xml"),
                     name: None,
