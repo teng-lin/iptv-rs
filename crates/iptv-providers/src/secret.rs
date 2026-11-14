@@ -1,6 +1,13 @@
 //! Values that must never reach logs: passwords, tokens, MACs, serials.
+//!
+//! Both types overwrite their text with zeros when dropped, so a secret
+//! does not stay readable in freed memory (a core dump, a later
+//! allocation). This covers the value they own; a copy made from
+//! [`Secret::expose`] (a request URL, a header) is the caller's to wipe.
 
 use std::fmt;
+
+use zeroize::Zeroize;
 
 /// A secret string. `Debug` and `Display` print `***`; read the value with
 /// [`Secret::expose`] only where it goes on the wire or into secure storage.
@@ -9,6 +16,12 @@ use std::fmt;
 /// adapter decision (keystore), never a side effect of serialising a model.
 #[derive(Clone, Default, PartialEq, Eq, Hash)]
 pub struct Secret(String);
+
+impl Drop for Secret {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
 
 impl Secret {
     pub fn new(value: impl Into<String>) -> Self {
@@ -59,6 +72,12 @@ impl fmt::Display for Secret {
 #[derive(Clone, Default, PartialEq, Eq, Hash)]
 pub struct SecretUrl(String);
 
+impl Drop for SecretUrl {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+
 impl SecretUrl {
     pub fn new(value: impl Into<String>) -> Self {
         Self(value.into())
@@ -105,6 +124,26 @@ mod tests {
         assert_eq!(format!("{s:?}"), "Secret(***)");
         assert_eq!(format!("{s}"), "***");
         assert_eq!(s.expose(), "hunter2-synthetic");
+    }
+
+    #[test]
+    fn secrets_are_wiped_when_dropped() {
+        // Freed memory cannot be read back safely, so this checks the two
+        // halves: both types run code on drop, and that code (`zeroize` on
+        // the owned text) overwrites and empties the value in place.
+        assert!(std::mem::needs_drop::<Secret>() && std::mem::needs_drop::<SecretUrl>());
+        let mut secret = Secret::new("hunter2-synthetic");
+        let copy = secret.clone();
+        secret.0.zeroize();
+        assert!(secret.is_empty());
+        assert_eq!(
+            copy.expose(),
+            "hunter2-synthetic",
+            "a clone owns its own text"
+        );
+        let mut url = SecretUrl::new("http://tv.example.com/get.php?password=synthetic");
+        url.0.zeroize();
+        assert_eq!(url.expose(), "");
     }
 
     #[test]

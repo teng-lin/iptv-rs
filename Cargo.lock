@@ -2316,6 +2316,7 @@ dependencies = [
  "sha1_smol",
  "url",
  "xxhash-rust",
+ "zeroize",
 ]
 
 [[package]]
