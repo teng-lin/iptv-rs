@@ -46,7 +46,7 @@ pub async fn early(ui: Ui, stored: &StoredSource) -> bool {
     };
     let id = stored.id;
     let content = ContentId::from_stored(key.clone());
-    let row = match crate::store_service::read(move |store| store.channel(id, &content)).await {
+    let row = match crate::runtime::commands::channel(id, content).await {
         Ok(Some(row)) if !row.blocked => row,
         Ok(_) => return false,
         Err(e) => {

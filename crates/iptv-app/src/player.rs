@@ -223,9 +223,7 @@ pub fn start(ui: &Ui, channel: usize) {
                     save_last_channel(Some(source), &local);
                 }
                 let saved_key = key.clone();
-                let saved = crate::store_service::call(move |store| {
-                    store.set_combined_last_channel(&saved_key)
-                });
+                let saved = crate::runtime::commands::remember_combined_channel(saved_key);
                 crate::data::spawn_in_app(async move {
                     if let Err(e) = saved.await {
                         log::warn!("iptv combined: cannot save last channel: {e}");

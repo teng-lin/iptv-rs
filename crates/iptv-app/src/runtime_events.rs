@@ -4,6 +4,18 @@ use crate::{Ui, runtime::RuntimeEvent};
 pub(crate) fn apply(ui: Ui, event: RuntimeEvent) {
     match event {
         RuntimeEvent::ScheduleReady(schedule) => crate::set_schedule(&ui, schedule),
+        RuntimeEvent::OrganizationReady { schedule, snapshot } => {
+            if std::rc::Rc::ptr_eq(&schedule, &crate::schedule())
+                && let Some(epg) = schedule
+                    .as_any()
+                    .and_then(|s| s.downcast_ref::<iptv_guide::EpgSchedule>())
+            {
+                let kept = crate::lists::keep(ui);
+                snapshot.install(epg);
+                crate::lists::restore(ui, kept);
+                ui.data_version.update(|version| *version += 1);
+            }
+        }
         RuntimeEvent::SourceReady(resume) => crate::player::source_ready(ui, resume),
         RuntimeEvent::SourceChanged => crate::player::source_changed(ui),
         RuntimeEvent::AccountStreams(limit) => crate::multiview::set_account_streams(limit),

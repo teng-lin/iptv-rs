@@ -154,3 +154,11 @@ mod tests {
         assert!(!second_cancel.is_cancelled());
     }
 }
+
+pub(crate) mod store_service;
+
+pub(crate) mod executor;
+
+pub(crate) mod file_writer;
+
+pub(crate) mod commands;

@@ -76,3 +76,15 @@ pub(crate) struct StatusSnapshot {
     pub(crate) guides: BTreeMap<SourceId, StoredGuide>,
     pub(crate) lines: BTreeMap<SourceId, Vec<SourceLine>>,
 }
+
+/// Organization read atomically for one committed library version.
+pub(crate) struct OrganizationSnapshot {
+    pub(crate) organization: iptv_guide::Organization,
+    pub(crate) lists: Vec<(String, String, Vec<String>)>,
+}
+impl OrganizationSnapshot {
+    pub(crate) fn install(self, schedule: &EpgSchedule) {
+        schedule.set_organization(self.organization);
+        schedule.set_group_lists(self.lists);
+    }
+}

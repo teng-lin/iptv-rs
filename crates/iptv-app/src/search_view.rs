@@ -243,10 +243,7 @@ fn load_history() -> SearchHistory {
 pub(crate) fn load_saved_history(ui: Ui) {
     SAVED.with(|saved| *saved.borrow_mut() = None);
     let legacy = crate::data::data_dir().join(LEGACY_HISTORY_FILE);
-    let loaded = crate::store_service::call(move |store| {
-        import_legacy_history(store, &legacy)?;
-        store.search_history()
-    });
+    let loaded = crate::runtime::commands::load_search_history(legacy);
     crate::data::spawn_in_app(async move {
         let list = match loaded.await {
             Ok(list) => list,
@@ -272,33 +269,6 @@ pub(crate) fn load_saved_history(ui: Ui) {
 /// Moves the recent searches of a legacy file into an empty store table,
 /// then deletes the file. An unreadable file is deleted too: it held only
 /// recent searches, and plaintext must not stay behind.
-fn import_legacy_history(
-    store: &mut iptv_store_sqlite::Store,
-    path: &std::path::Path,
-) -> Result<(), iptv_store_sqlite::StoreError> {
-    let Ok(bytes) = std::fs::read(path) else {
-        return Ok(());
-    };
-    let list: Vec<String> = serde_json::from_slice(&bytes).unwrap_or_default();
-    if !list.is_empty() && store.search_history()?.is_empty() {
-        let list = SearchHistory::from_list(list, SearchHistory::DEFAULT_CAPACITY).to_list();
-        store.set_search_history(&list)?;
-        log::info!(
-            "iptv search: moved {} recent searches into the store",
-            list.len()
-        );
-    }
-    if let Err(error) = std::fs::remove_file(path)
-        && error.kind() != std::io::ErrorKind::NotFound
-    {
-        log::warn!(
-            "iptv search: could not delete the old recent searches file ({})",
-            error.kind()
-        );
-    }
-    Ok(())
-}
-
 fn save_history(ui: Ui) {
     let Some(session) = ui
         .search
@@ -312,7 +282,7 @@ fn save_history(ui: Ui) {
         return;
     }
     SAVED.with(|saved| *saved.borrow_mut() = Some(list.clone()));
-    let saved = crate::store_service::call(move |store| store.set_search_history(&list));
+    let saved = crate::runtime::commands::save_search_history(list);
     crate::data::spawn_in_app(async move {
         if let Err(error) = saved.await {
             log::warn!("iptv search: could not save the recent searches: {error}");

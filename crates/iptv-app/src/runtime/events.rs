@@ -5,6 +5,10 @@ use std::rc::Rc;
 
 pub(crate) enum RuntimeEvent {
     ScheduleReady(Rc<dyn Schedule>),
+    OrganizationReady {
+        schedule: Rc<dyn Schedule>,
+        snapshot: super::state::OrganizationSnapshot,
+    },
     SourceReady(bool),
     SourceChanged,
     AccountStreams(Option<u32>),

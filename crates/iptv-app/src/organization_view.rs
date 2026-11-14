@@ -5,20 +5,10 @@ use crate::wizard_view::entry::{self, TextSheet};
 use crate::{Ui, data, ui_kit};
 use iptv_core::organization::{ACTIONS, Action as Edit, Editor, Item};
 use iptv_nav::Action;
-use iptv_providers::{ContentId, GroupId};
-use iptv_store_sqlite::{
-    ChannelQuery, ChannelScope, CustomGroupId, OrderScope, SourceId, StoreError,
-};
+use iptv_store_sqlite::{SourceId, StoreError};
 use nsh_core::prelude::*;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Kind {
-    Channels,
-    Groups,
-    Favorites,
-    GroupChannels(GroupId),
-    CustomChannels(CustomGroupId),
-}
+pub use iptv_library::OrganizationScope as Kind;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Open {
     source: SourceId,
@@ -26,59 +16,11 @@ pub struct Open {
     editor: Editor,
 }
 async fn items(source: SourceId, kind: &Kind) -> Result<Vec<Item>, StoreError> {
-    let kind = kind.clone();
-    let favorites = crate::favorites::ordered_keys();
-    // Edits reload their rows only after the edit's reply: the reader sees it.
-    crate::store_service::read(move |store| {
-        let org = data::organization::read_in(store, source)?;
-        let rows = match kind {
-            Kind::Channels => org.channels,
-            Kind::Groups => org.groups,
-            Kind::Favorites => {
-                let names: std::collections::HashMap<_, _> = org
-                    .channels
-                    .into_iter()
-                    .map(|(id, name, hidden)| (id, (name, hidden)))
-                    .collect();
-                favorites
-                    .into_iter()
-                    .filter_map(|id| {
-                        names
-                            .get(&id)
-                            .map(|(name, hidden)| (id.clone(), name.clone(), *hidden))
-                    })
-                    .collect()
-            }
-            Kind::GroupChannels(group) => store
-                .load_channels(
-                    source,
-                    &ChannelQuery {
-                        scope: ChannelScope::Group(group),
-                        include_hidden: true,
-                        ..Default::default()
-                    },
-                )?
-                .into_iter()
-                .map(|r| (r.channel.id.as_str().to_owned(), r.name, r.hidden))
-                .collect(),
-            Kind::CustomChannels(group) => store
-                .load_channels(
-                    source,
-                    &ChannelQuery {
-                        scope: ChannelScope::Custom(group),
-                        include_hidden: true,
-                        ..Default::default()
-                    },
-                )?
-                .into_iter()
-                .map(|r| (r.channel.id.as_str().to_owned(), r.name, r.hidden))
-                .collect(),
-        };
-        Ok(rows
-            .into_iter()
-            .map(|(id, name, hidden)| Item { id, name, hidden })
-            .collect())
-    })
+    crate::runtime::commands::organization_items(
+        source,
+        kind.clone(),
+        crate::favorites::ordered_keys(),
+    )
     .await
 }
 
@@ -200,21 +142,7 @@ fn perform(ui: Ui, edit: Edit) {
     if s.kind == Kind::Favorites && edit == Edit::ResetOrder {
         let keys = crate::favorites::ordered_keys();
         let source = s.source;
-        let ordered = crate::store_service::call(move |store| {
-            Ok(store
-                .load_channels(
-                    source,
-                    &ChannelQuery {
-                        include_hidden: true,
-                        order: iptv_store_sqlite::ChannelOrder::Provider,
-                        ..Default::default()
-                    },
-                )?
-                .into_iter()
-                .filter(|row| keys.iter().any(|key| key == row.channel.id.as_str()))
-                .map(|row| row.channel.id.as_str().to_owned())
-                .collect::<Vec<_>>())
-        });
+        let ordered = crate::runtime::commands::favorite_provider_order(source, keys);
         data::spawn_in_app(async move {
             let ordered = ordered.await;
             if OPEN_GENERATION.get() != generation {
@@ -230,69 +158,8 @@ fn perform(ui: Ui, edit: Edit) {
         return;
     }
     let finished = s.clone();
-    let result = crate::store_service::call(move |store| {
-        let id = ContentId::from_stored(&item.id);
-        let group = GroupId::from_stored(&item.id);
-        let at = s
-            .editor
-            .items
-            .iter()
-            .position(|i| i.id == item.id)
-            .unwrap_or(0);
-        let to = match edit {
-            Edit::Earlier => at.saturating_sub(1),
-            Edit::Later => (at + 1).min(s.editor.items.len().saturating_sub(1)),
-            Edit::First => 0,
-            Edit::Last => s.editor.items.len().saturating_sub(1),
-            _ => at,
-        };
-        match edit {
-            Edit::Visibility => match &s.kind {
-                Kind::Groups => store.hide_group(s.source, &group, !item.hidden)?,
-                _ => store.set_hidden(s.source, &id, !item.hidden)?,
-            },
-            Edit::ResetName => match &s.kind {
-                Kind::Groups => store.rename_group(s.source, &group, None)?,
-                _ => store.rename_channel(s.source, &id, None)?,
-            },
-            Edit::Earlier | Edit::Later | Edit::First | Edit::Last => match &s.kind {
-                Kind::Channels => {
-                    store.move_channel(s.source, &OrderScope::All, &id, to)?;
-                }
-                Kind::GroupChannels(g) => {
-                    store.move_channel(s.source, &OrderScope::Group(g.clone()), &id, to)?;
-                }
-                Kind::CustomChannels(g) => {
-                    store.move_in_custom_group(*g, &id, to)?;
-                }
-                Kind::Favorites => unreachable!("handled before queuing"),
-                Kind::Groups => store.move_group(s.source, &group, to)?,
-            },
-            Edit::ResetOrder => match &s.kind {
-                Kind::Channels => store.reset_manual_order(s.source, &OrderScope::All)?,
-                Kind::GroupChannels(g) => {
-                    store.reset_manual_order(s.source, &OrderScope::Group(g.clone()))?
-                }
-                Kind::CustomChannels(g) => store.reset_custom_group_order(*g)?,
-                Kind::Favorites => unreachable!("handled before queuing"),
-                Kind::Groups => store.reset_group_order(s.source)?,
-            },
-            Edit::HideSelected | Edit::ShowSelected | Edit::HideAll | Edit::ShowAll => {
-                let all = matches!(edit, Edit::HideAll | Edit::ShowAll);
-                let hidden = matches!(edit, Edit::HideSelected | Edit::HideAll);
-                let ids: Vec<_> = s
-                    .editor
-                    .items
-                    .iter()
-                    .filter(|i| all || s.editor.selected.contains(&i.id))
-                    .map(|i| i.id.clone())
-                    .collect();
-                store.set_library_visibility(s.source, &ids, s.kind == Kind::Groups, hidden)?;
-            }
-            _ => {}
-        }
-        Ok(())
-    });
+    let result =
+        crate::runtime::commands::edit_organization(s.source, s.kind, s.editor, item, edit);
     data::spawn_in_app(async move {
         finish(ui, &finished, generation, result.await);
     });
@@ -333,15 +200,12 @@ fn commit(ui: Ui) {
         return;
     };
     let target = s.clone();
-    let result = crate::store_service::call(move |store| {
-        let text = (!text.trim().is_empty()).then_some(text.trim());
-        match target.kind {
-            Kind::Groups => {
-                store.rename_group(target.source, &GroupId::from_stored(&item.id), text)
-            }
-            _ => store.rename_channel(target.source, &ContentId::from_stored(&item.id), text),
-        }
-    });
+    let result = crate::runtime::commands::rename_organization_item(
+        target.source,
+        target.kind,
+        item.id,
+        text,
+    );
     dismiss_keyboard();
     data::spawn_in_app(async move {
         finish(ui, &s, generation, result.await);
