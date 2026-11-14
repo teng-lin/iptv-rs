@@ -157,7 +157,7 @@ mkdir -p "$build/ffmpeg"
 meson_build mpv -Ddefault_library=shared -Dauto_features=disabled \
     "-Dc_link_args=['-Wl,-exported_symbol,_mpv_*', '-Wl,-dead_strip_dylibs', '-lc++', '-Wl,-undefined,error']" \
     -Dgpl=false -Dcplayer=false -Dlibmpv=true -Dbuild-date=false -Dgl=enabled -Dplain-gl=enabled \
-    -Dcoreaudio=enabled -Dcocoa=disabled -Dswift-build=disabled -Diconv=enabled \
+    -Dcoreaudio=enabled -Dcocoa=enabled -Dswift-build=disabled -Diconv=enabled \
     -Dlibavdevice=enabled -Dzlib=enabled -Dlua=disabled -Djavascript=disabled
 cp "$build/mpv/config.h" "$output/logs/mpv-config.h"
 verify mpv "$output/logs/mpv-config.h"
@@ -170,6 +170,12 @@ for header in client.h render.h render_gl.h stream_cb.h; do
     install -m 644 "$prefix/include/mpv/$header" "$output/include/mpv/$header"
 done
 install -m 755 "$prefix/bin/ffmpeg" "$output/ffmpeg"
+# mpv links with `-undefined dynamic_lookup`, so a symbol nothing defines
+# links fine and fails only when the library is loaded. Refuse it here.
+if nm -m -u "$library" | grep "dynamically looked up"; then
+    echo "libmpv leaves the symbols above to be found at load time" >&2
+    exit 1
+fi
 strip "$output/ffmpeg"
 # Editing load commands voids the linker's signature; arm64 needs a valid one.
 codesign --force --sign - "$library"
