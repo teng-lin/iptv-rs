@@ -20,6 +20,8 @@ on:
       - 'tools/ci/**'
       - 'tools/package-macos.sh'
       - 'tools/bundle-macos.py'
+      - 'tools/mpv-runtime-unix/**'
+      - 'tools/mpv-runtime/prepare.py'
   workflow_dispatch:
 # Superseded PR checks need not keep occupying runners. Releases are never cancelled.
 concurrency:
@@ -65,7 +67,8 @@ jobs:
           export APPIMAGE_EXTRACT_AND_RUN=1 CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target"
           bash tools/ci/package-linux.sh
           bash tools/ci/check-linux-packages.sh
-          # As in a release: every bundled library's source must be fetchable.
+          # As in a release: every bundled system library's source must be
+          # fetchable (libmpv's is retained with its pinned runtime release).
           bash tools/ci/enable-deb-src.sh
           python3 tools/ci/native-sources.py linux target/Patina.AppDir \
             "target/native-sources/Patina-$VERSION-linux-native-sources.tar"
@@ -82,7 +85,8 @@ jobs:
           PACKAGE_PLATFORM=macos python3 tools/ci/unpack-signing-input.py
           IPTV_SIGNING_STAGE=1 bash tools/ci/package-macos.sh
           bash tools/ci/smoke-macos-dmg.sh
-          # As in a release: every bundled library's source must be fetchable.
+          # As in a release: the source of any bundled Homebrew library must be
+          # fetchable (normally none: libmpv is the pinned runtime).
           python3 tools/ci/native-sources.py macos target/package/Patina.app \
             "target/native-sources/Patina-$VERSION-macos-native-sources.tar"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -95,4 +99,4 @@ jobs:
         with:
           name: native-sources-manifest-${{ matrix.platform }}
           path: target/native-sources/Patina-*-native-sources.json
-          if-no-files-found: error
+          if-no-files-found: ${{ matrix.platform == 'linux' && 'error' || 'ignore' }}

@@ -1,13 +1,22 @@
-name: Build retained Windows libmpv dependency
+name: Build retained libmpv dependencies
 on:
   workflow_dispatch:
+    inputs:
+      platform:
+        description: Runtime to build, test and publish
+        type: choice
+        default: windows
+        options: [windows, linux, macos]
 permissions:
   contents: read
 concurrency:
-  group: mpv-runtime-dependency
+  group: mpv-runtime-dependency-${{ inputs.platform }}
   cancel-in-progress: false
 jobs:
+  # Windows: tools/mpv-runtime. Linux and macOS: tools/mpv-runtime-unix, from
+  # the same pinned sources. Each platform publishes its own retained release.
   build:
+    if: inputs.platform == 'windows'
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
@@ -54,6 +63,7 @@ jobs:
           path: target/mpv-runtime-build/logs
           retention-days: 14
   smoke:
+    if: inputs.platform == 'windows'
     needs: build
     runs-on: windows-2025
     timeout-minutes: 15
@@ -80,6 +90,7 @@ jobs:
           python tools/mpv-runtime/smoke.py --dll "$dist/runtime/libmpv-2.dll" --ffmpeg "$dist/test-tools/ffmpeg.exe"
           if ($LASTEXITCODE -ne 0) { throw 'Synthetic TS/HLS runtime smoke failed' }
   publish:
+    if: inputs.platform == 'windows'
     needs: [build, smoke]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -106,4 +117,220 @@ jobs:
           printf 'Pinned Windows libmpv dependency. Sources, licenses and build configuration accompany the runtime. Synthetic MPEG-TS/HLS playback passed on Windows.\n' > release-notes.txt
           gh release create "$tag" --draft --target "$COMMIT" --title "$tag" --notes-file release-notes.txt --latest=false \
             mpv-runtime-windows-x86_64.zip mpv-runtime-sources.tar.gz runtime.json SHA256SUMS
+          gh release edit "$tag" --draft=false --latest=false
+
+  linux-build:
+    if: inputs.platform == 'linux'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Validate source selection and packaging
+        run: |
+          python3 tools/mpv-runtime/test_prepare.py
+          python3 tools/mpv-runtime-unix/test_runtime.py
+      - name: Build pinned host environment
+        run: docker build --tag patina-mpv-builder-linux tools/mpv-runtime-unix/linux
+      - name: Download and verify pinned inputs
+        run: |
+          mkdir -p target/mpv-runtime-linux-work target/mpv-runtime-linux-build target/mpv-runtime-linux-dist
+          docker run --rm -v "$PWD:/repo:ro" -v "$PWD/target/mpv-runtime-linux-work:/work" patina-mpv-builder-linux sh -c '
+            python3 /repo/tools/mpv-runtime-unix/runtime.py lock --platform linux --output /work/lock.json &&
+            python3 /repo/tools/mpv-runtime/prepare.py prepare --lock /work/lock.json --work /work'
+      # Includes the build-time MPEG-TS/HLS smoke test inside the builder.
+      - name: Compile without network access
+        run: |
+          docker run --rm --network=none -v "$PWD:/repo:ro" \
+            -v "$PWD/target/mpv-runtime-linux-work:/work" -v "$PWD/target/mpv-runtime-linux-build:/output" \
+            patina-mpv-builder-linux bash /repo/tools/mpv-runtime-unix/linux/build.sh /work /output
+      - name: Package runtime and corresponding sources
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          docker run --rm --network=none -v "$PWD:/repo:ro" \
+            -v "$PWD/target/mpv-runtime-linux-work:/work" -v "$PWD/target/mpv-runtime-linux-build:/build-output:ro" \
+            -v "$PWD/target/mpv-runtime-linux-dist:/dist" patina-mpv-builder-linux \
+            python3 /repo/tools/mpv-runtime-unix/runtime.py package --platform linux --lock /work/lock.json \
+            --work /work --build /build-output --output /dist --repository "$REPOSITORY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mpv-runtime-linux-candidate
+          path: target/mpv-runtime-linux-dist/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+      - name: Retain build diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mpv-runtime-linux-build-logs
+          path: target/mpv-runtime-linux-build/logs
+          retention-days: 14
+  # The exact packaged library on a stock Ubuntu 24.04 runner: synthetic
+  # playback, then the app's own real-player tests, with the system libmpv
+  # removed so nothing else can be linked or loaded.
+  linux-smoke:
+    needs: linux-build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: mpv-runtime-linux-candidate
+          path: target/mpv-runtime-linux-dist
+      - uses: ./.github/actions/setup
+        with:
+          cache: 'false'
+      - name: Verify the candidate and play synthetic media
+        run: |
+          dist=target/mpv-runtime-linux-dist
+          (cd "$dist" && sha256sum --check SHA256SUMS)
+          sudo apt-get remove -y libmpv-dev libmpv2
+          sudo apt-get install -y libpulse0 libasound2t64 libpipewire-0.3-0t64 libva2 libva-drm2 libssl3t64 libfontconfig1
+          python3 tools/mpv-runtime-unix/runtime.py fetch --platform linux --manifest "$dist/runtime-linux.json" \
+            --archive "$dist/mpv-runtime-linux-x86_64.tar.gz" --destination target/mpv-runtime-linux
+          mkdir -p target/mpv-runtime-linux-tools
+          tar -xzf "$dist/test-tools-linux-x86_64.tar.gz" -C target/mpv-runtime-linux-tools
+          python3 tools/mpv-runtime-unix/smoke.py --library target/mpv-runtime-linux/lib/libmpv.so.2 \
+            --ffmpeg target/mpv-runtime-linux-tools/bin/ffmpeg
+      - name: App player tests against the candidate
+        env:
+          IPTV_REQUIRE_PLAYER_TESTS: '1'
+        run: |
+          export LIBRARY_PATH="$PWD/target/mpv-runtime-linux/lib" LD_LIBRARY_PATH="$PWD/target/mpv-runtime-linux/lib"
+          export PATH="$PWD/target/mpv-runtime-linux-tools/bin:$PATH"
+          cargo test --locked -p iptv-app --lib --features test-support mpv::
+  linux-publish:
+    needs: [linux-build, linux-smoke]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: mpv-runtime-linux-candidate
+          path: dist
+      - name: Publish retained dependency release without overwriting
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          cd dist
+          sha256sum --check SHA256SUMS
+          tag=$(python3 -c 'import json; print(json.load(open("runtime-linux.json"))["tag"])')
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo 'Dependency release already exists; refusing to overwrite it.' >&2
+            exit 1
+          fi
+          printf 'Pinned Linux x86_64 libmpv dependency (LGPL-only FFmpeg). Sources, licenses and build configuration accompany the runtime. Synthetic MPEG-TS/HLS playback and the app player tests passed on Ubuntu 24.04.\n' > release-notes.txt
+          gh release create "$tag" --draft --target "$COMMIT" --title "$tag" --notes-file release-notes.txt --latest=false \
+            mpv-runtime-linux-x86_64.tar.gz mpv-runtime-linux-sources.tar.gz runtime-linux.json SHA256SUMS
+          gh release edit "$tag" --draft=false --latest=false
+  # macOS: no container. The pinned Xcode is selected through DEVELOPER_DIR and
+  # macos/build.sh isolates itself (empty environment, no Homebrew, network
+  # denied by a sandbox profile). Not yet run: see tools/mpv-runtime-unix/README.md.
+  macos-build:
+    if: inputs.platform == 'macos'
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Select the pinned Xcode
+        run: |
+          developer="/Applications/Xcode_$(tr -d '[:space:]' < tools/mpv-runtime-unix/macos/xcode-version).app/Contents/Developer"
+          test -d "$developer"
+          echo "DEVELOPER_DIR=$developer" >> "$GITHUB_ENV"
+      - name: Validate source selection and packaging
+        run: |
+          /usr/bin/python3 tools/mpv-runtime/test_prepare.py
+          /usr/bin/python3 tools/mpv-runtime-unix/test_runtime.py
+      - name: Download and verify pinned inputs
+        run: |
+          mkdir -p target/mpv-runtime-macos-work target/mpv-runtime-macos-build target/mpv-runtime-macos-dist
+          /usr/bin/python3 tools/mpv-runtime-unix/runtime.py lock --platform macos --output target/mpv-runtime-macos-work/lock.json
+          /usr/bin/python3 tools/mpv-runtime/prepare.py prepare --lock target/mpv-runtime-macos-work/lock.json \
+            --work target/mpv-runtime-macos-work
+      # Includes the build-time MPEG-TS/HLS smoke test.
+      - name: Compile in isolation
+        run: bash tools/mpv-runtime-unix/macos/build.sh target/mpv-runtime-macos-work target/mpv-runtime-macos-build
+      - name: Package runtime and corresponding sources
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          /usr/bin/python3 tools/mpv-runtime-unix/runtime.py package --platform macos \
+            --lock target/mpv-runtime-macos-work/lock.json --work target/mpv-runtime-macos-work \
+            --build target/mpv-runtime-macos-build --output target/mpv-runtime-macos-dist --repository "$REPOSITORY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mpv-runtime-macos-candidate
+          path: target/mpv-runtime-macos-dist/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+      - name: Retain build diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mpv-runtime-macos-build-logs
+          path: target/mpv-runtime-macos-build/logs
+          retention-days: 14
+  macos-smoke:
+    needs: macos-build
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: mpv-runtime-macos-candidate
+          path: target/mpv-runtime-macos-dist
+      - name: Verify the candidate and play synthetic media on a fresh runner
+        run: |
+          dist=target/mpv-runtime-macos-dist
+          (cd "$dist" && shasum -a 256 --check SHA256SUMS)
+          /usr/bin/python3 tools/mpv-runtime-unix/runtime.py fetch --platform macos --manifest "$dist/runtime-macos.json" \
+            --archive "$dist/mpv-runtime-macos-arm64.tar.gz" --destination target/mpv-runtime-macos
+          otool -L target/mpv-runtime-macos/lib/libmpv.2.dylib
+          mkdir -p target/mpv-runtime-macos-tools
+          tar -xzf "$dist/test-tools-macos-arm64.tar.gz" -C target/mpv-runtime-macos-tools
+          /usr/bin/python3 tools/mpv-runtime-unix/smoke.py --library target/mpv-runtime-macos/lib/libmpv.2.dylib \
+            --ffmpeg target/mpv-runtime-macos-tools/bin/ffmpeg
+  macos-publish:
+    needs: [macos-build, macos-smoke]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: mpv-runtime-macos-candidate
+          path: dist
+      - name: Publish retained dependency release without overwriting
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          cd dist
+          sha256sum --check SHA256SUMS
+          tag=$(python3 -c 'import json; print(json.load(open("runtime-macos.json"))["tag"])')
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo 'Dependency release already exists; refusing to overwrite it.' >&2
+            exit 1
+          fi
+          printf 'Pinned macOS arm64 libmpv dependency (LGPL-only FFmpeg). Sources, licenses and build configuration accompany the runtime. Synthetic MPEG-TS/HLS playback passed on macOS 15.\n' > release-notes.txt
+          gh release create "$tag" --draft --target "$COMMIT" --title "$tag" --notes-file release-notes.txt --latest=false \
+            mpv-runtime-macos-arm64.tar.gz mpv-runtime-macos-sources.tar.gz runtime-macos.json SHA256SUMS
           gh release edit "$tag" --draft=false --latest=false

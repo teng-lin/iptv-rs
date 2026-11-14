@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "platform": "macos",
+  "arch": "arm64",
+  "url": "https://github.com/teng-lin/patina-iptv/releases/download/mpv-runtime-macos-f5bc5d59553c907551c59b6b7351e8bb6180c82c076e6a267fd45bfb08afc7c3/mpv-runtime-macos-arm64.tar.gz",
+  "sha256": "9abdc6c82c9d424f5ebef5109042afd363ed6aa7d684ba19c576b929fa7febfd",
+  "library": "libmpv.2.dylib",
+  "library_sha256": "62768f9cae002815dad0306dfadbfd68a219d1ff766a51acc0d97d7f501addd0",
+  "source_url": "https://github.com/teng-lin/patina-iptv/releases/download/mpv-runtime-macos-f5bc5d59553c907551c59b6b7351e8bb6180c82c076e6a267fd45bfb08afc7c3/mpv-runtime-macos-sources.tar.gz",
+  "source_sha256": "c64f5ec47fa525d7e3ea64bc83ef022fd422385cc9f49a535a4c72b7fab86e0e",
+  "tag": "mpv-runtime-macos-f5bc5d59553c907551c59b6b7351e8bb6180c82c076e6a267fd45bfb08afc7c3",
+  "macos_minimum": "14.0",
+  "library_uuid": "C4A5BEA5-B1B1-3A3B-814A-BDF5C7748E22"
+}

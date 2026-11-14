@@ -14,7 +14,7 @@ hdiutil attach "$PWD/dist/Patina-$VERSION-macos-arm64.dmg" -readonly -nobrowse -
 trap 'hdiutil detach "$mount"; rmdir "$mount"' EXIT
 app="$mount/Patina.app"
 codesign --verify --deep --strict "$app"
-python3 tools/ci/check-notices.py "$app" native/components.json
+python3 tools/ci/check-notices.py "$app" mpv-runtime/components.json
 python3 - "$app" <<'PY'
 from pathlib import Path
 import plistlib

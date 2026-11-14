@@ -64,12 +64,14 @@ Release builds are published on
 | --- | --- |
 | Android TV and tablets (Android 8.0+) | `.apk` |
 | Linux x86_64 (glibc 2.39+, GTK 4.14+) | `.deb`, `.rpm`, `.pkg.tar.zst`, `.AppImage` |
-| macOS (Apple silicon) | `.dmg` (ad hoc signed, not notarized) |
-| Windows x64 (experimental) | `-setup.exe` installer (unsigned) |
+| macOS 14+ (Apple silicon) | `.dmg` (preview: ad hoc signed, not notarized) |
+| Windows x64 (experimental) | `-setup.exe` installer (preview: unsigned) |
 | iPad | Not released yet; [build from source](#ipad) |
 
 The native Linux packages need the system's GTK 4, libmpv and GStreamer.
-The AppImage bundles them.
+The AppImage bundles them: GTK and GStreamer from Ubuntu 24.04, and Patina's
+own libmpv, built with an LGPL-only FFmpeg from pinned sources. The macOS
+disk image and the Windows installer bundle the same build of libmpv.
 
 Each release has a `SHA256SUMS` file and build provenance attestations.
 With the [GitHub CLI](https://cli.github.com/) you can check that a download
@@ -85,9 +87,11 @@ predate the attestations.
 
 ### Opening the macOS and Windows builds
 
-The macOS and Windows packages are not signed with a platform developer
-certificate yet, so the system warns before the first launch. Verify the
-download as above first.
+The macOS and Windows packages are **previews** until platform signing is
+configured: they are not signed with an Apple Developer ID or a Windows
+code-signing certificate, and the macOS image is not notarized, so the
+system warns before the first launch. Each release's notes say whether its
+packages are signed. Verify the download as above first.
 
 - **macOS (Gatekeeper):** drag Patina to Applications and open it once; macOS
   refuses. Then open System Settings, Privacy & Security, scroll to the
@@ -121,7 +125,9 @@ download as above first.
 
 - **Linux:** GTK 4 and libmpv 2 (`mpv` on Arch, `libmpv-dev` on
   Debian/Ubuntu).
-- **macOS:** Xcode command line tools and `brew install mpv`.
+- **macOS:** Xcode command line tools and `brew install mpv` for development
+  builds. Packages use the pinned libmpv runtime instead
+  (`tools/mpv-runtime-unix`).
 - **Android:** JDK 21, Android SDK (platform 35, build-tools 35.0.1), NDK 30.
 - **iPad:** Xcode. `tools/fetch-mpvkit.sh` downloads the libmpv build.
 - `python3` and `ffmpeg` for the synthetic test streams.
@@ -303,8 +309,9 @@ tag builds and publishes the release.
 
 [AGPL-3.0-only](LICENSE). Bundled Roboto fonts are under the
 [SIL Open Font License](crates/iptv-app/fonts/OFL.txt). Packages that
-bundle FFmpeg and mpv carry their licences too, and each release publishes
-the [source of those bundled libraries](docs/release.md#corresponding-source-for-bundled-media-libraries):
-`Patina-<version>-macos-native-sources.tar` and
-`Patina-<version>-linux-native-sources.tar` beside the packages, and the
-retained source archive of the Windows libmpv build.
+bundle FFmpeg and mpv carry their licences too, and the
+[source of those bundled libraries](docs/release.md#corresponding-source-for-bundled-media-libraries)
+is published: the retained source archive of each platform's libmpv build
+(named in the package's `SOURCE.txt`), and
+`Patina-<version>-linux-native-sources.tar` beside the packages for the
+Ubuntu libraries the AppImage bundles.
