@@ -61,6 +61,7 @@ fn the_remote_shows_one_time_line_a_banner_on_zap_the_card_on_ok_and_the_strip_o
     step(app.press("text:Add playlist"));
     step(app.wait_for("text:Playlist file"));
     step(app.press("text:Playlist file"));
+    step(app.wait_for("text:Choose a file…"));
     step(app.press("text:Choose a file…"));
     step(app.wait_for("text:synthetic.m3u"));
     step(app.press("text:Add playlist"));

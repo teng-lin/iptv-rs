@@ -83,6 +83,7 @@ fn the_last_channel_opens_once_before_the_guide() {
     step(first.press("text:Add playlist"));
     step(first.wait_for("text:Playlist file"));
     step(first.press("text:Playlist file"));
+    step(first.wait_for("text:Choose a file…"));
     step(first.press("text:Choose a file…"));
     step(first.wait_for("text:synthetic.m3u"));
     step(first.press("text:Add playlist"));
@@ -117,8 +118,12 @@ fn the_last_channel_opens_once_before_the_guide() {
     assert_eq!(iptv_app::player_opens(0), opens + 1, "opened once");
     // The guide arrives (first screen, then the whole window) and the
     // playing channel is found in it: back to the guide shows it, with
-    // programmes past the first screen.
-    std::thread::sleep(Duration::from_secs(2));
+    // programmes past the first screen. Its first screen is on the tree
+    // under the video once "Now Show" is; the whole window follows from
+    // the store without a text of its own, so the app is left to finish
+    // rendering before the count is read.
+    step(app.wait_for_within("text:Now Show", IMPORT));
+    step(app.idle(Duration::from_millis(500)).map(|_| ()));
     step(app.back());
     step(app.wait_for_within("text:Now Show", IMPORT));
     assert_eq!(

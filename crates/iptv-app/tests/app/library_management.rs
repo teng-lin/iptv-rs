@@ -88,6 +88,7 @@ fn organization_playlist_policies_and_remote_bindings_are_editable_and_persisted
     step(app.wait_for_within("text:Local A", Duration::from_secs(20)));
     rail(&mut app);
     step(app.press("text:Playlists >> nth=0"));
+    step(app.wait_for("text:Synthetic library"));
     step(app.press("text:Synthetic library"));
     // Channel editor is available by remote; hidden items remain in this manager.
     for _ in 0..6 {
@@ -96,6 +97,7 @@ fn organization_playlist_policies_and_remote_bindings_are_editable_and_persisted
     step(app.press_key("enter"));
     step(app.wait_for("text:Organize channels"));
     step(app.press("id:organization-row-0"));
+    step(app.wait_for("text:Hide item"));
     step(app.press("text:Hide item"));
     assert!(
         crate::isolated::open_database(&path)
@@ -111,8 +113,11 @@ fn organization_playlist_policies_and_remote_bindings_are_editable_and_persisted
             .hidden
     );
     step(app.press("id:organization-row-0"));
+    step(app.wait_for("text:Show item"));
     step(app.press("text:Show item"));
+    step(app.wait_for("id:organization-row-2"));
     step(app.press("id:organization-row-2"));
+    step(app.wait_for("text:Move to first"));
     step(app.press("text:Move to first"));
     assert_eq!(
         crate::isolated::open_database(&path)
@@ -135,6 +140,7 @@ fn organization_playlist_policies_and_remote_bindings_are_editable_and_persisted
     step(app.back());
     edit(&mut app, 0, "Rename", 1);
     step(app.type_text("text:Renamed C", " discarded"));
+    step(app.wait_for("text:Cancel"));
     step(app.press("text:Cancel"));
     assert_eq!(channels(&path, source)[0], "Renamed C");
     step(app.back());
@@ -174,6 +180,7 @@ fn organization_playlist_policies_and_remote_bindings_are_editable_and_persisted
     step(app.press_key("enter"));
     step(app.wait_for("text:Organize groups"));
     step(app.press("id:organization-row-0"));
+    step(app.wait_for("text:Hide item"));
     step(app.press("text:Hide item"));
     assert!(
         crate::isolated::open_database(&path)
@@ -183,6 +190,7 @@ fn organization_playlist_policies_and_remote_bindings_are_editable_and_persisted
             .hidden
     );
     step(app.press("id:organization-row-0"));
+    step(app.wait_for("text:Show item"));
     step(app.press("text:Show item"));
     edit(&mut app, 0, "Rename", 1);
     step(app.clear("text:News"));
@@ -269,10 +277,13 @@ fn organization_playlist_policies_and_remote_bindings_are_editable_and_persisted
     step(app.wait_for_within("text:Local A", Duration::from_secs(20)));
     rail(&mut app);
     step(app.press("text:Settings >> nth=0"));
+    step(app.wait_for("text:Remote control"));
     step(app.press("text:Remote control"));
+    step(app.wait_for("text:Edit remote bindings"));
     step(app.press("text:Edit remote bindings"));
     step(app.wait_for("text:Remote bindings"));
     step(app.press("id:remote-Action")); // Toggle favourite -> Nothing.
+    step(app.wait_for("id:remote-Save"));
     step(app.press("id:remote-Save"));
     step(app.wait_for("text:/^Currently: .* · custom binding$/"));
     let json = std::fs::read_to_string(dir.join("settings.json")).unwrap();
@@ -285,6 +296,7 @@ fn organization_playlist_policies_and_remote_bindings_are_editable_and_persisted
     assert_eq!(bindings[0].action, "ignore");
     // Replacing the same key requires confirmation; Back keeps the previous value.
     step(app.press("id:remote-Action"));
+    step(app.wait_for("id:remote-Save"));
     step(app.press("id:remote-Save"));
     step(app.wait_for("text:Replace the existing binding?"));
     step(app.back());
@@ -306,7 +318,9 @@ fn organization_playlist_policies_and_remote_bindings_are_editable_and_persisted
     step(app.wait_for("text:/^Currently: .* · custom binding$/"));
     assert_eq!(read_bindings(&dir).len(), 1);
     step(app.press("id:remote-Context"));
+    step(app.wait_for("id:remote-Press"));
     step(app.press("id:remote-Press"));
+    step(app.wait_for("id:remote-Capture"));
     step(app.press("id:remote-Capture"));
     step(app.press_key("green"));
     step(app.wait_for("text:Key: Green"));
@@ -327,6 +341,7 @@ fn organization_playlist_policies_and_remote_bindings_are_editable_and_persisted
     assert!(app.screen().matches("text:Remote bindings").unwrap());
     assert_eq!(read_bindings(&dir), saved);
     step(app.press("id:remote-Action"));
+    step(app.wait_for("id:remote-Save"));
     step(app.press("id:remote-Save"));
     step(app.wait_for("text:Replace the existing binding?"));
     step(app.press_key("left"));
@@ -356,6 +371,7 @@ fn organization_playlist_policies_and_remote_bindings_are_editable_and_persisted
     step(app.back());
     step(app.wait_for_gone("id:remote-editor-screen", Duration::from_secs(2)));
     step(app.press("text:Edit remote bindings"));
+    step(app.wait_for("id:remote-Key"));
     step(app.press("id:remote-Key"));
     step(app.wait_for("text:Key: Green"));
     step(app.press_key("left"));
@@ -374,6 +390,7 @@ fn organization_playlist_policies_and_remote_bindings_are_editable_and_persisted
     step(app.press("id:remote-editor-screen >> text:Close"));
     step(app.back());
     step(app.back());
+    step(app.wait_for("text:☰  All channels"));
     step(app.press("text:☰  All channels"));
     step(app.press_key("right"));
     step(app.press_key("red"));

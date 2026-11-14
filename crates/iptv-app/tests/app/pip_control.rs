@@ -107,6 +107,7 @@ fn picture_in_picture_opens_a_window_of_its_own_on_the_same_player() {
     step(app.press("text:Add playlist"));
     step(app.wait_for("text:Playlist file"));
     step(app.press("text:Playlist file"));
+    step(app.wait_for("text:Choose a file…"));
     step(app.press("text:Choose a file…"));
     step(app.wait_for("text:synthetic.m3u"));
     step(app.press("text:Add playlist"));

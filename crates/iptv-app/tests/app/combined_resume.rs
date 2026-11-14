@@ -353,10 +353,13 @@ fn adding_playlist_reauthenticates_a_cached_portal_after_startup_auth_failed() {
     step(app.press("text:☰  All channels"));
     step(app.press_key("left"));
     step(app.press_key("left"));
+    step(app.wait_for("text:Playlists >> nth=0"));
     step(app.press("text:Playlists >> nth=0"));
+    step(app.wait_for("text:Portal"));
     step(app.press("text:Portal"));
     step(app.wait_for_within("text:Refresh now", IMPORT));
     step(app.back());
+    step(app.wait_for("text:Close"));
     step(app.press("text:Close"));
     let failed_attempts = portal.auth_attempts();
     assert!(failed_attempts > 0);
@@ -369,7 +372,9 @@ fn adding_playlist_reauthenticates_a_cached_portal_after_startup_auth_failed() {
         )]
     });
     step(app.press("text:+ Add playlist"));
+    step(app.wait_for("text:Playlist file"));
     step(app.press("text:Playlist file"));
+    step(app.wait_for("text:Choose a file…"));
     step(app.press("text:Choose a file…"));
     step(app.wait_for("text:Additional.m3u"));
     step(app.press("text:Add playlist"));

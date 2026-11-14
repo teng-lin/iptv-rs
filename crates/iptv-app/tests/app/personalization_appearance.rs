@@ -7,6 +7,7 @@ fn settings(app: &mut Headless) {
     step(app.press_key("m"));
     step(app.wait_for("text:Manage favourites…"));
     step(app.press("text:Settings >> nth=1"));
+    step(app.wait_for("text:Appearance >> nth=0"));
     step(app.press("text:Appearance >> nth=0"));
     step(app.press_key("right"));
 }

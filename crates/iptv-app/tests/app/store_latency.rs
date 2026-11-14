@@ -45,6 +45,7 @@ fn guide_input_stays_under_budget_while_the_database_writer_is_locked() {
     app.press("text:Add playlist").unwrap();
     app.wait_for("text:Playlist file").unwrap();
     app.press("text:Playlist file").unwrap();
+    app.wait_for("text:Choose a file…").unwrap();
     app.press("text:Choose a file…").unwrap();
     // The picker returns asynchronously; wait until its result has reached
     // the wizard before submitting the form.

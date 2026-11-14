@@ -40,6 +40,7 @@ fn a_recent_search_shows_its_matches_again() {
     step(app.press("text:Add playlist"));
     step(app.wait_for("text:Playlist file"));
     step(app.press("text:Playlist file"));
+    step(app.wait_for("text:Choose a file…"));
     step(app.press("text:Choose a file…"));
     step(app.wait_for("text:synthetic.m3u"));
     step(app.press("text:Add playlist"));
@@ -75,5 +76,6 @@ fn open_search(app: &mut Headless) {
     step(app.press("text:☰  All channels"));
     step(app.press_key("left"));
     step(app.press_key("left"));
+    step(app.wait_for("text:Search >> nth=0"));
     step(app.press("text:Search >> nth=0"));
 }

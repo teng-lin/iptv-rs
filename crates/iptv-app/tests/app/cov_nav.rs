@@ -181,6 +181,7 @@ fn keys_drive_the_guide_search_the_channel_list_and_multiview() {
     step(app.press("text:Add playlist"));
     step(app.wait_for("text:Playlist file"));
     step(app.press("text:Playlist file"));
+    step(app.wait_for("text:Choose a file…"));
     step(app.press("text:Choose a file…"));
     step(app.wait_for("text:synthetic.m3u"));
     step(app.press("text:Add playlist"));
@@ -241,12 +242,14 @@ fn guide_keys(app: &mut Headless) {
     close_search(app);
     // Its Details (tapped): the popover, which Menu closes; Back too.
     step(app.press_key("m"));
+    step(app.wait_for("text:Details"));
     step(app.press("text:Details"));
     wait_times(app, 1);
     step(app.press_key("down"));
     step(app.press_key("m"));
     wait_times(app, 0);
     step(app.press_key("m"));
+    step(app.wait_for("text:Details"));
     step(app.press("text:Details"));
     wait_times(app, 1);
     step(app.press_key("backspace"));
@@ -328,6 +331,7 @@ fn guide_keys(app: &mut Headless) {
     // changes nothing; Right adds all, Left removes them; Back closes.
     const STAR: &str = "text:★ Test Channel Four";
     step(app.press_key("m"));
+    step(app.wait_for("text:Manage favourites…"));
     step(app.press("text:Manage favourites…"));
     step(app.press_key("down"));
     step(app.press_key("up"));
@@ -724,6 +728,7 @@ fn multiview_keys(app: &mut Headless) {
     gone(app, TILE);
     // Leaving full screen from the grid (O) keeps its tile playing.
     step(app.press_key("m"));
+    step(app.wait_for("text:Multiview"));
     step(app.press("text:Multiview"));
     step(app.wait_for(TILE));
     step(app.press_key("up"));
@@ -734,6 +739,7 @@ fn multiview_keys(app: &mut Headless) {
     step(app.press_key("f"));
     // Stop ends it all: nothing plays, the guide.
     step(app.press_key("m"));
+    step(app.wait_for("text:Multiview"));
     step(app.press("text:Multiview"));
     step(app.wait_for(TILE));
     step(app.press_key("up"));

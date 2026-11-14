@@ -157,6 +157,7 @@ fn rail(app: &mut Headless, item: &str) {
     step(app.press("text:/^☰  /"));
     step(app.press_key("left"));
     step(app.press_key("left"));
+    step(app.wait_for(&format!("text:{item} >> nth=0")));
     step(app.press(&format!("text:{item} >> nth=0")));
 }
 
@@ -186,6 +187,7 @@ fn enter_text(app: &mut Headless, text: &str) {
 /// Adds the next picked file through the wizard (open), then watches it.
 fn add(app: &mut Headless, name: &str) {
     step(app.press("text:Playlist file"));
+    step(app.wait_for("text:Choose a file…"));
     step(app.press("text:Choose a file…"));
     step(app.wait_for(&format!("text:{name}")));
     step(app.press("text:Add playlist"));
@@ -471,6 +473,7 @@ fn stored_playlists_switch_refresh_and_go() {
         act(app, playlist, "Guide sources");
         step(app.wait_for(provider));
         step(app.press(provider));
+        step(app.wait_for(&format!("text:{to}")));
         step(app.press(&format!("text:{to}")));
         to_guide(app);
     };
@@ -484,6 +487,7 @@ fn stored_playlists_switch_refresh_and_go() {
     assert!(!app.screen().matches("text:Alpha Now").unwrap());
     rail(&mut app, "Settings");
     step(app.press("text:TV guide data"));
+    step(app.wait_for("text:Update the guide now"));
     step(app.press("text:Update the guide now"));
     step(app.wait_for("text:This playlist has no guide source switched on"));
     to_guide(&mut app);
@@ -496,6 +500,7 @@ fn stored_playlists_switch_refresh_and_go() {
     act(&mut app, "first", "Guide sources");
     step(app.wait_for(provider));
     step(app.press(provider));
+    step(app.wait_for("text:Switch on"));
     step(app.press("text:Switch on"));
     to_guide(&mut app);
     step(app.run_for(Duration::from_secs(3)));
@@ -505,6 +510,7 @@ fn stored_playlists_switch_refresh_and_go() {
     std::fs::write(&guide_a, guide("Fresh", &["a1", "a2"])).unwrap();
     rail(&mut app, "Settings");
     step(app.press("text:TV guide data"));
+    step(app.wait_for("text:Update the guide now"));
     step(app.press("text:Update the guide now"));
     step(app.wait_for_within("text:Fresh Now", IMPORT));
     // Without its file the update fails; the stored guide stays.
@@ -531,6 +537,7 @@ fn stored_playlists_switch_refresh_and_go() {
     std::fs::write(&guide_a, guide("Again", &["a1", "a2"])).unwrap();
     rail(&mut app, "Settings");
     step(app.press("text:TV guide data"));
+    step(app.wait_for("text:Update the guide now"));
     step(app.press("text:Update the guide now"));
     step(app.wait_for_within("text:Again Now", IMPORT));
     to_guide(&mut app);
@@ -590,7 +597,9 @@ fn stored_playlists_switch_refresh_and_go() {
     // then one that does.
     rail(&mut app, "Playlists");
     step(app.press("text:+ Add playlist >> nth=1"));
+    step(app.wait_for("text:Playlist file"));
     step(app.press("text:Playlist file"));
+    step(app.wait_for("text:Choose a file…"));
     step(app.press("text:Choose a file…"));
     step(app.wait_for("text:/^third.list\\.m3u$/"));
     step(app.press("text:Guide link"));

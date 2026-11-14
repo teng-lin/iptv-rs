@@ -172,6 +172,7 @@ fn a_down_press_mounts_little_and_the_guide_draws_no_empty_cells_or_layers() {
     step(app.press("text:Add playlist"));
     step(app.wait_for("text:Playlist file"));
     step(app.press("text:Playlist file"));
+    step(app.wait_for("text:Choose a file…"));
     step(app.press("text:Choose a file…"));
     step(app.wait_for("text:synthetic.m3u"));
     step(app.press("text:Add playlist"));

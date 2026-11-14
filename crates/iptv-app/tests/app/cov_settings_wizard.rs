@@ -301,6 +301,7 @@ fn the_wizard_and_the_choosers() {
     step(app.back());
     step(app.wait_for("text:What did your provider give you?"));
     step(app.press("text:Playlist file"));
+    step(app.wait_for("text:Choose a file…"));
     step(app.press("text:Choose a file…"));
     step(app.wait_for("text:synthetic.m3u"));
     step(app.press("text:Add playlist"));
@@ -345,6 +346,7 @@ fn choosers(app: &mut Headless) {
     // The sleep timer from the control strip (Menu): a time starts it,
     // Off (by keys) stops it.
     step(app.press_key("m"));
+    step(app.wait_for("text:/^Sleep timer/"));
     step(app.press("text:/^Sleep timer/"));
     step(app.wait_for("text:✓  Off"));
     step(app.press("text:30 minutes"));

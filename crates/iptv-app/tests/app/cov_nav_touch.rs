@@ -141,6 +141,7 @@ fn pointer_and_touch_drive_search_the_channel_list_and_multiview() {
     step(app.press("text:Add playlist"));
     step(app.wait_for("text:Playlist file"));
     step(app.press("text:Playlist file"));
+    step(app.wait_for("text:Choose a file…"));
     step(app.press("text:Choose a file…"));
     step(app.wait_for("text:synthetic.m3u"));
     step(app.press("text:Add playlist"));
@@ -223,7 +224,9 @@ fn multiview_past_the_account(app: &mut Headless, now: i64) {
     step(app.set_viewport(Size::new(px(1280.0), px(720.0))));
     // Out of full screen (Exit multiview left it there).
     step(app.press_key("f"));
+    step(app.wait_for("text:+ Add playlist"));
     step(app.press("text:+ Add playlist"));
+    step(app.wait_for("text:Xtream Codes login"));
     step(app.press("text:Xtream Codes login"));
     for (field, empty, value) in [
         ("Server", "http://server:port", server.as_str()),
@@ -244,8 +247,11 @@ fn multiview_past_the_account(app: &mut Headless, now: i64) {
     step(app.press("text:☰  All playlists"));
     step(app.press_key("left"));
     step(app.press_key("left"));
+    step(app.wait_for("text:Playlists >> nth=0"));
     step(app.press("text:Playlists >> nth=0"));
+    step(app.wait_for("text:127.0.0.1"));
     step(app.press("text:127.0.0.1"));
+    step(app.wait_for("text:Show this playlist"));
     step(app.press("text:Show this playlist"));
     step(app.wait_for_within("text:Xtream Channel 1", IMPORT));
     // Refresh the account in single-source mode so its session limit is
@@ -253,17 +259,24 @@ fn multiview_past_the_account(app: &mut Headless, now: i64) {
     step(app.press("text:☰  All channels"));
     step(app.press_key("left"));
     step(app.press_key("left"));
+    step(app.wait_for("text:Playlists >> nth=0"));
     step(app.press("text:Playlists >> nth=0"));
+    step(app.wait_for("text:127.0.0.1"));
     step(app.press("text:127.0.0.1"));
+    step(app.wait_for("text:Refresh now"));
     step(app.press("text:Refresh now"));
+    step(app.wait_for("text:127.0.0.1"));
     step(app.press("text:127.0.0.1"));
     step(app.wait_for_within("text:Refresh now", IMPORT));
     step(app.back());
+    step(app.wait_for("text:Close"));
     step(app.press("text:Close"));
     // Channel 1 full screen; Multiview asks at once.
     step(app.press("text:Xtream Channel 1"));
     step(app.press("text:Xtream Channel 1"));
+    step(app.wait_for("label:Video"));
     step(app.press("label:Video"));
+    step(app.wait_for("label:Multiview"));
     step(app.press("label:Multiview"));
     step(app.wait_for(WARNING));
     step(app.wait_for("text:Add it anyway"));
@@ -275,13 +288,16 @@ fn multiview_past_the_account(app: &mut Headless, now: i64) {
     assert_eq!(tiles(app), 1);
     // The menu's Add screen asks again; a tap beside the dialog closes it.
     step(app.press(&tile("Xtream Channel 1")));
+    step(app.wait_for(&format!("{MENU} >> text:Add screen")));
     step(app.press(&format!("{MENU} >> text:Add screen")));
     step(app.wait_for(WARNING));
     step(app.press_at("label:Video", Point::new(px(4.0), px(4.0))));
     gone(app, WARNING);
     // Add it anyway: the list picks the second tile; no more asking.
     step(app.press(&tile("Xtream Channel 1")));
+    step(app.wait_for(&format!("{MENU} >> text:Add screen")));
     step(app.press(&format!("{MENU} >> text:Add screen")));
+    step(app.wait_for("text:Add it anyway"));
     step(app.press("text:Add it anyway"));
     gone(app, WARNING);
     step(app.press(&format!("{PICKER} >> text:/^2  Xtream Channel 2$/")));
@@ -307,6 +323,7 @@ fn search_by_touch(app: &mut Headless, data: &std::path::Path) {
     step(app.type_text(FIELD, "Zebra"));
     step(app.wait_for("text:Nothing found for “Zebra”"));
     step(app.submit(FIELD));
+    step(app.wait_for("text:Close"));
     step(app.press("text:Close"));
     gone(app, FIELD);
     // The new query went on top of the saved ones.
@@ -319,6 +336,7 @@ fn search_by_touch(app: &mut Headless, data: &std::path::Path) {
     step(app.type_text(FIELD, "Gala"));
     step(app.wait_for("text:/^Programmes · 1$/"));
     step(app.press("text:/^Programmes · 1$/"));
+    step(app.wait_for("text:Later"));
     step(app.press("text:Later"));
     step(app.wait_until("details", WAIT, |s| s.count(GALA) == Ok(2)));
     step(app.back());
@@ -334,7 +352,9 @@ fn search_by_touch(app: &mut Headless, data: &std::path::Path) {
     gone(app, FIELD);
     // Its channel a favourite (the play bar's ☆).
     step(app.press("label:Video"));
+    step(app.wait_for("label:Favourite"));
     step(app.press("label:Favourite"));
+    step(app.wait_for("label:Video"));
     step(app.press("label:Video"));
     gone(app, "label:Mute");
 
@@ -359,6 +379,7 @@ fn channel_list_by_touch(app: &mut Headless) {
     // A replay plays (Left would seek): the control strip's Channels.
     step(app.press_key("f"));
     step(app.press_key("m"));
+    step(app.wait_for("text:Channels"));
     step(app.press("text:Channels"));
     // Its heading opens the groups beside it; an entry shows its list.
     step(app.press("text:◂  All channels"));
@@ -370,6 +391,7 @@ fn channel_list_by_touch(app: &mut Headless) {
     step(app.wait_for("text:2  Test Channel Four  ▶"));
     // All channels again, from the groups (the row's tap closed them).
     step(app.press("text:◂  Sport"));
+    step(app.wait_for(&format!("{GROUPS} >> text:All channels")));
     step(app.press(&format!("{GROUPS} >> text:All channels")));
     step(app.wait_for("text:4  Test Channel Four  ▶"));
     // A tap beside the list closes it: Up then zaps (in the list it would
@@ -431,6 +453,7 @@ fn player_event(app: &mut Headless, name: &str, event: &str, data: serde_json::V
 fn multiview_by_pointer(app: &mut Headless) {
     // Channel three plays: the first tile; channel two the next.
     step(app.press("label:Video"));
+    step(app.wait_for("label:Multiview"));
     step(app.press("label:Multiview"));
     step(app.wait_for(TILE));
     step(app.press(&format!("{PICKER} >> text:/^2  Test Channel Two$/")));
@@ -439,21 +462,26 @@ fn multiview_by_pointer(app: &mut Headless) {
     // A tap on the other tile makes it active and shows the chrome: the
     // toolbar's Add screen adds one.
     step(app.press(&tile("Test Channel Three")));
+    step(app.wait_for("label:Add screen"));
     step(app.press("label:Add screen"));
+    step(app.wait_for(&format!("{PICKER} >> text:/^4  Test Channel Four$/")));
     step(app.press(&format!("{PICKER} >> text:/^4  Test Channel Four$/")));
     step(app.wait_for(&tile("Test Channel Four")));
     assert_eq!(tiles(app), 3);
     // A tile's enlarge button enlarges it, then reduces it.
     step(app.press(&tile("Test Channel Two")));
+    step(app.wait_for("label:Enlarge screen: Test Channel Four"));
     step(app.press("label:Enlarge screen: Test Channel Four"));
     step(app.wait_for("label:Reduce screen: Test Channel Four"));
     step(app.press("label:Reduce screen: Test Channel Four"));
     step(app.wait_for("label:Enlarge screen: Test Channel Four"));
     // A long press does the same.
     step(app.long_press(&tile("Test Channel Three")));
+    step(app.wait_for(&tile("Test Channel Two")));
     step(app.press(&tile("Test Channel Two")));
     step(app.wait_for("label:Reduce screen: Test Channel Three"));
     step(app.long_press(&tile("Test Channel Three")));
+    step(app.wait_for(&tile("Test Channel Two")));
     step(app.press(&tile("Test Channel Two")));
     step(app.wait_for("label:Enlarge screen: Test Channel Three"));
     // A remove button removes its tile (two is active now).
@@ -529,7 +557,9 @@ fn multiview_by_pointer(app: &mut Headless) {
 
     // A fourth: the toolbar names the device's limit instead of Add screen.
     step(app.press(&tile("Test Channel Three")));
+    step(app.wait_for("label:Add screen"));
     step(app.press("label:Add screen"));
+    step(app.wait_for(&format!("{PICKER} >> text:/^1  Test Channel One$/")));
     step(app.press(&format!("{PICKER} >> text:/^1  Test Channel One$/")));
     step(app.wait_for(&tile("Test Channel One")));
     step(app.press(&tile("Test Channel Two")));
