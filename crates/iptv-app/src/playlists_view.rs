@@ -15,9 +15,9 @@
 
 use crate::i18n::tr;
 
-mod details;
+use iptv_library::details;
 mod details_card;
-mod state;
+use iptv_library::playlists as state;
 mod words;
 
 use iptv_nav::Action;
@@ -25,7 +25,6 @@ use iptv_store_sqlite::SourceId;
 use nsh_core::prelude::*;
 
 pub use state::Screen as Open;
-pub(crate) use state::plain_link;
 use state::{Act, EditKind, Effect, Item, Key, Layer, Screen};
 pub(crate) use words::masked_link;
 

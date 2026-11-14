@@ -5,11 +5,11 @@
 //! playlist's id), never by list position. Pure: the view feeds it remote
 //! keys and taps and carries out the [`Effect`]s it returns.
 
+use crate::SourceId;
 use iptv_providers::model::{Source, SourceKind};
-use iptv_store_sqlite::SourceId;
 
 use super::details::{Form, Param};
-use crate::data::Playlist;
+use crate::Playlist;
 
 /// A focusable row of the list.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,7 +100,7 @@ pub enum Effect {
     /// Open the add-playlist wizard.
     Add,
     Show(SourceId),
-    Policy(SourceId, iptv_store_sqlite::SourcePolicy),
+    Policy(SourceId, crate::SourcePolicy),
     Organize(SourceId, bool),
     CustomGroups(SourceId),
     Refresh(SourceId),

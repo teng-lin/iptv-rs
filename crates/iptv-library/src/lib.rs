@@ -163,3 +163,62 @@ impl From<&iptv_providers::ProviderError> for ImportErrorKind {
         Self::from_slug(error.import_error_slug())
     }
 }
+
+use iptv_epg::MatchKind;
+use iptv_providers::model::SourceKind;
+
+/// A stored playlist, as listed. Carries no secrets but the guide
+/// addresses, which redact themselves.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Playlist {
+    pub policy: SourcePolicy,
+    pub id: SourceId,
+    pub name: String,
+    pub kind: SourceKind,
+    /// Live channels of the last successful import.
+    pub channels: u32,
+    pub updated_at: Option<i64>,
+    /// The last refresh failed (and when); the channels before it remain.
+    pub failed: Option<(ImportErrorKind, Option<i64>)>,
+    /// Its guide sources in the user's order.
+    pub guides: Vec<GuideSource>,
+    /// The last guide download failed (its stored guide stays).
+    pub guide_failed: bool,
+    /// The User-Agent its requests send (M3U and Xtream only).
+    pub user_agent: Option<String>,
+    /// An M3U playlist read from a file (no link to change).
+    pub from_file: bool,
+}
+
+/// One guide source with how its last download went.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceLine {
+    pub source: GuideSource,
+    pub result: Option<FeedResult>,
+}
+
+/// A channel's guide.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Choice {
+    /// Matched by its guide id and name (no choice saved).
+    Automatic,
+    NoGuide,
+    Channel {
+        feed: iptv_epg::FeedId,
+        epg_channel: String,
+    },
+}
+
+/// What a channel's guide is now: the saved choice and the guide channel
+/// its stored programmes come from (with how it was matched).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Current {
+    pub choice: Option<Choice>,
+    pub bound: Option<(iptv_epg::FeedId, String, MatchKind)>,
+}
+
+pub mod details;
+pub mod epg_sources;
+pub mod guide_assign;
+pub mod guides;
+pub mod playlists;

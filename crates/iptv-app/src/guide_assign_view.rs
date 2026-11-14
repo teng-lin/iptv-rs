@@ -11,7 +11,7 @@
 //! tap a row, tap the field to type; a tap beside the panel closes it.
 //! State: `state.rs`.
 
-mod state;
+use iptv_library::guide_assign as state;
 
 use iptv_nav::Action;
 use iptv_store_sqlite::{GuideChannel, SourceId};

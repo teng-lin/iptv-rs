@@ -10,7 +10,7 @@
 //! which needs the full channel lists) the playlist's guide is downloaded
 //! right away and matched with the choice.
 
-use iptv_epg::{ChannelKey, MatchKind};
+use iptv_epg::ChannelKey;
 use iptv_providers::ContentId;
 use iptv_store_sqlite::{EpgOverride, GuideChannel, SourceId, Store, StoreError};
 
@@ -18,40 +18,27 @@ use super::stored::{self, Matching};
 use super::{GENERATION, Imported, Streams};
 use crate::Ui;
 
-/// A channel's guide.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Choice {
-    /// Matched by its guide id and name (no choice saved).
-    Automatic,
-    NoGuide,
-    Channel {
-        feed: iptv_epg::FeedId,
-        epg_channel: String,
-    },
-}
-
-impl Choice {
-    fn overlay(&self) -> Option<EpgOverride> {
-        match self {
-            Self::Automatic => None,
-            Self::NoGuide => Some(EpgOverride::Disabled),
-            Self::Channel { feed, epg_channel } => {
-                Some(EpgOverride::for_feed(*feed, epg_channel.clone()))
-            }
+pub use iptv_library::Choice;
+fn choice_overlay(choice: &Choice) -> Option<EpgOverride> {
+    match choice {
+        Choice::Automatic => None,
+        Choice::NoGuide => Some(EpgOverride::Disabled),
+        Choice::Channel { feed, epg_channel } => {
+            Some(EpgOverride::for_feed(*feed, epg_channel.clone()))
         }
     }
+}
 
-    fn of(overlay: Option<EpgOverride>) -> Self {
-        match overlay {
-            None => Self::Automatic,
-            Some(EpgOverride::Disabled) => Self::NoGuide,
-            Some(o @ EpgOverride::Xmltv { .. }) => match (o.feed(), o) {
-                (Some(feed), EpgOverride::Xmltv { epg_channel, .. }) => {
-                    Self::Channel { feed, epg_channel }
-                }
-                _ => Self::Automatic,
-            },
-        }
+fn choice_of(overlay: Option<EpgOverride>) -> Choice {
+    match overlay {
+        None => Choice::Automatic,
+        Some(EpgOverride::Disabled) => Choice::NoGuide,
+        Some(o @ EpgOverride::Xmltv { .. }) => match (o.feed(), o) {
+            (Some(feed), EpgOverride::Xmltv { epg_channel, .. }) => {
+                Choice::Channel { feed, epg_channel }
+            }
+            _ => Choice::Automatic,
+        },
     }
 }
 
@@ -68,13 +55,7 @@ pub enum Applied {
     Failed,
 }
 
-/// What a channel's guide is now: the saved choice and the guide channel
-/// its stored programmes come from (with how it was matched).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Current {
-    pub choice: Option<Choice>,
-    pub bound: Option<(iptv_epg::FeedId, String, MatchKind)>,
-}
+pub use iptv_library::Current;
 
 /// The saved choice and the binding of channel `key` of `source`.
 pub async fn current(source: SourceId, key: &str) -> Current {
@@ -85,7 +66,7 @@ pub async fn current(source: SourceId, key: &str) -> Current {
             .and_then(|row| row.epg_override);
         let bound = s.epg_binding(source, &ChannelKey::new(&key))?;
         Ok(Current {
-            choice: Some(Choice::of(overlay)),
+            choice: Some(choice_of(overlay)),
             bound,
         })
     })
@@ -148,7 +129,7 @@ fn save_and_rebind(
     choice: &Choice,
 ) -> Result<Option<Box<Imported>>, StoreError> {
     let content = ContentId::from_stored(key);
-    let overlay = choice.overlay();
+    let overlay = choice_overlay(choice);
     store.set_epg_override(source, &content, overlay.as_ref())?;
     let rebound = (|| -> Result<Option<Box<Imported>>, StoreError> {
         let to = match choice {
@@ -255,7 +236,7 @@ mod tests {
                 epg_channel: "news.test".into(),
             },
         ] {
-            assert_eq!(Choice::of(choice.overlay()), choice);
+            assert_eq!(choice_of(choice_overlay(&choice)), choice);
         }
         // A key that names no feed (not written by this app) reads as
         // automatic.
@@ -263,6 +244,6 @@ mod tests {
             epg_source: "elsewhere".into(),
             epg_channel: "x".into(),
         };
-        assert_eq!(Choice::of(Some(other)), Choice::Automatic);
+        assert_eq!(choice_of(Some(other)), Choice::Automatic);
     }
 }

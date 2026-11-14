@@ -1,7 +1,7 @@
-use iptv_store_sqlite::{FeedResult, GuideSource};
+use crate::{FeedResult, GuideSource};
 
 use super::*;
-use crate::data::guides;
+use crate::guides;
 
 const P: SourceId = SourceId(7);
 const USER: Feed = guides::FIRST_USER_FEED;

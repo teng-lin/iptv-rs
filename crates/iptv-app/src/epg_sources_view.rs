@@ -21,7 +21,7 @@
 
 use crate::i18n::tr;
 
-mod state;
+use iptv_library::epg_sources as state;
 mod words;
 
 use iptv_nav::Action;

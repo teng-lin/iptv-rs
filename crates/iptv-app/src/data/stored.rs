@@ -39,8 +39,8 @@ use iptv_providers::SecretUrl;
 use iptv_providers::model::{Channel, ContentKind, Group};
 use iptv_settings::{Settings, Target};
 use iptv_store_sqlite::{
-    ChannelOrder, ChannelQuery, EpgCounts, EpgFeedMeta, EpgWindow, FeedResult, GuideSource,
-    ImportErrorKind, SourceId, Store, StoreError, StoredGuide,
+    ChannelOrder, ChannelQuery, EpgCounts, EpgFeedMeta, EpgWindow, GuideSource, ImportErrorKind,
+    SourceId, Store, StoreError, StoredGuide,
 };
 
 use nsh_core::prelude::timer;
@@ -575,12 +575,7 @@ pub fn updating(source: SourceId) -> bool {
     UPDATING.with(|u| u.borrow().contains(&source))
 }
 
-/// One guide source with how its last download went.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SourceLine {
-    pub source: GuideSource,
-    pub result: Option<FeedResult>,
-}
+pub use iptv_library::SourceLine;
 
 /// `source`'s guide sources in order, each with its last result (one
 /// short read of the store).

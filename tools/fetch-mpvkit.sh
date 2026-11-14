@@ -4,7 +4,7 @@
 # versions and checksums of MPVKit 1.0.0's Package.swift, as static
 # xcframeworks. Only the iOS device and simulator slices are kept.
 # crates/iptv-app/build.rs links them into the iOS app (`tv.player` on
-# libmpv, src/mpv/ios.rs).
+# libmpv, crates/iptv-player-mpv/src/mpv/ios.rs).
 # Usage: tools/fetch-mpvkit.sh [directory, default target/mpvkit]
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)

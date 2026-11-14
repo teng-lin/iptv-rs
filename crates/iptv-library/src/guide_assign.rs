@@ -4,10 +4,10 @@
 //! identity. Pure: the view feeds it keys, taps and typed text and carries
 //! out its [`Effect`]s.
 
+use crate::{GuideChannel, SourceId};
 use iptv_epg::FeedId as Feed;
-use iptv_store_sqlite::{GuideChannel, SourceId};
 
-use crate::data::assign::{Choice, Current};
+use crate::{Choice, Current};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Row {
@@ -134,6 +134,11 @@ impl Picker {
 
     pub fn len(&self) -> usize {
         FIXED.len() + self.shown.len()
+    }
+
+    /// Includes the search, filter and automatic-choice rows.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     pub fn row(&self, i: usize) -> Option<Row> {

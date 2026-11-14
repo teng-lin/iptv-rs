@@ -517,6 +517,7 @@ dependencies = [
  "flate2",
  "iptv-core",
  "iptv-epg",
+ "iptv-library",
  "iptv-providers",
  "iptv-settings",
  "serde_json",
@@ -531,6 +532,15 @@ dependencies = [
  "iptv-net",
  "iptv-providers",
  "libfuzzer-sys",
+]
+
+[[package]]
+name = "iptv-library"
+version = "0.1.1"
+dependencies = [
+ "iptv-core",
+ "iptv-epg",
+ "iptv-providers",
 ]
 
 [[package]]
