@@ -95,12 +95,24 @@ $adb shell am force-stop $pkg
 $adb logcat -b main -b system -b crash -c
 $adb shell am start -W -n $act >/dev/null
 expect 'iptv startup: fonts registered' 60
+# The last start-up step: until then a slow emulator may drop keys.
+expect 'iptv pip: supported' 60
 pause 3
 shot 01-first-run
 
 step "add the synthetic playlist"
 mark
-keys KEYCODE_DPAD_DOWN KEYCODE_DPAD_CENTER          # Add playlist
+# Add playlist, the first-run screen's only button. A slow emulator can
+# still miss the first keys while the screen settles; pressing again is
+# harmless there.
+for attempt in 1 2 3 4; do
+  keys KEYCODE_DPAD_DOWN KEYCODE_DPAD_CENTER
+  for _ in $(seq 1 10); do
+    applog | grep -qE 'key=ok .*ctx=Menu' && break 2
+    pause 0.5
+  done
+  echo "  no response to Add playlist (attempt $attempt)"
+done
 expect 'key=ok .*ctx=Menu' 10
 pause 2
 keys KEYCODE_DPAD_CENTER                            # Playlist link (prefilled)
