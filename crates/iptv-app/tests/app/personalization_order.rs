@@ -6,6 +6,7 @@ use std::time::Duration;
 fn reorder(app: &mut nsh_testing::Headless, row: usize) {
     menu(app, "Reorder channels");
     step(app.press(&format!("id:organization-row-{row}")));
+    step(app.wait_for("text:Move to first"));
     step(app.press("text:Move to first"));
     step(app.back());
 }

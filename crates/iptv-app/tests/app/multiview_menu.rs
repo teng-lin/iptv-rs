@@ -143,7 +143,9 @@ fn changing_picker_group_or_query_reveals_selection_after_touch_scrolling() {
     let step = |r: Result<(), String>| r.unwrap_or_else(|e| panic!("{e}"));
     step(app.wait_for("text:No playlists yet"));
     step(app.press("text:Add playlist"));
+    step(app.wait_for("text:Playlist file"));
     step(app.press("text:Playlist file"));
+    step(app.wait_for("text:Choose a file…"));
     step(app.press("text:Choose a file…"));
     step(app.wait_for("text:synthetic.m3u"));
     step(app.press("text:Add playlist"));
@@ -153,7 +155,9 @@ fn changing_picker_group_or_query_reveals_selection_after_touch_scrolling() {
     step(app.press("text:Shared Alpha 000"));
     step(app.wait_for("text:▶"));
     step(app.press("text:Shared Alpha 000"));
+    step(app.wait_for("label:Video"));
     step(app.press("label:Video"));
+    step(app.wait_for("label:Multiview"));
     step(app.press("label:Multiview"));
 
     let picker = "id:multiview-picker";
@@ -206,6 +210,7 @@ fn the_tile_menu_is_a_side_panel_with_pause_and_search_and_add() {
     step(app.press("text:Add playlist"));
     step(app.wait_for("text:Playlist file"));
     step(app.press("text:Playlist file"));
+    step(app.wait_for("text:Choose a file…"));
     step(app.press("text:Choose a file…"));
     step(app.wait_for("text:synthetic.m3u"));
     step(app.press("text:Add playlist"));
@@ -219,7 +224,9 @@ fn the_tile_menu_is_a_side_panel_with_pause_and_search_and_add() {
     step(app.press("text:Test Channel One"));
     step(app.wait_for("text:▶"));
     step(app.press("text:Test Channel One"));
+    step(app.wait_for("label:Video"));
     step(app.press("label:Video"));
+    step(app.wait_for("label:Multiview"));
     step(app.press("label:Multiview"));
     step(app.wait_for(TILE));
     step(app.set_environment("a TV", |e| e.idiom = Idiom::Tv));
@@ -369,9 +376,11 @@ fn the_tile_menu_is_a_side_panel_with_pause_and_search_and_add() {
 
     // Reopening starts unfiltered; closing a replacement keeps the old stream.
     step(app.press_key("enter"));
+    step(app.wait_for(&format!("{MENU} >> text:Change channel")));
     step(app.press(&format!("{MENU} >> text:Change channel")));
     step(app.wait_for(&format!("{picker} >> text:1  Test Channel One")));
     step(app.type_text(field, "missing"));
+    step(app.wait_for(&format!("{picker} >> text:Close")));
     step(app.press(&format!("{picker} >> text:Close")));
     step(gone(&mut app, picker));
     assert_eq!(tiles(&app), 3);

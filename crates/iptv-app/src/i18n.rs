@@ -44,6 +44,62 @@ pub fn language_name(tag: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    /// The names of the controls that show an icon only (`.label(…)`, read
+    /// by VoiceOver and TalkBack): each has a row in the catalogue, so a
+    /// screen reader speaks the interface language. A name that only
+    /// reached `tr` without a row would stay English without a sign.
+    #[test]
+    fn accessibility_labels_are_in_the_catalogue() {
+        use iptv_core::i18n::{LANGUAGES, resolve, translate};
+        const LABELS: [&str; 29] = [
+            // The play bar.
+            "Mute",
+            "Volume",
+            "Rewind",
+            "Play or pause",
+            "Fast-forward",
+            "Favourite",
+            "Subtitles and tracks",
+            "Programme details",
+            "Picture size",
+            "Channel list",
+            "Multiview",
+            "Back to multiview",
+            "Picture in picture",
+            "TV guide",
+            "Full screen",
+            "Guide",
+            // The video, the choosers and the guide's way back.
+            "Video",
+            "Close the chooser",
+            "Groups",
+            "Menu",
+            // Multiview's toolbar and tiles.
+            "Add screen",
+            "Exit multiview",
+            "Reduce screen",
+            "Enlarge screen",
+            "Remove screen",
+            // The picture-in-picture window.
+            "Back to the app",
+            "Close",
+            "Play",
+            "Pause",
+        ];
+        for label in LABELS {
+            // Some languages spell a word as English does ("Menu"), but
+            // none of these is the same in every language.
+            let translated = LANGUAGES
+                .iter()
+                .filter(|language| translate(language, label) != label)
+                .count();
+            assert!(translated > 0, "no catalogue row for {label:?}");
+        }
+        assert_eq!(translate(resolve("es", None), "Volume"), "Volumen");
+        assert_eq!(translate(resolve("de", None), "Mute"), "Stumm");
+        assert_eq!(translate(resolve("zh-TW", None), "Menu"), "選單");
+    }
+
     #[test]
     fn picker_and_catalogue_languages_match() {
         let choices = iptv_settings::catalogue::choices::LANGUAGE.variants;

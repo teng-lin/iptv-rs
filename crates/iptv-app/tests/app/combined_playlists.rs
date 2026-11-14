@@ -56,10 +56,18 @@ fn seed(store: &mut Store, home: &Path, name: &str) -> SourceId {
         .unwrap()
         .as_secs() as i64;
     let guide = home.join(format!("{name}.xml"));
-    std::fs::write(&guide, format!(
-        "<tv><channel id=\"shared\"><display-name>Shared</display-name></channel><programme channel=\"shared\" start=\"{}\" stop=\"{}\"><title>{name} bulletin</title><desc>{name} synthetic programme details.</desc></programme></tv>",
-        iptv_epg::format_xmltv_time(now - 1800), iptv_epg::format_xmltv_time(now + 1800)
-    )).unwrap();
+    std::fs::write(
+        &guide,
+        format!(
+            "<tv><channel id=\"shared\"><display-name>Shared</display-name></channel>\
+             <programme channel=\"shared\" start=\"{}\" stop=\"{}\">\
+             <title>{name} bulletin</title>\
+             <desc>{name} synthetic programme details.</desc></programme></tv>",
+            iptv_epg::format_xmltv_time(now - 1800),
+            iptv_epg::format_xmltv_time(now + 1800)
+        ),
+    )
+    .unwrap();
     store
         .set_guide_sources(
             source,
@@ -81,6 +89,7 @@ fn playlists(app: &mut Headless) {
     step(app.press("text:/^☰  /"));
     step(app.press_key("left"));
     step(app.press_key("left"));
+    step(app.wait_for("text:Playlists >> nth=0"));
     step(app.press("text:Playlists >> nth=0"));
     step(app.wait_for("text:Tap a playlist for what you can do with it"));
 }
@@ -140,7 +149,9 @@ fn multiview_picker_expansion_preserves_the_guides_category_and_saved_expansion(
     step(app.press("text:/^Only Alpha · Alpha/"));
     step(app.wait_for("text:▶"));
     step(app.press("text:/^Only Alpha · Alpha/"));
+    step(app.wait_for("label:Video"));
     step(app.press("label:Video"));
+    step(app.wait_for("label:Multiview"));
     step(app.press("label:Multiview"));
     let picker = "id:multiview-picker";
     step(app.wait_for(picker));
@@ -224,6 +235,7 @@ fn combined_browsing_routes_duplicate_keys_favorites_search_and_playback() {
     // must not change Alpha's membership.
     step(app.press("text:/^Shared · Beta/"));
     step(app.press_key("m"));
+    step(app.wait_for("text:Add to favourites"));
     step(app.press("text:Add to favourites"));
     step(app.wait_until(
         "owning source favorite saved",
@@ -265,6 +277,7 @@ fn combined_browsing_routes_duplicate_keys_favorites_search_and_playback() {
     step(app.wait_for("text:/Shared · Beta/"));
     step(app.clear("id:search-field"));
     step(app.type_text("id:search-field", "bulletin"));
+    step(app.wait_for("text:/^Programmes/"));
     step(app.press("text:/^Programmes/"));
     step(app.wait_for_within("text:/Alpha bulletin/", Duration::from_secs(10)));
     step(app.wait_for("text:/Beta bulletin/"));
@@ -274,6 +287,7 @@ fn combined_browsing_routes_duplicate_keys_favorites_search_and_playback() {
     // leak the other source's favorite, then All playlists remains available.
     playlists(&mut app);
     step(app.press("text:Alpha"));
+    step(app.wait_for("text:Show this playlist"));
     step(app.press("text:Show this playlist"));
     step(app.wait_for_within("text:Only Alpha", Duration::from_secs(20)));
     assert!(!app.screen().matches("text:/^Only Beta/").unwrap());
@@ -290,6 +304,7 @@ fn combined_browsing_routes_duplicate_keys_favorites_search_and_playback() {
     );
     playlists(&mut app);
     step(app.press("text:Beta"));
+    step(app.wait_for("text:Playlist enabled: Yes"));
     step(app.press("text:Playlist enabled: Yes"));
     assert!(
         !crate::isolated::open_database(&path)
@@ -349,6 +364,7 @@ fn persisted_combined_mode_recovers_disabled_and_failed_sources_and_deletion() {
     assert_eq!(app.screen().count("id:guide-channel-name").unwrap(), 0);
     playlists(&mut app);
     step(app.press("text:Alpha"));
+    step(app.wait_for("text:Playlist enabled: No"));
     step(app.press("text:Playlist enabled: No"));
     step(app.back());
     step(app.back());
@@ -368,7 +384,9 @@ fn persisted_combined_mode_recovers_disabled_and_failed_sources_and_deletion() {
     assert_eq!(app.screen().count("id:guide-channel-name").unwrap(), 2);
     playlists(&mut app);
     step(app.press("text:Alpha"));
+    step(app.wait_for("text:Delete"));
     step(app.press("text:Delete"));
+    step(app.wait_for("text:Delete >> nth=0"));
     step(app.press("text:Delete >> nth=0"));
     step(app.back());
     step(app.wait_until(
@@ -415,6 +433,7 @@ fn leaving_combined_mode_cancels_a_missing_startup_channel_before_manual_return(
     step(app.wait_for_within("text:/^Only Beta · Beta/", Duration::from_secs(20)));
     playlists(&mut app);
     step(app.press("text:Alpha"));
+    step(app.wait_for("text:Show this playlist"));
     step(app.press("text:Show this playlist"));
     step(app.wait_for_within("text:Only Alpha", Duration::from_secs(20)));
     let mut store = crate::isolated::open_database(&path).unwrap();
@@ -518,6 +537,7 @@ fn guide_browses_playlist_sections_by_touch_and_remote_and_remembers_expansion()
     step(app.wait_for_gone("id:guide-groups", Duration::from_secs(3)));
     step(app.wait_for("text:☰  Alpha"));
     step(app.press("text:☰  Alpha"));
+    step(app.wait_for("id:guide-groups >> text:    News >> nth=1"));
     step(app.press("id:guide-groups >> text:    News >> nth=1"));
     step(app.wait_for("text:/^Only Beta · Beta/"));
     assert_eq!(app.screen().count("id:guide-channel-name").unwrap(), 2);
@@ -563,7 +583,9 @@ fn adding_second_playlist_opens_combined_browser_without_management_switch() {
     step(app.wait_for_within("text:Only Alpha", Duration::from_secs(20)));
     step(app.press("text:☰  All channels"));
     step(app.press_key("m"));
+    step(app.wait_for("text:Playlist file"));
     step(app.press("text:Playlist file"));
+    step(app.wait_for("text:Choose a file…"));
     step(app.press("text:Choose a file…"));
     step(app.wait_for("text:Beta.m3u"));
     step(app.press("text:Add playlist"));
@@ -633,7 +655,10 @@ fn delayed_account(hold_first_account: bool) -> DelayedAccount {
                     (
                         "200 OK",
                         format!(
-                            "<tv><channel id=\"beta1\"><display-name>Imported Beta One</display-name></channel><programme channel=\"beta1\" start=\"{}\" stop=\"{}\"><title>Delayed Beta guide {count}</title></programme></tv>",
+                            "<tv><channel id=\"beta1\">\
+                             <display-name>Imported Beta One</display-name></channel>\
+                             <programme channel=\"beta1\" start=\"{}\" stop=\"{}\">\
+                             <title>Delayed Beta guide {count}</title></programme></tv>",
                             iptv_epg::format_xmltv_time(now - 3600),
                             iptv_epg::format_xmltv_time(now + 24 * 3600),
                         ),
@@ -721,6 +746,7 @@ fn automatic_join_keeps_account_format_limit_and_the_original_guide_job_and_time
     .unwrap();
     step(app.wait_for_within("text:Alpha bulletin", Duration::from_secs(20)));
     step(app.press("text:+ Add playlist"));
+    step(app.wait_for("text:Xtream Codes login"));
     step(app.press("text:Xtream Codes login"));
     for (field, empty, value) in [
         ("Server", "http://server:port", server.as_str()),
@@ -796,7 +822,9 @@ fn automatic_join_keeps_account_format_limit_and_the_original_guide_job_and_time
         },
     ));
     step(app.press("text:/^Imported Beta One · /"));
+    step(app.wait_for("label:Video"));
     step(app.press("label:Video"));
+    step(app.wait_for("label:Multiview"));
     step(app.press("label:Multiview"));
     // Playlist parents in the picker expand their categories without closing
     // it or changing the guide's list. The source filter survives both toggles.
@@ -858,7 +886,9 @@ fn automatic_join_reloads_previous_source_whose_account_refresh_is_still_pending
         |_| accounts.load(Ordering::SeqCst) == 1,
     ));
     step(app.press("text:+ Add playlist"));
+    step(app.wait_for("text:Playlist file"));
     step(app.press("text:Playlist file"));
+    step(app.wait_for("text:Choose a file…"));
     step(app.press("text:Choose a file…"));
     step(app.wait_for("text:Alpha.m3u"));
     step(app.press("text:Add playlist"));
@@ -940,7 +970,10 @@ fn exercise_previous_guide_handoff(home: &super::isolated::Home, action: Previou
                         .unwrap()
                         .as_secs() as i64;
                     format!(
-                        "<tv><channel id=\"previous\"><display-name>Previous channel</display-name></channel><programme channel=\"previous\" start=\"{}\" stop=\"{}\"><title>{title}</title></programme></tv>",
+                        "<tv><channel id=\"previous\">\
+                         <display-name>Previous channel</display-name></channel>\
+                         <programme channel=\"previous\" start=\"{}\" stop=\"{}\">\
+                         <title>{title}</title></programme></tv>",
                         iptv_epg::format_xmltv_time(now - 3600),
                         iptv_epg::format_xmltv_time(now + 24 * 3600)
                     )
@@ -1014,8 +1047,11 @@ fn exercise_previous_guide_handoff(home: &super::isolated::Home, action: Previou
         step(app.press("text:/^☰  /"));
         step(app.press_key("left"));
         step(app.press_key("left"));
+        step(app.wait_for("text:Settings >> nth=0"));
         step(app.press("text:Settings >> nth=0"));
+        step(app.wait_for("text:TV guide data"));
         step(app.press("text:TV guide data"));
+        step(app.wait_for("text:Update the guide now"));
         step(app.press("text:Update the guide now"));
         step(app.wait_until(
             "explicit previous guide update held",
@@ -1027,6 +1063,7 @@ fn exercise_previous_guide_handoff(home: &super::isolated::Home, action: Previou
     } else {
         playlists(&mut app);
         step(app.press("text:Previous"));
+        step(app.wait_for("text:Refresh now"));
         step(app.press("text:Refresh now"));
         step(app.wait_until(
             "previous guide refresh held after playlist",
@@ -1037,10 +1074,13 @@ fn exercise_previous_guide_handoff(home: &super::isolated::Home, action: Previou
         step(app.press("text:Previous"));
         step(app.wait_for_within("text:Refresh now", Duration::from_secs(10)));
         step(app.back());
+        step(app.wait_for("text:Close"));
         step(app.press("text:Close"));
     }
     step(app.press("text:+ Add playlist"));
+    step(app.wait_for("text:Playlist file"));
     step(app.press("text:Playlist file"));
+    step(app.wait_for("text:Choose a file…"));
     step(app.press("text:Choose a file…"));
     step(app.wait_for("text:Second.m3u"));
     step(app.press("text:Add playlist"));
@@ -1060,8 +1100,11 @@ fn exercise_previous_guide_handoff(home: &super::isolated::Home, action: Previou
         step(app.press("text:/^☰  /"));
         step(app.press_key("left"));
         step(app.press_key("left"));
+        step(app.wait_for("text:Settings >> nth=0"));
         step(app.press("text:Settings >> nth=0"));
+        step(app.wait_for("text:TV guide data"));
         step(app.press("text:TV guide data"));
+        step(app.wait_for("text:Delete stored guide data"));
         step(app.press("text:Delete stored guide data"));
         step(app.wait_for("text:Delete stored guide data?"));
         step(app.press("text:Delete stored guide data >> nth=1"));

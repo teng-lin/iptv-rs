@@ -188,7 +188,7 @@ fn controls(ui: Ui) -> impl IntoElement {
         .child(
             button(
                 "pip-back",
-                || "Back to the app",
+                || tr("Back to the app"),
                 || Icon::BackToApp,
                 32.0,
                 move || {

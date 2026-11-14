@@ -79,6 +79,7 @@ fn a_tablet_first_run_shows_whole_numbers_and_no_development_defaults() {
     step(app.back());
 
     step(app.press("text:Playlist file"));
+    step(app.wait_for("text:Choose a file…"));
     step(app.press("text:Choose a file…"));
     step(app.wait_for("text:synthetic.m3u"));
     step(app.press("text:Add playlist"));

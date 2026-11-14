@@ -459,22 +459,141 @@ pub fn ordered_keys() -> Vec<String> {
     STATE.with(|s| s.borrow().favorites.keys().to_vec())
 }
 pub fn reorder(ui: Ui, key: &str, index: usize) {
-    let source = STATE.with(|s| {
+    let write = STATE.with(|s| {
         let mut s = s.borrow_mut();
-        s.favorites
-            .move_key(key, index)
-            .then_some(s.source)
-            .flatten()
+        if s.favorites.move_key(key, index) {
+            move_write(&s, key, index)
+        } else {
+            None
+        }
     });
-    if let Some(source) = source {
-        send(Write::MoveFavourite {
-            source,
-            key: key.into(),
-            index,
-        });
+    if let Some(write) = write {
+        send(write);
     }
     publish(ui);
     crate::lists::favorites_changed(ui);
+}
+
+/// The store write for a favourite that the list in memory just moved to
+/// `index`, by the owner lookup the other writes use ([`write_owner`]).
+///
+/// One playlist on screen: `index` is its place in that playlist's list,
+/// which is what the store keeps. "All playlists": the list is every
+/// playlist's favourites together, so `index` is not a place in any one
+/// of them. The store keeps an order per playlist only, so the write
+/// carries the favourite's place among its own playlist's favourites,
+/// read from the moved list. How the playlists' favourites interleave is
+/// held in memory, as for the rest of the combined list
+/// ([`prepare_combined`]). (No screen reorders the combined list today:
+/// the menu item is disabled there. This keeps the function right
+/// should one start to.)
+fn move_write(state: &State, key: &str, index: usize) -> Option<Write> {
+    let (source, local) = write_owner(state, key)?;
+    let index = if state.source.is_some() {
+        index
+    } else {
+        state
+            .favorites
+            .keys()
+            .iter()
+            .take_while(|other| other.as_str() != key)
+            .filter(|other| {
+                iptv_guide::combined::split_key(other).is_some_and(|(id, _)| id == source.0)
+            })
+            .count()
+    };
+    Some(Write::MoveFavourite {
+        source,
+        key: local,
+        index,
+    })
+}
+
+#[cfg(test)]
+mod reorder_tests {
+    use super::*;
+    use iptv_guide::combined::qualified_key;
+
+    fn moved(state: &mut State, key: &str, index: usize) -> Option<(SourceId, String, usize)> {
+        assert!(state.favorites.move_key(key, index));
+        match move_write(state, key, index)? {
+            Write::MoveFavourite { source, key, index } => Some((source, key, index)),
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn one_playlist_saves_the_place_in_its_own_list() {
+        let mut state = State {
+            source: Some(SourceId(7)),
+            favorites: Favorites::from_keys(["a", "b", "c"].map(String::from)),
+            ..State::default()
+        };
+        assert_eq!(
+            moved(&mut state, "c", 0),
+            Some((SourceId(7), "c".to_owned(), 0))
+        );
+        assert_eq!(state.favorites.keys(), ["c", "a", "b"]);
+    }
+
+    #[test]
+    fn all_playlists_save_the_place_among_the_owning_playlists_favourites() {
+        let key = |source, key: &str| qualified_key(source, key);
+        let mut state = State {
+            source: None,
+            combined_sources: vec![SourceId(1), SourceId(2)],
+            favorites: Favorites::from_keys([
+                key(1, "a"),
+                key(1, "b"),
+                key(2, "x"),
+                key(2, "y"),
+                key(2, "z"),
+            ]),
+            ..State::default()
+        };
+        // Last of the list to its front: first of playlist 2's own.
+        assert_eq!(
+            moved(&mut state, &key(2, "z"), 0),
+            Some((SourceId(2), "z".to_owned(), 0))
+        );
+        // To the fourth place of the combined list: z, a and b lie before
+        // it, of which only z is playlist 2's.
+        assert_eq!(
+            moved(&mut state, &key(2, "y"), 3),
+            Some((SourceId(2), "y".to_owned(), 1))
+        );
+        assert_eq!(
+            state.favorites.keys(),
+            [
+                key(2, "z"),
+                key(1, "a"),
+                key(1, "b"),
+                key(2, "y"),
+                key(2, "x")
+            ]
+        );
+        // Playlist 1's own order is untouched by those: b to the end is
+        // its second place.
+        assert_eq!(
+            moved(&mut state, &key(1, "b"), 4),
+            Some((SourceId(1), "b".to_owned(), 1))
+        );
+    }
+
+    #[test]
+    fn a_favourite_of_no_shown_playlist_is_not_written() {
+        let stray = qualified_key(9, "gone");
+        let mut state = State {
+            source: None,
+            combined_sources: vec![SourceId(1)],
+            favorites: Favorites::from_keys([qualified_key(1, "a"), stray.clone()]),
+            ..State::default()
+        };
+        assert_eq!(moved(&mut state, &stray, 0), None);
+        // A key that is not a combined one has no owner either.
+        state.favorites = Favorites::from_keys(["bare".to_owned()]);
+        assert_eq!(moved(&mut state, "bare", 0), None);
+    }
 }
 
 #[cfg(test)]

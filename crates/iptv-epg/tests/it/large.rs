@@ -48,7 +48,13 @@ fn generate(channels: usize, mut emit: impl FnMut(&[u8])) -> u64 {
                 let stop = (t + dur).min(end);
                 let _ = writeln!(
                     buf,
-                    r#"<programme start="{}" stop="{}" channel="ch{c}.example"><title>Show {} &amp; friends</title><desc>Episode {} of a synthetic series about item {}. Nothing here is real.</desc><category>{}</category><episode-num system="xmltv_ns">{}.{}.</episode-num></programme>"#,
+                    concat!(
+                        r#"<programme start="{}" stop="{}" channel="ch{c}.example">"#,
+                        r#"<title>Show {} &amp; friends</title>"#,
+                        r#"<desc>Episode {} of a synthetic series about item {}. Nothing here is real."#,
+                        r#"</desc><category>{}</category>"#,
+                        r#"<episode-num system="xmltv_ns">{}.{}.</episode-num></programme>"#,
+                    ),
                     format_xmltv_time(t),
                     format_xmltv_time(stop),
                     i % 97,
@@ -57,6 +63,9 @@ fn generate(channels: usize, mut emit: impl FnMut(&[u8])) -> u64 {
                     GENRES[i % GENRES.len()],
                     i % 5,
                     i % 20,
+                    // Named here: a format string built by `concat!` cannot
+                    // capture variables by itself.
+                    c = c,
                 );
                 programmes += 1;
                 t = stop;

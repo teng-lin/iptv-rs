@@ -77,8 +77,12 @@ impl T {
         }
     }
 
+    /// Presses `sel` once it is on screen. A step is done when the app
+    /// rendered nothing for a moment, which a loaded machine can reach
+    /// before the screen the last step opened is drawn: the press waits
+    /// for its target instead of failing on the old screen.
     pub fn press(&mut self, sel: &str) {
-        let r = self.app.press(sel);
+        let r = self.app.wait_for(sel).and_then(|()| self.app.press(sel));
         self.ok(&format!("press {sel}"), r);
     }
 

@@ -223,6 +223,7 @@ fn the_player_follows_its_host_through_waits_failures_and_replays() {
     step(app.press("text:Add playlist"));
     step(app.wait_for("text:Playlist file"));
     step(app.press("text:Playlist file"));
+    step(app.wait_for("text:Choose a file…"));
     step(app.press("text:Choose a file…"));
     step(app.wait_for("text:synthetic.m3u"));
     step(app.press("text:Add playlist"));
@@ -619,6 +620,7 @@ fn the_player_follows_its_host_through_waits_failures_and_replays() {
     step(app.wait_for_gone("label:Mute", Duration::from_secs(1)));
     // Picture in picture from the bar, and back to the app.
     step(app.press("label:Video"));
+    step(app.wait_for("label:Picture in picture"));
     step(app.press("label:Picture in picture"));
     step(app.wait_for("text:Playing in picture-in-picture"));
     step(app.press("id:pip-return"));
@@ -640,6 +642,7 @@ fn the_player_follows_its_host_through_waits_failures_and_replays() {
     // back; the bar's rewind and fast-forward, and its progress line under
     // a finger, seek in it; its programme details open and close.
     step(app.press("label:Video"));
+    step(app.wait_for("label:TV guide"));
     step(app.press("label:TV guide"));
     step(app.wait_for_gone("label:Mute", Duration::from_secs(1)));
     step(app.press_key("home"));
@@ -674,6 +677,7 @@ fn the_player_follows_its_host_through_waits_failures_and_replays() {
     // In picture in picture, stopping playback in the main window closes
     // the window: it has nothing to show.
     step(app.press("label:Video"));
+    step(app.wait_for("label:Picture in picture"));
     step(app.press("label:Picture in picture"));
     step(app.wait_for("text:Playing in picture-in-picture"));
     step(app.press_key("stop"));

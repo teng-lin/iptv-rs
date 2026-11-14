@@ -13,6 +13,7 @@ use nsh_core::prelude::*;
 
 use super::{PANEL_ALPHA, WHITE, device_limit, with_state};
 use crate::fonts::{OSD_BADGE, OSD_DETAIL};
+use crate::i18n::tr;
 use crate::multiview;
 use crate::play_bar::icons::{self, Icon};
 use crate::theme::{RADIUS_LARGE, RESTING_ALPHA, TEXT_SECONDARY_ALPHA};
@@ -51,7 +52,8 @@ pub fn toolbar(ui: Ui) -> impl IntoElement {
             .rounded(px(RADIUS_LARGE))
             .bg(tint(WHITE, RESTING_ALPHA))
             .hover(|s| s.bg(tint(WHITE, RESTING_ALPHA * 2)))
-            .label(name)
+            // Its name in the interface language; the log keeps the source.
+            .label(move || tr(name))
             .on_press(move || {
                 log::info!("iptv multiview toolbar: {name}");
                 act(ui);
@@ -175,12 +177,12 @@ pub fn tile_buttons(ui: Ui, index: usize) -> impl IntoElement {
                         } else {
                             "Enlarge screen"
                         };
-                        format!("{what}: {}", name())
+                        format!("{}: {}", tr(what), name())
                     }),
                 )
                 .child(
                     button(Box::new(|| Icon::Close), multiview::remove)
-                        .label(move || format!("Remove screen: {}", name())),
+                        .label(move || format!("{}: {}", tr("Remove screen"), name())),
                 )
         },
     )

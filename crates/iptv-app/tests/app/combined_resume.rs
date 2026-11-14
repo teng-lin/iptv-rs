@@ -25,7 +25,12 @@ use nsh_testing::Headless;
 const IMPORT: Duration = Duration::from_secs(20);
 const STREAM: &str = "http://stream.example.test/resumed-stalker.m3u8";
 const GENRES: &str = r#"{"js":[{"id":"1","title":"News","censored":0}]}"#;
-const CHANNELS: &str = r#"{"js":{"total_items":"1","max_page_items":"14","data":[{"id":"100","name":"Saved portal channel","number":"1","cmd":"ffmpeg http://stream.example.test/original/100.m3u8","tv_genre_id":"1","use_http_tmp_link":"1","use_load_balancing":"0"}]}}"#;
+const CHANNELS: &str = concat!(
+    r#"{"js":{"total_items":"1","max_page_items":"14","data":[{"id":"100","#,
+    r#""name":"Saved portal channel","number":"1","#,
+    r#""cmd":"ffmpeg http://stream.example.test/original/100.m3u8","#,
+    r#""tv_genre_id":"1","use_http_tmp_link":"1","use_load_balancing":"0"}]}}"#,
+);
 const M3U: &str = "#EXTM3U\n#EXTINF:-1 tvg-id=\"generated-m3u\" group-title=\"News\",Ready M3U\nhttp://stream.example.test/m3u\n";
 
 #[derive(Default)]
@@ -353,10 +358,13 @@ fn adding_playlist_reauthenticates_a_cached_portal_after_startup_auth_failed() {
     step(app.press("text:☰  All channels"));
     step(app.press_key("left"));
     step(app.press_key("left"));
+    step(app.wait_for("text:Playlists >> nth=0"));
     step(app.press("text:Playlists >> nth=0"));
+    step(app.wait_for("text:Portal"));
     step(app.press("text:Portal"));
     step(app.wait_for_within("text:Refresh now", IMPORT));
     step(app.back());
+    step(app.wait_for("text:Close"));
     step(app.press("text:Close"));
     let failed_attempts = portal.auth_attempts();
     assert!(failed_attempts > 0);
@@ -369,7 +377,9 @@ fn adding_playlist_reauthenticates_a_cached_portal_after_startup_auth_failed() {
         )]
     });
     step(app.press("text:+ Add playlist"));
+    step(app.wait_for("text:Playlist file"));
     step(app.press("text:Playlist file"));
+    step(app.wait_for("text:Choose a file…"));
     step(app.press("text:Choose a file…"));
     step(app.wait_for("text:Additional.m3u"));
     step(app.press("text:Add playlist"));

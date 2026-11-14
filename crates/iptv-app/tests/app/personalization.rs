@@ -13,7 +13,13 @@ use std::{
     path::PathBuf,
     time::{Duration, SystemTime},
 };
-pub const M3U: &str = "#EXTM3U\n#EXTINF:-1 group-title=\"News\" tvg-logo=\"http://example.test/logo.svg\",Local A\nhttp://example.test/a\n#EXTINF:-1 group-title=\"News\",Local B\nhttp://example.test/b\n#EXTINF:-1 group-title=\"Sport\",Local C\nhttp://example.test/c\n";
+pub const M3U: &str = "#EXTM3U\n\
+                       #EXTINF:-1 group-title=\"News\" tvg-logo=\"http://example.test/logo.svg\",Local A\n\
+                       http://example.test/a\n\
+                       #EXTINF:-1 group-title=\"News\",Local B\n\
+                       http://example.test/b\n\
+                       #EXTINF:-1 group-title=\"Sport\",Local C\n\
+                       http://example.test/c\n";
 pub struct Fixture {
     pub home: Home,
     pub path: PathBuf,
@@ -90,6 +96,7 @@ pub fn menu(app: &mut Headless, label: &str) {
 pub fn group(app: &mut Headless, name: &str) {
     // The list-name button is the only text beginning with this mark.
     step(app.press("text:/^☰  /"));
+    step(app.wait_for(&format!("id:guide-groups >> text:{name}")));
     step(app.press(&format!("id:guide-groups >> text:{name}")));
     step(app.press_key("right"));
 }

@@ -73,18 +73,30 @@ pub(super) fn on_main(f: impl FnOnce() + Send + 'static) {
         .push(Box::new(f));
 }
 
+/// The UI timer: runs the jobs queued for the main thread, then ticks the
+/// players. Windows calls it from its message dispatch, and a panic must
+/// not unwind out of an `extern "system"` function (the process aborts):
+/// a job or a round of ticks that panics is logged and dropped, and the
+/// next ones run.
 unsafe extern "system" fn pump(_: HWND, _: u32, _: usize, _: u32) {
     let jobs = std::mem::take(&mut *QUEUE.lock().unwrap_or_else(|e| e.into_inner()));
     for job in jobs {
-        job();
-    }
-    let players: Vec<_> =
-        super::PLAYERS.with(|p| p.borrow().values().filter_map(|p| p.upgrade()).collect());
-    for player in players {
-        if player.video.tick.get().elapsed() >= Duration::from_secs(1) {
-            player.video.tick.set(Instant::now());
-            player.tick();
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(job)).is_err() {
+            log::error!("iptv mpv: a main-thread job panicked; the player timer goes on");
         }
+    }
+    let ticked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let players: Vec<_> =
+            super::PLAYERS.with(|p| p.borrow().values().filter_map(|p| p.upgrade()).collect());
+        for player in players {
+            if player.video.tick.get().elapsed() >= Duration::from_secs(1) {
+                player.video.tick.set(Instant::now());
+                player.tick();
+            }
+        }
+    }));
+    if ticked.is_err() {
+        log::error!("iptv mpv: a player tick panicked; the player timer goes on");
     }
 }
 

@@ -32,6 +32,8 @@ pub const MPV_EVENT_HOOK: c_int = 25;
 pub const MPV_END_FILE_REASON_EOF: c_int = 0;
 pub const MPV_END_FILE_REASON_ERROR: c_int = 4;
 
+/// `mpv_set_option_string`: this build of mpv has no such option.
+pub const MPV_ERROR_OPTION_NOT_FOUND: c_int = -5;
 pub const MPV_ERROR_LOADING_FAILED: c_int = -13;
 pub const MPV_ERROR_NOTHING_TO_PLAY: c_int = -16;
 pub const MPV_ERROR_UNKNOWN_FORMAT: c_int = -17;

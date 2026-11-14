@@ -40,26 +40,34 @@ pub extern "system" fn Java_com_hantekllc_iptvrs_host_TvActivity_initializeDataD
     _activity: jni::objects::JObject,
     path: jni::objects::JString,
 ) {
-    let path = match env.get_string(&path) {
-        Ok(path) => PathBuf::from(String::from(path)),
-        Err(_) => return, // JNI retains the conversion exception.
-    };
-    if !path.is_absolute() {
-        let _ = env.throw_new(
-            "java/lang/IllegalArgumentException",
-            "Expected absolute files directory",
-        );
-        return;
-    }
-    if let Some(existing) = ANDROID_FILES.get() {
-        if existing != &path {
+    // A panic must not unwind out of an `extern "system"` function into the
+    // JVM (the process aborts): it is logged, without its message, and the
+    // directory stays as it was.
+    let set = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let path = match env.get_string(&path) {
+            Ok(path) => PathBuf::from(String::from(path)),
+            Err(_) => return, // JNI retains the conversion exception.
+        };
+        if !path.is_absolute() {
             let _ = env.throw_new(
-                "java/lang/IllegalStateException",
-                "Files directory changed in one process",
+                "java/lang/IllegalArgumentException",
+                "Expected absolute files directory",
             );
+            return;
         }
-    } else {
-        let _ = ANDROID_FILES.set(path);
+        if let Some(existing) = ANDROID_FILES.get() {
+            if existing != &path {
+                let _ = env.throw_new(
+                    "java/lang/IllegalStateException",
+                    "Files directory changed in one process",
+                );
+            }
+        } else {
+            let _ = ANDROID_FILES.set(path);
+        }
+    }));
+    if set.is_err() {
+        log::error!("iptv data: setting the files directory panicked");
     }
 }
 

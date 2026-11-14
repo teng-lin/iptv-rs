@@ -245,6 +245,10 @@ pub fn tracks(track_list: &str, video_auto: bool) -> Option<serde_json::Value> {
 /// only as text). Holds no text, so no address can leak from it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Clues {
+    /// The relay's own verdict on this load. It is authoritative: the relay
+    /// made the upstream request, while the log only shows what the relay
+    /// answered the player with (a 415 or 502 standing in for the cause).
+    transport: Option<&'static str>,
     http: Option<u16>,
     network: Option<&'static str>,
     format: bool,
@@ -270,9 +274,21 @@ fn status_after(text: &str, marker: &str) -> Option<u16> {
 }
 
 impl Clues {
+    /// Records the relay's error for this load. It wins over whatever the
+    /// log says, whichever arrives first: the log line for the relay's
+    /// stand-in status can be delivered after the end-of-file event that
+    /// reports the relay's error. A new load starts from fresh clues
+    /// (`Player::open`), so this cannot outlive the load it describes.
     pub fn transport_error(&mut self, code: &'static str) {
-        self.http = None;
-        self.network = Some(code);
+        self.transport = Some(code);
+    }
+
+    /// The load went on to its next entry (a live stream handed over to
+    /// its spare): what the relay said about the connection that closed
+    /// does not describe a later failure of the new one. The relay reports
+    /// again if the new connection fails.
+    pub fn handed_over(&mut self) {
+        self.transport = None;
     }
 
     /// Reads one log message.
@@ -310,6 +326,9 @@ impl Clues {
         use super::ffi::{
             MPV_ERROR_LOADING_FAILED, MPV_ERROR_NOTHING_TO_PLAY, MPV_ERROR_UNKNOWN_FORMAT,
         };
+        if let Some(code) = self.transport {
+            return (code, None);
+        }
         if let Some(status) = self.http {
             return (HTTP_STATUS, Some(status));
         }
@@ -530,6 +549,53 @@ mod tests {
     }
 
     const MPV_LOADING: i32 = super::super::ffi::MPV_ERROR_LOADING_FAILED;
+
+    #[test]
+    fn the_relays_error_wins_over_the_logged_status_in_either_order() {
+        // The relay refuses a playlist it cannot classify and answers the
+        // player 415; FFmpeg logs that status.
+        let logged = "http: HTTP error 415 Unsupported Media Type";
+
+        let mut log_first = Clues::default();
+        log_first.hear(logged);
+        log_first.transport_error(CONTAINER_UNSUPPORTED);
+        assert_eq!(log_first.error(MPV_LOADING), (CONTAINER_UNSUPPORTED, None));
+        assert_eq!(kind(&log_first, MPV_LOADING), ErrorKind::Format);
+
+        let mut log_last = Clues::default();
+        log_last.transport_error(CONTAINER_UNSUPPORTED);
+        log_last.hear(logged);
+        assert_eq!(log_last.error(MPV_LOADING), (CONTAINER_UNSUPPORTED, None));
+        assert_eq!(kind(&log_last, MPV_LOADING), ErrorKind::Format);
+
+        // Other log clues do not displace it either.
+        let mut timed_out = Clues::default();
+        timed_out.transport_error(CONNECTION_FAILED);
+        timed_out.hear("tcp: Connection timed out");
+        timed_out.hear("Failed to recognize file format.");
+        assert_eq!(timed_out.error(MPV_LOADING), (CONNECTION_FAILED, None));
+
+        // The relay's latest report replaces its earlier one.
+        let mut again = Clues::default();
+        again.transport_error(CONNECTION_FAILED);
+        again.transport_error(CONNECTION_TIMEOUT);
+        assert_eq!(again.error(MPV_LOADING), (CONNECTION_TIMEOUT, None));
+
+        // A live stream that handed over to its spare left the old
+        // connection's error behind: a later status is the new one's.
+        let mut bridged = Clues::default();
+        bridged.transport_error(CONNECTION_TIMEOUT);
+        bridged.handed_over();
+        bridged.hear("http: HTTP error 403 Forbidden");
+        assert_eq!(bridged.error(MPV_LOADING), (HTTP_STATUS, Some(403)));
+
+        // Without a relay error the logged status is still what is shown,
+        // and the next load starts from nothing.
+        let mut plain = Clues::default();
+        plain.hear("http: HTTP error 403 Forbidden");
+        assert_eq!(plain.error(MPV_LOADING), (HTTP_STATUS, Some(403)));
+        assert_eq!(Clues::default().error(MPV_LOADING), (IO_UNSPECIFIED, None));
+    }
 
     #[test]
     fn track_props_become_mpv_values() {

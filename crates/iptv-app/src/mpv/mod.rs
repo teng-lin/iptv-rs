@@ -694,6 +694,7 @@ impl Inner {
                         self.id
                     );
                     st.expected = Some(entry);
+                    st.clues.handed_over();
                 }
             }
             Note::Restarted { audio_out } => self.restarted(audio_out, out),

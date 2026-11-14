@@ -26,6 +26,16 @@ fn headers(env: &mut JNIEnv, value: &JString) -> Option<Vec<(String, String)>> {
 fn failed(env: &mut JNIEnv) {
     let _ = env.throw_new("java/io/IOException", "Playback transport unavailable");
 }
+/// Runs the body of a JNI entry point. A panic must not unwind out of an
+/// `extern "system"` function into the JVM (the process aborts): it is
+/// logged, without its message (which may quote an address), and reported
+/// as the entry point's ordinary failure.
+fn guarded<T>(entry: &'static str, body: impl FnOnce() -> Option<T>) -> Option<T> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)).unwrap_or_else(|_| {
+        log::error!("iptv transport: {entry} panicked");
+        None
+    })
+}
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_hantekllc_iptvrs_host_PlaybackTransport_create(
@@ -35,7 +45,7 @@ pub extern "system" fn Java_com_hantekllc_iptvrs_host_PlaybackTransport_create(
     fields: JString,
     public_only: jboolean,
 ) -> jstring {
-    let result = (|| {
+    let result = guarded("create", || {
         let url = string(&mut env, &url)?;
         let fields = headers(&mut env, &fields)?;
         let relay = PlaybackRelay::start_with_policy(
@@ -48,7 +58,7 @@ pub extern "system" fn Java_com_hantekllc_iptvrs_host_PlaybackTransport_create(
         let value = env.new_string(&local).ok()?;
         relays().lock().ok()?.insert(local, relay);
         Some(value.into_raw())
-    })();
+    });
     result.unwrap_or_else(|| {
         failed(&mut env);
         std::ptr::null_mut()
@@ -62,7 +72,7 @@ pub extern "system" fn Java_com_hantekllc_iptvrs_host_PlaybackTransport_updateHe
     local: JString,
     fields: JString,
 ) {
-    let result = (|| {
+    let result = guarded("updateHeaders", || {
         let local = string(&mut env, &local)?;
         let fields = headers(&mut env, &fields)?;
         relays()
@@ -71,7 +81,7 @@ pub extern "system" fn Java_com_hantekllc_iptvrs_host_PlaybackTransport_updateHe
             .get(&local)?
             .update_headers(&fields)
             .ok()
-    })();
+    });
     if result.is_none() {
         failed(&mut env);
     }
@@ -83,11 +93,14 @@ pub extern "system" fn Java_com_hantekllc_iptvrs_host_PlaybackTransport_release(
     _object: JObject,
     local: JString,
 ) {
-    if let Some(local) = string(&mut env, &local) {
-        if let Ok(mut relays) = relays().lock() {
+    let _ = guarded("release", || {
+        if let Some(local) = string(&mut env, &local)
+            && let Ok(mut relays) = relays().lock()
+        {
             relays.remove(&local);
         }
-    }
+        Some(())
+    });
 }
 
 #[unsafe(no_mangle)]
@@ -96,10 +109,10 @@ pub extern "system" fn Java_com_hantekllc_iptvrs_host_PlaybackTransport_takeErro
     _object: JObject,
     local: JString,
 ) -> jstring {
-    let result = (|| {
+    let result = guarded("takeErrorCode", || {
         let local = string(&mut env, &local)?;
         let code = relays().lock().ok()?.get(&local)?.take_error_code()?;
         env.new_string(code).ok().map(|value| value.into_raw())
-    })();
+    });
     result.unwrap_or(std::ptr::null_mut())
 }

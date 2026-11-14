@@ -24,6 +24,7 @@ fn custom_groups_filter_select_copy_move_rename_delete_and_restore_focus() {
     new_group(app, "My group");
     new_group(app, "Second group");
     step(app.press("text:Browse all channels"));
+    step(app.wait_for("text:Search · all channels"));
     step(app.press("text:Search · all channels"));
     step(app.type_text("text:Enter text", "local a"));
     step(app.submit("text:local a"));
@@ -39,23 +40,30 @@ fn custom_groups_filter_select_copy_move_rename_delete_and_restore_focus() {
     step(app.press_key("enter"));
     step(app.wait_for("text:1 selected · 1 matching · 3 total"));
     step(app.press_key("up"));
+    step(app.wait_for("text:Search · local a"));
     step(app.press("text:Search · local a"));
     step(app.clear("text:local a"));
     step(app.type_text("text:Enter text", "local b"));
     step(app.submit("text:local b"));
+    step(app.wait_for("text:Select filtered"));
     step(app.press("text:Select filtered"));
     step(app.wait_for("text:2 selected · 1 matching · 3 total"));
     step(app.press("text:Copy selected"));
     step(app.back());
     step(app.wait_for("text:2 selected · 1 matching · 3 total"));
     step(app.press("text:Copy selected"));
+    step(app.wait_for("text:My group · 0 channels"));
     step(app.press("text:My group · 0 channels"));
     step(app.wait_for("text:2 channels copied."));
     step(app.wait_for("text:0 selected · 1 matching · 3 total"));
     step(app.back());
+    step(app.wait_for("text:My group · 2 channels"));
     step(app.press("text:My group · 2 channels"));
+    step(app.wait_for("text:Edit members"));
     step(app.press("text:Edit members"));
+    step(app.wait_for("text:Select filtered"));
     step(app.press("text:Select filtered"));
+    step(app.wait_for("text:Move selected"));
     step(app.press("text:Move selected"));
     assert!(
         !app.shows("My group · 2 channels"),
@@ -72,13 +80,18 @@ fn custom_groups_filter_select_copy_move_rename_delete_and_restore_focus() {
     assert_eq!(groups[1].channel_count, 2);
     step(app.back());
     step(app.back());
+    step(app.wait_for("text:Second group · 2 channels"));
     step(app.press("text:Second group · 2 channels"));
+    step(app.wait_for("text:Rename group"));
     step(app.press("text:Rename group"));
     step(app.clear("text:Second group"));
     step(app.type_text("text:Enter text", "Renamed group"));
     step(app.submit("text:Renamed group"));
+    step(app.wait_for("text:Reorder members"));
     step(app.press("text:Reorder members"));
+    step(app.wait_for("id:organization-row-1"));
     step(app.press("id:organization-row-1"));
+    step(app.wait_for("text:Move to first"));
     step(app.press("text:Move to first"));
     step(app.back());
     let s = crate::isolated::open_database(&f.path).unwrap();
@@ -95,10 +108,13 @@ fn custom_groups_filter_select_copy_move_rename_delete_and_restore_focus() {
     assert_eq!(members[0].name, "Local B");
     drop(s);
     step(app.press("text:Edit members"));
+    step(app.wait_for("text:Search · all channels"));
     step(app.press("text:Search · all channels"));
     step(app.type_text("text:Enter text", "local b"));
     step(app.submit("text:local b"));
+    step(app.wait_for("text:Select filtered"));
     step(app.press("text:Select filtered"));
+    step(app.wait_for("text:Remove selected"));
     step(app.press("text:Remove selected"));
     assert_eq!(
         crate::isolated::open_database(&f.path)
@@ -144,6 +160,7 @@ fn custom_groups_filter_select_copy_move_rename_delete_and_restore_focus() {
     step(app.wait_for("text:This group has no channels."));
     // An empty custom list remains addressable in the guide and manageable.
     step(app.press("text:/^☰  /"));
+    step(app.wait_for("text:All channels >> nth=0"));
     step(app.press("text:All channels >> nth=0"));
     step(app.press_key("right"));
     step(app.wait_for("text:★ Local A"));

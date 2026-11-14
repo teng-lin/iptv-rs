@@ -95,8 +95,11 @@ fn startup_and_periodic_refresh_skip_disabled_sources_and_failures_keep_the_cach
     step(app.press("text:☰  All playlists"));
     step(app.press_key("left"));
     step(app.press_key("left"));
+    step(app.wait_for("text:Playlists >> nth=0"));
     step(app.press("text:Playlists >> nth=0"));
+    step(app.wait_for("text:Synthetic A"));
     step(app.press("text:Synthetic A"));
+    step(app.wait_for("text:Show this playlist"));
     step(app.press("text:Show this playlist"));
     step(app.wait_for_within("text:A 0", Duration::from_secs(20)));
     until(
@@ -169,9 +172,11 @@ fn startup_and_periodic_refresh_skip_disabled_sources_and_failures_keep_the_cach
     step(app.press("text:☰  All channels"));
     step(app.press_key("left"));
     step(app.press_key("left"));
+    step(app.wait_for("text:Playlists >> nth=0"));
     step(app.press("text:Playlists >> nth=0"));
     step(app.wait_for("text:Synthetic A"));
     step(app.press("text:Synthetic A"));
+    step(app.wait_for("text:Refresh now"));
     step(app.press("text:Refresh now"));
     until(
         &mut app,
@@ -197,6 +202,7 @@ fn startup_and_periodic_refresh_skip_disabled_sources_and_failures_keep_the_cach
     );
     // Manual refresh of a disabled source remains possible without enabling/showing it.
     step(app.press("text:Synthetic C"));
+    step(app.wait_for("text:Refresh now"));
     step(app.press("text:Refresh now"));
     until(
         &mut app,
@@ -227,6 +233,7 @@ fn startup_and_periodic_refresh_skip_disabled_sources_and_failures_keep_the_cach
         Some(a)
     );
     step(app.press("text:Synthetic A"));
+    step(app.wait_for("text:Playlist enabled: Yes"));
     step(app.press("text:Playlist enabled: Yes"));
     until(
         &mut app,

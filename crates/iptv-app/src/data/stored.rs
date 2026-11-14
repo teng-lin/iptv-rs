@@ -419,7 +419,18 @@ pub fn replace(
 /// Notes a failed guide download (every source in `configs` failed); the
 /// stored guide stays.
 pub fn record_failure(source: SourceId, error: &ImportError, configs: &[EpgSourceConfig]) {
-    let kind = error_kind(error);
+    record_failure_kind(source, error_kind(error), configs);
+}
+
+/// Notes that the guide could not be downloaded because the network
+/// client could not be set up: no source in `configs` was reached, which
+/// the refresh policy treats as a network failure of each (it backs off
+/// and tries again, as after a failed download).
+pub fn record_client_failure(source: SourceId, configs: &[EpgSourceConfig]) {
+    record_failure_kind(source, ImportErrorKind::Network, configs);
+}
+
+fn record_failure_kind(source: SourceId, kind: ImportErrorKind, configs: &[EpgSourceConfig]) {
     let results: Vec<_> = configs.iter().map(|c| (c.id, Some(kind))).collect();
     let recorded = crate::store_service::blocking(move |s| {
         s.record_epg_failure(source, kind)?;

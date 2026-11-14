@@ -372,7 +372,7 @@ fn corner_back(ui: Ui) -> impl IntoElement {
             0.0,
             crate::play_bar::back_bg(ui),
             move || {
-                if groups() { tr("Groups") } else { "Menu" }
+                if groups() { tr("Groups") } else { tr("Menu") }
             },
             move || {
                 ui.touched();

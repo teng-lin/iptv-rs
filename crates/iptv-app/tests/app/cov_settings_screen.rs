@@ -104,6 +104,7 @@ fn menus_favourites_and_settings() {
     step(app.press("text:Add playlist"));
     step(app.wait_for("text:Playlist file"));
     step(app.press("text:Playlist file"));
+    step(app.wait_for("text:Choose a file…"));
     step(app.press("text:Choose a file…"));
     step(app.wait_for("text:synthetic.m3u"));
     step(app.press("text:Add playlist"));
@@ -463,6 +464,7 @@ fn appearance(app: &mut Headless, home: &Path) {
     step(app.wait_for_gone("text:◀  25 %  ▶", GONE));
     row_value(app, label, "20 %");
     step(app.press(&format!("text:{label}")));
+    step(app.wait_for("text:−"));
     step(app.press("text:−"));
     step(app.wait_for("text:◀  15 %  ▶"));
     step(app.press("text:Keep"));
@@ -539,10 +541,12 @@ fn other_pages(app: &mut Headless) {
     // Playlists: its screen over the settings; a rename there types in
     // the wizard's text sheet.
     step(app.press("text:Playlists >> nth=0"));
+    step(app.wait_for("text:Manage playlists"));
     step(app.press("text:Manage playlists"));
     let shown = |s: &Screen| s.count("text:Playlists").unwrap_or(0);
     step(app.wait_until("the playlists screen", GONE, |s| shown(s) > 1));
     step(app.press("text:synthetic"));
+    step(app.wait_for("text:Rename"));
     step(app.press("text:Rename"));
     let field = input(app);
     step(app.wait_for("text:Playlist name"));
@@ -554,6 +558,7 @@ fn other_pages(app: &mut Headless) {
     // The remote's bindings: its editor opens over the settings (its own
     // test, tests/app/library_management.rs, edits them); Back closes it.
     step(app.press("text:Remote control >> nth=0"));
+    step(app.wait_for("text:Edit remote bindings"));
     step(app.press("text:Edit remote bindings"));
     step(app.wait_for("text:Remote bindings"));
     step(app.back());
@@ -581,7 +586,9 @@ fn leaving(app: &mut Headless) {
     step(app.press_key("right"));
     open_menu(app);
     step(app.press(MENU_SETTINGS));
+    step(app.wait_for("text:General >> nth=0"));
     step(app.press("text:General >> nth=0"));
+    step(app.wait_for("text:Press Back twice to leave"));
     step(app.press("text:Press Back twice to leave"));
     row_value(app, "Press Back twice to leave", "Off");
     // A key the screen has no use for changes nothing.

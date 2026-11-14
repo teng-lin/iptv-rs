@@ -52,6 +52,7 @@ fn clicks_reach_the_guide_under_the_hidden_layers() {
     step(app.press("text:Add playlist"));
     step(app.wait_for("text:Playlist file"));
     step(app.press("text:Playlist file"));
+    step(app.wait_for("text:Choose a file…"));
     step(app.press("text:Choose a file…"));
     step(app.wait_for("text:synthetic.m3u"));
     step(app.press("text:Add playlist"));
@@ -67,9 +68,11 @@ fn clicks_reach_the_guide_under_the_hidden_layers() {
     // The playing channel's name again: full screen. A tap on the video
     // shows the play bar, whose buttons act; another tap hides it.
     step(app.press("text:Test Channel Two"));
+    step(app.wait_for("label:Video"));
     step(app.press("label:Video"));
     step(app.wait_for("label:Mute"));
     step(app.press("label:Play or pause"));
+    step(app.wait_for("label:Favourite"));
     step(app.press("label:Favourite"));
     step(app.wait_for("text:★ Test Channel Two"));
     step(app.press("label:Video"));
@@ -101,6 +104,7 @@ fn clicks_reach_the_guide_under_the_hidden_layers() {
     // The list name in the header (under the hidden player panels' top
     // bar) opens the groups and the rail; a group shows its channels.
     step(app.press("text:☰  All channels"));
+    step(app.wait_for("text:Sport"));
     step(app.press("text:Sport"));
     step(app.wait_for("text:Test Channel Three"));
     step(app.wait_for_gone("text:Test Channel One", Duration::from_secs(2)));
@@ -109,6 +113,52 @@ fn clicks_reach_the_guide_under_the_hidden_layers() {
     // too) opens the wizard.
     step(app.press("text:+ Add playlist"));
     step(app.wait_for("text:Playlist link"));
+}
+
+/// A mouse moving over full-screen video brings the play bar up, but not
+/// while the channel list is open over the video: the list is what the
+/// pointer is for then, and the bar would lie over it.
+fn moving_mouse(app: &mut Headless, step: impl Fn(Result<(), String>)) {
+    const LIST: &str = "id:channel-list";
+    const BESIDE: &str = "id:channel-list-beside";
+    // A move counts once the mouse went somewhere else, a quarter of a
+    // second after the last one that counted (`desktop::pointer_moved`).
+    let pause = Duration::from_millis(300);
+    let no_bar = |app: &mut Headless, at: &str| {
+        step(app.wait(pause));
+        step(app.hover(at));
+        step(app.wait(pause));
+        assert!(
+            !app.screen().matches("label:Mute").unwrap(),
+            "the play bar came up over the channel list (mouse over {at})"
+        );
+    };
+
+    step(app.hover("label:Video"));
+    step(app.wait_for("label:Mute"));
+    // A separate click, outside the desktop's double-click interval.
+    step(app.wait(Duration::from_millis(600)));
+    step(app.press("label:Video"));
+    step(app.wait_for_gone("label:Mute", Duration::from_secs(2)));
+
+    // The channel list, from the menu; the mouse over the picture beside
+    // it, then over the list itself.
+    step(app.press_key("m"));
+    step(app.wait_for("text:Channels"));
+    step(app.press("text:Channels"));
+    no_bar(app, BESIDE);
+    no_bar(app, LIST);
+
+    // The list closed (a tap beside it): the mouse shows the bar again,
+    // once it moves from where it last showed it (the moves over the list
+    // did not count).
+    step(app.press(BESIDE));
+    step(app.wait(pause));
+    step(app.hover(BESIDE));
+    step(app.wait_for("label:Mute"));
+    step(app.wait(Duration::from_millis(600)));
+    step(app.press("label:Video"));
+    step(app.wait_for_gone("label:Mute", Duration::from_secs(2)));
 }
 
 /// Presses every button of the play bar over full-screen video (shown by
@@ -166,6 +216,7 @@ fn bar_buttons(app: &mut Headless, step: impl Fn(Result<(), String>)) {
     // (one tile stays), Back again returns to full screen, where the bar
     // comes back.
     step(app.press("label:Video"));
+    step(app.wait_for("label:Multiview"));
     step(app.press("label:Multiview"));
     step(app.wait_for(TILE));
     step(gone(app, "label:Mute"));
@@ -187,9 +238,11 @@ fn bar_buttons(app: &mut Headless, step: impl Fn(Result<(), String>)) {
     // (cut with two dots where the window is narrow: the harness still
     // reports the 760 pt window here).
     step(app.press("label:Video"));
+    step(app.wait_for("label:TV guide"));
     step(app.press("label:TV guide"));
     step(gone(app, "label:Mute"));
     step(app.press("text:/^★ (Test Channel Two|T.*\\.\\.)$/"));
+    step(app.wait_for("label:Video"));
     step(app.press("label:Video"));
     step(app.wait_for("label:Mute"));
 }
@@ -218,6 +271,7 @@ fn chrome(app: &mut Headless, step: impl Fn(Result<(), String>)) {
 /// it full screen: the grid goes, the session waits.
 fn detour(app: &mut Headless, step: impl Fn(Result<(), String>)) {
     step(app.press(TILE_THREE));
+    step(app.wait_for(&format!("{MENU} >> text:Full screen")));
     step(app.press(&format!("{MENU} >> text:Full screen")));
     step(app.wait_for_gone(TILE, Duration::from_secs(2)));
 }
@@ -230,6 +284,7 @@ fn detour(app: &mut Headless, step: impl Fn(Result<(), String>)) {
 fn multiview(app: &mut Headless, step: impl Fn(Result<(), String>) + Copy) {
     let gone = |app: &mut Headless, s: &str| app.wait_for_gone(s, Duration::from_secs(2));
     step(app.press("label:Video"));
+    step(app.wait_for("label:Multiview"));
     step(app.press("label:Multiview"));
     step(app.wait_for(TILE));
     assert_eq!(tiles(app), 1, "the playing channel is the first tile");
@@ -288,6 +343,7 @@ fn multiview(app: &mut Headless, step: impl Fn(Result<(), String>) + Copy) {
     // Again, picking Channel Three.
     chrome(app, step);
     step(app.press("label:Add screen"));
+    step(app.wait_for(ROW_THREE));
     step(app.press(ROW_THREE));
     step(app.wait_for(TILE_THREE));
     assert_eq!(tiles(app), 2);
@@ -411,12 +467,16 @@ fn back_navigation(home: &crate::isolated::Home, device: Idiom) {
     step(app.press("text:Test Channel One"));
     step(app.wait_for("text:▶"));
     step(app.press("text:Test Channel One"));
+    step(app.wait_for("label:Video"));
     step(app.press("label:Video"));
     step(app.wait_for("label:Guide"));
     step(app.wait_for("label:Mute"));
     step(app.press_key("space"));
     step(app.wait_for_gone("label:Mute", Duration::from_secs(2)));
     step(app.wait_for_gone("label:Guide", Duration::from_secs(2)));
+    if device == Idiom::Desktop {
+        moving_mouse(&mut app, step);
+    }
     // A separate tap, outside the desktop's double-click interval.
     step(app.wait(Duration::from_millis(600)));
     step(app.press("label:Video"));

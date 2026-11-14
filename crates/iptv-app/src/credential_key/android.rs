@@ -24,17 +24,26 @@ pub extern "system" fn Java_com_hantekllc_iptvrs_host_CredentialKey_installDatab
     _class: JClass<'_>,
     bytes: JByteArray<'_>,
 ) -> jboolean {
-    let Ok(raw) = env.convert_byte_array(&bytes) else {
-        return 0;
-    };
-    let raw = Zeroizing::new(raw);
-    let Ok(key) = <[u8; 32]>::try_from(raw.as_slice()) else {
-        return 0;
-    };
-    match KEY.set(Zeroizing::new(key)) {
-        Ok(()) => 1,
-        // Activity recreation must install the same key, never silently accept
-        // changed persistent credentials while the old key remains in memory.
-        Err(candidate) => u8::from(KEY.get().is_some_and(|existing| **existing == *candidate)),
-    }
+    // A panic must not unwind out of an `extern "system"` function into the
+    // JVM (the process aborts): it counts as "not installed". Its message
+    // is not logged.
+    let installed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> jboolean {
+        let Ok(raw) = env.convert_byte_array(&bytes) else {
+            return 0;
+        };
+        let raw = Zeroizing::new(raw);
+        let Ok(key) = <[u8; 32]>::try_from(raw.as_slice()) else {
+            return 0;
+        };
+        match KEY.set(Zeroizing::new(key)) {
+            Ok(()) => 1,
+            // Activity recreation must install the same key, never silently accept
+            // changed persistent credentials while the old key remains in memory.
+            Err(candidate) => u8::from(KEY.get().is_some_and(|existing| **existing == *candidate)),
+        }
+    }));
+    installed.unwrap_or_else(|_| {
+        log::error!("iptv credential key: installing the database key panicked");
+        0
+    })
 }

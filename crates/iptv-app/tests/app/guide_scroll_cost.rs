@@ -61,7 +61,10 @@ fn guide(now: i64) -> String {
         for k in 0..36 {
             let (a, b) = (start + shift + k * 1800, start + shift + (k + 1) * 1800);
             xml.push_str(&format!(
-                "<programme channel=\"c{n}\" start=\"{}\" stop=\"{}\"><title>Programme {n}-{k}</title><desc>A synthetic description of programme {n}-{k}, long enough to take two lines of the header.</desc></programme>",
+                "<programme channel=\"c{n}\" start=\"{}\" stop=\"{}\">\
+                 <title>Programme {n}-{k}</title>\
+                 <desc>A synthetic description of programme {n}-{k}, long enough to take two \
+                 lines of the header.</desc></programme>",
                 format_xmltv_time(a),
                 format_xmltv_time(b)
             ));
@@ -172,6 +175,7 @@ fn a_down_press_mounts_little_and_the_guide_draws_no_empty_cells_or_layers() {
     step(app.press("text:Add playlist"));
     step(app.wait_for("text:Playlist file"));
     step(app.press("text:Playlist file"));
+    step(app.wait_for("text:Choose a file…"));
     step(app.press("text:Choose a file…"));
     step(app.wait_for("text:synthetic.m3u"));
     step(app.press("text:Add playlist"));

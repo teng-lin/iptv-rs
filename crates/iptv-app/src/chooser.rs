@@ -320,7 +320,7 @@ pub fn layer(ui: Ui) -> impl IntoElement {
             view()
                 .absolute()
                 .inset_0()
-                .label("Close the chooser")
+                .label(move || tr("Close the chooser"))
                 .on_press(move || {
                     ui.touched();
                     close(ui);

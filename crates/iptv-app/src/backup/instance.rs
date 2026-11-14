@@ -1,5 +1,6 @@
 //! Hold the application storage lock for the process lifetime. The lock is a
 //! sibling of the data directory, so activating a restore never moves it.
+use super::error::{Context, Error, Result};
 use std::fs::{File, OpenOptions};
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
@@ -11,10 +12,10 @@ static ACQUIRING: Mutex<()> = Mutex::new(());
 
 /// Acquire before settings, restore activation or any storage worker starts.
 /// Activity/root recreation in this process reuses the already-held lock.
-pub(super) fn acquire(root: &Path) -> Result<(), &'static str> {
+pub(super) fn acquire(root: &Path) -> Result<()> {
     let _guard = ACQUIRING
         .lock()
-        .map_err(|_| "Could not lock application storage")?;
+        .context("Could not lock application storage")?;
     if FILE.get().is_some() {
         return Ok(());
     }
@@ -22,7 +23,7 @@ pub(super) fn acquire(root: &Path) -> Result<(), &'static str> {
         .file_name()
         .ok_or("Invalid application storage directory")?;
     let parent = root.parent().ok_or("Application storage has no parent")?;
-    std::fs::create_dir_all(parent).map_err(|_| "Could not open application storage")?;
+    std::fs::create_dir_all(parent).context("Could not open application storage")?;
     let mut lock_name = name.to_os_string();
     lock_name.push(".instance-lock");
     let mut options = OpenOptions::new();
@@ -34,18 +35,21 @@ pub(super) fn acquire(root: &Path) -> Result<(), &'static str> {
     }
     let file = options
         .open(parent.join(lock_name))
-        .map_err(|_| "Could not open the application storage lock")?;
+        .context("Could not open the application storage lock")?;
     match file.try_lock() {
         Ok(()) => {}
-        Err(std::fs::TryLockError::WouldBlock) => return Err(ALREADY_RUNNING),
-        Err(std::fs::TryLockError::Error(_)) => return Err("Could not lock application storage"),
+        Err(std::fs::TryLockError::WouldBlock) => return Err(ALREADY_RUNNING.into()),
+        Err(std::fs::TryLockError::Error(error)) => {
+            return Err(Error::new("Could not lock application storage", error));
+        }
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         file.set_permissions(std::fs::Permissions::from_mode(0o600))
-            .map_err(|_| "Could not protect the application storage lock")?;
+            .context("Could not protect the application storage lock")?;
     }
+    // Only this function sets it, under `ACQUIRING`, after finding it empty.
     FILE.set(file)
         .map_err(|_| "Could not retain the application storage lock")?;
     // Do not unlink or explicitly unlock: every app-owned detached worker may
@@ -85,7 +89,10 @@ mod tests {
                 let mut release = [0];
                 std::io::stdin().read_exact(&mut release).unwrap();
             }
-            "contender" => assert_eq!(acquire(root), Err(ALREADY_RUNNING)),
+            "contender" => assert_eq!(
+                acquire(root).map_err(|error| error.message()),
+                Err(ALREADY_RUNNING)
+            ),
             "successor" => acquire(root).unwrap(),
             mode => panic!("unknown synthetic child mode: {mode}"),
         }
