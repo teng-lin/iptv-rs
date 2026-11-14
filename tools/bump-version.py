@@ -35,8 +35,12 @@ def bump(root, requested, dry_run=False):
         if package.get("version") == {"workspace": True}:
             names.add(package["name"])
     changes = {}
-    for relative in ("Cargo.lock", "tools/ci/package.Cargo.lock"):
+    # The fuzz harness is a workspace of its own; its lock names only the
+    # crates it fuzzes, and its builds are --locked like every other.
+    for relative, complete in (("Cargo.lock", True), ("tools/ci/package.Cargo.lock", True), ("fuzz/Cargo.lock", False)):
         lock = root / relative
+        if not complete and not lock.exists():
+            continue
         blocks = lock.read_text().split("[[package]]")
         found = set()
         for index, block in enumerate(blocks[1:], 1):
@@ -46,7 +50,7 @@ def bump(root, requested, dry_run=False):
                     raise ValueError(f"{relative} version is out of sync: {package['name']}")
                 blocks[index] = block.replace(f'version = "{current}"', f'version = "{version}"', 1)
                 found.add(package["name"])
-        if found != names:
+        if found != names and (complete or not found):
             raise ValueError(f"Workspace packages missing from {relative}; regenerate it first")
         changes[lock] = "[[package]]".join(blocks)
     updated, count = re.subn(

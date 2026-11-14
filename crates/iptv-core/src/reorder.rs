@@ -1,7 +1,7 @@
 //! Reorder mode for a list of channel or group ids.
 //!
-//! Two sub-modes (reference UX notes: tivimate docs/01 "Bulk operations",
-//! docs/02 "Channel and group editing", docs/09 "Manual sorting"; AC06):
+//! Two sub-modes, as observed in the reference UX's bulk operations, channel
+//! and group editing, and manual sorting (acceptance criterion AC06):
 //!
 //! | Key | Browse (nothing selected) | Move (an item selected) |
 //! | --- | --- | --- |

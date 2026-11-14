@@ -23,18 +23,20 @@ try {
     & "$PSScriptRoot/fetch-mpv-windows.ps1"
     $env:PATH = "$(Join-Path $root 'target/mpv');$env:PATH"
     if ($Check) {
+        # The same checks as tools/check.sh; tools/ci/test-check-parity.py keeps
+        # the crate lists of the two scripts equal.
+        & python "$PSScriptRoot/ci/pins.py" check-nsh
+        if ($LASTEXITCODE -ne 0) { throw 'The NSH checkout is not at the commit in nsh.rev' }
         & cargo clippy --locked --workspace --all-targets --features iptv-app/test-support -- -D warnings
         if ($LASTEXITCODE -ne 0) { throw 'Windows lint checks failed' }
         & cargo test --locked -p nsh-platform-windows --lib chrome::pointer_tests
         if ($LASTEXITCODE -ne 0) { throw 'Windows pointer regression failed' }
-        & cargo test --locked -p iptv-import -p iptv-providers -p iptv-net
-        if ($LASTEXITCODE -ne 0) { throw 'Import, provider or transport tests failed' }
-        & cargo test --locked -p iptv-core
-        if ($LASTEXITCODE -ne 0) { throw 'Core tests failed' }
-        & cargo build --locked -p iptv-core --target wasm32-unknown-unknown
-        if ($LASTEXITCODE -ne 0) { throw 'Core wasm build failed' }
-        & cargo test --locked -p iptv-store-sqlite
-        if ($LASTEXITCODE -ne 0) { throw 'Encrypted store tests failed' }
+        & cargo test --locked -p iptv-core -p iptv-nav -p iptv-settings -p iptv-epg -p iptv-providers -p iptv-guide -p iptv-import -p iptv-net -p iptv-store-sqlite -p iptv-search
+        if ($LASTEXITCODE -ne 0) { throw 'Library crate tests failed' }
+        foreach ($crate in @('iptv-core', 'iptv-nav', 'iptv-settings', 'iptv-epg', 'iptv-providers', 'iptv-guide', 'iptv-import', 'iptv-search')) {
+            & cargo build --locked -p $crate --target wasm32-unknown-unknown
+            if ($LASTEXITCODE -ne 0) { throw "wasm build of $crate failed" }
+        }
         & cargo test --locked -p iptv-app --lib --features test-support
         if ($LASTEXITCODE -ne 0) { throw 'App unit tests failed' }
         & cargo test --locked -p iptv-app --test app --features test-support

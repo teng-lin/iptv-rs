@@ -21,9 +21,8 @@ shares none of its code or artwork.
 
 ![The guide on an Android tablet, with a live channel in the preview](docs/screenshots/tablet-guide.png)
 
-<sub>The Android TV screenshots use the repository's synthetic playlist,
-guide and test streams. The tablet screenshot shows a real provider's
-playlist.</sub>
+<sub>All screenshots use the repository's synthetic playlist, guide and
+test streams.</sub>
 
 Patina provides no channels or content. You add the playlist or account
 your IPTV provider gave you.
@@ -66,10 +65,37 @@ Release builds are published on
 | Android TV and tablets (Android 8.0+) | `.apk` |
 | Linux x86_64 (glibc 2.39+, GTK 4.14+) | `.deb`, `.rpm`, `.pkg.tar.zst`, `.AppImage` |
 | macOS (Apple silicon) | `.dmg` (ad hoc signed, not notarized) |
+| Windows x64 (experimental) | `-setup.exe` installer (unsigned) |
 | iPad | Not released yet; [build from source](#ipad) |
 
 The native Linux packages need the system's GTK 4, libmpv and GStreamer.
 The AppImage bundles them.
+
+Each release has a `SHA256SUMS` file and build provenance attestations.
+With the [GitHub CLI](https://cli.github.com/) you can check that a download
+was built by this repository's release workflow:
+
+```sh
+gh attestation verify Patina-<version>-linux-x86_64.AppImage --repo teng-lin/patina-iptv
+```
+
+[The release guide](docs/release.md#checksums-provenance-and-sbom) has the
+stricter form, checksum verification and the SBOM. Releases up to v0.1.1
+predate the attestations.
+
+### Opening the macOS and Windows builds
+
+The macOS and Windows packages are not signed with a platform developer
+certificate yet, so the system warns before the first launch. Verify the
+download as above first.
+
+- **macOS (Gatekeeper):** drag Patina to Applications and open it once; macOS
+  refuses. Then open System Settings, Privacy & Security, scroll to the
+  message about Patina and choose **Open Anyway**. Alternatively remove the
+  download marker in a terminal:
+  `xattr -dr com.apple.quarantine /Applications/Patina.app`.
+- **Windows (SmartScreen):** when "Windows protected your PC" appears, choose
+  **More info**, then **Run anyway**.
 
 ## Build from source
 
@@ -78,12 +104,20 @@ The AppImage bundles them.
 - Rust (the version pinned in `rust-toolchain.toml`) with the
   `wasm32-unknown-unknown` target, and for Android also
   `aarch64-linux-android` and `x86_64-linux-android`.
-- The NSH fork checked out next to this repository and its CLI built:
+- The NSH fork checked out next to this repository at the commit recorded
+  in [`nsh.rev`](nsh.rev), and its CLI built:
 
   ```sh
-  git clone -b tv-keys https://github.com/teng-lin/nsh.git ../nsh
+  git clone https://github.com/teng-lin/nsh.git ../nsh
+  git -C ../nsh checkout --detach "$(cat nsh.rev)"
   (cd ../nsh && cargo build --release -p nsh-cli)
   ```
+
+  NSH is a path dependency, so `Cargo.lock` cannot record its commit;
+  `nsh.rev` does. CI checks out the same commit, and `tools/check.sh` fails
+  when `../nsh` is at another one (`IPTV_ALLOW_NSH_DRIFT=1` allows it while
+  you develop the fork). After `nsh.rev` changes, run
+  `git -C ../nsh fetch origin && git -C ../nsh checkout --detach "$(cat nsh.rev)"`.
 
 - **Linux:** GTK 4 and libmpv 2 (`mpv` on Arch, `libmpv-dev` on
   Debian/Ubuntu).
@@ -97,8 +131,8 @@ The AppImage bundles them.
 Windows uses the NSH fork's Win32/Direct2D backend. Install Visual Studio
 2022 Build Tools with **Desktop development with C++** and a Windows SDK,
 Rust's MSVC toolchain, and Strawberry Perl on `PATH` (for bundled OpenSSL).
-Keep the `tv-keys` NSH checkout next to this repository as above; its CLI
-is not needed for the Windows build. The build script applies the small
+Keep the NSH checkout next to this repository at the `nsh.rev` commit as
+above; its CLI is not needed for the Windows build. The build script applies the small
 `tools/patches/nsh-windows-pointer-leave.patch` fix to that checkout; it keeps
 PiP controls visible when crossing from a drag region onto a button.
 
@@ -131,8 +165,10 @@ renderer, with output capped at 1920×1080 and scaled by Direct2D. This is
 CPU intensive; high-resolution playback and multiview need performance
 validation. GPU rendering is not yet implemented on Windows.
 
-The Windows CI job and `-Check` command run native builds, encrypted-storage
-and app tests, and the portable core's WebAssembly build. A first build also
+The Windows CI job and `-Check` command run what `tools/check.sh` runs on
+Linux and macOS: lints, the tests of every library crate and of the app, and
+the WebAssembly builds of the portable crates. `-Check` also needs Python,
+to compare the NSH checkout with `nsh.rev`. A first build also
 compiles OpenSSL from source and can take several minutes. For direct Cargo
 commands, put Strawberry Perl's `perl/bin` and `c/bin` directories, plus
 `target/mpv`, on `PATH`.
@@ -250,10 +286,15 @@ Useful environment variables: `IPTV_RS_AUDIO=null` (mute),
 `IPTV_RS_HWDEC` (mpv `hwdec`), `RUST_LOG=info` (player state, never stream
 addresses).
 
-Project rules for contributors and coding agents are in
+[docs/architecture.md](docs/architecture.md) explains the crate layering, the
+sans-IO ports, the state and video-layer rules, the import pipeline and the
+NSH boundary. [CONTRIBUTING.md](CONTRIBUTING.md) covers setup, checks and
+commit style; the project rules for contributors and coding agents are in
 [AGENTS.md](AGENTS.md). Release and signing setup is in
-[docs/release.md](docs/release.md). The storage and transport security
-model is in [docs/security.md](docs/security.md).
+[docs/release.md](docs/release.md), and changes per release in
+[CHANGELOG.md](CHANGELOG.md). The storage and transport security model is in
+[docs/security.md](docs/security.md); to report a vulnerability see
+[SECURITY.md](SECURITY.md).
 
 `python3 tools/bump-version.py patch` bumps the version. A `v<version>`
 tag builds and publishes the release.
@@ -262,4 +303,8 @@ tag builds and publishes the release.
 
 [AGPL-3.0-only](LICENSE). Bundled Roboto fonts are under the
 [SIL Open Font License](crates/iptv-app/fonts/OFL.txt). Packages that
-bundle FFmpeg and mpv carry their licences too.
+bundle FFmpeg and mpv carry their licences too, and each release publishes
+the [source of those bundled libraries](docs/release.md#corresponding-source-for-bundled-media-libraries):
+`Patina-<version>-macos-native-sources.tar` and
+`Patina-<version>-linux-native-sources.tar` beside the packages, and the
+retained source archive of the Windows libmpv build.

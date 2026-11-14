@@ -1,8 +1,8 @@
 //! General, playlists and channel organisation.
 //!
 //! Default provenance: `// default: ours` is iptv-rs's choice;
-//! `// default: observed (07)` is the reference player's initial displayed
-//! value (`~/src/tivimate/docs/07-runtime-tv-observations.md`).
+//! `// default: observed (07)` is the value the reference player displayed
+//! on a fresh install, observed at run time on Android TV.
 
 use super::choices::*;
 use crate::schema::*;

@@ -191,7 +191,7 @@ impl Keymap {
             b(Some(Guide), K::ChannelDown, Short, A::PageDown),
             // Full screen, the reference's player defaults: OK shows the
             // info card and its action cards, Long OK and Menu the control
-            // strip (observed, tivimate docs/08 E), Up/Down zap, Left the
+            // strip (as observed in the reference), Up/Down zap, Left the
             // channel list over the video (Long Left beside the video),
             // Right the most recent channel (Long Right the history), Long
             // Back stops playback.

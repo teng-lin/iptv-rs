@@ -61,6 +61,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-windows
+        with:
+          cache: 'false'
       - name: Set release metadata
         shell: pwsh
         run: python tools/ci/version.py
@@ -124,6 +126,15 @@ jobs:
           export APPIMAGE_EXTRACT_AND_RUN=1 CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target"
           bash tools/ci/package-linux.sh
           bash tools/ci/check-linux-packages.sh
+      # The AppImage bundles Ubuntu's libmpv, FFmpeg and GTK: publish the exact
+      # source packages they were built from. A source that cannot be fetched
+      # or does not match its checksum fails the release.
+      - name: Corresponding source of the libraries bundled in the AppImage
+        if: matrix.platform == 'linux'
+        run: |
+          bash tools/ci/enable-deb-src.sh
+          python3 tools/ci/native-sources.py linux target/Patina.AppDir \
+            "target/native-sources/Patina-$VERSION-linux-native-sources.tar"
       - name: Prepare unsigned Android artifacts
         if: matrix.platform == 'android'
         run: bash tools/ci/prepare-android.sh
@@ -134,6 +145,13 @@ jobs:
         run: |
           bash tools/package-macos.sh
           bash tools/ci/package-macos.sh
+      # The app bundles Homebrew's libmpv, FFmpeg and their dependencies:
+      # publish the sources named by the formulae of the installed versions.
+      - name: Corresponding source of the libraries bundled in the macOS app
+        if: matrix.platform == 'macos'
+        run: |
+          python3 tools/ci/native-sources.py macos target/package/Patina.app \
+            "target/native-sources/Patina-$VERSION-macos-native-sources.tar"
       - name: Build iOS app without signing credentials
         if: matrix.platform == 'ios'
         run: bash tools/ci/prepare-ios.sh
@@ -157,6 +175,37 @@ jobs:
         if: matrix.platform == 'linux'
         with:
           name: packages-linux
+          path: dist/*
+          if-no-files-found: error
+      # Released beside the packages; the signing jobs never see these files.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: matrix.platform == 'linux' || matrix.platform == 'macos'
+        with:
+          name: packages-${{ matrix.platform }}-native-sources
+          path: target/native-sources/Patina-*-native-sources.*
+          if-no-files-found: error
+          # The members are compressed archives already.
+          compression-level: 0
+  sbom:
+    # No signing material and no publication rights: only the dependency graph.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          cache: 'false'
+      - name: Set release metadata
+        run: python3 tools/ci/version.py
+      - name: Write the CycloneDX SBOM of the locked Rust dependency graph
+        run: |
+          cargo install cargo-cyclonedx --version 0.5.10 --locked
+          python3 tools/ci/sbom.py "dist/Patina-$VERSION-sbom.cdx.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: packages-sbom
           path: dist/*
           if-no-files-found: error
   sign:
@@ -246,24 +295,40 @@ jobs:
           if-no-files-found: error
   publish:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [tests, package, sign, windows-package]
+    needs: [tests, package, sign, windows-package, sbom]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      # Build provenance: a short-lived Sigstore certificate bound to this
+      # workflow run signs the attestations. Only this job can request one.
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: packages-*
           merge-multiple: true
           path: dist
-      - name: Publish GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
-        run: |
-          cd dist
-          sha256sum ./* > SHA256SUMS
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --verify-tag --draft --generate-notes
-          gh release upload "$TAG" ./* --clobber
-          gh release edit "$TAG" --draft=false
+      # A public release is never written to again (tools/ci/publish-release.py).
+      - name: Refuse to replace a public release, then write SHA256SUMS
+        run: python3 tools/ci/publish-release.py checksums dist "$TAG"
+      # One attestation names every released file by its SHA-256 digest; a
+      # second covers SHA256SUMS itself, so the checksum file is signed too.
+      # Verify with `gh attestation verify` (docs/release.md).
+      - name: Attest the provenance of every released file
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS
+      - name: Attest the provenance of SHA256SUMS
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/SHA256SUMS
+      - name: Upload to a draft and publish it once
+        run: python3 tools/ci/publish-release.py publish dist "$TAG"

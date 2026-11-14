@@ -1,12 +1,24 @@
 name: Windows build prerequisites
 description: Pinned NSH and Rust for the Windows app
+inputs:
+  cache:
+    description: Restore and save the Rust build cache (disabled for release packaging)
+    default: 'true'
 runs:
   using: composite
   steps:
+    # nsh.rev and rust-toolchain.toml are the only places that name these pins.
+    - name: Read the pinned NSH revision and Rust toolchain
+      id: pins
+      shell: pwsh
+      run: |
+        $pins = python tools/ci/pins.py
+        if ($LASTEXITCODE -ne 0) { throw 'Could not read the NSH or Rust pin.' }
+        $pins >> $env:GITHUB_OUTPUT
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       with:
         repository: teng-lin/nsh
-        ref: 4439410f78174fadacc35f6677b8a767ff206c90
+        ref: ${{ steps.pins.outputs.nsh }}
         path: nsh-source
         persist-credentials: false
     - shell: pwsh
@@ -18,7 +30,17 @@ runs:
         'C:\Strawberry\perl\bin' >> $env:GITHUB_PATH
         'C:\Strawberry\c\bin' >> $env:GITHUB_PATH
         'C:\Program Files\NASM' >> $env:GITHUB_PATH
-    - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+    - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       with:
-        toolchain: 1.99.1
+        toolchain: ${{ steps.pins.outputs.toolchain }}
         targets: wasm32-unknown-unknown
+    # The same cache and policy as the Linux and macOS setup action.
+    - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      if: inputs.cache == 'true'
+      with:
+        # Per-PR copies of these gigabyte-sized caches evict each other.
+        # PRs can restore master caches; only master refreshes them.
+        save-if: ${{ github.ref == 'refs/heads/master' }}
+        workspaces: |
+          .
+          ../nsh

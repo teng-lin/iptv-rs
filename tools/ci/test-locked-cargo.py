@@ -59,6 +59,38 @@ assert Path(executable).is_absolute() and Path(executable).is_file(), result.std
 assert executable != str(root / "tools/ci/locked-cargo.py")
 print("nested toolchain pinned and real Cargo resolved outside the repository")
 
+# The same environment with and without rustup. rustup's choice of the pinned
+# release wins; without it the Cargo on PATH is used, and no Cargo at all fails.
+def locked_environment(tools):
+    with tempfile.TemporaryDirectory() as directory:
+        bin_directory = Path(directory) / "bin"
+        bin_directory.mkdir()
+        # Wrappers, not links: some interpreters locate themselves through argv[0].
+        tools = {name: f'exec "{shutil.which(name)}" "$@"' for name in ("bash", "python3", "dirname")} | tools
+        for name, script in tools.items():
+            (bin_directory / name).write_text("#!/bin/sh\n" + script + "\n")
+            (bin_directory / name).chmod(0o755)
+        return subprocess.run([
+            "bash", "-c", 'source "$1" || exit 7; printf "%s\n%s\n%s\n" "$RUSTUP_TOOLCHAIN" "$IPTV_REAL_CARGO" "$CARGO"',
+            "locked-environment", str(root / "tools/ci/locked-build-env.sh")
+        ], cwd=tempfile.gettempdir(), env={"PATH": str(bin_directory)}, text=True, capture_output=True), bin_directory
+
+path_cargo = 'echo "cargo 0.0.0 (synthetic)"'
+result, directory = locked_environment({
+    "cargo": path_cargo,
+    "rustup": '[ "$1 $2 $3 $4" = "which --toolchain ' + expected + ' cargo" ] && echo /synthetic/toolchains/pinned/bin/cargo',
+})
+assert result.returncode == 0, result.stderr
+assert result.stdout.splitlines() == [expected, "/synthetic/toolchains/pinned/bin/cargo", str(root / "tools/ci/locked-cargo.py")], result.stdout
+assert result.stderr == "", result.stderr
+result, directory = locked_environment({"cargo": path_cargo})
+assert result.returncode == 0, result.stderr
+assert result.stdout.splitlines() == [expected, str(directory / "cargo"), str(root / "tools/ci/locked-cargo.py")], result.stdout
+assert "rustup not found" in result.stderr and "cargo 0.0.0 (synthetic)" in result.stderr and expected in result.stderr, result.stderr
+result, directory = locked_environment({})
+assert result.returncode == 7 and "neither rustup nor cargo" in result.stderr, (result.returncode, result.stderr)
+print("pinned Cargo chosen through rustup; Cargo on PATH used without rustup; no Cargo refused")
+
 # Runner graphs can contain multiple versions, so bare references must not be
 # ambiguous. Exercise this without invoking another Cargo/build executable.
 import runpy

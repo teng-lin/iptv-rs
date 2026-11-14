@@ -18,5 +18,6 @@ cp "$root/crates/iptv-app/fonts/OFL.txt" "$out/Patina.app/Contents/Resources/OFL
 cp -R "$root/target/notices" "$out/Patina.app/Contents/Resources/notices"
 python3 -I "$root/tools/bundle-macos.py" "$out/Patina.app"
 python3 "$root/tools/ci/check-notices.py" "$out/Patina.app" native/components.json
+python3 "$root/tools/ci/check-notices.py" "$out/Patina.app" native/sources.json
 codesign --verify --deep --strict "$out/Patina.app"
 echo "$out/Patina.app"

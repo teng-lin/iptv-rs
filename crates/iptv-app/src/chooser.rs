@@ -2,8 +2,8 @@
 //! to all channels"), the sleep timer, the video, audio and subtitle
 //! tracks, the audio delay, and the recently watched channels (the History
 //! quick action: the store's watch history, as the Recently watched list).
-//! Option sets follow the reference UX's observed choosers
-//! (tivimate docs/09); wording is ours. Entries are taken when a chooser
+//! Option sets follow the choosers observed in the reference UX;
+//! wording is ours. Entries are taken when a chooser
 //! opens; Up/Down move, OK (or a tap) picks and closes, Back closes.
 
 use crate::i18n::tr;

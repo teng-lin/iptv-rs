@@ -8,4 +8,6 @@ hosts/android/build/
 hosts/android/app/build/
 hosts/android/local.properties
 **/__pycache__/
+# cargo cyclonedx writes these beside each manifest (tools/ci/sbom.py removes them).
+*.cdx.json
 hosts/android/.kotlin/

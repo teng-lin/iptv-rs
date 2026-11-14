@@ -15,6 +15,7 @@ on:
       - 'crates/iptv-app/icon.png'
       - 'crates/iptv-app/fonts/**'
       - 'rust-toolchain.toml'
+      - 'nsh.rev'
       - 'about.toml'
       - 'tools/ci/**'
       - 'tools/package-macos.sh'
@@ -64,6 +65,10 @@ jobs:
           export APPIMAGE_EXTRACT_AND_RUN=1 CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target"
           bash tools/ci/package-linux.sh
           bash tools/ci/check-linux-packages.sh
+          # As in a release: every bundled library's source must be fetchable.
+          bash tools/ci/enable-deb-src.sh
+          python3 tools/ci/native-sources.py linux target/Patina.AppDir \
+            "target/native-sources/Patina-$VERSION-linux-native-sources.tar"
       - name: macOS ad hoc package installation and smoke test
         if: matrix.platform == 'macos'
         env:
@@ -77,8 +82,17 @@ jobs:
           PACKAGE_PLATFORM=macos python3 tools/ci/unpack-signing-input.py
           IPTV_SIGNING_STAGE=1 bash tools/ci/package-macos.sh
           bash tools/ci/smoke-macos-dmg.sh
+          # As in a release: every bundled library's source must be fetchable.
+          python3 tools/ci/native-sources.py macos target/package/Patina.app \
+            "target/native-sources/Patina-$VERSION-macos-native-sources.tar"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: unsigned-packages-${{ matrix.platform }}
           path: dist/*
+          if-no-files-found: error
+      # Only the manifest: what was fetched from where, for review.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-sources-manifest-${{ matrix.platform }}
+          path: target/native-sources/Patina-*-native-sources.json
           if-no-files-found: error

@@ -1,10 +1,23 @@
 #!/usr/bin/env python3
-"""Copy Ubuntu copyright notices for native libraries deployed in an AppImage."""
+"""Copy Ubuntu copyright notices for native libraries deployed in an AppImage.
+
+Also records which Ubuntu source package version built each library
+(sources.json) and where a user finds that source (SOURCE.txt); the release
+job downloads exactly that list with tools/ci/native-sources.py.
+
+Usage: linux-native-notices.py APPDIR VERSION
+"""
+import importlib.util
 from pathlib import Path
 import json
 import shutil
 import subprocess
 import sys
+
+spec = importlib.util.spec_from_file_location("native_sources", Path(__file__).with_name("native-sources.py"))
+native_sources = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(native_sources)
+
 
 def installed_owners(query_output, architecture):
     """Only system library paths can own linuxdeploy's system dependencies.
@@ -35,7 +48,9 @@ def select_owner(query_output, architecture, library):
 
 
 def main():
-    appdir = Path(sys.argv[1])
+    if len(sys.argv) != 3:
+        raise SystemExit(__doc__)
+    appdir, release = Path(sys.argv[1]), sys.argv[2]
     output = appdir / "usr/bin/notices/native"
     output.mkdir(parents=True, exist_ok=True)
     inventory = []
@@ -53,8 +68,14 @@ def main():
         if not doc.is_file():
             raise SystemExit(f"missing copyright text for {package}")
         shutil.copyfile(doc, output / (package.replace(":", "_") + "-copyright"))
-        inventory.append({"library": str(library.relative_to(appdir)), "package": package, "version": version})
+        source = subprocess.check_output(
+            ["dpkg-query", "-W", "-f=${source:Package} ${source:Version}", package], text=True)
+        inventory.append({"library": str(library.relative_to(appdir)), "package": package, "version": version,
+                          **native_sources.source_package(source, package)})
     (output / "components.json").write_text(json.dumps(inventory, indent=2) + "\n")
+    description = native_sources.manifest("linux", release, native_sources.ubuntu_components(inventory))
+    (output / "sources.json").write_text(json.dumps(description, indent=2) + "\n")
+    (output / "SOURCE.txt").write_text(native_sources.source_note("linux", release))
 
 
 if __name__ == "__main__":

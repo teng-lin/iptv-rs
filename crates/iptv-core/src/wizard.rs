@@ -6,9 +6,8 @@
 //! clipboard, start or cancel an import, close the wizard). Nothing here
 //! does I/O or reads a clock.
 //!
-//! Flow (reference UX notes: tivimate docs/01 "Playlist setup and
-//! onboarding", docs/02 "Dialog and operation lifecycle"; AC01, AC02, AC11,
-//! AC13):
+//! Flow, as observed in the reference UX's playlist setup, onboarding and
+//! dialog lifecycle (acceptance criteria AC01, AC02, AC11, AC13):
 //!
 //! ```text
 //! Empty ──OK──▶ ChooseType ──OK──▶ Form ──Submit──▶ Processing ──▶ Succeeded

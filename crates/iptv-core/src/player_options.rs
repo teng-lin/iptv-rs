@@ -1,7 +1,7 @@
 //! Player options chosen over full-screen video: picture size (per channel
 //! or for all channels) and the sleep timer, plus the small chooser model
-//! their translucent lists use. Option sets follow the reference UX's
-//! observed choosers (tivimate docs/09); times are the caller's monotonic
+//! their translucent lists use. Option sets follow the choosers observed
+//! in the reference UX; times are the caller's monotonic
 //! milliseconds (no clock access here).
 
 use std::collections::BTreeMap;

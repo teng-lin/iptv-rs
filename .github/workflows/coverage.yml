@@ -1,0 +1,55 @@
+name: Coverage
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/coverage.yml'
+      - '.github/actions/setup/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/**'
+      - 'rust-toolchain.toml'
+      - 'tools/ci/coverage.sh'
+  push:
+    branches: [master]
+  workflow_dispatch:
+# Superseded PR measurements need not keep occupying runners.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('coverage-pr-{0}', github.event.pull_request.number) || format('coverage-run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+permissions:
+  contents: read
+jobs:
+  coverage:
+    # A measurement, not a gate: it is path-filtered and allowed to fail, so it
+    # must not be made a required check. The Tests workflow decides merges.
+    continue-on-error: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Install cargo-llvm-cov
+        run: |
+          rustup component add llvm-tools
+          cargo install cargo-llvm-cov --version 0.9.1 --locked
+      - name: Measure line coverage of the library crates
+        run: bash tools/ci/coverage.sh
+      - name: Show the summary
+        run: |
+          {
+            echo '### Line coverage of the library crates'
+            echo
+            echo '```'
+            cat target/coverage/summary.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage
+          path: |
+            target/coverage/lcov.info
+            target/coverage/summary.txt
+            target/coverage/html
+          if-no-files-found: error

@@ -15,42 +15,50 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       package: ${{ steps.paths.outputs.package }}
+      compile: ${{ steps.paths.outputs.compile }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        if: github.event_name == 'pull_request'
         with:
           persist-credentials: false
-          fetch-depth: 0
+          # A pull request's changed paths need both sides of the comparison.
+          # Pull requests diff base...head, which needs both commits. Not
+          # `&& 0 || 1`: 0 is falsy in expressions, so that is always 1.
+          fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
       - id: paths
         env:
           EVENT: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        # The path lists and their tests: tools/ci/android-changes.py.
+        run: python3 tools/ci/android-changes.py >> "$GITHUB_OUTPUT"
+  android-check:
+    needs: changes
+    # Rust sources are not packaging inputs, so the android job below skips
+    # pull requests that change only them. This cheaper job compiles the app
+    # library for Android instead: no other pull request check builds
+    # cfg(target_os = "android") code. Like the android job it stays present
+    # when skipped, and a detection failure fails it, so it can be required.
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.compile == 'true') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Require successful change detection
+        if: needs.changes.result != 'success'
+        run: exit 1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
+      - name: Install the NDK and the Android Rust target
         run: |
-          python3 - <<'PYCODE'
-          import fnmatch
-          import os
-          import subprocess
-          patterns = (
-              ".github/workflows/android.yml", ".github/actions/android/**",
-              ".github/actions/setup/**", ".github/actions/nsh-cli/**",
-              ".cargo/config", ".cargo/config.toml", "hosts/android/**", "Cargo.toml",
-              "Cargo.lock", "crates/**/Cargo.toml", "crates/iptv-app/build.rs",
-              "crates/iptv-app/nsh.json", "crates/iptv-app/icon.png",
-              "crates/iptv-app/fonts/**", "tools/sync-host.sh", "tools/ci/**",
-              "rust-toolchain.toml", "about.toml",
-          )
-          package = True
-          if os.environ["EVENT"] == "pull_request":
-              paths = subprocess.check_output([
-                  "git", "diff", "--name-only", "-z",
-                  os.environ["BASE_SHA"] + "..." + os.environ["HEAD_SHA"],
-              ]).decode().split("\0")
-              package = any(fnmatch.fnmatchcase(path, pattern)
-                            for path in paths for pattern in patterns)
-          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-              output.write(f"package={str(package).lower()}\n")
-          PYCODE
+          # Runner images preset ANDROID_NDK_HOME to their own default NDK.
+          source tools/ci/android-ndk-env.sh
+          sdkmanager "ndk;$IPTV_ANDROID_NDK"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$IPTV_ANDROID_NDK" >> "$GITHUB_ENV"
+          rustup target add aarch64-linux-android
+      - name: Compile the app library for Android
+        run: bash tools/ci/check-android.sh
   android:
     needs: changes
     # Keep the required android check present even when packaging is skipped.

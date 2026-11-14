@@ -56,8 +56,8 @@ pub const QUICK_ACTIONS: [QuickAction; 6] = [
     QuickAction::Controls,
 ];
 
-/// Buttons in the full-screen control strip, in the reference UX's observed
-/// order (tivimate docs/08, section E). Play/pause and live are on the
+/// Buttons in the full-screen control strip, in the order observed in the
+/// reference UX's strip. Play/pause and live are on the
 /// remote's media keys, not in the strip.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Control {

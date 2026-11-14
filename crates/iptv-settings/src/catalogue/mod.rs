@@ -2,7 +2,7 @@
 //! section, plus lookups and the UI tree.
 //!
 //! The capability set and its structure follow the reference player's
-//! settings reference (`~/src/tivimate/docs/03-settings-reference.md`);
+//! settings screens, section by section, as they were observed;
 //! keys, choice families, defaults and wording are iptv-rs's own. Each
 //! row's comment records where its default comes from.
 //!
