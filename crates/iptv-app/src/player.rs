@@ -27,12 +27,9 @@ use iptv_core::playback::{ChannelHistory, ErrorKind, Health, PlaySource, Retry};
 use iptv_core::player_info::StreamFormat as Format;
 use iptv_core::tracks::{Choice, Tracks};
 use iptv_guide::EpgSchedule;
-use iptv_guide::playback::{Clock, PlaybackContext, Resolution, StalkerLink, Unavailable};
-use iptv_import::{CancelToken, SourceMeta};
+use iptv_guide::playback::{Clock, Resolution, StalkerLink, Unavailable};
+use iptv_import::CancelToken;
 use iptv_net::NetClient;
-use iptv_providers::model::SourceConfig;
-use iptv_providers::xtream::StreamFormat;
-use iptv_store_sqlite::SourceId;
 use nsh_core::platform::Lifecycle;
 use nsh_core::prelude::*;
 
@@ -44,8 +41,6 @@ pub(crate) mod resume;
 
 use recover::{fail, watch_stall};
 pub use recover::{failed, on_error, on_state, retry, retry_surface, surface_failed};
-
-const LAST_CHANNEL_FILE: &str = "last_channel";
 
 /// Player surfaces: the full-screen one and multiview's others.
 pub const SURFACES: usize = iptv_core::multiview::MAX_SURFACES;
@@ -154,29 +149,7 @@ pub fn target(ui: Ui, surface: usize) -> Option<(usize, Playback)> {
 /// The playback context of an imported source: what its streams need from
 /// it (headers, account, session). Attach it with
 /// `EpgSchedule::with_playback`.
-pub fn context_for(config: &SourceConfig, meta: &SourceMeta) -> Option<PlaybackContext> {
-    match (config, meta) {
-        (SourceConfig::M3u(c), _) => Some(PlaybackContext::m3u(c)),
-        (SourceConfig::Xtream(c), SourceMeta::Xtream { account, .. }) => {
-            PlaybackContext::xtream(c, account.as_ref(), StreamFormat::Auto).ok()
-        }
-        (SourceConfig::Stalker(_), SourceMeta::Stalker { session }) => {
-            Some(PlaybackContext::stalker((**session).clone()))
-        }
-        _ => None,
-    }
-}
-
-/// What a stored source's streams need before its refresh ran: no account
-/// details yet (HLS for Xtream) and no portal session, so a Stalker
-/// source plays only once it imported.
-pub fn stored_context(config: &SourceConfig) -> Option<PlaybackContext> {
-    match config {
-        SourceConfig::M3u(c) => Some(PlaybackContext::m3u(c)),
-        SourceConfig::Xtream(c) => PlaybackContext::xtream(c, None, StreamFormat::Auto).ok(),
-        _ => None,
-    }
-}
+pub use crate::runtime::playback::stored_context;
 
 /// `f` after `delay`, under the app's owner.
 fn later(ui: Ui, delay: Duration, f: impl FnOnce() + 'static) {
@@ -223,9 +196,7 @@ pub fn start(ui: &Ui, channel: usize) {
                     save_last_channel(Some(source), &local);
                 }
                 let saved_key = key.clone();
-                let saved = crate::store_service::call(move |store| {
-                    store.set_combined_last_channel(&saved_key)
-                });
+                let saved = crate::runtime::commands::remember_combined_channel(saved_key);
                 crate::data::spawn_in_app(async move {
                     if let Err(e) = saved.await {
                         log::warn!("iptv combined: cannot save last channel: {e}");
@@ -403,17 +374,12 @@ fn load(ui: Ui, surface: usize, session: u64, mut source: PlaySource) {
     watch_stall(ui, surface);
 }
 
-thread_local! {
-    /// Each surface's Stalker link request in flight: its session and the
-    /// token that cancels it.
-    static RESOLVING: std::cell::RefCell<[Option<(u64, CancelToken)>; SURFACES]> =
-        std::cell::RefCell::default();
-}
-
 /// Cancels `surface`'s link request in flight, if any: the viewer zapped,
 /// the surface reopens or plays nothing.
 fn cancel_resolve(surface: usize) {
-    let running = RESOLVING.with(|r| r.borrow_mut().get_mut(surface).and_then(Option::take));
+    let running = crate::runtime()
+        .resolving
+        .with(|r| r.borrow_mut().get_mut(surface).and_then(Option::take));
     if let Some((_, cancel)) = running {
         cancel.cancel();
     }
@@ -439,7 +405,7 @@ fn resolve_link(
     } = *link;
     cancel_resolve(surface);
     let cancel = CancelToken::new();
-    RESOLVING.with(|r| {
+    crate::runtime().resolving.with(|r| {
         if let Some(slot) = r.borrow_mut().get_mut(surface) {
             *slot = Some((session, cancel.clone()));
         }
@@ -455,9 +421,9 @@ fn resolve_link(
         (result, portal)
     });
     let _task = ui.player.owner.run(|| {
-        spawn(async move {
+        spawn(crate::in_runtime(async move {
             let answered = request.await;
-            RESOLVING.with(|r| {
+            crate::runtime().resolving.with(|r| {
                 if let Some(slot) = r.borrow_mut().get_mut(surface)
                     && slot.as_ref().is_some_and(|(s, _)| *s == session)
                 {
@@ -491,7 +457,7 @@ fn resolve_link(
                 ),
                 Err(kind) => fail(ui, surface, session, ErrorKind::from_resolve(&kind), kind),
             }
-        })
+        }))
     });
 }
 
@@ -532,38 +498,10 @@ fn show_channel(ui: Ui, channel: usize) {
     crate::lists::show_channel(ui, channel);
 }
 
+pub use crate::runtime::playback::forget_source;
 /// The last channel's file of playlist `source` (the shared one of older
 /// builds for none).
-fn last_channel_path(source: Option<SourceId>) -> std::path::PathBuf {
-    crate::data::data_dir().join(match source {
-        Some(id) => format!("{LAST_CHANNEL_FILE}-{}", id.0),
-        None => LAST_CHANNEL_FILE.to_owned(),
-    })
-}
-
-/// Queues the write: a zap never waits for the disk (`file_writer`).
-fn save_last_channel(source: Option<SourceId>, key: &str) {
-    drop(crate::file_writer::write(
-        last_channel_path(source),
-        key.as_bytes().to_vec(),
-    ));
-}
-
-/// Includes a write still queued, so a zap is remembered at once.
-fn load_last_channel(source: Option<SourceId>) -> Option<String> {
-    let read = |path: std::path::PathBuf| {
-        let key = String::from_utf8(crate::file_writer::read(&path)?).ok()?;
-        let key = key.trim();
-        (!key.is_empty()).then(|| key.to_owned())
-    };
-    read(last_channel_path(source)).or_else(|| read(last_channel_path(None)))
-}
-
-/// Playlist `source` was deleted: its last channel goes too (after any
-/// write still queued for it).
-pub fn forget_source(source: SourceId) {
-    drop(crate::file_writer::remove(last_channel_path(Some(source))));
-}
+use crate::runtime::playback::{load_last_channel, save_last_channel};
 
 /// Another playlist is about to be shown (`data.rs`): what plays and the
 /// channel history belong to the old one (channel keys are unique only

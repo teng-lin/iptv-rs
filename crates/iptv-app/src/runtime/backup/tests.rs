@@ -210,6 +210,8 @@ fn interrupted_swap_recovers_current_data_before_rejecting_invalid_pending() {
     export(&root, &archive, &Settings::new().to_json_string()).unwrap();
     stage(&root, &mut File::open(archive).unwrap()).unwrap();
     fs::rename(&root, sibling(&root, "restore-previous")).unwrap();
+    // App initializes its private directory before the recovery worker runs.
+    crate::platform_data::protect_directory(&root).unwrap();
     fs::write(
         sibling(&root, "restore-pending").join("iptv.sqlite"),
         b"damaged",
@@ -245,6 +247,8 @@ fn interrupted_valid_swap_finishes_and_export_cannot_replace_live_database() {
     export(&root, &archive, &Settings::new().to_json_string()).unwrap();
     stage(&root, &mut File::open(archive).unwrap()).unwrap();
     fs::rename(&root, sibling(&root, "restore-previous")).unwrap();
+    // App initializes its private directory before the recovery worker runs.
+    crate::platform_data::protect_directory(&root).unwrap();
     activate(&root).unwrap();
     assert!(root.join("iptv.sqlite").exists());
     assert!(!sibling(&root, "restore-pending").exists());

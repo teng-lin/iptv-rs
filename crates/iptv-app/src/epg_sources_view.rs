@@ -24,8 +24,8 @@ use crate::i18n::tr;
 use iptv_library::epg_sources as state;
 mod words;
 
+use crate::runtime::model::SourceId;
 use iptv_nav::Action;
-use iptv_store_sqlite::SourceId;
 use nsh_core::prelude::*;
 
 pub use state::Screen as Open;
@@ -171,7 +171,7 @@ fn edit_name(edit: &crate::data::guides::Edit) -> String {
 }
 
 /// A guide source's title (its name, else where it comes from).
-pub fn source_title(s: &iptv_store_sqlite::GuideSource) -> String {
+pub fn source_title(s: &crate::runtime::model::GuideSource) -> String {
     words::title(s)
 }
 

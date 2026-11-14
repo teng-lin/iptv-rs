@@ -222,3 +222,12 @@ pub mod epg_sources;
 pub mod guide_assign;
 pub mod guides;
 pub mod playlists;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OrganizationScope {
+    Channels,
+    Groups,
+    Favorites,
+    GroupChannels(GroupId),
+    CustomChannels(CustomGroupId),
+}

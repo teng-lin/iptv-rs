@@ -14,64 +14,27 @@
 //! day of the programme playing from the archive is pinned meanwhile, and
 //! catch-up waits for its day before it resolves the archive ([`ready`]).
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Duration;
 
-use iptv_epg::{DAY, GuideStore, UnixTime};
+use iptv_epg::{GuideStore, UnixTime};
 use iptv_guide::EpgSchedule;
-use iptv_guide::pages::{PageRequest, PagedWindow};
-use iptv_store_sqlite::{EpgWindow, SourceId};
+use iptv_guide::pages::PageRequest;
+use iptv_library::SourceId;
 use nsh_core::prelude::*;
 
 use crate::guide::{Schedule, home_window};
 use crate::{Playback, Ui};
 
-/// Days of finished programmes held in memory with the guide (at most
-/// what `epg.keep_past` keeps). Older ones are paged in.
-pub const LOADED_PAST_DAYS: u32 = 1;
-
-thread_local! {
-    /// What waits for a page (catch-up of an older programme): run after
-    /// every page that arrives, each checks again.
-    static WAITERS: RefCell<Vec<Box<dyn FnOnce()>>> = const { RefCell::new(Vec::new()) };
-}
-
-/// What a schedule shown at `now` holds of the stored guide: from
-/// [`LOADED_PAST_DAYS`] (at most `keep_past_days`) before the hour of
-/// `now` on; the store keeps nothing that ended before `keep_past_days`.
-pub fn window(now: UnixTime, keep_past_days: u32) -> PagedWindow {
-    let days = i64::from(LOADED_PAST_DAYS.min(keep_past_days));
-    PagedWindow {
-        loaded_from: now - now.rem_euclid(3600) - days * DAY,
-        oldest: now.saturating_sub(i64::from(keep_past_days).saturating_mul(DAY)),
-    }
-}
-
-/// The store read of [`window`]'s held part.
-pub fn store_window(window: PagedWindow) -> EpgWindow<'static> {
-    EpgWindow {
-        from: window.loaded_from,
-        ..EpgWindow::from(0, 0)
-    }
-}
-
-/// [`window`] with its oldest time at the first programme stored (`None`:
-/// none is), when that is later than what the store would keep: the guide
-/// can be browsed back to it and no further (`EpgSchedule::browsable`).
-pub fn kept_from(window: PagedWindow, first: Option<UnixTime>, now: UnixTime) -> PagedWindow {
-    PagedWindow {
-        oldest: window.oldest.max(first.unwrap_or(now)),
-        ..window
-    }
-}
+pub use crate::runtime::paging::{kept_from, window};
 
 /// `schedule` (source `source`'s stored guide, as [`window`] at `now`
 /// read it) with its older days paged in on demand, back to the first
 /// programme stored.
 pub async fn paged(ui: Ui, schedule: EpgSchedule, source: SourceId, now: UnixTime) -> EpgSchedule {
     let keep = super::stored::keep_past_days(&crate::settings::get());
-    let first = crate::store_service::read(move |store| store.epg_first_start(source))
+    let first = crate::runtime::commands::first_programme(source)
         .await
         .unwrap_or_else(|e| {
             log::warn!("iptv data: the stored guide's first day: {e}");
@@ -87,14 +50,7 @@ pub async fn paged(ui: Ui, schedule: EpgSchedule, source: SourceId, now: UnixTim
 fn loader(ui: Ui, source: SourceId) -> impl Fn(PageRequest) + 'static {
     move |request: PageRequest| {
         let started = std::time::Instant::now();
-        let read = crate::store_service::read(move |store| {
-            let window = EpgWindow {
-                from: request.from,
-                to: request.to,
-                ..EpgWindow::from(0, 0)
-            };
-            store.load_epg(source, &window)
-        });
+        let read = crate::runtime::commands::guide_page(source, request);
         super::spawn_in_app(async move {
             let read = read.await;
             let took = started.elapsed();
@@ -130,9 +86,12 @@ fn arrived(ui: Ui, source: SourceId, request: PageRequest, store: GuideStore, to
         inserted
     });
     if inserted {
-        ui.guide_pages.update(|v| *v += 1);
+        crate::runtime().emit(crate::runtime::RuntimeEvent::GuideChanged);
     }
-    for waiter in WAITERS.with(|w| std::mem::take(&mut *w.borrow_mut())) {
+    for waiter in crate::runtime()
+        .page_waiters
+        .with(|w| std::mem::take(&mut *w.borrow_mut()))
+    {
         waiter();
     }
 }
@@ -157,7 +116,10 @@ fn each(schedule: &dyn Schedule, mut f: impl FnMut(&EpgSchedule)) {
 /// A schedule replaced the one on screen (with the whole window after a
 /// first screen, `opening.rs`): what waited for its programmes looks again.
 pub fn replaced() {
-    for waiter in WAITERS.with(|w| std::mem::take(&mut *w.borrow_mut())) {
+    for waiter in crate::runtime()
+        .page_waiters
+        .with(|w| std::mem::take(&mut *w.borrow_mut()))
+    {
         waiter();
     }
 }
@@ -188,7 +150,9 @@ pub fn ready(
         return true;
     }
     log::info!("iptv data: catch-up waits for its guide day");
-    WAITERS.with(|w| w.borrow_mut().push(Box::new(retry)));
+    crate::runtime()
+        .page_waiters
+        .with(|w| w.borrow_mut().push(Box::new(retry)));
     false
 }
 
@@ -233,6 +197,9 @@ pub fn bind(ui: Ui) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::paging::store_window;
+    use iptv_epg::DAY;
+    use std::cell::RefCell;
 
     const NOW: UnixTime = 1_800_000_000 + 1234;
 
@@ -284,7 +251,9 @@ mod tests {
         assert!(a.insert_page(request, GuideStore::default()));
         assert!(ready(&schedule, 0, time, || panic!("A is already loaded")));
         assert!(!b.ensure_loaded(time));
-        WAITERS.with(|waiters| waiters.borrow_mut().clear());
+        crate::runtime()
+            .page_waiters
+            .with(|waiters| waiters.borrow_mut().clear());
     }
 
     #[test]

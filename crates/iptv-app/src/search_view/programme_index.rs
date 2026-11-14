@@ -9,12 +9,12 @@ use std::time::Instant;
 use iptv_core::guide::Schedule;
 use iptv_epg::{ChannelKey, DAY, UnixTime};
 use iptv_guide::{EpgSchedule, combined::CombinedSchedule};
-use iptv_search::{ProgrammeIndex, ProgrammeIndexBuilder};
+use iptv_search::ProgrammeIndex;
 
 /// Builds the index of `epg`'s channels (by row) and hands it to `done` on
 /// the UI thread (not at all when the store cannot be read).
 pub fn build(schedule: &dyn Schedule, rows: usize, done: impl FnOnce(ProgrammeIndex) + 'static) {
-    let mut sources: Vec<(iptv_store_sqlite::SourceId, Vec<ChannelKey>, usize)> = Vec::new();
+    let mut sources: Vec<(crate::runtime::model::SourceId, Vec<ChannelKey>, usize)> = Vec::new();
     if let Some(all) = schedule
         .as_any()
         .and_then(|s| s.downcast_ref::<CombinedSchedule>())
@@ -24,7 +24,7 @@ pub fn build(schedule: &dyn Schedule, rows: usize, done: impl FnOnce(ProgrammeIn
             let keys = (0..part.schedule.channel_count())
                 .filter_map(|c| part.schedule.channel(c).map(|c| c.key.clone()))
                 .collect();
-            sources.push((iptv_store_sqlite::SourceId(part.id), keys, offset));
+            sources.push((crate::runtime::model::SourceId(part.id), keys, offset));
             offset += part.schedule.channel_count();
         }
     } else if let Some(epg) = schedule
@@ -47,19 +47,7 @@ pub fn build(schedule: &dyn Schedule, rows: usize, done: impl FnOnce(ProgrammeIn
     let from: UnixTime =
         crate::time::wall_unix().saturating_sub(i64::from(keep).saturating_mul(DAY));
     let started = Instant::now();
-    let read = crate::store_service::read(move |store| {
-        let mut builder = ProgrammeIndexBuilder::new(rows);
-        for (source, keys, offset) in sources {
-            store.for_each_epg_title(
-                source,
-                &keys,
-                from,
-                UnixTime::MAX,
-                |channel, start, stop, title| builder.push(channel + offset, start, stop, title),
-            )?;
-        }
-        Ok(builder.finish())
-    });
+    let read = crate::runtime::search::programmes(sources, rows, from);
     crate::data::spawn_in_app(async move {
         match read.await {
             Ok(index) => {

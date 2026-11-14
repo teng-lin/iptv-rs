@@ -1,5 +1,5 @@
 //! Android host unwraps the database key with its non-exportable Keystore key.
-use iptv_store_sqlite::{DatabaseKey, StoreError};
+use crate::runtime::model::{DatabaseKey, StoreError};
 use jni::{
     JNIEnv,
     objects::{JByteArray, JClass},

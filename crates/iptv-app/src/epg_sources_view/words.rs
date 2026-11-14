@@ -2,8 +2,8 @@
 
 use crate::i18n::tr;
 
+use crate::runtime::model::{GuideSource, ImportErrorKind};
 use iptv_core::wizard::FieldError;
-use iptv_store_sqlite::{GuideSource, ImportErrorKind};
 
 use super::state::{Act, EditKind, Notice};
 use crate::data::stored::SourceLine;
@@ -147,8 +147,8 @@ pub fn remove_consequences(s: &GuideSource) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::runtime::model::FeedResult;
     use iptv_providers::SecretUrl;
-    use iptv_store_sqlite::FeedResult;
 
     use super::*;
     use crate::data::guides;

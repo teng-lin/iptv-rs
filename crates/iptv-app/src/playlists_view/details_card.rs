@@ -2,7 +2,7 @@
 //! addresses hidden), "Check and save", and what the check is doing or why
 //! it refused the new details.
 
-use iptv_store_sqlite::SourceId;
+use crate::runtime::model::SourceId;
 use nsh_core::prelude::*;
 
 use super::details::Param;

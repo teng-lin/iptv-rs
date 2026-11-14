@@ -17,10 +17,10 @@
 //! The reader's connection is made by the writer ([`Store::open_reader`]):
 //! the platform key is fetched, and the file migrated, only there.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::future::Future;
 use std::sync::{
-    OnceLock,
+    Arc, Mutex, OnceLock, Weak,
     atomic::{AtomicU64, Ordering},
     mpsc,
 };
@@ -53,17 +53,6 @@ struct Lane {
     jobs: OnceLock<mpsc::Sender<Job>>,
 }
 
-static WRITER: Lane = Lane {
-    role: Role::Writer,
-    name: "iptv-store",
-    jobs: OnceLock::new(),
-};
-static READER: Lane = Lane {
-    role: Role::Reader,
-    name: "iptv-store-read",
-    jobs: OnceLock::new(),
-};
-
 #[derive(Default)]
 struct Epochs {
     next: AtomicU64,
@@ -84,17 +73,108 @@ impl Epochs {
             .is_ok()
     }
 }
-static EPOCHS: Epochs = Epochs {
-    next: AtomicU64::new(0),
-    active: AtomicU64::new(0),
-};
+pub(crate) struct Service {
+    pub(crate) directory: std::path::PathBuf,
+    writer: Lane,
+    reader: Lane,
+    epochs: Epochs,
+    pub(crate) executor: Arc<super::executor::Executor>,
+    pub(crate) files: Arc<super::file_writer::Files>,
+    pub(crate) pool: OnceLock<super::workers::Pool>,
+    pub(crate) settings: super::settings::Current,
+}
+impl Default for Service {
+    fn default() -> Self {
+        Self {
+            directory: crate::platform_data::data_dir(),
+            writer: Lane {
+                role: Role::Writer,
+                name: "iptv-store",
+                jobs: OnceLock::new(),
+            },
+            reader: Lane {
+                role: Role::Reader,
+                name: "iptv-store-read",
+                jobs: OnceLock::new(),
+            },
+            epochs: Epochs::default(),
+            executor: Arc::default(),
+            files: Arc::default(),
+            pool: OnceLock::new(),
+            settings: Arc::default(),
+        }
+    }
+}
+impl Service {
+    pub(crate) fn retire(&self) {
+        self.epochs.active.store(0, Ordering::SeqCst);
+        self.files.close();
+        if let Some(pool) = self.pool.get() {
+            pool.close();
+        }
+    }
+}
+
+thread_local! { static CONTEXT: RefCell<Option<Weak<Service>>> = const { RefCell::new(None) }; }
+// A platform callback (Android onStop) can arrive off the application thread.
+// This weak registry identifies the active owner without owning its state.
+static ACTIVE: Mutex<Weak<Service>> = Mutex::new(Weak::new());
+
+pub(crate) fn service() -> Arc<Service> {
+    CONTEXT
+        .with(|context| context.borrow().as_ref().and_then(Weak::upgrade))
+        .or_else(|| {
+            ACTIVE
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .upgrade()
+        })
+        .unwrap_or_else(|| crate::runtime().store.clone())
+}
+
+pub(crate) fn activate(owner: Arc<Service>) {
+    *ACTIVE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Arc::downgrade(&owner);
+    CONTEXT.set(Some(Arc::downgrade(&owner)));
+}
+
+pub(crate) fn with_service<R>(owner: Arc<Service>, run: impl FnOnce() -> R) -> R {
+    struct Restore(Option<Weak<Service>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            CONTEXT.set(self.0.take());
+        }
+    }
+    let _restore = Restore(CONTEXT.replace(Some(Arc::downgrade(&owner))));
+    super::settings::with_current(owner.settings.clone(), run)
+}
+
+pub(crate) fn scope_future<F: Future>(
+    owner: Arc<Service>,
+    future: F,
+) -> impl Future<Output = F::Output> {
+    let epoch = APP_EPOCH.get();
+    let mut future = Box::pin(future);
+    std::future::poll_fn(move |context| {
+        struct Epoch(Option<u64>);
+        impl Drop for Epoch {
+            fn drop(&mut self) {
+                APP_EPOCH.set(self.0);
+            }
+        }
+        let _epoch = Epoch(APP_EPOCH.replace(epoch));
+        with_service(owner.clone(), || future.as_mut().poll(context))
+    })
+}
+
 fn stale() -> StoreError {
     StoreError::Unavailable("request belongs to a closed application")
 }
 fn affinity() -> Result<u64, StoreError> {
     APP_EPOCH
         .get()
-        .filter(|epoch| EPOCHS.permits(*epoch))
+        .filter(|epoch| service().epochs.permits(*epoch))
         .ok_or_else(stale)
 }
 pub(crate) fn is_current() -> bool {
@@ -103,13 +183,16 @@ pub(crate) fn is_current() -> bool {
 
 pub fn register_ui_thread() {
     UI_THREAD.set(true);
-    APP_EPOCH.set(Some(EPOCHS.begin()));
+    APP_EPOCH.set(Some(service().epochs.begin()));
 }
 
 /// Capture ownership before spawning work. A pooled worker never adopts the
 /// epoch of a newer app just because an older network request finishes late.
-pub(crate) fn scoped(work: impl FnOnce() + Send + 'static) -> impl FnOnce() + Send + 'static {
+pub(crate) fn scoped<R: 'static>(
+    work: impl FnOnce() -> R + Send + 'static,
+) -> impl FnOnce() -> R + Send + 'static {
     let epoch = APP_EPOCH.get();
+    let owner = service();
     move || {
         struct Restore(Option<u64>);
         impl Drop for Restore {
@@ -118,7 +201,7 @@ pub(crate) fn scoped(work: impl FnOnce() + Send + 'static) -> impl FnOnce() + Se
             }
         }
         let _restore = Restore(APP_EPOCH.replace(epoch));
-        work();
+        with_service(owner, work)
     }
 }
 
@@ -143,10 +226,10 @@ fn with_epoch<R>(
 }
 
 fn open_store() -> Result<Store, StoreError> {
-    let directory = crate::data::data_dir();
+    let directory = super::paths::data_dir();
     std::fs::create_dir_all(&directory)
         .map_err(|_| StoreError::Unavailable("cannot create data directory"))?;
-    crate::credential_key::open_database(&directory.join("iptv.sqlite"))
+    super::credential_store::open_database(&directory.join("iptv.sqlite"))
 }
 
 /// The reader's connection, made by the writer from its own open store
@@ -154,10 +237,14 @@ fn open_store() -> Result<Store, StoreError> {
 /// which may wait for the writer; the writer never waits for the reader.
 fn open_reader(epoch: u64) -> Result<Store, StoreError> {
     let (sender, receiver) = mpsc::sync_channel(1);
-    WRITER.queue(Box::new(move |store| {
-        let _ = sender.send(with_epoch(&EPOCHS, epoch, store, open_store, |store| {
-            store.open_reader()
-        }));
+    service().writer.queue(Box::new(move |store| {
+        let _ = sender.send(with_epoch(
+            &service().epochs,
+            epoch,
+            store,
+            open_store,
+            |store| store.open_reader(),
+        ));
     }))?;
     receiver
         .recv()
@@ -165,30 +252,34 @@ fn open_reader(epoch: u64) -> Result<Store, StoreError> {
 }
 
 impl Lane {
-    fn sender(&'static self) -> Result<&'static mpsc::Sender<Job>, StoreError> {
+    fn sender(&self) -> Result<mpsc::Sender<Job>, StoreError> {
         if WORKER_THREAD.get() == Some(self.role) {
             return Err(StoreError::Unavailable("recursive store request"));
         }
-        Ok(self.jobs.get_or_init(|| {
-            let (sender, receiver) = mpsc::channel::<Job>();
-            let role = self.role;
-            std::thread::Builder::new()
-                .name(self.name.into())
-                .spawn(move || {
-                    WORKER_THREAD.set(Some(role));
-                    let mut store = None;
-                    while let Ok(job) = receiver.recv() {
-                        run_job(&mut store, job);
-                    }
-                })
-                .expect("start store service");
-            sender
-        }))
+        Ok(self
+            .jobs
+            .get_or_init(|| {
+                let (sender, receiver) = mpsc::channel::<Job>();
+                let role = self.role;
+                std::thread::Builder::new()
+                    .name(self.name.into())
+                    .spawn(move || {
+                        WORKER_THREAD.set(Some(role));
+                        let mut store = None;
+                        while let Ok(job) = receiver.recv() {
+                            run_job(&mut store, job);
+                        }
+                    })
+                    .expect("start store service");
+                sender
+            })
+            .clone())
     }
 
-    fn queue(&'static self, job: Job) -> Result<(), StoreError> {
+    fn queue(&self, job: Job) -> Result<(), StoreError> {
+        let owner = service();
         self.sender()?
-            .send(job)
+            .send(Box::new(move |store| with_service(owner, || job(store))))
             .map_err(|_| StoreError::Unavailable("store worker stopped"))
     }
 
@@ -196,16 +287,16 @@ impl Lane {
     /// `limit`, until it has run. False when it could not be queued or did
     /// not finish in time.
     fn barrier(
-        &'static self,
+        &self,
         limit: std::time::Duration,
         job: impl FnOnce(&mut Option<Store>) + Send + 'static,
     ) -> bool {
-        let Some(jobs) = self.jobs.get() else {
+        if self.jobs.get().is_none() {
             return true;
-        };
+        }
         let (done, reply) = mpsc::channel();
-        if jobs
-            .send(Box::new(move |store| {
+        if self
+            .queue(Box::new(move |store| {
                 job(store);
                 let _ = done.send(());
             }))
@@ -266,8 +357,14 @@ pub fn call<R: Send + 'static>(
 ) -> impl Future<Output = Result<R, StoreError>> {
     let (sender, receiver) = oneshot::channel();
     let queued = affinity().and_then(|epoch| {
-        WRITER.queue(Box::new(move |store| {
-            let _ = sender.send(with_epoch(&EPOCHS, epoch, store, open_store, operation));
+        service().writer.queue(Box::new(move |store| {
+            let _ = sender.send(with_epoch(
+                &service().epochs,
+                epoch,
+                store,
+                open_store,
+                operation,
+            ));
         }))
     });
     async move {
@@ -286,9 +383,9 @@ pub fn read<R: Send + 'static>(
 ) -> impl Future<Output = Result<R, StoreError>> {
     let (sender, receiver) = oneshot::channel();
     let queued = affinity().and_then(|epoch| {
-        READER.queue(Box::new(move |store| {
+        service().reader.queue(Box::new(move |store| {
             let opened = with_epoch(
-                &EPOCHS,
+                &service().epochs,
                 epoch,
                 store,
                 || open_reader(epoch),
@@ -312,8 +409,14 @@ pub fn blocking<R: Send + 'static>(
     assert!(!UI_THREAD.get(), "blocking store request on the UI thread");
     let epoch = affinity()?;
     let (sender, receiver) = mpsc::sync_channel(1);
-    WRITER.queue(Box::new(move |store| {
-        let _ = sender.send(with_epoch(&EPOCHS, epoch, store, open_store, operation));
+    service().writer.queue(Box::new(move |store| {
+        let _ = sender.send(with_epoch(
+            &service().epochs,
+            epoch,
+            store,
+            open_store,
+            operation,
+        ));
     }))?;
     receiver
         .recv()
@@ -323,7 +426,9 @@ pub fn blocking<R: Send + 'static>(
 /// Occupies the writer for `duration` after the work queued before it.
 #[cfg(feature = "test-support")]
 pub fn occupy_writer(duration: std::time::Duration) {
-    let _ = WRITER.queue(Box::new(move |_| std::thread::sleep(duration)));
+    let _ = service()
+        .writer
+        .queue(Box::new(move |_| std::thread::sleep(duration)));
 }
 
 /// Root teardown only, after the favourites writer has submitted its last work.
@@ -332,23 +437,23 @@ pub(crate) fn drain_on_shutdown() -> bool {
     let Some(epoch) = APP_EPOCH.get() else {
         return true;
     };
-    if WRITER.jobs.get().is_none() {
-        EPOCHS.close(epoch);
+    if service().writer.jobs.get().is_none() {
+        service().epochs.close(epoch);
         return true;
     }
     let limit = std::time::Duration::from_secs(10);
     // The writer first: once it closed the epoch, a late read cannot open
     // the reader's connection again.
-    let writer = WRITER.barrier(limit, move |store| {
+    let writer = service().writer.barrier(limit, move |store| {
         // Release SQLite handles before a new app instance opens or restores
         // its library in the same process.
-        EPOCHS.close(epoch);
+        service().epochs.close(epoch);
         // Even if a timed-out teardown was followed by a newer start, this
         // FIFO barrier still retires the connection held by preceding work.
         *store = None;
         RETRY_OPEN_AT.set(None);
     });
-    let reader = READER.barrier(limit, |store| {
+    let reader = service().reader.barrier(limit, |store| {
         *store = None;
         RETRY_OPEN_AT.set(None);
     });
@@ -357,6 +462,62 @@ pub(crate) fn drain_on_shutdown() -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_scoped_worker_keeps_its_original_settings_and_directory() {
+        use iptv_settings::{Settings, Target, Value, keys};
+        use std::sync::Arc;
+        let directory = tempfile::tempdir().unwrap();
+        let first_path = directory.path().join("alpha");
+        let first = Arc::new(super::Service {
+            directory: first_path.clone(),
+            ..Default::default()
+        });
+        let second = Arc::new(super::Service {
+            directory: directory.path().join("beta"),
+            ..Default::default()
+        });
+        let values = |agent: &str| {
+            let mut settings = Settings::new();
+            settings
+                .set("general.user_agent", Value::Text(agent.into()))
+                .unwrap();
+            Some(Arc::new(settings))
+        };
+        *first.settings.write().unwrap() = values("SyntheticAlpha/1");
+        *second.settings.write().unwrap() = values("SyntheticBeta/1");
+        let worker = super::with_service(first.clone(), || {
+            super::scoped(|| {
+                (
+                    super::super::settings::get().text(keys::USER_AGENT, &Target::Global),
+                    super::super::paths::data_dir(),
+                )
+            })
+        });
+        first.retire();
+        let result = super::with_service(second, || std::thread::spawn(worker).join().unwrap());
+        assert_eq!(result, ("SyntheticAlpha/1".into(), first_path));
+    }
+
+    #[test]
+    fn a_retired_owner_cannot_start_a_file_writer_late() {
+        let owner = std::rc::Rc::new(super::super::Runtime::default());
+        let retained = owner.clone();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("synthetic-settings.json");
+        assert!(owner.drain_services());
+        drop(owner);
+        retained.with_context(|| {
+            drop(super::super::file_writer::write(
+                path.clone(),
+                b"{}".to_vec(),
+            ));
+            assert!(super::super::file_writer::flush(
+                std::time::Duration::from_secs(1)
+            ));
+        });
+        assert!(!path.exists());
+    }
+
     fn unreachable_open() -> Result<iptv_store_sqlite::Store, iptv_store_sqlite::StoreError> {
         unreachable!("the test supplies an open store")
     }

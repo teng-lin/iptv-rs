@@ -64,7 +64,7 @@ fn ten_thousand_channels(home: &crate::isolated::Home) -> Headless {
 }
 
 /// Another connection holding SQLite's write lock, as a long publish does.
-fn hold_writer(home: &crate::isolated::Home) -> rusqlite::Connection {
+pub(super) fn hold_writer(home: &crate::isolated::Home) -> rusqlite::Connection {
     let path = home.data_dir().join("iptv.sqlite");
     let lock = rusqlite::Connection::open(&path).unwrap();
     lock.pragma_update(None, "key", format!("x'{}'", "54".repeat(32)))

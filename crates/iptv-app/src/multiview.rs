@@ -41,7 +41,6 @@ use std::cell::Cell;
 
 use iptv_core::multiview::{Key, Limits, MAX_SURFACES, Multiview, Outcome};
 use iptv_core::play_bar::PlayBar;
-use iptv_import::SourceMeta;
 use iptv_nav::Action;
 use nsh_core::prelude::*;
 
@@ -64,30 +63,15 @@ const GAP: f32 = 3.0;
 /// How long the key hint stays.
 const HINT_MS: u64 = 5_000;
 
-thread_local! {
-    static ACCOUNT_STREAMS: Cell<Option<u32>> = const { Cell::new(None) };
-}
-
-/// The streams the shown source's account allows at once, if it says.
-pub fn account_streams(meta: &SourceMeta) -> Option<u32> {
-    match meta {
-        SourceMeta::Xtream {
-            account: Some(account),
-            ..
-        } => account.max_connections.filter(|n| *n > 0),
-        _ => None,
-    }
-}
-
 /// The streams the shown source's account allows at once, if known: the
 /// failure card names it when the provider refuses a stream.
 pub fn account_limit() -> Option<u32> {
-    ACCOUNT_STREAMS.with(Cell::get)
+    crate::runtime().account_streams.with(Cell::get)
 }
 
 /// The source on screen changed its account's allowance (`data.rs`).
 pub fn set_account_streams(allowed: Option<u32>) {
-    ACCOUNT_STREAMS.with(|a| a.set(allowed));
+    crate::runtime().account_streams.with(|a| a.set(allowed));
 }
 
 /// A multiview session exists (its grid shows, or it waits for a detour).
@@ -188,7 +172,7 @@ pub fn open(ui: Ui) {
     crate::channels_view::close(ui);
     let limits = Limits {
         decoders: DECODERS,
-        connections: ACCOUNT_STREAMS.with(Cell::get),
+        connections: crate::runtime().account_streams.with(Cell::get),
     };
     log::info!(
         "iptv multiview: open (device {} streams, account {:?})",
@@ -281,8 +265,9 @@ pub fn picked(ui: Ui, channel: usize) -> bool {
     apply(ui, |m, _| {
         let exceeded = all.and_then(|all| {
             let (source, _) = all.channel_source(channel)?;
-            let allowed =
-                crate::data::combined::connection_limit(iptv_store_sqlite::SourceId(source.id))?;
+            let allowed = crate::data::combined::connection_limit(
+                crate::runtime::model::SourceId(source.id),
+            )?;
             let replacing = match m.pick() {
                 Some(iptv_core::multiview::Pick::Replace(tile)) => Some(tile),
                 _ => None,

@@ -164,7 +164,7 @@ detection, the error and waiting overlays).
 
 An import never writes to the live catalog while it downloads.
 
-1. **Stage.** `data.rs` starts the import off the UI thread. It creates a
+1. **Stage.** The runtime starts the import off the UI thread. It creates a
    `CatalogStage`, a private scratch database opened through the store so that
    it is encrypted with the same key. `iptv_import::import_source_into` streams
    rows into it through `CatalogSink`.
@@ -183,30 +183,58 @@ the network, and stay when the refresh fails. Whether a stored guide is
 downloaded again is decided by `iptv_import::plan_startup` from the
 `epg.update_*` settings.
 
-## The store worker
+## Application runtime and commands
 
-The app has one connection to the encrypted catalog, owned by one long-lived
-thread named `iptv-store` (`iptv-app/src/store_service.rs`). Nothing else
-opens the database.
+`iptv-app/src/runtime/` is the native application layer. It has no NSH
+imports. The shell holds one `Rc<Runtime>` and installs a task host, timers
+and an event sink. Runtime events enter the shell at
+`runtime_events::apply`; views issue named commands rather than closures
+that can reach a `Store`. `runtime/model.rs` exposes command values, without
+exposing the connection or worker API.
 
-- The UI thread calls `store_service::call`, which queues a closure and
-  returns a future. No SQLite work runs on the UI thread.
-- Import and refresh workers call `store_service::blocking`, which waits for
-  the reply. It asserts that it is not on the UI thread.
-- Jobs run in FIFO order. A job that tries to issue another store request from
-  the store thread is refused rather than deadlocking.
-- Each request carries the epoch of the app instance that made it. A request
-  from a closed instance is rejected, so late work from an old instance cannot
-  write into a newer one in the same process.
+Runtime owns the current schedule, library snapshot, refresh tickets and
+attempts, combined-source parts, guide status, favourites, search indexes,
+backup progress and settings. Its services own the store lanes, bounded
+refresh pool, file writer and shared two-worker Tokio executor. Refresh
+scheduling consumes foreground notifications and emits refresh requests;
+it does not wake a sleeping device. Platform handles, caches and UI gesture
+flags remain in the shell, with an explicit list in
+`tests/app/architecture.rs`. The same tests guard the SQLite and NSH
+boundaries.
 
-Refresh work is bounded by a small pool (`data/workers.rs`); work for the
-source on screen goes first. Network work runs on Tokio runtimes owned by
-those workers.
+Every local future and worker captures the owner that accepted it. A late
+reply keeps that owner's settings, paths and epoch; it cannot adopt a newer
+application's state. Weak context registries select the owner without owning
+its data. Android's off-thread `onStop` callback uses a weak service registry
+to flush the active owner's accepted file writes. Teardown drains accepted
+writes, rejects later work and cancels imports and link resolves.
+
+The private store service owns two long-lived connections to the encrypted
+catalogue. The writer serializes mutations, staging and reads that must
+follow queued writes. The read-only connection serves guide, search and
+organization queries without waiting behind a publish transaction. Both
+live on dedicated threads; no SQLite operation runs on the UI thread.
+Each request carries its application epoch. Recursive requests to the same
+worker and requests from a retired owner are rejected.
+
+Imports use the bounded refresh pool so their blocking store waits cannot
+hold Tokio's network workers. Channel indexing and organization preparation
+run off the UI thread. The final `EpgSchedule` wraps prepared data and local
+callbacks on the UI thread, retaining its `Rc` model. The storage prerequisite
+measured the expensive preparation at 100k channels; no `Rc` to `Arc` rewrite
+is needed for that work to leave the UI thread.
+
+The runtime remains a module in the shell crate for this refactor. Moving it
+to a separate crate is optional; its remaining platform inputs (key broker,
+private paths and startup instrumentation) would become explicit ports.
+Scenario processes stay isolated because NSH and the player have their own
+platform globals.
 
 ## The NSH boundary
 
 NSH is the UI toolkit: a retained shadow tree with signals, laid out and
-drawn by a native host per platform. Only `iptv-app` depends on it.
+drawn by a native host per platform. The shell and player component adapter
+depend on it; the application runtime does not import it.
 
 - `nsh-core` and `nsh-base` are used on every platform. The platform crates
   (`nsh-platform-linux`, `-macos`, `-ios`, `-windows`) are target-specific
@@ -222,5 +250,5 @@ drawn by a native host per platform. Only `iptv-app` depends on it.
   exact commit is in [`nsh.rev`](../nsh.rev), which CI and `tools/check.sh`
   enforce. Patches to the fork stay small, carry tests and go upstream later.
 
-Everything that is not drawing or platform glue belongs below this boundary,
-in a crate that builds for wasm.
+Pure models and state machines belong in the portable crates. Native
+application orchestration belongs in the runtime; adapters own platform I/O.

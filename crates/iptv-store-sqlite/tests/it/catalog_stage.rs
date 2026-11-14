@@ -92,3 +92,125 @@ fn startup_removes_only_abandoned_catalog_stage_files() {
     assert!(dir.path().join("iptv.sqlite").exists());
     assert!(dir.path().join("playlist.m3u").exists());
 }
+
+/// A failure after credentials and guide rows are written must roll back the
+/// entire edit, including a failure late in the catalog copy itself.
+#[test]
+fn edited_details_guides_and_catalog_publish_as_one_transaction() {
+    use iptv_epg::FeedId;
+    use iptv_providers::SecretUrl;
+    use iptv_store_sqlite::GuideSource;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("synthetic.sqlite");
+    let mut store = Store::open(&path).unwrap();
+    let source = store.add_source(&common::m3u_source("Original")).unwrap();
+    let old_channel = common::m3u_channel(1, 2, common::XT_PASSWORD);
+    store
+        .replace_catalog(source, &[], std::slice::from_ref(&old_channel), &[], &[])
+        .unwrap();
+    let old_guide = GuideSource {
+        feed: FeedId(1),
+        provider_index: None,
+        url: SecretUrl::new("https://guide.example.test/original.xml"),
+        name: Some("Generated original guide".into()),
+        enabled: true,
+        shift_minutes: 0,
+    };
+    store
+        .set_guide_sources(source, std::slice::from_ref(&old_guide))
+        .unwrap();
+    let original = store.source(source).unwrap();
+    let original_status = store.import_status(source).unwrap();
+    let mut edited = common::m3u_source("Edited");
+    let iptv_providers::model::SourceConfig::M3u(config) = &mut edited.config else {
+        unreachable!()
+    };
+    config.location = SecretUrl::new("https://playlist.example.test/edited.m3u?token=generated");
+    config.user_agent = Some("GeneratedEdit/1".into());
+    let new_channel = common::m3u_channel(2, 2, common::XT_PASSWORD);
+    let new_guide = GuideSource {
+        url: SecretUrl::new("https://guide.example.test/edited.xml"),
+        ..old_guide.clone()
+    };
+    let stage = || {
+        let mut stage = CatalogStage::create_in(dir.path()).unwrap();
+        stage
+            .push(CatalogRow::Channel(new_channel.clone()))
+            .unwrap();
+        stage.finish().unwrap();
+        stage
+    };
+    // Invalid metadata fails after the source update, before catalog copying.
+    assert!(
+        store
+            .publish_catalog_stage(
+                source,
+                stage(),
+                Some(&edited),
+                &[new_guide.clone(), new_guide.clone()]
+            )
+            .is_err()
+    );
+    assert_eq!(store.source(source).unwrap(), original);
+    assert_eq!(
+        store.guide_sources(source).unwrap(),
+        vec![old_guide.clone()]
+    );
+    assert_eq!(store.import_status(source).unwrap(), original_status);
+    assert_eq!(
+        store
+            .load_channels(source, &ChannelQuery::default())
+            .unwrap()[0]
+            .channel,
+        old_channel
+    );
+
+    // A real SQLite abort during the final copy must undo the earlier metadata.
+    let faults = rusqlite::Connection::open(&path).unwrap();
+    faults
+        .execute_batch(
+            "CREATE TRIGGER synthetic_reject_catalog BEFORE INSERT ON channels
+        BEGIN SELECT RAISE(ABORT, 'synthetic publication failure'); END;",
+        )
+        .unwrap();
+    assert!(
+        store
+            .publish_catalog_stage(
+                source,
+                stage(),
+                Some(&edited),
+                std::slice::from_ref(&new_guide)
+            )
+            .is_err()
+    );
+    assert_eq!(store.source(source).unwrap(), original);
+    assert_eq!(store.guide_sources(source).unwrap(), vec![old_guide]);
+    assert_eq!(store.import_status(source).unwrap(), original_status);
+    assert_eq!(
+        store
+            .load_channels(source, &ChannelQuery::default())
+            .unwrap()[0]
+            .channel,
+        old_channel
+    );
+    faults
+        .execute_batch("DROP TRIGGER synthetic_reject_catalog")
+        .unwrap();
+    store
+        .publish_catalog_stage(
+            source,
+            stage(),
+            Some(&edited),
+            std::slice::from_ref(&new_guide),
+        )
+        .unwrap();
+    assert_eq!(store.source(source).unwrap().unwrap().source, edited);
+    assert_eq!(store.guide_sources(source).unwrap(), vec![new_guide]);
+    assert_eq!(
+        store
+            .load_channels(source, &ChannelQuery::default())
+            .unwrap()[0]
+            .channel,
+        new_channel
+    );
+}

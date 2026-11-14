@@ -167,9 +167,7 @@ pub fn perform(ui: Ui, item: MenuItem) {
                 ui.library.shown.get_untracked(),
                 crate::schedule().channel_key(origin.channel),
             ) {
-                let saved = crate::store_service::call(move |store| {
-                    store.set_hidden(source, &iptv_providers::ContentId::from_stored(id), true)
-                });
+                let saved = crate::runtime::commands::hide_channel(source, id);
                 crate::data::spawn_in_app(async move {
                     match saved.await {
                         Ok(()) => crate::data::organization::changed(ui, source),
@@ -217,7 +215,7 @@ pub fn perform(ui: Ui, item: MenuItem) {
                                     .strip_prefix("custom:")
                                     .and_then(|s| s.parse::<i64>().ok())
                                 {
-                                    Kind::CustomChannels(iptv_store_sqlite::CustomGroupId(id))
+                                    Kind::CustomChannels(crate::runtime::model::CustomGroupId(id))
                                 } else {
                                     Kind::GroupChannels(iptv_providers::GroupId::from_stored(key))
                                 }

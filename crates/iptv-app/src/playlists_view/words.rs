@@ -2,9 +2,9 @@
 
 use crate::i18n::tr;
 
+use crate::runtime::model::ImportErrorKind;
 use iptv_core::wizard::{FailureKind, ImportFailure};
 use iptv_providers::model::SourceKind;
-use iptv_store_sqlite::ImportErrorKind;
 
 use super::details::{Form, Param};
 use super::state::{Act, Notice};
@@ -254,7 +254,7 @@ pub fn delete_consequences(p: &Playlist, next: Option<&str>, shown: bool) -> Str
 
 #[cfg(test)]
 mod tests {
-    use iptv_store_sqlite::SourceId;
+    use crate::runtime::model::SourceId;
 
     use super::*;
 

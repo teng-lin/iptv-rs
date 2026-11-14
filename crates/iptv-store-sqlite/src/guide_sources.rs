@@ -16,6 +16,37 @@ use crate::{SourceId, Store};
 
 pub use iptv_library::GuideSource;
 
+pub(crate) fn set_guide_sources_in(
+    conn: &rusqlite::Connection,
+    source: SourceId,
+    sources: &[GuideSource],
+    now: i64,
+) -> Result<()> {
+    ensure_source(conn, source)?;
+    conn.execute("DELETE FROM guide_sources WHERE source_id = ?1", [source.0])?;
+    {
+        let mut insert = conn.prepare_cached(
+            "INSERT INTO guide_sources (source_id, feed_id, provider_index, url, name,
+                     enabled, position, shift_minutes, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        )?;
+        for (position, g) in sources.iter().enumerate() {
+            insert.execute(params![
+                source.0,
+                g.feed.0,
+                g.provider_index,
+                g.url.expose(),
+                g.name,
+                g.enabled,
+                position as i64,
+                g.shift_minutes,
+                now
+            ])?;
+        }
+    }
+    Ok(())
+}
+
 impl Store {
     /// `source`'s guide sources in the user's order (first wins). Empty for
     /// a source whose guides were never arranged (a new one).
@@ -45,28 +76,7 @@ impl Store {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        ensure_source(&tx, source)?;
-        tx.execute("DELETE FROM guide_sources WHERE source_id = ?1", [source.0])?;
-        {
-            let mut insert = tx.prepare_cached(
-                "INSERT INTO guide_sources (source_id, feed_id, provider_index, url, name,
-                     enabled, position, shift_minutes, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            )?;
-            for (position, g) in sources.iter().enumerate() {
-                insert.execute(params![
-                    source.0,
-                    g.feed.0,
-                    g.provider_index,
-                    g.url.expose(),
-                    g.name,
-                    g.enabled,
-                    position as i64,
-                    g.shift_minutes,
-                    now
-                ])?;
-            }
-        }
+        set_guide_sources_in(&tx, source, sources, now)?;
         tx.commit()?;
         Ok(())
     }

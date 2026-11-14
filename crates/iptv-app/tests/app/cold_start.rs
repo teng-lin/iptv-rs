@@ -84,7 +84,9 @@ fn the_last_channel_opens_once_before_the_guide() {
     step(first.wait_for("text:Playlist file"));
     step(first.press("text:Playlist file"));
     step(first.wait_for("text:Choose a file…"));
-    step(first.press("text:Choose a file…"));
+    // The form focuses its file field by identity. Activate that field through
+    // the remote key path, without depending on a newly mounted row's layout.
+    step(first.press_key("enter"));
     step(first.wait_for("text:synthetic.m3u"));
     step(first.press("text:Add playlist"));
     step(first.wait_for_within("text:Playlist added", IMPORT));

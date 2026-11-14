@@ -2,18 +2,16 @@
 //! remains imported data; moves are offered only between custom groups.
 use crate::i18n::tr;
 
+use crate::runtime::model::{ChannelScope, CustomGroup, CustomGroupId, SourceId, StoreError};
 use crate::{
     Ui, data,
     scale::Scale,
     ui_kit,
     wizard_view::entry::{self, Sheet},
 };
-use iptv_core::membership::{Member, Membership};
+use iptv_core::membership::Membership;
 use iptv_nav::Action;
 use iptv_providers::ContentId;
-use iptv_store_sqlite::{
-    ChannelQuery, ChannelScope, CustomGroup, CustomGroupId, SourceId, Store, StoreError,
-};
 use nsh_core::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -100,11 +98,11 @@ fn advance() {
 }
 fn request<R: Send + 'static>(
     ui: Ui,
-    operation: impl FnOnce(&mut Store) -> Result<R, StoreError> + Send + 'static,
+    operation: impl std::future::Future<Output = Result<R, StoreError>> + 'static,
     done: impl FnOnce(Ui, Result<R, StoreError>) + 'static,
 ) {
     let generation = GENERATION.get();
-    let result = crate::store_service::call(operation);
+    let result = operation;
     data::spawn_in_app(async move {
         let result = result.await;
         if GENERATION.get() == generation && is_open(ui) {
@@ -115,11 +113,11 @@ fn request<R: Send + 'static>(
 fn mutate<R: Send + 'static>(
     ui: Ui,
     source: SourceId,
-    operation: impl FnOnce(&mut Store) -> Result<R, StoreError> + Send + 'static,
+    operation: impl std::future::Future<Output = Result<R, StoreError>> + 'static,
     done: impl FnOnce(Ui, Result<R, StoreError>) + 'static,
 ) {
     let generation = GENERATION.get();
-    let result = crate::store_service::call(operation);
+    let result = operation;
     data::spawn_in_app(async move {
         let result = result.await;
         // A committed edit affects the guide even if its editor was closed.
@@ -145,7 +143,7 @@ pub fn open(ui: Ui, source: SourceId, browse: bool) {
     }));
     request(
         ui,
-        move |store| store.custom_groups(source),
+        crate::runtime::commands::custom_groups(source),
         move |ui, result| match result {
             Ok(groups) => {
                 update(ui, |s| s.reload_groups(groups));
@@ -172,30 +170,13 @@ fn origin(s: &Open) -> Option<CustomGroupId> {
         None
     }
 }
-fn rows(store: &Store, source: SourceId, scope: ChannelScope) -> Result<Vec<Member>, StoreError> {
-    Ok(store
-        .load_channels(
-            source,
-            &ChannelQuery {
-                scope,
-                include_hidden: true,
-                ..Default::default()
-            },
-        )?
-        .into_iter()
-        .map(|r| Member {
-            id: r.channel.id.as_str().into(),
-            name: r.name,
-        })
-        .collect())
-}
 fn reload(ui: Ui) {
     let Some((source, scope)) = read(ui, |s| (s.source, s.scope.clone())) else {
         return;
     };
     request(
         ui,
-        move |store| Ok((store.custom_groups(source)?, rows(store, source, scope)?)),
+        crate::runtime::commands::group_members(source, scope),
         |ui, result| {
             if let Ok((groups, rows)) = result {
                 update(ui, |s| {
@@ -224,7 +205,7 @@ fn show_members(ui: Ui, scope: ChannelScope) {
     let loaded_scope = scope.clone();
     request(
         ui,
-        move |store| rows(store, source, loaded_scope),
+        crate::runtime::commands::members(source, loaded_scope),
         move |ui, result| match result {
             Ok(rows) => update(ui, |s| {
                 s.scope = scope;
@@ -326,11 +307,14 @@ fn commit_text(ui: Ui) {
     mutate(
         ui,
         s.source,
-        move |store| match kind {
-            Text::Create => store.create_custom_group(s.source, &name).map(|_| ()),
-            Text::Rename(group) => store.rename_custom_group(group, &name),
-            Text::Filter => unreachable!(),
-        },
+        crate::runtime::commands::save_custom_group(
+            s.source,
+            match kind {
+                Text::Rename(group) => Some(group),
+                _ => None,
+            },
+            name,
+        ),
         |ui, result| {
             if result.is_ok() {
                 cancel_text(ui);
@@ -443,7 +427,7 @@ fn act(ui: Ui, index: usize) {
                 mutate(
                     ui,
                     s.source,
-                    move |store| store.remove_custom_members(origin, &ids),
+                    crate::runtime::commands::remove_custom_members(origin, ids),
                     report,
                 );
             }
@@ -472,9 +456,13 @@ fn act(ui: Ui, index: usize) {
             mutate(
                 ui,
                 s.source,
-                move |store| {
-                    store.transfer_custom_members(s.source, origin(&s), target, &ids, moving)
-                },
+                crate::runtime::commands::transfer_custom_members(
+                    s.source,
+                    origin(&s),
+                    target,
+                    ids,
+                    moving,
+                ),
                 move |ui, result| match result {
                     Ok(count) => {
                         update(ui, |s| {
@@ -499,7 +487,7 @@ fn act(ui: Ui, index: usize) {
                 mutate(
                     ui,
                     s.source,
-                    move |store| store.delete_custom_group(g).map(|_| ()),
+                    crate::runtime::commands::delete_custom_group(g),
                     |ui, result| {
                         if result.is_ok() {
                             update(ui, |s| {

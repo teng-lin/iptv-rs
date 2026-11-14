@@ -171,7 +171,7 @@ impl Client {
     ) -> Result<StreamingResponse<Body>, FetchError> {
         let path = iptv_providers::content_url::local_path(&request.url).map_err(|_| failure())?;
         if let Some(path) = path {
-            let root = crate::data::data_dir().join("playlists");
+            let root = super::paths::data_dir().join("playlists");
             if path.starts_with(&root) {
                 if !local_allowed(self.net.config(), &request) {
                     return Err(failure());
@@ -182,7 +182,7 @@ impl Client {
                     return Err(failure());
                 }
                 let reader =
-                    crate::store_service::call(move |store| store.read_private_file(&actual))
+                    super::store_service::call(move |store| store.read_private_file(&actual))
                         .await
                         .map_err(|_| failure())?;
                 let remaining = self.net.config().max_streamed_bytes;

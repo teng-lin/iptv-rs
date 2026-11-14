@@ -181,6 +181,27 @@ const IMPORT_COLUMNS: &str = "i.last_attempt_at, i.last_success_at, i.group_coun
     i.channel_count, i.vod_count, i.series_count, i.duplicate_count, i.last_error_kind, \
     i.last_error_at";
 
+pub(crate) fn update_source_in(
+    conn: &Connection,
+    id: SourceId,
+    source: &Source,
+    now: i64,
+) -> Result<()> {
+    ensure_source(conn, id)?;
+    let config = write_credentials(conn, id, &source.config)?;
+    conn.execute(
+        "UPDATE sources SET kind = ?2, name = ?3, config = ?4, updated_at = ?5 WHERE id = ?1",
+        params![
+            id.0,
+            source_kind_slug(source.kind()),
+            source.name,
+            config.to_string(),
+            now
+        ],
+    )?;
+    Ok(())
+}
+
 impl Store {
     /// Adds a source at the end of the list.
     pub fn add_source(&mut self, source: &Source) -> Result<SourceId> {
@@ -212,18 +233,7 @@ impl Store {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        ensure_source(&tx, id)?;
-        let config = write_credentials(&tx, id, &source.config)?;
-        tx.execute(
-            "UPDATE sources SET kind = ?2, name = ?3, config = ?4, updated_at = ?5 WHERE id = ?1",
-            params![
-                id.0,
-                source_kind_slug(source.kind()),
-                source.name,
-                config.to_string(),
-                now
-            ],
-        )?;
+        update_source_in(&tx, id, source, now)?;
         tx.commit()?;
         Ok(())
     }

@@ -20,8 +20,8 @@ mod details_card;
 use iptv_library::playlists as state;
 mod words;
 
+use crate::runtime::model::SourceId;
 use iptv_nav::Action;
-use iptv_store_sqlite::SourceId;
 use nsh_core::prelude::*;
 
 pub use state::Screen as Open;
