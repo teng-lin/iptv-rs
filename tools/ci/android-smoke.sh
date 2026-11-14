@@ -46,6 +46,8 @@ fail() {
   tail -20 "$out/app.log" >&2 || true
   exit 1
 }
+# Pipes into grep read to the end (no -q): with pipefail, grep quitting at
+# the first match can fail the producer, which would read as no match.
 # The app's log since the last mark (`nsh` tag: the Rust app and the host).
 applog() { $adb logcat -d -s nsh:I | tr -d '\r'; }
 # Keeps the logs so far ($out) and starts afresh.
@@ -57,7 +59,7 @@ mark() {
 # Waits up to $2 s for a line of the app's log since the last mark matching $1.
 expect() {
   local pattern=$1 limit=${2:-30} start=$SECONDS
-  while ! applog | grep -qE "$pattern"; do
+  while ! applog | grep -E "$pattern" >/dev/null; do
     alive || fail "the app is not running (waiting for: $pattern)"
     [ $((SECONDS - start)) -lt "$limit" ] || fail "no '$pattern' within ${limit}s"
     pause 0.5
@@ -112,7 +114,7 @@ mark
 for attempt in 1 2 3 4; do
   keys KEYCODE_DPAD_DOWN KEYCODE_DPAD_CENTER
   for _ in $(seq 1 10); do
-    applog | grep -qE 'key=ok .*ctx=Menu' && break 2
+    applog | grep -E 'key=ok .*ctx=Menu' >/dev/null && break 2
     pause 0.5
   done
   echo "  no response to Add playlist (attempt $attempt)"
@@ -162,10 +164,10 @@ step "background and resume"
 mark
 keys KEYCODE_HOME
 for _ in $(seq 1 20); do
-  $adb shell dumpsys activity -p $pkg activities | grep -q 'state=STOPPED' && break
+  $adb shell dumpsys activity -p $pkg activities | grep 'state=STOPPED' >/dev/null && break
   pause 0.5
 done
-$adb shell dumpsys activity -p $pkg activities | grep -q 'state=STOPPED' ||
+$adb shell dumpsys activity -p $pkg activities | grep 'state=STOPPED' >/dev/null ||
   fail "the activity did not stop in the background"
 echo "  ok: activity stopped"
 pause 3
@@ -186,7 +188,7 @@ expect 'iptv player 0 state: ready' 30
 for _ in 1 2 3 4; do
   keys KEYCODE_BACK
   pause 2
-  applog | grep -q 'iptv panels hidden: left full screen' && break
+  applog | grep 'iptv panels hidden: left full screen' >/dev/null && break
 done
 expect 'iptv panels hidden: left full screen' 1
 keys KEYCODE_DPAD_DOWN

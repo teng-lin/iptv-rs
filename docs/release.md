@@ -81,8 +81,10 @@ branch). That file is the only place the commit is named: both setup actions
 read it through `tools/ci/pins.py`, and `tools/check.sh` refuses a `../nsh`
 checkout at any other commit. Update `nsh.rev` when adopting fork changes.
 
-Local Android builds: `./gradlew assembleDebug` in `hosts/android` for
-development, and `assembleProfile` for measuring (`tools/perf-android.sh`): a
+Local Android builds: `tools/sync-host.sh` first (it builds the Rust library
+and copies it and the app's assets into the Gradle host; Gradle does not run
+it, so skipping it packages a missing or stale library), then
+`./gradlew assembleDebug` in `hosts/android` for development, and `assembleProfile` for measuring (`tools/perf-android.sh`): a
 non-debuggable release build that is also profileable from the shell and
 signed with the debug key. The `release` build type itself is never
 profileable and never falls back to the debug key: a release task fails unless
