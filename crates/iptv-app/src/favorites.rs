@@ -6,18 +6,20 @@
 //!
 //! The in-memory lists are the truth while a source is shown; writes go to
 //! one writer thread in order, so a toggle never waits for the store. They
-//! are read when a source is shown. The synthetic guide keeps them in
-//! memory only.
+//! are read when a source is shown, on the store's reader unless writes
+//! of this module are still queued ([`load`]). The synthetic guide keeps
+//! them in memory only.
 
 use std::cell::RefCell;
 use std::collections::{BTreeSet, VecDeque};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use iptv_core::favorites::{Favorites, History, KeyIndex, RECENT_LIMIT, Recent, diff};
 use iptv_core::guide::Schedule;
 use iptv_providers::ContentId;
 use iptv_providers::model::ContentKind;
-use iptv_store_sqlite::{ChannelOrder, ChannelQuery, SourceId};
+use iptv_store_sqlite::{ChannelOrder, ChannelQuery, SourceId, Store, StoreError};
 
 use crate::Ui;
 
@@ -54,6 +56,23 @@ enum Write {
     },
 }
 
+/// Writes sent to the writer thread and not yet committed (or dropped with
+/// their deleted playlist).
+static UNSAVED: AtomicUsize = AtomicUsize::new(0);
+
+/// Reads saved favourites. The store's reader does not wait for a long
+/// publish, but it cannot see a write still queued: while any of ours is,
+/// the read goes to the writer's queue behind it.
+async fn load<R: Send + 'static>(
+    read: impl FnOnce(&Store) -> Result<R, StoreError> + Send + 'static,
+) -> Result<R, StoreError> {
+    if UNSAVED.load(Ordering::Acquire) > 0 {
+        crate::store_service::call(move |store| read(store)).await
+    } else {
+        crate::store_service::read(read).await
+    }
+}
+
 thread_local! {
     static STATE: RefCell<State> = RefCell::default();
     static WRITER: RefCell<Option<Sender<Write>>> = const { RefCell::new(None) };
@@ -72,7 +91,7 @@ pub(crate) fn reset() {
 pub async fn prepare_source(source: Option<SourceId>) -> Option<impl FnOnce()> {
     let generation = crate::data::generation();
     let id = source?;
-    let loaded = crate::store_service::call(move |store| {
+    let loaded = load(move |store| {
         let has_vod = store
             .import_status(id)
             .is_ok_and(|s| s.counts.vod + s.counts.series > 0);
@@ -125,7 +144,7 @@ pub async fn prepare_source(source: Option<SourceId>) -> Option<impl FnOnce()> {
 pub async fn prepare_combined() -> Option<impl FnOnce()> {
     let generation = crate::data::generation();
     use iptv_guide::combined::{qualified_key, split_key};
-    let loaded = crate::store_service::call(|store| {
+    let loaded = load(|store| {
         let mut ids = Vec::new();
         let mut favorites = Vec::new();
         for source in store.sources()? {
@@ -314,6 +333,10 @@ pub fn played(key: &str) {
 }
 
 fn send(write: Write) {
+    let counted = !matches!(write, Write::Barrier(_) | Write::Shutdown(_));
+    if counted {
+        UNSAVED.fetch_add(1, Ordering::AcqRel);
+    }
     WRITER.with(|w| {
         let mut w = w.borrow_mut();
         let tx = w.get_or_insert_with(|| {
@@ -324,6 +347,8 @@ fn send(write: Write) {
         if tx.send(write).is_err() {
             log::warn!("iptv favourites: the writer stopped");
         }
+        // A write that never reached the thread is never saved; it stays
+        // counted, so reads keep going behind the writer's queue.
     });
 }
 
@@ -399,12 +424,14 @@ fn write_all(rx: Receiver<Write>) {
             &result,
             Err(iptv_store_sqlite::StoreError::SourceNotFound(_))
         ) {
+            UNSAVED.fetch_sub(1, Ordering::AcqRel);
             return true;
         }
         if let Err(e) = result {
             log::warn!("iptv favourites: could not save ({e})");
             return false;
         }
+        UNSAVED.fetch_sub(1, Ordering::AcqRel);
         true
     });
 }

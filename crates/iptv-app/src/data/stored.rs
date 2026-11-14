@@ -469,7 +469,7 @@ pub fn description_lookup(
         cache.borrow_mut().insert(identity.clone(), None);
         let key = key.clone();
         let read =
-            crate::store_service::call(move |store| store.epg_description(source, &key, start));
+            crate::store_service::read(move |store| store.epg_description(source, &key, start));
         let cache = cache.clone();
         super::spawn_in_app(async move {
             match read.await {

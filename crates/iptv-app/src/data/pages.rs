@@ -71,7 +71,7 @@ pub fn kept_from(window: PagedWindow, first: Option<UnixTime>, now: UnixTime) ->
 /// programme stored.
 pub async fn paged(ui: Ui, schedule: EpgSchedule, source: SourceId, now: UnixTime) -> EpgSchedule {
     let keep = super::stored::keep_past_days(&crate::settings::get());
-    let first = crate::store_service::call(move |store| store.epg_first_start(source))
+    let first = crate::store_service::read(move |store| store.epg_first_start(source))
         .await
         .unwrap_or_else(|e| {
             log::warn!("iptv data: the stored guide's first day: {e}");
@@ -81,13 +81,13 @@ pub async fn paged(ui: Ui, schedule: EpgSchedule, source: SourceId, now: UnixTim
     schedule.with_pages(window, loader(ui, source))
 }
 
-/// Reads a page on the shared store worker and updates the visible schedule.
+/// Reads a page on the store's reader and updates the visible schedule.
 /// Called from guide queries (maybe inside a view's computation): it only
 /// starts work.
 fn loader(ui: Ui, source: SourceId) -> impl Fn(PageRequest) + 'static {
     move |request: PageRequest| {
         let started = std::time::Instant::now();
-        let read = crate::store_service::call(move |store| {
+        let read = crate::store_service::read(move |store| {
             let window = EpgWindow {
                 from: request.from,
                 to: request.to,

@@ -6,10 +6,9 @@ use nsh_testing::Headless;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-#[test]
-#[ignore = "tools/check.sh runs this wall-clock budget separately from other app scenarios"]
-fn guide_input_stays_under_budget_while_the_database_writer_is_locked() {
-    let Some(home) = isolated!() else { return };
+/// The app on a generated 10,000-channel playlist with seven days of
+/// programmes, on the guide.
+fn ten_thousand_channels(home: &crate::isolated::Home) -> Headless {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -61,16 +60,30 @@ fn guide_input_stays_under_budget_while_the_database_writer_is_locked() {
     app.press("text:Watch").unwrap();
     app.wait_for_within("text:Synthetic day 0", Duration::from_secs(120))
         .unwrap();
-    for _ in 0..40 {
-        app.press_key("down").unwrap();
-    }
-    app.idle(Duration::from_millis(150)).unwrap();
+    app
+}
 
+/// Another connection holding SQLite's write lock, as a long publish does.
+fn hold_writer(home: &crate::isolated::Home) -> rusqlite::Connection {
     let path = home.data_dir().join("iptv.sqlite");
     let lock = rusqlite::Connection::open(&path).unwrap();
     lock.pragma_update(None, "key", format!("x'{}'", "54".repeat(32)))
         .unwrap();
     lock.execute_batch("BEGIN IMMEDIATE").unwrap();
+    lock
+}
+
+#[test]
+#[ignore = "tools/check.sh runs this wall-clock budget separately from other app scenarios"]
+fn guide_input_stays_under_budget_while_the_database_writer_is_locked() {
+    let Some(home) = isolated!() else { return };
+    let mut app = ten_thousand_channels(&home);
+    for _ in 0..40 {
+        app.press_key("down").unwrap();
+    }
+    app.idle(Duration::from_millis(150)).unwrap();
+
+    let lock = hold_writer(&home);
     // This action queues a real database write while the other connection owns
     // SQLite's writer lock. The UI change and later navigation must still render.
     app.press_key("m").unwrap();
@@ -121,6 +134,37 @@ fn guide_input_stays_under_budget_while_the_database_writer_is_locked() {
         );
         app.wait(Duration::from_millis(50)).unwrap();
     }
+}
+
+/// A UI read while the app's writer is busy with a long publish (a job
+/// that holds it for 6 s) and another connection holds SQLite's write lock
+/// with uncommitted deletes: the search screen's programme index reads
+/// every stored title. On the writer's queue it would wait for the
+/// publish; on the reader it reads the last commit at once.
+#[test]
+#[ignore = "tools/check.sh runs this wall-clock budget separately from other app scenarios"]
+fn a_store_read_does_not_wait_for_a_busy_writer() {
+    const PUBLISH: Duration = Duration::from_secs(6);
+    let Some(home) = isolated!() else { return };
+    let mut app = ten_thousand_channels(&home);
+    let lock = hold_writer(&home);
+    lock.execute_batch("DELETE FROM epg_programmes").unwrap();
+    iptv_app::occupy_writer(PUBLISH);
+    let started = Instant::now();
+    app.press_key("/").unwrap();
+    app.wait_for("id:search-field").unwrap();
+    app.type_text("id:search-field", "Synthetic").unwrap();
+    app.wait_for_within("text:Programmes · 200+", Duration::from_secs(30))
+        .unwrap();
+    let elapsed = started.elapsed();
+    lock.execute_batch("ROLLBACK").unwrap();
+    eprintln!(
+        "10k channels / 7 days, writer busy for {PUBLISH:?}: search's programme read {elapsed:?}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(3),
+        "a read waited for the busy writer: {elapsed:?}"
+    );
 }
 
 #[test]

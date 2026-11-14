@@ -78,7 +78,7 @@ pub(super) async fn send_stored(job: &Job, id: SourceId, now: UnixTime, tx: &Sen
     let started = Instant::now();
     let ms = |t: Instant| t.elapsed().as_millis();
     let (groups, channels) =
-        match crate::store_service::call(move |store| stored::catalog_in(store, id)).await {
+        match crate::store_service::read(move |store| stored::catalog_in(store, id)).await {
             Ok(catalog) => catalog,
             Err(e) => {
                 log::warn!("iptv data: stored catalog: {e}");
@@ -107,7 +107,7 @@ pub(super) async fn send_stored(job: &Job, id: SourceId, now: UnixTime, tx: &Sen
     let (from, to) = first_screen(now);
     let resumes = crate::settings::flag(iptv_settings::keys::RESUME_LAST_CHANNEL);
     let focus = if resumes {
-        crate::store_service::call(move |_| Ok(crate::player::resume::last_key(id)))
+        crate::store_service::read(move |_| Ok(crate::player::resume::last_key(id)))
             .await
             .ok()
             .flatten()
@@ -116,7 +116,7 @@ pub(super) async fn send_stored(job: &Job, id: SourceId, now: UnixTime, tx: &Sen
     };
     let keys = first_rows(&channels, focus.as_deref());
     let query_keys = keys.clone();
-    if let Ok(guide) = crate::store_service::call(move |store| {
+    if let Ok(guide) = crate::store_service::read(move |store| {
         store.load_epg(
             id,
             &EpgWindow {
@@ -141,7 +141,7 @@ pub(super) async fn send_stored(job: &Job, id: SourceId, now: UnixTime, tx: &Sen
     }
     let started = Instant::now();
     let window = super::pages::window(now, stored::keep_past_days(&crate::settings::get()));
-    let guide = crate::store_service::call(move |store| {
+    let guide = crate::store_service::read(move |store| {
         store.load_epg(id, &super::pages::store_window(window))
     })
     .await

@@ -32,8 +32,10 @@ struct Snapshot {
     organization: Organization,
     lists: Vec<(String, String, Vec<String>)>,
 }
+/// Every caller loads after the change it shows was committed (an edit's
+/// reply, a refresh's publish), so the reader sees it.
 async fn load(source: SourceId) -> Result<Snapshot, StoreError> {
-    crate::store_service::call(move |store| {
+    crate::store_service::read(move |store| {
         Ok(Snapshot {
             organization: read_in(store, source)?,
             lists: group_lists_in(store, source)?,

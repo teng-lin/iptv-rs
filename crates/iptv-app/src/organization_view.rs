@@ -28,7 +28,8 @@ pub struct Open {
 async fn items(source: SourceId, kind: &Kind) -> Result<Vec<Item>, StoreError> {
     let kind = kind.clone();
     let favorites = crate::favorites::ordered_keys();
-    crate::store_service::call(move |store| {
+    // Edits reload their rows only after the edit's reply: the reader sees it.
+    crate::store_service::read(move |store| {
         let org = data::organization::read_in(store, source)?;
         let rows = match kind {
             Kind::Channels => org.channels,

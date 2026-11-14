@@ -56,6 +56,59 @@ fn reader_sees_the_last_commit_while_a_write_is_pending() {
     assert_eq!(reader.channel_count(src, &all).unwrap(), 4);
 }
 
+/// The app's reader connection: it shares the writer's key, reads the
+/// last commit while another connection holds the write lock, and refuses
+/// every write, also through methods that take `&self`.
+#[test]
+fn a_reader_reads_during_a_held_write_and_cannot_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.db");
+    let key = iptv_store_sqlite::DatabaseKey::from_bytes([0x5a; 32]);
+    let mut writer = Store::open_encrypted(&path, &key).unwrap();
+    let src = writer.add_source(&xtream_source("Xt")).unwrap();
+    replace(&mut writer, src, &catalog(10, 2, XT_PASSWORD));
+    let reader = writer.open_reader().unwrap();
+    assert_eq!(
+        reader.schema_version().unwrap(),
+        iptv_store_sqlite::SCHEMA_VERSION
+    );
+
+    let raw = rusqlite::Connection::open(&path).unwrap();
+    raw.pragma_update(None, "key", format!("x'{}'", "5a".repeat(32)))
+        .unwrap();
+    raw.execute_batch("BEGIN IMMEDIATE; DELETE FROM channel_groups; DELETE FROM channels;")
+        .unwrap();
+    let all = ChannelQuery::default();
+    let started = std::time::Instant::now();
+    assert_eq!(reader.channel_count(src, &all).unwrap(), 10);
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "the read waited for the writer: {:?}",
+        started.elapsed()
+    );
+    raw.execute_batch("ROLLBACK").unwrap();
+
+    // `query_only`: SQLite refuses the write whatever the method's receiver.
+    let refused = |result: iptv_store_sqlite::Result<()>| match result {
+        Err(StoreError::Sqlite(rusqlite::Error::SqliteFailure(e, _))) => {
+            assert_eq!(e.code, rusqlite::ErrorCode::ReadOnly);
+        }
+        other => panic!("expected a read-only refusal, got {other:?}"),
+    };
+    refused(reader.mark_private_documents_unsealed());
+    let mut reader = reader;
+    let id = catalog(1, 1, XT_PASSWORD).channels[0].id.clone();
+    refused(reader.set_favourite(src, &id, true));
+
+    // It sees what the writer commits afterwards.
+    replace(&mut writer, src, &catalog(4, 1, XT_PASSWORD));
+    assert_eq!(reader.channel_count(src, &all).unwrap(), 4);
+    assert!(
+        Store::open_in_memory().unwrap().open_reader().is_err(),
+        "an in-memory store has no second connection"
+    );
+}
+
 /// Two refreshes save at once: a write that reads first (whether the
 /// source exists) waits for the other writer's commit and goes on, instead
 /// of failing as "database is locked" on a snapshot that commit made

@@ -19,8 +19,9 @@
 //!   to run repeatedly ([`migrate`]).
 //!
 //! One [`Store`] wraps one connection and is `Send`, not `Sync`. Use one
-//! writer and any number of reader stores on the same file; WAL lets them
-//! read while the writer replaces a catalog.
+//! writer and any number of reader stores on the same file
+//! ([`Store::open_reader`]); WAL lets them read while the writer replaces
+//! a catalog.
 //! - **Guide data** (EPG) is stored per playlist source and replaced per
 //!   refresh ([`Store::replace_epg`]) from a download staged in its own
 //!   file ([`EpgStage`]); the app loads a window of it without
@@ -168,6 +169,46 @@ impl Store {
             fts: options.prefer_fts && fts_index,
             clock: system_now,
             key: None,
+        })
+    }
+
+    /// A second connection to this store's file that can only read: the
+    /// same key, no migration (this store migrated the file when it
+    /// opened) and `PRAGMA query_only`, so SQLite refuses any write through
+    /// it, including from `&self` methods that would write. In WAL mode it
+    /// reads the last commit while this store holds a write transaction,
+    /// so reads need not queue behind a long catalog or guide publish.
+    pub fn open_reader(&self) -> Result<Self> {
+        let path = self
+            .conn
+            .path()
+            .filter(|path| !path.is_empty())
+            .ok_or(StoreError::Unavailable("an in-memory store has no reader"))?;
+        // No CREATE: the file must be the one this store opened.
+        let conn = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_WRITE
+                | OpenFlags::SQLITE_OPEN_NO_MUTEX
+                | OpenFlags::SQLITE_OPEN_URI,
+        )?;
+        if let Some(key) = &self.key {
+            key.apply(&conn)?;
+        }
+        conn.busy_timeout(OpenOptions::default().busy_timeout)?;
+        conn.pragma_update(None, "cache_size", -CACHE_KIB)?;
+        conn.pragma_update(None, "query_only", true)?;
+        let version = migrate::current_version(&conn)?;
+        if version != SCHEMA_VERSION {
+            return Err(StoreError::Unavailable(
+                "the reader found a schema this build did not migrate",
+            ));
+        }
+        Ok(Self {
+            conn,
+            fts_index: self.fts_index,
+            fts: self.fts,
+            clock: self.clock,
+            key: self.key.clone(),
         })
     }
 
