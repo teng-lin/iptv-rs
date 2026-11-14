@@ -68,6 +68,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "content_url_policy",
         sql: include_str!("../migrations/0008_content_url_policy.sql"),
     },
+    Migration {
+        version: 9,
+        name: "search_history",
+        sql: include_str!("../migrations/0009_search_history.sql"),
+    },
 ];
 
 /// The schema version this build writes.

@@ -201,3 +201,27 @@ fn root_shutdown_drains_a_favourite_write_that_is_waiting_for_sqlite() {
     );
     release.join().unwrap();
 }
+
+/// A zap queues the last channel's file write off the UI thread; closing
+/// the app right after it still leaves that channel on disk.
+#[test]
+fn root_shutdown_saves_the_channel_zapped_to_just_before() {
+    use crate::personalization::{M3U, start, step};
+    let Some(home) = isolated!() else { return };
+    let mut fixture = start(home, iptv_settings::Settings::new(), true);
+    let app = &mut fixture.app;
+    step(app.press_key("enter"));
+    step(app.run_for(Duration::from_millis(500)));
+    step(app.press_key("down"));
+    step(app.press_key("down"));
+    // The zap opens once the switch delay is over.
+    step(app.run_for(Duration::from_millis(600)));
+    let file = crate::isolated::data_dir(fixture.home.path())
+        .join(format!("last_channel-{}", fixture.source.0));
+    drop(fixture.app);
+    let expected = iptv_providers::m3u::parse_m3u(M3U).channels.items[2]
+        .id
+        .as_str()
+        .to_owned();
+    assert_eq!(std::fs::read_to_string(file).unwrap(), expected);
+}

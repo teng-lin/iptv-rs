@@ -514,31 +514,28 @@ fn last_channel_path(source: Option<SourceId>) -> std::path::PathBuf {
     })
 }
 
+/// Queues the write: a zap never waits for the disk (`file_writer`).
 fn save_last_channel(source: Option<SourceId>, key: &str) {
-    let path = last_channel_path(source);
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    if let Err(e) = std::fs::write(&path, key) {
-        log::warn!(
-            "iptv player: could not save the last channel ({})",
-            e.kind()
-        );
-    }
+    drop(crate::file_writer::write(
+        last_channel_path(source),
+        key.as_bytes().to_vec(),
+    ));
 }
 
+/// Includes a write still queued, so a zap is remembered at once.
 fn load_last_channel(source: Option<SourceId>) -> Option<String> {
-    let read = |path| {
-        let key = std::fs::read_to_string(path).ok()?;
+    let read = |path: std::path::PathBuf| {
+        let key = String::from_utf8(crate::file_writer::read(&path)?).ok()?;
         let key = key.trim();
         (!key.is_empty()).then(|| key.to_owned())
     };
     read(last_channel_path(source)).or_else(|| read(last_channel_path(None)))
 }
 
-/// Playlist `source` was deleted: its last channel goes too.
+/// Playlist `source` was deleted: its last channel goes too (after any
+/// write still queued for it).
 pub fn forget_source(source: SourceId) {
-    let _ = std::fs::remove_file(last_channel_path(Some(source)));
+    drop(crate::file_writer::remove(last_channel_path(Some(source))));
 }
 
 /// Another playlist is about to be shown (`data.rs`): what plays and the

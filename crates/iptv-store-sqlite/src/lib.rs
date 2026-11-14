@@ -52,6 +52,7 @@ mod order;
 mod organise;
 mod overlay;
 mod search;
+mod search_history;
 mod source_settings;
 mod sources;
 

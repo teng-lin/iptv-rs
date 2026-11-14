@@ -23,6 +23,7 @@ mod desktop;
 mod epg_sources_view;
 mod fav_editor;
 mod favorites;
+mod file_writer;
 mod fonts;
 mod grid;
 mod guide_assign_view;

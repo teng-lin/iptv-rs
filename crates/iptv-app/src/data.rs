@@ -221,6 +221,9 @@ pub fn start(ui: Ui) {
     struct Drain;
     impl Drop for Drain {
         fn drop(&mut self) {
+            if !crate::file_writer::flush(Duration::from_secs(5)) {
+                log::error!("iptv persistence: queued file writes did not finish at shutdown");
+            }
             if !crate::favorites::flush_on_shutdown() {
                 log::error!(
                     "iptv persistence: queued favourite changes could not be saved at shutdown"
@@ -233,10 +236,22 @@ pub fn start(ui: Ui) {
     }
     let drain = Drain;
     nsh_core::prelude::cleanup(move || drop(drain));
+    // In the background the system may end the process without a teardown:
+    // a zap or a settings change made just before must already be on disk.
+    // Usually nothing is queued and this returns at once. The Android host
+    // also waits for them in `onStop` (`TvActivity.flushPendingWrites`).
+    effect(|| {
+        if lifecycle() == nsh_core::platform::Lifecycle::Background
+            && !crate::file_writer::flush(Duration::from_secs(2))
+        {
+            log::warn!("iptv persistence: queued file writes did not finish in the background");
+        }
+    });
     APP_OWNER.with(|o| o.set(Some(Owner::current())));
     combined::reset_single();
     library::reset_imports();
     stored::bind(ui);
+    crate::search_view::load_saved_history(ui);
     let started = std::time::Instant::now();
     let startup = crate::store_service::call(|store| {
         EpgStage::remove_stale(data_dir());

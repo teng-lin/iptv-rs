@@ -79,3 +79,68 @@ fn open_search(app: &mut Headless) {
     step(app.wait_for("text:Search >> nth=0"));
     step(app.press("text:Search >> nth=0"));
 }
+
+/// Recent searches an older build kept in a plaintext file move into the
+/// encrypted store once: the file is deleted, the store holds them (not
+/// as plaintext), and they are there after a restart.
+#[test]
+fn an_old_history_file_moves_into_the_store() {
+    let Some(home) = isolated!() else { return };
+    let data = home.data_dir();
+    std::fs::create_dir_all(&data).unwrap();
+    let legacy = data.join("search-history.json");
+    std::fs::write(&legacy, r#"["synthetic legacy query"]"#).unwrap();
+    let playlist = "#EXTM3U\n\
+         #EXTINF:-1 group-title=\"Local\",US : New York Metro\nhttp://stream.example.test/1.m3u8\n";
+    let start = || {
+        Headless::start(EngineConfig {
+            viewport: Size::new(px(1920.0), px(1080.0)),
+            ..EngineConfig::new(Root::of::<iptv_app::App>())
+        })
+        .unwrap()
+    };
+    let step = |r: Result<(), String>| r.unwrap_or_else(|e| panic!("{e}"));
+    let mut app = start();
+    app.on_pick(move |_| {
+        vec![PickedFile::new(
+            "synthetic.m3u",
+            "audio/x-mpegurl",
+            ImageData::new(playlist.as_bytes().to_vec()),
+        )]
+    });
+    step(app.wait_for("text:No playlists yet"));
+    step(app.press("text:Add playlist"));
+    step(app.wait_for("text:Playlist file"));
+    step(app.press("text:Playlist file"));
+    step(app.wait_for("text:Choose a file…"));
+    step(app.press("text:Choose a file…"));
+    step(app.wait_for("text:synthetic.m3u"));
+    step(app.press("text:Add playlist"));
+    step(app.wait_for_within("text:Playlist added", IMPORT));
+    step(app.press("text:Watch"));
+    step(app.wait_for_within("text:US : New York Metro", IMPORT));
+    open_search(&mut app);
+    step(app.wait_for("text:synthetic legacy query"));
+    assert!(!legacy.exists(), "the plaintext file is deleted");
+    step(app.type_text("id:search-field", "metro"));
+    step(app.wait_for_within("text:1   US : New York Metro", RESULTS));
+    step(app.press_key("enter"));
+    step(app.press("text:Close"));
+    drop(app);
+
+    for name in ["iptv.sqlite", "iptv.sqlite-wal"] {
+        let bytes = std::fs::read(data.join(name)).unwrap_or_default();
+        assert!(
+            !bytes
+                .windows(b"synthetic legacy query".len())
+                .any(|w| w == b"synthetic legacy query"),
+            "{name} is encrypted"
+        );
+    }
+    let mut app = start();
+    step(app.wait_for_within("text:US : New York Metro", IMPORT));
+    open_search(&mut app);
+    step(app.wait_for("text:metro"));
+    step(app.wait_for("text:synthetic legacy query"));
+    assert!(!legacy.exists());
+}
