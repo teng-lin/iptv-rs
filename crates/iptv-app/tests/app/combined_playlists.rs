@@ -237,10 +237,11 @@ fn combined_browsing_routes_duplicate_keys_favorites_search_and_playback() {
     step(app.press_key("m"));
     step(app.wait_for("text:Add to favourites"));
     step(app.press("text:Add to favourites"));
-    step(app.wait_until(
+    step(crate::isolated::wait_outside(
+        &mut app,
         "owning source favorite saved",
         Duration::from_secs(5),
-        |_| favorite_names(&path, beta) == ["Shared"],
+        || favorite_names(&path, beta) == ["Shared"],
     ));
     assert!(favorite_names(&path, alpha).is_empty());
 
@@ -1220,10 +1221,11 @@ fn forty_cached_sources_open_while_both_network_workers_are_stalled() {
     })
     .unwrap();
     step(app.wait_for_within("text:Cached 00", Duration::from_secs(10)));
-    step(app.wait_until(
+    step(crate::isolated::wait_outside(
+        &mut app,
         "both refresh workers have outstanding requests",
         Duration::from_secs(10),
-        |_| accepted.load(std::sync::atomic::Ordering::Relaxed) == 2,
+        || accepted.load(std::sync::atomic::Ordering::Relaxed) == 2,
     ));
     // Every cached constituent must reach the combined guide independently
     // of the two blocked network requests, including sources beyond queue size.

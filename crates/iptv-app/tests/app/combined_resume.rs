@@ -266,11 +266,12 @@ fn exercise(data: &Path, combined_key: bool) {
         }
     });
     step(app.wait_for_within("text:Saved portal channel · Portal", IMPORT));
-    step(
-        app.wait_until("portal authentication is waiting", IMPORT, |_| {
-            portal.auth_started()
-        }),
-    );
+    step(crate::isolated::wait_outside(
+        &mut app,
+        "portal authentication is waiting",
+        IMPORT,
+        || portal.auth_started(),
+    ));
     // Refreshing the other source now produces can_resume=true only after the
     // saved portal channel is visible, while its own auth remains gated.
     portal.release_m3u();
@@ -292,11 +293,12 @@ fn exercise(data: &Path, combined_key: bool) {
     assert_eq!(portal.links.load(Ordering::SeqCst), 0);
 
     portal.release_auth();
-    step(
-        app.wait_until("saved portal stream opens after its login", IMPORT, |_| {
-            opened.lock().unwrap().iter().any(|url| url == STREAM)
-        }),
-    );
+    step(crate::isolated::wait_outside(
+        &mut app,
+        "saved portal stream opens after its login",
+        IMPORT,
+        || opened.lock().unwrap().iter().any(|url| url == STREAM),
+    ));
     step(app.wait(Duration::from_millis(250)));
     assert_eq!(
         iptv_app::player_opens(0),
@@ -343,16 +345,19 @@ fn adding_playlist_reauthenticates_a_cached_portal_after_startup_auth_failed() {
     })
     .unwrap();
     step(app.wait_for_within("text:Saved portal channel", IMPORT));
-    step(
-        app.wait_until("failed portal startup is recorded", IMPORT, |_| {
+    step(crate::isolated::wait_outside(
+        &mut app,
+        "failed portal startup is recorded",
+        IMPORT,
+        || {
             crate::isolated::open_database(&path)
                 .unwrap()
                 .import_status(stalker)
                 .unwrap()
                 .last_error
                 .is_some()
-        }),
-    );
+        },
+    ));
     // An enabled Refresh now action confirms the UI has consumed completion:
     // this source is no longer RUNNING, but its cached context is still absent.
     step(app.press("text:☰  All channels"));

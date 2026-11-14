@@ -67,9 +67,10 @@ fn saved(app: &mut Headless, home: &Path, want: &str) {
             .and_then(|p| std::fs::read_to_string(p).ok())
             .unwrap_or_default()
     };
-    let found = app.wait_until("settings saved", Duration::from_secs(5), |_| {
-        read().contains(want)
-    });
+    let found =
+        crate::isolated::wait_outside(app, "settings saved", Duration::from_secs(5), || {
+            read().contains(want)
+        });
     assert!(found.is_ok(), "{want} in {}", read());
 }
 
