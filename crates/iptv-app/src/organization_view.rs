@@ -273,20 +273,7 @@ fn perform(ui: Ui, edit: Edit) {
                 Kind::GroupChannels(g) => {
                     store.reset_manual_order(s.source, &OrderScope::Group(g.clone()))?
                 }
-                Kind::CustomChannels(g) => {
-                    let rows = store.load_channels(
-                        s.source,
-                        &ChannelQuery {
-                            scope: ChannelScope::Custom(*g),
-                            include_hidden: true,
-                            order: iptv_store_sqlite::ChannelOrder::Provider,
-                            ..Default::default()
-                        },
-                    )?;
-                    for (at, r) in rows.iter().enumerate() {
-                        store.move_in_custom_group(*g, &r.channel.id, at)?;
-                    }
-                }
+                Kind::CustomChannels(g) => store.reset_custom_group_order(*g)?,
                 Kind::Favorites => unreachable!("handled before queuing"),
                 Kind::Groups => store.reset_group_order(s.source)?,
             },

@@ -370,6 +370,30 @@ impl Store {
         )? > 0)
     }
 
+    /// Puts a custom group's present members in provider order, in one
+    /// transaction. Members whose channel is gone keep their place relative
+    /// to their neighbours, as a series of [`Store::move_in_custom_group`]
+    /// calls in that order would leave them.
+    pub fn reset_custom_group_order(&mut self, group: CustomGroupId) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        let source = group_source(&tx, group)?;
+        let mut list = members(&tx, group)?;
+        let present = present_ids(&tx, source)?;
+        let provider = ids(
+            &tx,
+            "SELECT m.channel_id FROM custom_group_members m
+             JOIN channels c ON c.source_id = ?2 AND c.id = m.channel_id
+             WHERE m.group_id = ?1 ORDER BY c.position",
+            params![group.0, source.0],
+        )?;
+        for (index, id) in provider.iter().enumerate() {
+            move_to(&mut list, &present, id, index);
+        }
+        write_members(&tx, group, &list)?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Moves a member to `index` among the group's present channels.
     pub fn move_in_custom_group(
         &mut self,
