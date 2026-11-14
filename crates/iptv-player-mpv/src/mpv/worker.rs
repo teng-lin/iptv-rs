@@ -121,6 +121,7 @@ impl Worker {
         let (tx, notes) = channel();
         let queue = Arc::new(Mutex::new(Vec::new()));
         let quit = Arc::new(AtomicBool::new(false));
+        let policy = super::POLICY.get();
         let thread = {
             let (mpv, queue, quit) = (mpv.clone(), queue.clone(), quit.clone());
             std::thread::Builder::new()
@@ -128,6 +129,7 @@ impl Worker {
                 .spawn(move || {
                     let mut bridge = Bridge::new();
                     bridge.guarded = guarded;
+                    bridge.policy = policy;
                     run(&mpv, &queue, &quit, &tx, notify, bridge)
                 })
                 .map_err(|e| log::error!("iptv mpv: no control thread ({e})"))
@@ -289,7 +291,7 @@ fn execute(mpv: &Mpv, cmd: Cmd, bridge: &mut Bridge) -> Vec<Note> {
                 let Ok(transport) = iptv_net::playback::PlaybackRelay::start_with_policy(
                     &url,
                     &bridge.headers,
-                    crate::transport::policy(public_only),
+                    (bridge.policy)(public_only),
                 ) else {
                     mpv.command(&["stop"]);
                     return vec![Note::Loading(None)];
@@ -385,6 +387,7 @@ fn remove_entry(mpv: &Mpv, id: i64) {
 /// `IPTV_RS_LIVE_BRIDGE=0`: every closed connection is then an end the app
 /// reconnects.
 struct Bridge {
+    policy: super::Policy,
     guarded: bool,
     enabled: bool,
     headers: Vec<(String, String)>,
@@ -422,6 +425,7 @@ impl Bridge {
             log::info!("iptv mpv: live bridging off");
         }
         Bridge {
+            policy: super::default_policy,
             guarded: true,
             enabled: !off,
             headers: Vec::new(),
@@ -685,7 +689,7 @@ mod tests {
             iptv_net::playback::PlaybackRelay::start_with_policy(
                 "http://localhost:1/old",
                 &[],
-                crate::transport::policy(false),
+                crate::mpv::default_policy(false),
             )
             .unwrap(),
         );

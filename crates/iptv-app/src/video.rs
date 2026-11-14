@@ -161,7 +161,7 @@ fn count_open(surface: usize, last: &RefCell<Option<(String, u64)>>, value: &Val
 
 /// The stream as the host's `source` prop: `{url, headers, token, live,
 /// reconnect}`, or null when nothing plays.
-fn source_prop(ui: Ui, surface: usize) -> Value {
+fn source_prop(ui: Ui, surface: usize) -> Option<iptv_player_mpv::SourceProps> {
     let stream = ui.player.stream(surface);
     let playing = if surface == 0 {
         ui.playing.get().is_some() || crate::player::resume::playing(ui)
@@ -169,27 +169,20 @@ fn source_prop(ui: Ui, surface: usize) -> Value {
         stream.channel.get().is_some()
     };
     if !playing {
-        return Value::Null;
+        return None;
     }
     let token = stream.token.get();
     // Set with the token (`player::load`).
     let live = stream.live.get_untracked();
     let reconnect = stream.reconnect.get_untracked();
     stream.source.with(|s| {
-        s.as_ref().map_or(Value::Null, |s| {
-            let headers: serde_json::Map<String, Value> = s
-                .headers
-                .iter()
-                .map(|(k, v)| (k.clone(), Value::String(v.clone())))
-                .collect();
-            json!({
-                "url": s.url,
-                "publicOnly": s.public_only,
-                "headers": headers,
-                "token": token,
-                "live": live,
-                "reconnect": reconnect,
-            })
+        s.as_ref().map(|s| iptv_player_mpv::SourceProps {
+            url: s.url.clone(),
+            public_only: s.public_only,
+            headers: s.headers.iter().cloned().collect(),
+            token,
+            live,
+            reconnect,
         })
     })
 }
@@ -198,45 +191,52 @@ fn source_prop(ui: Ui, surface: usize) -> Value {
 pub fn layer(ui: Ui, surface: usize) -> impl IntoElement {
     let stream = ui.player.stream(surface);
     let sent = RefCell::new(None);
+    let props: iptv_player_mpv::PlayerBindings = iptv_player_mpv::PlayerBindings {
+        source: Box::new(move || {
+            let source = source_prop(ui, surface);
+            count_open(surface, &sent, &json!(source));
+            source
+        }),
+        paused: Box::new(move || {
+            (surface == 0 && ui.paused.get()) || crate::multiview::paused(ui, surface)
+        }),
+        picture_size: Box::new(move || {
+            let ch = if surface == 0 {
+                ui.playing.get()
+            } else {
+                stream.channel.get()
+            };
+            ui.picture
+                .with(|p| p.for_channel(ch.unwrap_or(0)))
+                .key()
+                .to_owned()
+        }),
+        video_track: Box::new(move || stream.choice.with(|c| c.video.clone())),
+        audio_track: Box::new(move || stream.choice.with(|c| c.audio.clone())),
+        text_track: Box::new(move || stream.choice.with(|c| c.text.clone())),
+        volume: Box::new(move || ui.media.volume.with(|v| v.level)),
+        muted: Box::new(move || {
+            ui.media.volume.with(|v| v.muted) || !crate::multiview::audible(ui, surface)
+        }),
+        audio_delay: Box::new(move || ui.media.delay_ms.get()),
+        pip: Box::new(move || crate::pip::prop(ui, surface)),
+    };
     native("tv.player")
         .absolute()
         .left(move || px(surface_rect(ui, surface).0))
         .top(move || px(surface_rect(ui, surface).1))
         .w(move || px(surface_rect(ui, surface).2))
         .h(move || px(surface_rect(ui, surface).3))
-        .prop("source", move || {
-            let value = source_prop(ui, surface);
-            count_open(surface, &sent, &value);
-            value
-        })
-        // Full screen's pause holds surface 0; in multiview each tile has
-        // its own (the menu's Pause).
-        .prop("paused", move || {
-            json!((surface == 0 && ui.paused.get()) || crate::multiview::paused(ui, surface))
-        })
-        .prop("pictureSize", move || {
-            let ch = if surface == 0 {
-                ui.playing.get()
-            } else {
-                stream.channel.get()
-            };
-            json!(ui.picture.with(|p| p.for_channel(ch.unwrap_or(0))).key())
-        })
-        .prop("videoTrack", move || {
-            json!(stream.choice.with(|c| c.video.clone()))
-        })
-        .prop("audioTrack", move || {
-            json!(stream.choice.with(|c| c.audio.clone()))
-        })
-        .prop("textTrack", move || {
-            json!(stream.choice.with(|c| c.text.clone()))
-        })
-        .prop("volume", move || json!(ui.media.volume.with(|v| v.level)))
-        .prop("muted", move || {
-            json!(ui.media.volume.with(|v| v.muted) || !crate::multiview::audible(ui, surface))
-        })
-        .prop("audioDelay", move || json!(ui.media.delay_ms.get()))
-        .prop("pip", move || crate::pip::prop(ui, surface))
+        .prop("source", move || json!((props.source)()))
+        .prop("paused", move || json!((props.paused)()))
+        .prop("pictureSize", move || json!((props.picture_size)()))
+        .prop("videoTrack", move || json!((props.video_track)()))
+        .prop("audioTrack", move || json!((props.audio_track)()))
+        .prop("textTrack", move || json!((props.text_track)()))
+        .prop("volume", move || json!((props.volume)()))
+        .prop("muted", move || json!((props.muted)()))
+        .prop("audioDelay", move || json!((props.audio_delay)()))
+        .prop("pip", move || json!((props.pip)()))
         .on_native_event(move |e: &NativeEvent| {
             match e.name.as_ref() {
                 // Once a second while playing: not logged.
