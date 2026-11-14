@@ -15,52 +15,19 @@
 //! catch-up waits for its day before it resolves the archive ([`ready`]).
 
 use std::cell::Cell;
-#[cfg(test)]
-use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
-use iptv_epg::{DAY, GuideStore, UnixTime};
+use iptv_epg::{GuideStore, UnixTime};
 use iptv_guide::EpgSchedule;
-use iptv_guide::pages::{PageRequest, PagedWindow};
+use iptv_guide::pages::PageRequest;
 use iptv_store_sqlite::{EpgWindow, SourceId};
 use nsh_core::prelude::*;
 
 use crate::guide::{Schedule, home_window};
 use crate::{Playback, Ui};
 
-/// Days of finished programmes held in memory with the guide (at most
-/// what `epg.keep_past` keeps). Older ones are paged in.
-pub const LOADED_PAST_DAYS: u32 = 1;
-
-/// What a schedule shown at `now` holds of the stored guide: from
-/// [`LOADED_PAST_DAYS`] (at most `keep_past_days`) before the hour of
-/// `now` on; the store keeps nothing that ended before `keep_past_days`.
-pub fn window(now: UnixTime, keep_past_days: u32) -> PagedWindow {
-    let days = i64::from(LOADED_PAST_DAYS.min(keep_past_days));
-    PagedWindow {
-        loaded_from: now - now.rem_euclid(3600) - days * DAY,
-        oldest: now.saturating_sub(i64::from(keep_past_days).saturating_mul(DAY)),
-    }
-}
-
-/// The store read of [`window`]'s held part.
-pub fn store_window(window: PagedWindow) -> EpgWindow<'static> {
-    EpgWindow {
-        from: window.loaded_from,
-        ..EpgWindow::from(0, 0)
-    }
-}
-
-/// [`window`] with its oldest time at the first programme stored (`None`:
-/// none is), when that is later than what the store would keep: the guide
-/// can be browsed back to it and no further (`EpgSchedule::browsable`).
-pub fn kept_from(window: PagedWindow, first: Option<UnixTime>, now: UnixTime) -> PagedWindow {
-    PagedWindow {
-        oldest: window.oldest.max(first.unwrap_or(now)),
-        ..window
-    }
-}
+pub use crate::runtime::paging::{kept_from, store_window, window};
 
 /// `schedule` (source `source`'s stored guide, as [`window`] at `now`
 /// read it) with its older days paged in on demand, back to the first
@@ -237,6 +204,8 @@ pub fn bind(ui: Ui) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iptv_epg::DAY;
+    use std::cell::RefCell;
 
     const NOW: UnixTime = 1_800_000_000 + 1234;
 

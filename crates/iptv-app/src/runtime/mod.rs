@@ -32,6 +32,8 @@ type EventSink = Rc<dyn Fn(RuntimeEvent)>;
 type PageWaiters = RefCell<Vec<Box<dyn FnOnce()>>>;
 
 pub(crate) struct Runtime {
+    pub(crate) activity: RefCell<BTreeMap<SourceId, library::Activity>>,
+    pub(crate) all: Cell<bool>,
     pub(crate) generation: Slot<Cell<u64>>,
     pub(crate) imports: Slot<RefCell<HashMap<SourceId, (u64, CancelToken)>>>,
     pub(crate) attempts: Slot<RefCell<HashMap<SourceId, i64>>>,
@@ -57,6 +59,8 @@ pub(crate) struct Runtime {
 impl Default for Runtime {
     fn default() -> Self {
         Self {
+            activity: RefCell::default(),
+            all: Cell::new(false),
             generation: Slot::default(),
             imports: Slot::default(),
             attempts: Slot::default(),
@@ -162,3 +166,23 @@ pub(crate) mod executor;
 pub(crate) mod file_writer;
 
 pub(crate) mod commands;
+
+pub(crate) mod imports;
+
+pub(crate) mod stored;
+
+pub(crate) mod opening;
+
+pub(crate) mod paging;
+
+pub(crate) mod playback;
+
+pub(crate) mod guides;
+
+pub(crate) mod workers;
+
+pub(crate) mod wizard_map;
+
+pub(crate) mod private_files;
+
+pub(crate) mod library;

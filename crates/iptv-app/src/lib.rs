@@ -53,7 +53,7 @@ mod player;
 mod player_keys;
 mod player_panels;
 mod playlists_view;
-mod private_files;
+use runtime::private_files;
 mod rail;
 mod remote_editor;
 mod scale;

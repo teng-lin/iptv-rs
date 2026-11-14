@@ -41,7 +41,6 @@ use std::cell::Cell;
 
 use iptv_core::multiview::{Key, Limits, MAX_SURFACES, Multiview, Outcome};
 use iptv_core::play_bar::PlayBar;
-use iptv_import::SourceMeta;
 use iptv_nav::Action;
 use nsh_core::prelude::*;
 
@@ -66,17 +65,6 @@ const HINT_MS: u64 = 5_000;
 
 thread_local! {
     static ACCOUNT_STREAMS: Cell<Option<u32>> = const { Cell::new(None) };
-}
-
-/// The streams the shown source's account allows at once, if it says.
-pub fn account_streams(meta: &SourceMeta) -> Option<u32> {
-    match meta {
-        SourceMeta::Xtream {
-            account: Some(account),
-            ..
-        } => account.max_connections.filter(|n| *n > 0),
-        _ => None,
-    }
 }
 
 /// The streams the shown source's account allows at once, if known: the

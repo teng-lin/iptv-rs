@@ -74,7 +74,7 @@ pub(super) fn added(ui: Ui, source: SourceId, generation: u64, previous: Option<
         let enabled = |id| playlists.iter().any(|p| p.id == id && p.policy.enabled);
         super::source_changed(ui, None);
         stored::note_shown(None);
-        ui.library.all.set(true);
+        crate::runtime::library::set_all(true);
         crate::runtime().parts.with(|p| p.borrow_mut().clear());
         crate::runtime().limits.with(|p| p.borrow_mut().clear());
         let previous = previous.filter(|s| {
@@ -160,8 +160,8 @@ fn reattach_guide(
     });
 }
 
-pub fn active(ui: Ui) -> bool {
-    ui.library.all.get_untracked()
+pub fn active(_ui: Ui) -> bool {
+    crate::runtime().all.get()
 }
 pub fn includes(ui: Ui, id: SourceId) -> bool {
     active(ui) && library::policy(id).is_ok_and(|p| p.enabled)
@@ -214,7 +214,7 @@ async fn switch_all_ready(ui: Ui) {
     reset_single();
     super::source_changed(ui, None);
     stored::note_shown(None);
-    ui.library.all.set(true);
+    crate::runtime::library::set_all(true);
     crate::runtime().parts.with(|p| p.borrow_mut().clear());
     crate::runtime().limits.with(|p| p.borrow_mut().clear());
     crate::runtime().emit(crate::runtime::RuntimeEvent::AccountStreams(None));
@@ -234,10 +234,10 @@ async fn switch_all_ready(ui: Ui) {
         }
     }
 }
-pub fn leave(ui: Ui) {
+pub fn leave(_ui: Ui) {
     reset_single();
     crate::runtime().resume.with(|r| r.set(false));
-    ui.library.all.set(false);
+    crate::runtime::library::set_all(false);
     crate::runtime().parts.with(|p| p.borrow_mut().clear());
     crate::runtime().limits.with(|p| p.borrow_mut().clear());
     let saved = crate::store_service::call(|store| store.set_all_playlists(false));

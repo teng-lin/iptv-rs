@@ -50,3 +50,8 @@ pub(crate) fn spawn_blocking<R: Send + 'static>(
 ) -> JoinHandle<R> {
     runtime().spawn_blocking(work)
 }
+
+/// Drive a non-Send import on its bounded blocking worker, sharing the IO executor.
+pub(crate) fn block_on<F: Future>(future: F) -> F::Output {
+    runtime().block_on(future)
+}

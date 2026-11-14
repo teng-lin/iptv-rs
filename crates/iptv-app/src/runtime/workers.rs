@@ -96,7 +96,7 @@ impl Drop for Pool {
     }
 }
 
-pub(super) fn submit(visible: bool, work: impl FnOnce() + Send + 'static) -> bool {
+pub(crate) fn submit(visible: bool, work: impl FnOnce() + Send + 'static) -> bool {
     let work = crate::store_service::scoped(move || {
         // Retired queued refreshes must not spend a new app's network budget.
         // Running work remains guarded again at every store operation.

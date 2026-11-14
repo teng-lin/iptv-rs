@@ -3,6 +3,17 @@ use crate::{Ui, runtime::RuntimeEvent};
 
 pub(crate) fn apply(ui: Ui, event: RuntimeEvent) {
     match event {
+        RuntimeEvent::RefreshProgress(source, activity) => {
+            ui.library.activity.update(|activities| {
+                if let Some(activity) = activity {
+                    activities.insert(source, activity);
+                } else {
+                    activities.remove(&source);
+                }
+            })
+        }
+        RuntimeEvent::BrowsingAll(all) => ui.library.all.set(all),
+        RuntimeEvent::ShownSource(source) => ui.library.shown.set(source),
         RuntimeEvent::ScheduleReady(schedule) => crate::set_schedule(&ui, schedule),
         RuntimeEvent::OrganizationReady { schedule, snapshot } => {
             if std::rc::Rc::ptr_eq(&schedule, &crate::schedule())

@@ -4,6 +4,9 @@ use iptv_library::SourceId;
 use std::rc::Rc;
 
 pub(crate) enum RuntimeEvent {
+    RefreshProgress(SourceId, Option<super::library::Activity>),
+    BrowsingAll(bool),
+    ShownSource(Option<SourceId>),
     ScheduleReady(Rc<dyn Schedule>),
     OrganizationReady {
         schedule: Rc<dyn Schedule>,
