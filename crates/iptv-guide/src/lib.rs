@@ -149,12 +149,33 @@ impl EpgSchedule {
         }
     }
     /// `groups`: names with their channels, in display order. The epoch is
-    /// `now` rounded down to the hour.
+    /// `now` rounded down to the hour. A group's name is its key.
     pub fn new(groups: Vec<(String, Vec<GuideChannel>)>, store: GuideStore, now: UnixTime) -> Self {
+        let keyed = groups
+            .into_iter()
+            .map(|(name, members)| (name.clone(), name, members));
+        Self::keyed(keyed, store, now)
+    }
+
+    /// `groups`: each group's stable key, its name and its channels, in
+    /// display order. Groups without channels are left out. A group's key,
+    /// name and first channel are recorded together here and nowhere
+    /// else, so the three lists always have one entry per group
+    /// ([`Self::set_organization`] indexes one by another's positions).
+    fn keyed(
+        groups: impl IntoIterator<Item = (String, String, Vec<GuideChannel>)>,
+        store: GuideStore,
+        now: UnixTime,
+    ) -> Self {
         let mut channels = Vec::new();
+        let mut group_keys = Vec::new();
         let mut group_names = Vec::new();
         let mut group_starts = Vec::new();
-        for (name, members) in groups.into_iter().filter(|(_, m)| !m.is_empty()) {
+        for (key, name, members) in groups {
+            if members.is_empty() {
+                continue;
+            }
+            group_keys.push(key);
             group_names.push(name);
             group_starts.push(channels.len());
             channels.extend(members);
@@ -163,7 +184,7 @@ impl EpgSchedule {
             data_start: store.first_start(),
             data_end: store.last_stop(),
             sources: vec![None; channels.len()],
-            group_keys: group_names.clone(),
+            group_keys,
             organization: Default::default(),
             channels,
             group_names,
@@ -254,6 +275,8 @@ impl EpgSchedule {
 
     /// From an imported catalog: each channel in its first group (in the
     /// catalog's group order), channels without a group last under "Other".
+    /// A group id listed twice is one group, the first listed: its
+    /// channels are there, and the repeat holds none.
     pub fn from_catalog(
         groups: &[Group],
         channels: &[Channel],
@@ -266,19 +289,20 @@ impl EpgSchedule {
         for (slot, i) in group_slots(groups, channels) {
             buckets[slot].push((i as u32 + 1, &channels[i]));
         }
-        let names = groups
+        // One key and name per bucket: the catalog's groups, then "Other".
+        let labels = groups
             .iter()
-            .map(|g| g.name.clone())
-            .chain(["Other".to_owned()]);
+            .map(|g| (g.id.as_str().to_owned(), g.name.clone()))
+            .chain([("__other__".to_owned(), "Other".to_owned())]);
         // Where each playlist position lands once grouped.
         let mut stored_at = vec![0; channels.len()];
         for (at, &(position, _)) in buckets.iter().flatten().enumerate() {
             stored_at[position as usize - 1] = at;
         }
         let mut ordered = Vec::new();
-        let grouped = names
+        let grouped: Vec<_> = labels
             .zip(buckets)
-            .map(|(name, members)| {
+            .map(|((key, name), members)| {
                 let guide = members
                     .iter()
                     .map(|&(position, c)| GuideChannel {
@@ -292,25 +316,10 @@ impl EpgSchedule {
                     })
                     .collect::<Vec<_>>();
                 ordered.extend(members.into_iter().map(|(_, c)| c.clone()));
-                (name, guide)
+                (key, name, guide)
             })
             .collect();
-        let mut schedule = EpgSchedule::new(grouped, store, now);
-        schedule.group_keys = groups
-            .iter()
-            .filter(|g| channels.iter().any(|c| c.groups.first() == Some(&g.id)))
-            .map(|g| g.id.as_str().to_owned())
-            .chain(
-                channels
-                    .iter()
-                    .any(|c| {
-                        c.groups
-                            .first()
-                            .is_none_or(|id| !groups.iter().any(|g| &g.id == id))
-                    })
-                    .then(|| "__other__".to_owned()),
-            )
-            .collect();
+        let mut schedule = EpgSchedule::keyed(grouped, store, now);
         schedule.sources = ordered.into_iter().map(Some).collect();
         schedule.playlist_order = stored_at;
         schedule

@@ -523,3 +523,63 @@ fn returning_and_new_channels_keep_provider_identity_and_fill_missing_preference
             .is_some()
     );
 }
+
+/// A store cannot hold a group id twice, but the constructor must not
+/// depend on that: a repeated id is one group, and every group has
+/// exactly one key, one name and one first channel.
+#[test]
+fn a_repeated_group_id_keeps_keys_names_and_starts_together() {
+    let m = parse_m3u(
+        "#EXTM3U\n\
+         #EXTINF:-1 group-title=\"News\",A\nhttp://example.test/a\n\
+         #EXTINF:-1 group-title=\"Sport\",B\nhttp://example.test/b\n\
+         #EXTINF:-1 group-title=\"News\",C\nhttp://example.test/c\n\
+         #EXTINF:-1,D\nhttp://example.test/d\n",
+    );
+    let (news, sport) = (m.groups[0].clone(), m.groups[1].clone());
+    let mut again = news.clone();
+    again.name = "News again".to_owned();
+    let repeated = [news.clone(), again, sport.clone(), sport.clone()];
+    let s = EpgSchedule::from_catalog(&repeated, &m.channels.items, GuideStore::new(), NOW);
+    let plain = EpgSchedule::from_catalog(&m.groups, &m.channels.items, GuideStore::new(), NOW);
+
+    let groups = |s: &EpgSchedule| {
+        (0..s.group_count())
+            .map(|g| (s.group_key(g), s.group_name(g), s.group_channels(g)))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        groups(&s),
+        [
+            (news.id.as_str().to_owned(), "News".to_owned(), vec![0, 1]),
+            (sport.id.as_str().to_owned(), "Sport".to_owned(), vec![2]),
+            ("__other__".to_owned(), "Other".to_owned(), vec![3]),
+        ]
+    );
+    assert_eq!(groups(&s), groups(&plain), "the repeats add nothing");
+    assert_eq!(
+        (
+            s.group_keys.len(),
+            s.group_names.len(),
+            s.group_starts.len()
+        ),
+        (3, 3, 3)
+    );
+
+    // Arranging the groups walks every key and reads its name: with more
+    // keys than names this indexed past the end.
+    s.set_organization(super::Organization {
+        channels: Vec::new(),
+        groups: vec![(
+            sport.id.as_str().to_owned(),
+            "Sport first".to_owned(),
+            false,
+        )],
+    });
+    assert_eq!(
+        (0..s.group_count())
+            .map(|g| s.group_name(g))
+            .collect::<Vec<_>>(),
+        ["Sport first", "News", "Other"]
+    );
+}
