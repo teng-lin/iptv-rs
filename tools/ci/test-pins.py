@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -105,6 +106,10 @@ class Repository(unittest.TestCase):
                                 check=True, capture_output=True, text=True)
         self.assertEqual(result.stdout.splitlines(),
                          [f"nsh={pins.nsh_revision()}", f"toolchain={pins.toolchain()}"])
+
+    def test_declared_minimum_rust_is_the_tested_toolchain(self):
+        manifest = tomllib.loads((ROOT / "Cargo.toml").read_text())
+        self.assertEqual(manifest["workspace"]["package"]["rust-version"], pins.toolchain())
 
     def test_actions_and_workflows_do_not_repeat_the_pins(self):
         revision, channel = pins.nsh_revision(), pins.toolchain()
