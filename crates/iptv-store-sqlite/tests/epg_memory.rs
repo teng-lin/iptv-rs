@@ -151,7 +151,7 @@ fn stored_load(shape: Shape) -> (Report, Report) {
     let (guide, programmes) = epg_synth::import(shape, StoreOptions::default());
     let feeds = [EpgFeedMeta {
         config: EpgSourceConfig::new(
-            iptv_epg::SourceId(1),
+            iptv_epg::FeedId(1),
             SecretUrl::new("http://epg.example.com/guide.xml.gz"),
         ),
         fetched_at: NOW,

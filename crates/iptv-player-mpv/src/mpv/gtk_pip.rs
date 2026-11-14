@@ -59,7 +59,7 @@ impl PipView {
             // Once the window's surface is up.
             glib::idle_add_local_once(move || {
                 if let Some(window) = frame.root().and_downcast::<gtk::Window>() {
-                    crate::desktop::x11::keep_above(&window);
+                    super::x11::keep_above(&window);
                 }
             });
         });

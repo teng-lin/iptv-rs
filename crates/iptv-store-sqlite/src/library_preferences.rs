@@ -5,32 +5,7 @@ use crate::{SourceId, Store};
 use iptv_providers::{GroupId, model::Group};
 use rusqlite::{OptionalExtension, params};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SourcePolicy {
-    pub enabled: bool,
-    /// Zero disables periodic refresh. Foreground scheduling only.
-    pub refresh_seconds: u32,
-    pub refresh_on_start: bool,
-}
-impl Default for SourcePolicy {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            refresh_seconds: 0,
-            refresh_on_start: true,
-        }
-    }
-}
-impl SourcePolicy {
-    /// Failed attempts count too: a failed import cannot create a tight retry loop.
-    pub fn due(self, now: i64, last_attempt: Option<i64>, startup: bool) -> bool {
-        self.enabled
-            && ((startup && self.refresh_on_start)
-                || (self.refresh_seconds > 0
-                    && last_attempt
-                        .is_none_or(|t| now.saturating_sub(t) >= i64::from(self.refresh_seconds))))
-    }
-}
+pub use iptv_library::SourcePolicy;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GroupRow {
     pub group: Group,

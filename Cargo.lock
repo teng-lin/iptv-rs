@@ -2199,7 +2199,6 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "dbus-secret-service",
- "dispatch2",
  "embed-resource",
  "env_logger",
  "futures-channel",
@@ -2208,8 +2207,10 @@ dependencies = [
  "iptv-epg",
  "iptv-guide",
  "iptv-import",
+ "iptv-library",
  "iptv-nav",
  "iptv-net",
+ "iptv-player-mpv",
  "iptv-providers",
  "iptv-search",
  "iptv-settings",
@@ -2226,14 +2227,6 @@ dependencies = [
  "nsh-platform-macos",
  "nsh-platform-windows",
  "nsh-testing",
- "objc2",
- "objc2-app-kit",
- "objc2-core-foundation",
- "objc2-core-video",
- "objc2-foundation",
- "objc2-open-gl",
- "objc2-quartz-core",
- "objc2-ui-kit",
  "rusqlite",
  "serde_json",
  "sys-locale",
@@ -2273,10 +2266,20 @@ dependencies = [
  "flate2",
  "iptv-core",
  "iptv-epg",
+ "iptv-library",
  "iptv-providers",
  "iptv-settings",
  "proptest",
  "serde_json",
+]
+
+[[package]]
+name = "iptv-library"
+version = "0.1.1"
+dependencies = [
+ "iptv-core",
+ "iptv-epg",
+ "iptv-providers",
 ]
 
 [[package]]
@@ -2303,6 +2306,32 @@ dependencies = [
  "tokio-rustls",
  "url",
  "webpki-roots 1.0.11",
+]
+
+[[package]]
+name = "iptv-player-mpv"
+version = "0.1.1"
+dependencies = [
+ "dispatch2",
+ "iptv-core",
+ "iptv-net",
+ "libc",
+ "log",
+ "nsh-platform-ios",
+ "nsh-platform-linux",
+ "nsh-platform-macos",
+ "nsh-platform-windows",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-core-foundation",
+ "objc2-core-video",
+ "objc2-foundation",
+ "objc2-open-gl",
+ "objc2-quartz-core",
+ "objc2-ui-kit",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -2342,6 +2371,7 @@ dependencies = [
  "iptv-epg",
  "iptv-guide",
  "iptv-import",
+ "iptv-library",
  "iptv-net",
  "iptv-providers",
  "rusqlite",

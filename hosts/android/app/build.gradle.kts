@@ -66,6 +66,7 @@ android {
 
 dependencies {
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20250107")
     implementation("androidx.core:core:1.15.0")
     val media3 = "1.5.1"
     implementation("androidx.media3:media3-exoplayer:$media3")

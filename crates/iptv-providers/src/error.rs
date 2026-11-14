@@ -24,6 +24,26 @@ pub enum ProviderError {
     Stalker(StalkerError),
 }
 
+impl ProviderError {
+    /// Stable failure category for persistence, without messages or secrets.
+    pub fn import_error_slug(&self) -> &'static str {
+        match self {
+            ProviderError::InvalidConfig(_) => "invalid_config",
+            ProviderError::HttpStatus(_) => "http_status",
+            ProviderError::InvalidBody(_) | ProviderError::Limit(_) => "invalid_body",
+            ProviderError::AccountRejected => "account_rejected",
+            ProviderError::Stalker(e) => match e.kind {
+                StalkerErrorKind::Blocked | StalkerErrorKind::DeviceConflict => "blocked",
+                StalkerErrorKind::LoginRequired | StalkerErrorKind::LoginRejected => {
+                    "account_rejected"
+                }
+                StalkerErrorKind::Portal => "other",
+                _ => "auth_failed",
+            },
+        }
+    }
+}
+
 impl fmt::Display for ProviderError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

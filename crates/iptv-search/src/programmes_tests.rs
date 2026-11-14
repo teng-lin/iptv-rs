@@ -2,8 +2,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use iptv_core::guide::Airing::{self, *};
 use iptv_epg::{
-    ChannelKey, EpgRef, GuideStore, MatchKind, SourceBuilder, SourceId, StoreOptions,
-    XmltvProgramme,
+    ChannelKey, EpgRef, FeedId, GuideStore, MatchKind, SourceBuilder, StoreOptions, XmltvProgramme,
 };
 
 use super::*;
@@ -19,7 +18,7 @@ fn keys() -> Vec<ChannelKey> {
 }
 
 fn store(programmes: &[(&str, i64, i64, &str)]) -> GuideStore {
-    let mut b = SourceBuilder::new(SourceId(1), 0, StoreOptions::default(), NOW);
+    let mut b = SourceBuilder::new(FeedId(1), 0, StoreOptions::default(), NOW);
     for &(ch, start, stop, title) in programmes {
         b.push_programme(XmltvProgramme {
             channel: format!("{ch}.example"),
@@ -36,7 +35,7 @@ fn store(programmes: &[(&str, i64, i64, &str)]) -> GuideStore {
         .map(|k| {
             let epg_id = format!("{k}.example");
             let r = EpgRef {
-                source: SourceId(1),
+                source: FeedId(1),
                 epg_id,
                 kind: MatchKind::TvgId,
             };

@@ -6,15 +6,15 @@ security model is in [security.md](security.md).
 
 ## Crates and the direction of dependencies
 
-The workspace has eleven crates in three layers. Dependencies only point
+The workspace has thirteen crates in three layers. Dependencies only point
 down: a crate may depend on crates in its own layer or below, never above.
 
 ```text
   Shell            iptv-app
                       │
-  Native adapters  iptv-net        iptv-store-sqlite
+  Native adapters  iptv-net        iptv-store-sqlite  iptv-player-mpv
                       │                   │
-  Portable core    iptv-import  iptv-guide  iptv-search
+  Portable core    iptv-import  iptv-guide  iptv-search  iptv-library
                    iptv-providers  iptv-epg  iptv-settings
                    iptv-core  iptv-nav
 ```
@@ -25,16 +25,19 @@ down: a crate may depend on crates in its own layer or below, never above.
 | `iptv-providers`, `iptv-epg` | `iptv-core` |
 | `iptv-guide` | `iptv-core`, `iptv-epg`, `iptv-providers` |
 | `iptv-search` | `iptv-core`, `iptv-epg` |
-| `iptv-import` | `iptv-core`, `iptv-providers`, `iptv-epg`, `iptv-settings` |
+| `iptv-library` | `iptv-core`, `iptv-providers`, `iptv-epg` |
+| `iptv-import` | `iptv-core`, `iptv-providers`, `iptv-epg`, `iptv-settings`, `iptv-library` |
 | `iptv-net` | `iptv-providers`, `iptv-import` |
-| `iptv-store-sqlite` | `iptv-providers`, `iptv-epg`, `iptv-import` |
+| `iptv-store-sqlite` | `iptv-providers`, `iptv-epg`, `iptv-import`, `iptv-library` |
+| `iptv-player-mpv` | `iptv-core`, `iptv-net`, platform NSH components |
 | `iptv-app` | all of the above, and NSH |
 
 | Layer | Crates | May use |
 | --- | --- | --- |
-| Portable core | `iptv-core`, `iptv-nav`, `iptv-settings`, `iptv-providers`, `iptv-epg`, `iptv-guide`, `iptv-import`, `iptv-search` | Plain Rust only. No NSH, no platform APIs, no blocking I/O, no clock, no async runtime. |
+| Portable core | `iptv-core`, `iptv-nav`, `iptv-settings`, `iptv-providers`, `iptv-epg`, `iptv-guide`, `iptv-import`, `iptv-search`, `iptv-library` | Plain Rust only. No NSH, no platform APIs, no blocking I/O, no clock, no async runtime. |
 | Native adapters | `iptv-net`, `iptv-store-sqlite` | Tokio and reqwest; SQLite. No NSH. |
-| Shell | `iptv-app` | NSH, the adapters, platform APIs, libmpv. |
+| Player adapter | `iptv-player-mpv` | NSH native components, platform APIs, libmpv. The Android build contains only the wire contract and track parser. |
+| Shell | `iptv-app` | NSH, the adapters, platform APIs. |
 
 `tools/check.sh` builds every portable crate for `wasm32-unknown-unknown`.
 That build is what keeps platform code out of them.
@@ -56,6 +59,10 @@ What each portable crate owns:
   store, behind the `Schedule` trait of `iptv-core`.
 - `iptv-import`: the import pipeline that drives the two above.
 - `iptv-search`: channel and programme search, and the search screen's state.
+- `iptv-library`: playlist and guide identifiers, policy and list models,
+  guide edits, and the playlists, guide sources and guide assignment screen
+  states. SQLite re-exports its former model paths. Guide feed IDs are
+  `iptv_epg::FeedId`; playlist IDs are `iptv_library::SourceId`.
 
 ## Sans-IO ports
 
@@ -121,11 +128,15 @@ There is one persistent player surface under the UI
 (`iptv-app/src/video.rs`). It is a native component named `tv.player`:
 
 - on Android the Kotlin host (`hosts/android`) registers it, on Media3;
-- on Linux, macOS, iPad and Windows `iptv-app/src/mpv/` registers it, on libmpv.
+- on Linux, macOS, iPad and Windows `iptv-player-mpv` registers it, on libmpv.
 
 Both sides implement the same contract of props (`source`, `paused`,
 `pictureSize`, track choices, volume) and events (`state`, `size`, `error`,
 `position`, `tracks`), summed up at the top of `video.rs`.
+`iptv-player-mpv/src/props.rs` declares the typed property bindings and their
+serialized snapshot. Rust and Kotlin tests read the same synthetic JSON
+fixture through their existing serialization and decoding paths. The shell
+supplies the playback transport policy when registering the player.
 
 The invariants:
 

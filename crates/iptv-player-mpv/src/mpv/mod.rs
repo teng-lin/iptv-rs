@@ -66,6 +66,8 @@ mod gtk;
 #[cfg(all(target_os = "linux", not(test)))]
 mod gtk_pip;
 #[cfg(all(target_os = "linux", not(test)))]
+mod x11;
+#[cfg(all(target_os = "linux", not(test)))]
 use gtk as platform;
 // The unit tests run the player without a display (`test_host`).
 #[cfg(all(target_os = "linux", test))]
@@ -96,7 +98,36 @@ use std::sync::mpsc::TryRecvError;
 use serde_json::{Value, json};
 
 use handle::Mpv;
-pub use platform::register;
+/// Supplies transport settings for each new load, including current trust roots.
+pub type Policy = fn(bool) -> iptv_net::playback::PlaybackPolicy;
+
+thread_local! {
+    static POLICY: Cell<Policy> = const { Cell::new(default_policy) };
+}
+
+fn default_policy(public_only: bool) -> iptv_net::playback::PlaybackPolicy {
+    iptv_net::playback::PlaybackPolicy {
+        public_only,
+        #[cfg(debug_assertions)]
+        allow_private_fixture: cfg!(test),
+        ..Default::default()
+    }
+}
+
+#[cfg(target_os = "ios")]
+use nsh_platform_ios::Components;
+#[cfg(target_os = "linux")]
+use nsh_platform_linux::Components;
+#[cfg(target_os = "macos")]
+use nsh_platform_macos::Components;
+#[cfg(windows)]
+use nsh_platform_windows::Components;
+
+/// Registers persistent player and PiP surfaces with the shell's transport policy.
+pub fn register(components: &Components, policy: Policy) {
+    POLICY.set(policy);
+    platform::register(components);
+}
 use platform::{ComponentContext, Video};
 use worker::{Cmd, Note, Worker};
 

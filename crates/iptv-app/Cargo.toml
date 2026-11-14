@@ -12,9 +12,11 @@ license.workspace = true
 test-support = []
 
 [dependencies]
+iptv-library.workspace = true
 base64 = "0.22"
 sys-locale = "0.3.2"
 iptv-core.workspace = true
+iptv-player-mpv.workspace = true
 iptv-nav.workspace = true
 iptv-guide.workspace = true
 iptv-epg.workspace = true
@@ -46,61 +48,11 @@ dbus-secret-service = { version = "4.1", features = ["crypto-rust"] }
 nsh-platform-linux.workspace = true
 keyring = { version = "3.6.3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
 
-# The macOS desktop: NSH's AppKit backend, and `tv.player` on libmpv drawing
-# into a CAOpenGLLayer (`src/mpv/mac.rs`).
 [target.'cfg(target_os = "macos")'.dependencies]
 nsh-platform-macos.workspace = true
-dispatch2 = "0.3.1"
-objc2 = "0.6.5"
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSGeometry", "NSObject"] }
-objc2-app-kit = { version = "0.3.2", default-features = false, features = [
-  "std",
-  "objc2-quartz-core",
-  "NSResponder",
-  "NSView",
-  "NSWindow",
-] }
-objc2-quartz-core = { version = "0.3.2", default-features = false, features = [
-  "std",
-  "objc2-core-video",
-  "objc2-open-gl",
-  "CALayer",
-  "CAOpenGLLayer",
-] }
-objc2-open-gl = { version = "0.3.2", default-features = false, features = [
-  "std",
-  "CGLCurrent",
-  "CGLTypes",
-] }
-objc2-core-video = { version = "0.3.2", default-features = false, features = ["std", "CVBase"] }
 
-# iOS and iPadOS: NSH's UIKit backend, and `tv.player` on MPVKit's libmpv
-# drawing into a CAEAGLLayer (`src/mpv/ios.rs`; `tools/fetch-mpvkit.sh`,
-# linked by build.rs).
 [target.'cfg(target_os = "ios")'.dependencies]
 nsh-platform-ios.workspace = true
-dispatch2 = "0.3.1"
-objc2 = "0.6.5"
-objc2-foundation = { version = "0.3.2", default-features = false, features = [
-  "std",
-  "NSGeometry",
-  "NSObject",
-  "NSString",
-  "NSURL",
-  "NSValue",
-  "NSError",
-  "objc2-core-foundation",
-] }
-objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFCGTypes"] }
-objc2-ui-kit = { version = "0.3.2", default-features = false, features = [
-  "std",
-  "objc2-core-foundation",
-  "UIEvent",
-  "UIResponder",
-  "UIScreen",
-  "UIView",
-  "UIWindow",
-] }
 
 [dev-dependencies]
 rusqlite.workspace = true

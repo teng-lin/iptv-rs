@@ -39,8 +39,8 @@ use iptv_providers::SecretUrl;
 use iptv_providers::model::{Channel, ContentKind, Group};
 use iptv_settings::{Settings, Target};
 use iptv_store_sqlite::{
-    ChannelOrder, ChannelQuery, EpgCounts, EpgFeedMeta, EpgWindow, FeedResult, GuideSource,
-    ImportErrorKind, SourceId, Store, StoreError, StoredGuide,
+    ChannelOrder, ChannelQuery, EpgCounts, EpgFeedMeta, EpgWindow, GuideSource, ImportErrorKind,
+    SourceId, Store, StoreError, StoredGuide,
 };
 
 use nsh_core::prelude::timer;
@@ -225,7 +225,7 @@ pub fn guide_sources(source: SourceId) -> Vec<GuideSource> {
 /// The download configs of `sources` (those switched on), with the storage
 /// settings of now (a stored config has those it was fetched with).
 pub fn configs(sources: &[GuideSource]) -> Vec<EpgSourceConfig> {
-    let template = EpgSourceConfig::new(iptv_epg::SourceId(0), SecretUrl::new(""));
+    let template = EpgSourceConfig::new(iptv_epg::FeedId(0), SecretUrl::new(""));
     let template = with_storage(vec![template], &crate::settings::get()).remove(0);
     guides::configs_of(sources, &template)
 }
@@ -575,12 +575,7 @@ pub fn updating(source: SourceId) -> bool {
     UPDATING.with(|u| u.borrow().contains(&source))
 }
 
-/// One guide source with how its last download went.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SourceLine {
-    pub source: GuideSource,
-    pub result: Option<FeedResult>,
-}
+pub use iptv_library::SourceLine;
 
 /// `source`'s guide sources in order, each with its last result (one
 /// short read of the store).
@@ -1013,8 +1008,8 @@ mod tests {
         let edits = [
             guides::Edit::SetEnabled(guides::FIRST_USER_FEED, false),
             guides::Edit::Remove(guides::FIRST_USER_FEED),
-            guides::Edit::Move(iptv_epg::SourceId(2), -1),
-            guides::Edit::Shift(iptv_epg::SourceId(2), 60),
+            guides::Edit::Move(iptv_epg::FeedId(2), -1),
+            guides::Edit::Shift(iptv_epg::FeedId(2), 60),
             guides::Edit::Add {
                 url: SecretUrl::new("http://more.example.test/g.xml".to_owned()),
                 name: None,

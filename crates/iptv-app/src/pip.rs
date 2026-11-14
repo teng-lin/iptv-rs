@@ -143,9 +143,9 @@ fn report(ui: Ui, active: bool) {
 /// Surface `surface`'s `pip` prop: `{auto, enter, window}` for surface 0
 /// (`window`: the desktops' window shows it), null for the others (the
 /// window shows surface 0).
-pub fn prop(ui: Ui, surface: usize) -> Value {
+pub fn prop(ui: Ui, surface: usize) -> Option<iptv_player_mpv::PipProps> {
     if surface != 0 {
-        return Value::Null;
+        return None;
     }
     ui.settings.get();
     let on_leave = OnLeave::from_key(crate::settings::choice(PIP_ON_LEAVE));
@@ -153,7 +153,11 @@ pub fn prop(ui: Ui, surface: usize) -> Value {
     let (auto, enter, window) = ui
         .pip
         .with(|p| (p.auto_enter(on_leave, playing), p.requests, p.in_window()));
-    json!({ "auto": auto, "enter": enter, "window": window })
+    Some(iptv_player_mpv::PipProps {
+        auto,
+        enter,
+        window,
+    })
 }
 
 /// The host's `pip` event.

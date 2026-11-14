@@ -25,7 +25,7 @@ fn store_with_sources() -> (Store, SourceId, SourceId) {
 
 fn config(id: u32, priority: i32) -> EpgSourceConfig {
     EpgSourceConfig::new(
-        iptv_epg::SourceId(id),
+        iptv_epg::FeedId(id),
         SecretUrl::new(format!(
             "http://epg.example.com/{id}.xml?password={}",
             common::XT_PASSWORD
@@ -58,8 +58,8 @@ fn prog(channel: &str, start: i64, stop: i64, title: &str, desc: Option<&str>) -
 /// Two feeds: "hi" (priority 9) has `x`, "lo" (1) has `x` and `y`.
 /// Keys: k1 -> x (hi wins), k2 -> y (lo), k3 -> x as well, k4 -> missing.
 fn two_feed_guide(tag: &str) -> GuideStore {
-    let mut hi = SourceBuilder::new(iptv_epg::SourceId(1), 9, StoreOptions::default(), NOW);
-    let mut lo = SourceBuilder::new(iptv_epg::SourceId(2), 1, StoreOptions::default(), NOW);
+    let mut hi = SourceBuilder::new(iptv_epg::FeedId(1), 9, StoreOptions::default(), NOW);
+    let mut lo = SourceBuilder::new(iptv_epg::FeedId(2), 1, StoreOptions::default(), NOW);
     for i in -3..6 {
         let t = NOW + i * H;
         hi.push_programme(prog("x", t, t + H, &format!("{tag} X{i}"), Some("About X")));
@@ -70,7 +70,7 @@ fn two_feed_guide(tag: &str) -> GuideStore {
     g.replace_source(hi.finish());
     g.replace_source(lo.finish());
     let cand = |s: u32, id: &str, kind| EpgRef {
-        source: iptv_epg::SourceId(s),
+        source: iptv_epg::FeedId(s),
         epg_id: id.into(),
         kind,
     };
@@ -118,7 +118,7 @@ fn replace_then_load_round_trips_bindings_and_priorities() {
     assert_eq!(titles(&g, "k1", NOW, NOW + H), ["v1 X0"]);
     assert_eq!(titles(&g, "k3", NOW, NOW + H), ["v1 X0"]);
     assert_eq!(titles(&g, "k2", NOW, NOW + H), ["v1 Y0"]);
-    assert_eq!(g.binding(&"k3".into()), Some((iptv_epg::SourceId(1), "x")));
+    assert_eq!(g.binding(&"k3".into()), Some((iptv_epg::FeedId(1), "x")));
     assert!(g.programme_at(&"k4".into(), NOW).is_none());
 
     let stored = store.epg_guide(a).unwrap().unwrap();
@@ -335,7 +335,7 @@ fn every_field_survives_the_store() {
         StoreOptions::default(),
     );
     let feeds = [meta(EpgSourceConfig::new(
-        iptv_epg::SourceId(1),
+        iptv_epg::FeedId(1),
         SecretUrl::new("http://epg.example.com/synthetic.xml.gz"),
     ))];
     let counts = staged::replace_epg(&mut store, a, &guide, &feeds, 0).unwrap();
@@ -408,7 +408,7 @@ fn the_first_programme_stored_bounds_the_guide() {
 #[test]
 fn a_window_read_seeks_to_the_programme_reaching_into_it() {
     let (mut store, a, _) = store_with_sources();
-    let mut b = SourceBuilder::new(iptv_epg::SourceId(1), 0, StoreOptions::default(), NOW);
+    let mut b = SourceBuilder::new(iptv_epg::FeedId(1), 0, StoreOptions::default(), NOW);
     b.push_programme(prog("x", NOW - 50 * H, NOW - 40 * H, "Old", None));
     b.push_programme(prog("x", NOW - 40 * H, NOW - 30 * H, "Older", None));
     // A day and more on air: it started long before the windows below.
@@ -417,7 +417,7 @@ fn a_window_read_seeks_to_the_programme_reaching_into_it() {
     let mut g = GuideStore::new();
     g.replace_source(b.finish());
     let cand = EpgRef {
-        source: iptv_epg::SourceId(1),
+        source: iptv_epg::FeedId(1),
         epg_id: "x".into(),
         kind: MatchKind::TvgId,
     };

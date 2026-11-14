@@ -12,14 +12,14 @@
 use std::collections::HashMap;
 
 use crate::intern::Interner;
-use crate::matching::SourceId;
+use crate::matching::FeedId;
 use crate::store::{EpgSource, IngestReport, ProgrammeData, Schedule, Slot, intern_programme};
 
 /// Builds an [`EpgSource`] one channel at a time from settled programmes.
 ///
 /// ```
 /// use iptv_epg::*;
-/// let mut b = SettledBuilder::new(SourceId(1), 10, false);
+/// let mut b = SettledBuilder::new(FeedId(1), 10, false);
 /// b.channel("one.example");
 /// for (start, stop, title) in [(1000, 2000, "News"), (2000, 2600, "Weather")] {
 ///     b.push(&ProgrammeData { start, stop: Some(stop), title, ..Default::default() });
@@ -29,7 +29,7 @@ use crate::store::{EpgSource, IngestReport, ProgrammeData, Schedule, Slot, inter
 /// assert_eq!((p.title(), p.start(), p.stop()), ("Weather", 2000, 2600));
 /// ```
 pub struct SettledBuilder {
-    id: SourceId,
+    id: FeedId,
     priority: i32,
     descriptions: bool,
     strings: Interner,
@@ -43,7 +43,7 @@ pub struct SettledBuilder {
 
 impl SettledBuilder {
     /// `descriptions`: keep them in memory (else they are left out).
-    pub fn new(id: SourceId, priority: i32, descriptions: bool) -> Self {
+    pub fn new(id: FeedId, priority: i32, descriptions: bool) -> Self {
         SettledBuilder {
             id,
             priority,
@@ -159,8 +159,8 @@ mod tests {
     #[test]
     fn settled_rows_read_back_as_the_source_builder_keeps_them() {
         let rows = [(1000, 1600, "A"), (1600, 2000, "B"), (2500, 3000, "C")];
-        let mut settled = SettledBuilder::new(SourceId(1), 5, false);
-        let mut built = SourceBuilder::new(SourceId(1), 5, StoreOptions::default(), 0);
+        let mut settled = SettledBuilder::new(FeedId(1), 5, false);
+        let mut built = SourceBuilder::new(FeedId(1), 5, StoreOptions::default(), 0);
         settled.channel("x");
         for &(a, b, t) in &rows {
             assert!(settled.push(&data(a, b, t)));
@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn rows_out_of_order_or_without_duration_are_dropped() {
-        let mut b = SettledBuilder::new(SourceId(1), 0, true);
+        let mut b = SettledBuilder::new(FeedId(1), 0, true);
         assert!(!b.push(&data(0, 10, "before any channel")));
         b.channel("x");
         assert!(b.push(&data(1000, 2000, "A")));

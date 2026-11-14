@@ -31,7 +31,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::thread::JoinHandle;
 
-use iptv_epg::{IngestReport, ProgrammeData, ScheduleRules, SourceId, StoreOptions, UnixTime};
+use iptv_epg::{FeedId, IngestReport, ProgrammeData, ScheduleRules, StoreOptions, UnixTime};
 use iptv_import::{GuideSink, SinkError};
 use rusqlite::{Connection, OpenFlags};
 
@@ -77,7 +77,7 @@ pub(crate) struct StagedChannel {
 
 /// The feed being received.
 struct Current {
-    feed: SourceId,
+    feed: FeedId,
     rules: ScheduleRules,
     descriptions: bool,
     /// EPG channel id -> (stage channel id, programmes admitted).
@@ -103,7 +103,7 @@ pub struct EpgStage {
     failed: Arc<AtomicBool>,
     batch: Batch,
     current: Option<Current>,
-    loaded: HashMap<SourceId, Loaded>,
+    loaded: HashMap<FeedId, Loaded>,
     next_channel: i64,
 }
 
@@ -202,7 +202,7 @@ impl EpgStage {
     }
 
     /// The staged channel `epg_id` of loaded feed `feed`.
-    pub(crate) fn channel(&self, feed: SourceId, epg_id: &str) -> Option<StagedChannel> {
+    pub(crate) fn channel(&self, feed: FeedId, epg_id: &str) -> Option<StagedChannel> {
         self.loaded.get(&feed)?.channels.get(epg_id).copied()
     }
 
@@ -350,7 +350,7 @@ fn sink_error(e: StoreError) -> SinkError {
 impl GuideSink for EpgStage {
     fn begin_feed(
         &mut self,
-        feed: SourceId,
+        feed: FeedId,
         _priority: i32,
         store: StoreOptions,
         now: UnixTime,
@@ -382,7 +382,7 @@ impl GuideSink for EpgStage {
         self.discard_inner().map_err(sink_error)
     }
 
-    fn has_programmes(&self, feed: SourceId, epg_id: &str) -> bool {
+    fn has_programmes(&self, feed: FeedId, epg_id: &str) -> bool {
         self.channel(feed, epg_id).is_some_and(|c| c.kept > 0)
     }
 }

@@ -618,7 +618,7 @@ mod tests {
             {"id":1,"type":"sub","selected":false,"lang":"ger","codec":"webvtt"}
         ]"#;
         let auto = tracks(list, true).unwrap();
-        let t = crate::media::parse_tracks(&auto);
+        let t = crate::parse_tracks(&auto);
         assert_eq!(t.video.len(), 2, "cover art is no rendition");
         assert_eq!(
             (t.video[0].bitrate, t.video[1].bitrate),
@@ -631,10 +631,10 @@ mod tests {
         assert_eq!(t.selected_video, None, "left to mpv");
         assert_eq!(t.selected_audio.as_deref(), Some("2"));
         assert_eq!(t.selected_text, None);
-        let chosen = crate::media::parse_tracks(&tracks(list, false).unwrap());
+        let chosen = crate::parse_tracks(&tracks(list, false).unwrap());
         assert_eq!(chosen.selected_video.as_deref(), Some("2"));
         assert!(tracks("{}", true).is_none());
-        let empty = crate::media::parse_tracks(&tracks("[]", true).unwrap());
+        let empty = crate::parse_tracks(&tracks("[]", true).unwrap());
         assert_eq!(empty, iptv_core::tracks::Tracks::default());
     }
 }

@@ -47,7 +47,7 @@ impl fmt::Display for ChannelKey {
 
 /// Identity of one configured EPG source.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct SourceId(pub u32);
+pub struct FeedId(pub u32);
 
 /// What matching needs to know about a playlist channel.
 #[derive(Clone, Copy, Debug)]
@@ -67,7 +67,7 @@ pub enum Override {
     /// Use this EPG channel id, from one source or (`None`) from every
     /// source that has it.
     Epg {
-        source: Option<SourceId>,
+        source: Option<FeedId>,
         epg_id: String,
     },
     /// The user switched the guide off for this channel.
@@ -87,7 +87,7 @@ pub enum MatchKind {
 /// One EPG channel a playlist channel may take its guide from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EpgRef {
-    pub source: SourceId,
+    pub source: FeedId,
     pub epg_id: String,
     pub kind: MatchKind,
 }
@@ -131,7 +131,7 @@ struct NameEntry {
 }
 
 struct SourceIndex {
-    source: SourceId,
+    source: FeedId,
     priority: i32,
     ids: Vec<Box<str>>,
     exact: HashMap<Box<str>, u32>,
@@ -189,7 +189,7 @@ impl MatchIndex {
     /// wins when several sources match the same playlist channel.
     pub fn add_source<'a>(
         &mut self,
-        source: SourceId,
+        source: FeedId,
         priority: i32,
         channels: impl IntoIterator<Item = &'a XmltvChannel>,
     ) {
@@ -233,12 +233,12 @@ impl MatchIndex {
         self.sources.insert(at, idx);
     }
 
-    pub fn remove_source(&mut self, source: SourceId) {
+    pub fn remove_source(&mut self, source: FeedId) {
         self.sources.retain(|s| s.source != source);
     }
 
     /// Whether `source` has a channel with exactly this id.
-    pub fn contains(&self, source: SourceId, epg_id: &str) -> bool {
+    pub fn contains(&self, source: FeedId, epg_id: &str) -> bool {
         self.sources
             .iter()
             .any(|s| s.source == source && s.exact.contains_key(epg_id))
@@ -347,7 +347,7 @@ pub struct MatchFilter {
     ids: HashSet<String>,
     names: HashSet<String>,
     /// Override targets: EPG id -> the sources named (`None`: any).
-    overrides: HashMap<String, Vec<Option<SourceId>>>,
+    overrides: HashMap<String, Vec<Option<FeedId>>>,
 }
 
 impl MatchFilter {
@@ -374,7 +374,7 @@ impl MatchFilter {
     /// Whether some playlist channel could match `channel` of `source`
     /// (as first declared: [`MatchIndex`] ignores later declarations of an
     /// id).
-    pub fn wants_channel(&self, source: SourceId, channel: &XmltvChannel) -> bool {
+    pub fn wants_channel(&self, source: FeedId, channel: &XmltvChannel) -> bool {
         let id = channel.id.trim();
         if id.is_empty() {
             return false;
@@ -394,7 +394,7 @@ impl MatchFilter {
     /// Whether an override names EPG channel `epg_id` of `source` (an
     /// override with a source binds to its programmes even when the feed
     /// does not declare the channel).
-    pub fn wants_id(&self, source: SourceId, epg_id: &str) -> bool {
+    pub fn wants_id(&self, source: FeedId, epg_id: &str) -> bool {
         !self.overrides.is_empty()
             && self
                 .overrides

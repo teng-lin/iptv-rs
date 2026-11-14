@@ -11,8 +11,8 @@ use std::rc::{Rc, Weak};
 
 use iptv_core::wizard::{ImportCounts, ImportFailure, ImportProgress};
 use iptv_import::CancelToken;
-use iptv_providers::model::{Source, SourceConfig, SourceKind};
-use iptv_store_sqlite::{GuideSource, ImportErrorKind, SourceId, Store, StoreError, StoredSource};
+use iptv_providers::model::{Source, SourceConfig};
+use iptv_store_sqlite::{SourceId, Store, StoreError, StoredSource};
 use nsh_core::prelude::*;
 
 use super::{Job, Purpose, Update, guides, start_import_with, stored};
@@ -54,28 +54,7 @@ pub enum Activity {
     Rejected(ImportFailure),
 }
 
-/// A stored playlist, as listed. Carries no secrets but the guide
-/// addresses, which redact themselves.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Playlist {
-    pub policy: iptv_store_sqlite::SourcePolicy,
-    pub id: SourceId,
-    pub name: String,
-    pub kind: SourceKind,
-    /// Live channels of the last successful import.
-    pub channels: u32,
-    pub updated_at: Option<i64>,
-    /// The last refresh failed (and when); the channels before it remain.
-    pub failed: Option<(ImportErrorKind, Option<i64>)>,
-    /// Its guide sources in the user's order.
-    pub guides: Vec<GuideSource>,
-    /// The last guide download failed (its stored guide stays).
-    pub guide_failed: bool,
-    /// The User-Agent its requests send (M3U and Xtream only).
-    pub user_agent: Option<String>,
-    /// An M3U playlist read from a file (no link to change).
-    pub from_file: bool,
-}
+pub use iptv_library::Playlist;
 
 thread_local! {
     /// Running imports of stored playlists: their ticket and cancel token.

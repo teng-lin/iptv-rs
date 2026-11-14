@@ -63,7 +63,7 @@ fn cached_playlist_still_downloads_its_guide_when_epg_startup_refresh_is_enabled
         .set_guide_sources(
             source,
             &[GuideSource {
-                feed: iptv_epg::SourceId(1001),
+                feed: iptv_epg::FeedId(1001),
                 provider_index: None,
                 url: SecretUrl::new(guide.to_string_lossy()),
                 name: Some("Local XMLTV".into()),
@@ -105,7 +105,7 @@ fn cached_playlist_still_downloads_its_guide_when_epg_startup_refresh_is_enabled
         .set_guide_sources(
             source,
             &[GuideSource {
-                feed: iptv_epg::SourceId(1001),
+                feed: iptv_epg::FeedId(1001),
                 provider_index: None,
                 url: SecretUrl::new(home.path().join("unavailable.xml").to_string_lossy()),
                 name: Some("Local XMLTV".into()),

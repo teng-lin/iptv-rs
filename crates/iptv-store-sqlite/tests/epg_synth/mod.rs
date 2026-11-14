@@ -7,8 +7,8 @@
 use std::fmt::Write as _;
 
 use iptv_epg::{
-    ChannelKey, DAY, GuideStore, MatchIndex, Overrides, ParseOptions, PlaylistChannel,
-    SourceBuilder, SourceId, StoreOptions, UnixTime, XmltvParser, format_xmltv_time,
+    ChannelKey, DAY, FeedId, GuideStore, MatchIndex, Overrides, ParseOptions, PlaylistChannel,
+    SourceBuilder, StoreOptions, UnixTime, XmltvParser, format_xmltv_time,
 };
 
 const ADJECTIVES: [&str; 20] = [
@@ -143,7 +143,7 @@ pub fn import(shape: Shape, store: StoreOptions) -> (GuideStore, u64) {
         descriptions: store.store_descriptions,
         ..ParseOptions::default()
     });
-    let mut builder = SourceBuilder::new(SourceId(1), 0, store, NOW);
+    let mut builder = SourceBuilder::new(FeedId(1), 0, store, NOW);
     let programmes = generate(shape, |chunk| {
         parser.feed(chunk, &mut |item| builder.push(item)).unwrap();
     });

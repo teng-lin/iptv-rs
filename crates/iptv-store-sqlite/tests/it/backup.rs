@@ -200,7 +200,7 @@ fn restore_confines_file_urls_and_validates_guide_locations() {
     }
     let id = store.add_source(&source).unwrap();
     let guide = |url: &str| GuideSource {
-        feed: iptv_epg::SourceId(1),
+        feed: iptv_epg::FeedId(1),
         provider_index: Some(0),
         url: SecretUrl::new(url),
         name: None,
@@ -270,7 +270,7 @@ fn restore_keeps_explicit_lan_guides_and_derived_xtream_guides() {
             .set_guide_sources(
                 id,
                 &[GuideSource {
-                    feed: iptv_epg::SourceId(1),
+                    feed: iptv_epg::FeedId(1),
                     provider_index: xtream.then_some(0),
                     url: SecretUrl::new(&url),
                     name: None,

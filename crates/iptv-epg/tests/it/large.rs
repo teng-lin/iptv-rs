@@ -86,7 +86,7 @@ fn two_thousand_channels_for_seven_days() {
         store_descriptions: true,
         past_days_to_keep: None,
     };
-    let mut builder = SourceBuilder::new(SourceId(1), 0, opts, now);
+    let mut builder = SourceBuilder::new(FeedId(1), 0, opts, now);
     let mut parser = XmltvParser::new(ParseOptions::default());
     let mut bytes = 0u64;
     let started = Instant::now();

@@ -12,7 +12,7 @@ mod stream_support;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicIsize, Ordering};
 
-use iptv_epg::{Overrides, SourceId, StoreOptions};
+use iptv_epg::{FeedId, Overrides, StoreOptions};
 use iptv_import::{CancelToken, EpgSourceConfig, NoProgress, import_epg};
 use iptv_providers::SecretUrl;
 use iptv_store_sqlite::{EpgFeedMeta, EpgStage, Store};
@@ -72,7 +72,7 @@ fn import(days: i64) -> (usize, usize, usize, u64) {
     };
     let fetch = Feeds::new().serve("g.xml", Serve::Generated(shape));
     let mut config = EpgSourceConfig::new(
-        SourceId(1),
+        FeedId(1),
         SecretUrl::new(format!("{}g.xml", stream_support::BASE)),
     );
     config.store = StoreOptions::default();

@@ -35,8 +35,8 @@ mod xmltv;
 
 pub use decode::{Compression, DecodeError};
 pub use matching::{
-    ChannelKey, EpgRef, MatchFilter, MatchIndex, MatchKind, MatchReport, MatchResult, Override,
-    Overrides, PlaylistChannel, SourceId,
+    ChannelKey, EpgRef, FeedId, MatchFilter, MatchIndex, MatchKind, MatchReport, MatchResult,
+    Override, Overrides, PlaylistChannel,
 };
 pub use normalize::{normalize_name, strip_tag_prefix};
 pub use parser::{ParseOptions, ParseStats, ParseWarnings, ParsedXmltv, XmltvParser, parse_xmltv};

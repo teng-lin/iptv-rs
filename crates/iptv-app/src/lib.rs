@@ -36,7 +36,7 @@ mod lists;
 mod media;
 mod menu_view;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "ios", windows))]
-mod mpv;
+use iptv_player_mpv as mpv;
 mod multiview;
 mod multiview_picker;
 mod multiview_view;
@@ -100,7 +100,7 @@ fn native_module(registry: &mut Registry) {
 #[cfg(windows)]
 #[native_components(windows)]
 pub fn components(components: &nsh_platform_windows::Components) {
-    mpv::register(components);
+    mpv::register(components, transport::policy);
 }
 
 /// The Linux desktop's native components: `tv.player` on libmpv (the
@@ -108,7 +108,7 @@ pub fn components(components: &nsh_platform_windows::Components) {
 #[cfg(target_os = "linux")]
 #[native_components(linux)]
 pub fn components(components: &nsh_platform_linux::Components) {
-    mpv::register(components);
+    mpv::register(components, transport::policy);
 }
 
 /// The macOS desktop's native components: `tv.player` on libmpv, as on
@@ -116,7 +116,7 @@ pub fn components(components: &nsh_platform_linux::Components) {
 #[cfg(target_os = "macos")]
 #[native_components(macos)]
 pub fn components(components: &nsh_platform_macos::Components) {
-    mpv::register(components);
+    mpv::register(components, transport::policy);
 }
 
 /// iOS and iPadOS's native components: `tv.player` on libmpv (MPVKit's,
@@ -124,7 +124,7 @@ pub fn components(components: &nsh_platform_macos::Components) {
 #[cfg(target_os = "ios")]
 #[native_components(ios)]
 pub fn components(components: &nsh_platform_ios::Components) {
-    mpv::register(components);
+    mpv::register(components, transport::policy);
 }
 
 /// The last kind of input: the focus fill only shows for keys, as in

@@ -34,8 +34,8 @@ use std::time::Duration;
 
 use iptv_core::import_limits::ImportLimits;
 use iptv_epg::{
-    ChannelKey, Compression, EpgRef, IngestReport, MatchFilter, MatchIndex, MatchReport, Overrides,
-    ParseOptions, ParseStats, PlaylistChannel, ProgrammeData, SourceId, StoreOptions, TimePolicy,
+    ChannelKey, Compression, EpgRef, FeedId, IngestReport, MatchFilter, MatchIndex, MatchReport,
+    Overrides, ParseOptions, ParseStats, PlaylistChannel, ProgrammeData, StoreOptions, TimePolicy,
     UnixTime, XmltvChannel, XmltvItem, XmltvParser,
 };
 use iptv_providers::m3u::M3uHeader;
@@ -77,7 +77,7 @@ fn retry_delay(retry: u32) -> Duration {
 pub struct EpgSourceConfig {
     /// False only for a guide/source endpoint explicitly configured by the user.
     pub content_supplied: bool,
-    pub id: SourceId,
+    pub id: FeedId,
     /// May carry credentials (Xtream `xmltv.php`).
     pub url: SecretUrl,
     /// Higher wins when several sources have a channel.
@@ -89,7 +89,7 @@ pub struct EpgSourceConfig {
 }
 
 impl EpgSourceConfig {
-    pub fn new(id: SourceId, url: SecretUrl) -> Self {
+    pub fn new(id: FeedId, url: SecretUrl) -> Self {
         Self {
             content_supplied: false,
             id,
@@ -116,7 +116,7 @@ impl EpgSourceConfig {
             .enumerate()
             .map(|(i, url)| {
                 let mut config =
-                    Self::new(SourceId(first_id + i as u32), SecretUrl::new(url.clone()))
+                    Self::new(FeedId(first_id + i as u32), SecretUrl::new(url.clone()))
                         .with_priority(n - i as i32);
                 config.content_supplied = true;
                 config
@@ -139,7 +139,7 @@ pub struct EpgSourceStats {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EpgSourceOutcome {
-    pub id: SourceId,
+    pub id: FeedId,
     pub result: Result<EpgSourceStats, ImportError>,
 }
 
@@ -161,7 +161,7 @@ pub struct EpgImport {
     /// One entry per configured source, in input order.
     pub sources: Vec<EpgSourceOutcome>,
     /// Every channel each loaded feed lists, in document order.
-    pub listed: Vec<(SourceId, Vec<ListedChannel>)>,
+    pub listed: Vec<(FeedId, Vec<ListedChannel>)>,
 }
 
 impl EpgImport {
@@ -177,7 +177,7 @@ impl EpgImport {
     }
 
     /// The channels feed `feed` lists (empty when it did not load).
-    pub fn listed(&self, feed: SourceId) -> &[ListedChannel] {
+    pub fn listed(&self, feed: FeedId) -> &[ListedChannel] {
         self.listed
             .iter()
             .find(|(id, _)| *id == feed)
@@ -215,8 +215,8 @@ pub async fn import_epg<F: Fetch, S: GuideSink, P: ProgressSink>(
     let mut index = MatchIndex::new();
     let mut outcomes = Vec::with_capacity(sources.len());
     // Loaded feeds in load order (a later one replaces the same id).
-    let mut loaded: Vec<(SourceId, i32)> = Vec::new();
-    let mut listed: Vec<(SourceId, Vec<ListedChannel>)> = Vec::new();
+    let mut loaded: Vec<(FeedId, i32)> = Vec::new();
+    let mut listed: Vec<(FeedId, Vec<ListedChannel>)> = Vec::new();
     for cfg in sources {
         // Only the user ends the run between sources. Time and bytes are
         // counted per source, so one that used up its budget is recorded
@@ -272,7 +272,7 @@ pub async fn import_epg<F: Fetch, S: GuideSink, P: ProgressSink>(
     // order.
     let mut by_rank = loaded;
     by_rank.sort_by_key(|&(_, priority)| std::cmp::Reverse(priority));
-    let rank: HashMap<SourceId, usize> = by_rank
+    let rank: HashMap<FeedId, usize> = by_rank
         .iter()
         .enumerate()
         .map(|(i, &(id, _))| (id, i))
@@ -317,7 +317,7 @@ fn listed_of(c: XmltvChannel) -> ListedChannel {
 /// What one feed's parse keeps in memory: its channels, and which ids a
 /// playlist channel may match (first declaration wins, as in matching).
 struct FeedState<'a, S> {
-    feed: SourceId,
+    feed: FeedId,
     filter: &'a MatchFilter,
     sink: &'a mut S,
     channels: Vec<XmltvChannel>,

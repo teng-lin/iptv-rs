@@ -6,7 +6,7 @@
 use std::fmt;
 
 use iptv_epg::{
-    EpgSource, GuideStore, IngestReport, ProgrammeData, SourceBuilder, SourceId, StoreOptions,
+    EpgSource, FeedId, GuideStore, IngestReport, ProgrammeData, SourceBuilder, StoreOptions,
     UnixTime,
 };
 
@@ -38,7 +38,7 @@ pub trait GuideSink {
     /// Feed `feed` starts. `now` is for retention only.
     fn begin_feed(
         &mut self,
-        feed: SourceId,
+        feed: FeedId,
         priority: i32,
         store: StoreOptions,
         now: UnixTime,
@@ -57,7 +57,7 @@ pub trait GuideSink {
 
     /// After [`Self::finish_feed`]: whether EPG channel `epg_id` of `feed`
     /// kept at least one programme.
-    fn has_programmes(&self, feed: SourceId, epg_id: &str) -> bool;
+    fn has_programmes(&self, feed: FeedId, epg_id: &str) -> bool;
 }
 
 /// Keeps the guide in memory ([`SourceBuilder`] per feed), for tests,
@@ -95,7 +95,7 @@ impl MemoryGuide {
 impl GuideSink for MemoryGuide {
     fn begin_feed(
         &mut self,
-        feed: SourceId,
+        feed: FeedId,
         priority: i32,
         store: StoreOptions,
         now: UnixTime,
@@ -131,7 +131,7 @@ impl GuideSink for MemoryGuide {
         Ok(())
     }
 
-    fn has_programmes(&self, feed: SourceId, epg_id: &str) -> bool {
+    fn has_programmes(&self, feed: FeedId, epg_id: &str) -> bool {
         self.sources
             .iter()
             .find(|s| s.id() == feed)

@@ -36,7 +36,7 @@ use crate::tint;
 
 /// The window's video view, a native component of the desktop players
 /// (`mpv/pip.rs`).
-pub const VIEW: &str = "tv.pip";
+pub use iptv_player_mpv::PIP_VIEW as VIEW;
 /// The window's id.
 pub const ID: &str = "pip";
 

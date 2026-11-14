@@ -75,9 +75,7 @@ pub use overlay::{EpgOverride, OrphanedOverlay};
 pub use search::SearchBackend;
 pub use sources::{CatalogCounts, ImportErrorKind, ImportStatus, SourceSummary, StoredSource};
 
-/// Row id of a source. Overlay keys are `(SourceId, ContentId)`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct SourceId(pub i64);
+pub use iptv_library::SourceId;
 
 /// How to open a store.
 #[derive(Clone, Debug)]

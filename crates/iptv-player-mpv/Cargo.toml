@@ -1,0 +1,86 @@
+[package]
+name = "iptv-player-mpv"
+description = "Persistent native libmpv surfaces and the shared player wire contract."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+iptv-core.workspace = true
+serde_json.workspace = true
+serde = { version = "1", features = ["derive"] }
+
+[target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "ios", windows))'.dependencies]
+iptv-net.workspace = true
+log.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+nsh-platform-linux.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+nsh-platform-windows.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+nsh-platform-macos.workspace = true
+dispatch2 = "0.3.1"
+objc2 = "0.6.5"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSGeometry", "NSObject"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "objc2-quartz-core",
+  "NSResponder",
+  "NSView",
+  "NSWindow",
+] }
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "objc2-core-video",
+  "objc2-open-gl",
+  "CALayer",
+  "CAOpenGLLayer",
+] }
+objc2-open-gl = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "CGLCurrent",
+  "CGLTypes",
+] }
+objc2-core-video = { version = "0.3.2", default-features = false, features = ["std", "CVBase"] }
+
+# iOS and iPadOS: NSH's UIKit backend, and `tv.player` on MPVKit's libmpv
+# drawing into a CAEAGLLayer (`src/mpv/ios.rs`; `tools/fetch-mpvkit.sh`,
+# linked by build.rs).
+[target.'cfg(target_os = "ios")'.dependencies]
+nsh-platform-ios.workspace = true
+dispatch2 = "0.3.1"
+objc2 = "0.6.5"
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "NSGeometry",
+  "NSObject",
+  "NSString",
+  "NSURL",
+  "NSValue",
+  "NSError",
+  "objc2-core-foundation",
+] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFCGTypes"] }
+objc2-ui-kit = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "objc2-core-foundation",
+  "UIEvent",
+  "UIResponder",
+  "UIScreen",
+  "UIView",
+  "UIWindow",
+] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

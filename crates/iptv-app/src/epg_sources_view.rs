@@ -21,7 +21,7 @@
 
 use crate::i18n::tr;
 
-mod state;
+use iptv_library::epg_sources as state;
 mod words;
 
 use iptv_nav::Action;
@@ -444,7 +444,7 @@ fn step(
     ui: Ui,
     size: Scale,
     label: &'static str,
-    feed: iptv_epg::SourceId,
+    feed: iptv_epg::FeedId,
     dir: i32,
 ) -> impl IntoElement {
     view()
@@ -461,7 +461,7 @@ fn step(
         .child(ui_kit::label(size, label))
 }
 
-fn actions_card(ui: Ui, size: Scale, feed: iptv_epg::SourceId) -> impl IntoElement {
+fn actions_card(ui: Ui, size: Scale, feed: iptv_epg::FeedId) -> impl IntoElement {
     let line = move || state(ui, |s| s.line(feed).cloned()).flatten();
     let acts = state(ui, |s| s.acts(feed)).unwrap_or_default();
     let act_row = move |act: Act| {
@@ -511,7 +511,7 @@ fn actions_card(ui: Ui, size: Scale, feed: iptv_epg::SourceId) -> impl IntoEleme
         .children(acts.into_iter().map(act_row))
 }
 
-fn confirm_card(ui: Ui, size: Scale, feed: iptv_epg::SourceId) -> impl IntoElement {
+fn confirm_card(ui: Ui, size: Scale, feed: iptv_epg::FeedId) -> impl IntoElement {
     let (title, body) = state(ui, |s| {
         s.line(feed).map(|l| {
             (
