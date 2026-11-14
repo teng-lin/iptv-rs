@@ -175,8 +175,8 @@ codesign --force --sign - "$library"
 codesign --force --sign - "$output/ffmpeg"
 
 for binary in libmpv.2.dylib ffmpeg; do
-    otool -L "$output/$binary" > "$output/logs/$binary-otool-L.txt"
-    otool -l "$output/$binary" > "$output/logs/$binary-otool-l.txt"
+    otool -L "$output/$binary" > "$output/logs/$binary-otool-libraries.txt"
+    otool -l "$output/$binary" > "$output/logs/$binary-otool-loads.txt"
 done
 nm -gU "$library" > "$output/logs/libmpv-exports.txt"
 (cd "$output" && shasum -a 256 libmpv.2.dylib ffmpeg > logs/binaries.sha256)

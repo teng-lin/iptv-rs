@@ -365,14 +365,14 @@ def validate_build(platform, build):
         facts["needed"] = sorted(needed)
     else:
         for binary in (library, "ffmpeg"):
-            references = macho_references((logs / f"{binary}-otool-L.txt").read_text(encoding="utf-8"))
+            references = macho_references((logs / f"{binary}-otool-libraries.txt").read_text(encoding="utf-8"))
             if not references:
                 errors.append(f"No load command evidence for {binary}")
             for reference in references:
                 own = binary == library and reference == "@rpath/" + library
                 if not own and not reference.startswith(MACOS_SYSTEM_PREFIXES):
                     errors.append(f"{binary} references a non-system library: {reference}")
-            commands = (logs / f"{binary}-otool-l.txt").read_text(encoding="utf-8")
+            commands = (logs / f"{binary}-otool-loads.txt").read_text(encoding="utf-8")
             minimum = macho_minimum(commands)
             if minimum > MACOS_LIMIT:
                 errors.append(f"{binary} needs macOS {version_text(minimum)}, newer than {version_text(MACOS_LIMIT)}")

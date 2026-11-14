@@ -170,9 +170,9 @@ class BuildFixture(Fixture):
             evidence.update({"libmpv-dynamic.txt": READELF, "ffmpeg-dynamic.txt": READELF.replace("[libmpv.so.2]", "[x]"),
                              "libmpv-exports.txt": NM, "libmpv-symbols.txt": OBJDUMP, "libmpv-notes.txt": NOTES})
         else:
-            evidence.update({f"{library}-otool-L.txt": OTOOL_L, f"{library}-otool-l.txt": OTOOL_LOAD,
-                             "ffmpeg-otool-L.txt": "/build/ffmpeg:\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0)\n",
-                             "ffmpeg-otool-l.txt": OTOOL_LOAD, "libmpv-exports.txt": "0000000000001000 T _mpv_create\n"})
+            evidence.update({f"{library}-otool-libraries.txt": OTOOL_L, f"{library}-otool-loads.txt": OTOOL_LOAD,
+                             "ffmpeg-otool-libraries.txt": "/build/ffmpeg:\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0)\n",
+                             "ffmpeg-otool-loads.txt": OTOOL_LOAD, "libmpv-exports.txt": "0000000000001000 T _mpv_create\n"})
         evidence.update(overrides)
         for name, text in evidence.items():
             (logs / name).write_text(text)
@@ -227,12 +227,12 @@ class MacValidateTests(BuildFixture):
     def test_homebrew_reference_newer_os_and_rpath_fail(self):
         brew = OTOOL_L + "\t/opt/homebrew/opt/ffmpeg/lib/libavcodec.62.dylib (compatibility version 62.0.0)\n"
         with self.assertRaisesRegex(ValueError, "non-system library: /opt/homebrew"):
-            runtime.validate_build("macos", self.make_build(**{"libmpv.2.dylib-otool-L.txt": brew}))
+            runtime.validate_build("macos", self.make_build(**{"libmpv.2.dylib-otool-libraries.txt": brew}))
         import shutil
         shutil.rmtree(self.root / "build")
         newer = OTOOL_LOAD.replace("minos 14.0", "minos 15.0") + "Load command 10\n          cmd LC_RPATH\n      cmdsize 32\n         path /Users/runner/prefix/lib (offset 12)\n"
         with self.assertRaisesRegex(ValueError, "(?s)macOS 15.0.*LC_RPATH"):
-            runtime.validate_build("macos", self.make_build(**{"libmpv.2.dylib-otool-l.txt": newer}))
+            runtime.validate_build("macos", self.make_build(**{"libmpv.2.dylib-otool-loads.txt": newer}))
 
 
 class PackageTests(BuildFixture):
