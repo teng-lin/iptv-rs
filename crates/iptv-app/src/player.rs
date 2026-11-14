@@ -421,7 +421,7 @@ fn resolve_link(
         (result, portal)
     });
     let _task = ui.player.owner.run(|| {
-        spawn(async move {
+        spawn(crate::in_runtime(async move {
             let answered = request.await;
             crate::runtime().resolving.with(|r| {
                 if let Some(slot) = r.borrow_mut().get_mut(surface)
@@ -457,7 +457,7 @@ fn resolve_link(
                 ),
                 Err(kind) => fail(ui, surface, session, ErrorKind::from_resolve(&kind), kind),
             }
-        })
+        }))
     });
 }
 

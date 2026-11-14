@@ -509,7 +509,7 @@ pub fn App() -> impl IntoElement {
     let (tx, rx) = futures_channel::oneshot::channel();
     let started = std::thread::Builder::new()
         .name("iptv-bootstrap".into())
-        .spawn(move || {
+        .spawn(runtime().scope_worker(move || {
             let result = match backup::startup() {
                 Ok(()) => Ok(()),
                 Err(error) => {
@@ -522,7 +522,7 @@ pub fn App() -> impl IntoElement {
                 }
             };
             let _ = tx.send(result);
-        });
+        }));
     if started.is_err() {
         outcome.set(Some(Err("The startup task could not be started")));
     } else {

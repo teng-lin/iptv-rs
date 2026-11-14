@@ -158,6 +158,17 @@ impl Runtime {
     pub(crate) fn with_context<R>(&self, run: impl FnOnce() -> R) -> R {
         store_service::with_service(self.store.clone(), run)
     }
+    /// Capture native context before starting a worker, including bootstrap
+    /// work accepted before the store's UI epoch exists.
+    pub(crate) fn scope_worker<R: 'static, F>(
+        &self,
+        work: F,
+    ) -> impl FnOnce() -> R + Send + 'static + use<R, F>
+    where
+        F: FnOnce() -> R + Send + 'static,
+    {
+        self.with_context(|| store_service::scoped(work))
+    }
     pub(crate) fn scope_future<F: std::future::Future + 'static>(
         &self,
         future: F,
@@ -244,6 +255,30 @@ mod tests {
         assert!(Rc::ptr_eq(&first.schedule(), &target));
         assert!(Rc::ptr_eq(&second.schedule(), &original_second));
         assert!(!Rc::ptr_eq(&second.schedule(), &target));
+    }
+
+    #[test]
+    fn a_late_local_reply_keeps_its_accepting_runtime() {
+        use std::future::Future;
+        use std::task::{Context, Poll, Waker};
+        let first = Rc::new(Runtime::default());
+        let second = Rc::new(Runtime::default());
+        let (reply, answer) = futures_channel::oneshot::channel();
+        let task = crate::with_runtime(first.clone(), || {
+            crate::in_runtime(async move {
+                let limit = answer.await.unwrap();
+                crate::runtime().account_streams.set(Some(limit));
+            })
+        });
+        let mut task = std::pin::pin!(task);
+        let mut context = Context::from_waker(Waker::noop());
+        crate::with_runtime(second.clone(), || {
+            assert_eq!(task.as_mut().poll(&mut context), Poll::Pending);
+            reply.send(3).unwrap();
+            assert_eq!(task.as_mut().poll(&mut context), Poll::Ready(()));
+        });
+        assert_eq!(first.account_streams.get(), Some(3));
+        assert_eq!(second.account_streams.get(), None);
     }
 
     #[test]

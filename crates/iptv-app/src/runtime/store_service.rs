@@ -463,11 +463,19 @@ pub(crate) fn drain_on_shutdown() -> bool {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn a_scoped_worker_keeps_its_original_settings_owner() {
+    fn a_scoped_worker_keeps_its_original_settings_and_directory() {
         use iptv_settings::{Settings, Target, Value, keys};
         use std::sync::Arc;
-        let first = Arc::new(super::Service::default());
-        let second = Arc::new(super::Service::default());
+        let directory = tempfile::tempdir().unwrap();
+        let first_path = directory.path().join("alpha");
+        let first = Arc::new(super::Service {
+            directory: first_path.clone(),
+            ..Default::default()
+        });
+        let second = Arc::new(super::Service {
+            directory: directory.path().join("beta"),
+            ..Default::default()
+        });
         let values = |agent: &str| {
             let mut settings = Settings::new();
             settings
@@ -478,11 +486,16 @@ mod tests {
         *first.settings.write().unwrap() = values("SyntheticAlpha/1");
         *second.settings.write().unwrap() = values("SyntheticBeta/1");
         let worker = super::with_service(first.clone(), || {
-            super::scoped(|| super::super::settings::get().text(keys::USER_AGENT, &Target::Global))
+            super::scoped(|| {
+                (
+                    super::super::settings::get().text(keys::USER_AGENT, &Target::Global),
+                    super::super::paths::data_dir(),
+                )
+            })
         });
         first.retire();
         let result = super::with_service(second, || std::thread::spawn(worker).join().unwrap());
-        assert_eq!(result, "SyntheticAlpha/1");
+        assert_eq!(result, ("SyntheticAlpha/1".into(), first_path));
     }
 
     #[test]
