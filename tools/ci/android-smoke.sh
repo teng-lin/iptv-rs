@@ -77,6 +77,10 @@ for _ in $(seq 1 120); do
   [ "$($adb shell getprop sys.boot_completed | tr -d '\r')" = 1 ] && break
   pause 2
 done
+# A freshly booted emulator image keeps optimizing and starting its own apps
+# for a while; on a slow CI host, starting ours on top of that has made the
+# emulator's system server die. Let it settle first (IPTV_SMOKE_SETTLE s).
+pause "${IPTV_SMOKE_SETTLE:-0}"
 
 step "install and first start"
 if [ -n "$apk" ]; then
