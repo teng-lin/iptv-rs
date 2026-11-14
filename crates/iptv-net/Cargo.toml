@@ -7,6 +7,11 @@ rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
 
+[features]
+# Exposes the HLS and DASH manifest rewriters to the fuzz crate
+# (`playback::fuzzing`). Nothing else enables it.
+fuzzing = []
+
 [dependencies]
 iptv-providers.workspace = true
 iptv-import.workspace = true

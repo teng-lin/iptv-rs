@@ -15,10 +15,20 @@ libfuzzer-sys = "0.4"
 iptv-import = { path = "../crates/iptv-import" }
 iptv-providers = { path = "../crates/iptv-providers" }
 iptv-epg = { path = "../crates/iptv-epg" }
+# The manifest rewriters are private to the playback relay; this feature
+# exposes them to the `manifests` target only.
+iptv-net = { path = "../crates/iptv-net", features = ["fuzzing"] }
 
 [[bin]]
 name = "imports"
 path = "fuzz_targets/imports.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "manifests"
+path = "fuzz_targets/manifests.rs"
 test = false
 doc = false
 bench = false

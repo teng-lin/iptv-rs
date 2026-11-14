@@ -826,6 +826,26 @@ fn rewrite_hls(body: &[u8], base: &Url, prefix: &str) -> Result<Vec<u8>, FetchEr
 mod dash;
 use dash::rewrite_dash;
 
+/// The manifest rewriters as `fuzz/fuzz_targets/manifests.rs` calls them.
+/// Compiled only with the `fuzzing` feature, which the fuzz crate alone
+/// enables; not an API.
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub mod fuzzing {
+    use super::Url;
+
+    /// The rewritten playlist, or `None` when `base` is not a URL or the
+    /// playlist is refused.
+    pub fn rewrite_hls(body: &[u8], base: &str, prefix: &str) -> Option<Vec<u8>> {
+        super::rewrite_hls(body, &Url::parse(base).ok()?, prefix).ok()
+    }
+
+    /// As [`rewrite_hls`], for a DASH manifest.
+    pub fn rewrite_dash(body: &[u8], base: &str, prefix: &str) -> Option<Vec<u8>> {
+        super::rewrite_dash(body, &Url::parse(base).ok()?, prefix).ok()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
