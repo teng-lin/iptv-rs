@@ -29,9 +29,15 @@ pub(super) fn group_of(channel: usize) -> String {
 
 /// The channel's logo address (imported channels with an http(s) logo).
 fn logo(channel: usize) -> Option<String> {
-    let s = crate::schedule();
-    let epg = s.as_any()?.downcast_ref::<iptv_guide::EpgSchedule>()?;
-    let logo = epg.source_channel(channel)?.logo.as_deref()?.trim();
+    logo_in(&*crate::schedule(), channel)
+}
+
+/// Read through the trait, so a combined ("All playlists") schedule finds
+/// the logo in the playlist that owns the channel. Only http(s) addresses
+/// go on to the image loader.
+fn logo_in(schedule: &dyn iptv_core::guide::Schedule, channel: usize) -> Option<String> {
+    let logo = schedule.channel_logo(channel)?;
+    let logo = logo.trim();
     (logo.starts_with("http://") || logo.starts_with("https://")).then(|| logo.to_owned())
 }
 
@@ -296,4 +302,71 @@ fn badge(
                 0.0
             }
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::rc::Rc;
+
+    use iptv_epg::GuideStore;
+    use iptv_guide::EpgSchedule;
+    use iptv_guide::combined::{CombinedSchedule, SourceSchedule};
+
+    use super::logo_in;
+
+    const NOW: i64 = 1_800_000_000;
+
+    /// A generated playlist: one channel with an http(s) logo, one with a
+    /// logo the image loader must not be handed, one without.
+    fn playlist(name: &str) -> EpgSchedule {
+        let parsed = iptv_providers::m3u::parse_m3u(&format!(
+            "#EXTM3U\n\
+             #EXTINF:-1 tvg-logo=\" https://logo.example.test/{name}.png \",{name} One\n\
+             http://stream.example.test/{name}/1\n\
+             #EXTINF:-1 tvg-logo=\"file:///generated/{name}.png\",{name} Two\n\
+             http://stream.example.test/{name}/2\n\
+             #EXTINF:-1,{name} Three\n\
+             http://stream.example.test/{name}/3\n"
+        ));
+        EpgSchedule::from_catalog(
+            &parsed.groups,
+            &parsed.channels.items,
+            GuideStore::default(),
+            NOW,
+        )
+    }
+
+    #[test]
+    fn a_single_playlist_card_shows_only_http_logos() {
+        let schedule = playlist("alpha");
+        assert_eq!(
+            logo_in(&schedule, 0).as_deref(),
+            Some("https://logo.example.test/alpha.png")
+        );
+        assert_eq!(logo_in(&schedule, 1), None);
+        assert_eq!(logo_in(&schedule, 2), None);
+        assert_eq!(logo_in(&schedule, 99), None);
+    }
+
+    #[test]
+    fn a_combined_playlist_card_shows_the_owning_playlists_logo() {
+        let part = |id, name: &str| SourceSchedule {
+            id,
+            name: name.into(),
+            schedule: Rc::new(playlist(name)),
+        };
+        let all = CombinedSchedule::new(vec![part(1, "alpha"), part(2, "beta")], NOW);
+        // Channels 0..3 are the first playlist's, 3..6 the second's.
+        assert_eq!(
+            logo_in(&all, 0).as_deref(),
+            Some("https://logo.example.test/alpha.png")
+        );
+        assert_eq!(
+            logo_in(&all, 3).as_deref(),
+            Some("https://logo.example.test/beta.png")
+        );
+        assert_eq!(logo_in(&all, 4), None);
+        assert_eq!(logo_in(&all, 5), None);
+        assert_eq!(logo_in(&all, 99), None);
+    }
 }
